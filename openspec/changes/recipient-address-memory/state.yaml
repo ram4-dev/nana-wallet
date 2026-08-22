@@ -1,0 +1,15 @@
+schema: sdd-state/v1
+change: recipient-address-memory
+artifact_store: openspec
+delivery_strategy: ask-on-risk
+updated_at: 2026-08-22
+phases:
+  init: completed
+  explore: completed
+  propose: completed
+  spec: completed
+  design: completed
+  tasks: not_started
+  apply: not_started
+  verify: not_started
+  archive: not_started
