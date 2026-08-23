@@ -12,17 +12,19 @@ Nana es una wallet agéntica para personas mayores y personas con discapacidad. 
 
 ### WDK usado
 
-Los paquetes WDK declarados en [`package.json`](package.json) son:
+Los paquetes WDK declarados en [`package.json`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/package.json#L30-L32) son:
 
 - `@tetherto/wdk@1.0.0-beta.14` — runtime WDK.
 - `@tetherto/wdk-cli@1.0.0-beta.2` — CLI y proceso MCP (`wdk-mcp`).
 - `@tetherto/wdk-wallet-evm@1.0.0-beta.11` — wallet EVM.
 
-Puntos principales de integración:
+Permalinks de la integración WDK en el commit público [`12881bf`](https://github.com/rober8b/aleph-hackathon/commit/12881bf226f53bc3c5203d1a812e0adfe3e1e345):
 
-- [`src/wdk/mcp-client.ts`](https://github.com/rober8b/aleph-hackathon/blob/96c8f8e40bdee8180ca974954e32bf6f4e9697a1/src/wdk/mcp-client.ts#L117-L119) — resuelve el proceso MCP WDK incluido.
-- [`src/agent/wdk-tools.ts`](https://github.com/rober8b/aleph-hackathon/blob/96c8f8e40bdee8180ca974954e32bf6f4e9697a1/src/agent/wdk-tools.ts#L60-L92) — expone las herramientas WDK al agente, incluido `send_token`.
-- [`src/agent/wallet-agent.ts`](https://github.com/rober8b/aleph-hackathon/blob/96c8f8e40bdee8180ca974954e32bf6f4e9697a1/src/agent/wallet-agent.ts#L292-L350) — aplica preview `dryRun`, confirmación separada y guardas antes de una ejecución live.
+- [`src/wdk/mcp-client.ts#L117-L119`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/wdk/mcp-client.ts#L117-L119) — resuelve el proceso MCP WDK incluido.
+- [`src/wdk/mcp-client.ts#L213-L223`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/wdk/mcp-client.ts#L213-L223) — configura el spawn del proceso bundled `wdk-mcp` por stdio.
+- [`src/agent/wdk-tools.ts#L60-L92`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/agent/wdk-tools.ts#L60-L92) — expone las herramientas WDK al agente, incluido `send_token`.
+- [`src/agent/wallet-agent.ts#L292-L349`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/agent/wallet-agent.ts#L292-L349) — aplica preview `dryRun`, confirmación separada y guardas antes de una ejecución live.
+- [`src/wdk/transaction-receipt.ts#L164-L212`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/wdk/transaction-receipt.ts#L164-L212) — verifica chain ID Sepolia, hash, receipt y estado confirmado/revertido después del broadcast.
 
 ### Demo
 

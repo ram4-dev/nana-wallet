@@ -40,10 +40,21 @@ Same branch; size exception accepted.
 ## Phase 2: Manual Evidence
 
 - [x] 2.1 **RED:** Add operator-gated `tests/integration/wdk-transfer.manual.test.ts`: Sepolia test USD₮ `dryRun:true` links recipient/token/amount/network/fee with no broadcast; record input equality. Skip broadcast without env. Depends 1.5; run `npx vitest run tests/integration/wdk-transfer.manual.test.ts`; rollback file.
-- [ ] 2.2 **GREEN:** Extend `src/wdk/mcp-client.ts` only for raw `send_token` evidence and `dryRun:false` capture; preserve `baseUnits`, fee/gas, hash, verification fields for Developer B; implement none. Depends 2.1; run `WDK_LIVE=1 WDK_ALLOW_BROADCAST=1 npx vitest run tests/integration/wdk-transfer.manual.test.ts`; rollback additions.
+- [x] 2.2 **GREEN:** Extend `src/wdk/mcp-client.ts` only for raw `send_token` evidence and `dryRun:false` capture; preserve `baseUnits`, fee/gas, hash, verification fields for Developer B; implement none. Depends 2.1. **Closure acceptance amendment (2026-08-23):** the recorded production `handleMessage` + bundled `wdk-mcp` E2E is accepted as the equivalent runtime harness; it captured matching preview/base units, reported fee, real hash, and independent receipt verification. `WDK_LIVE=1 WDK_ALLOW_BROADCAST=1 npx vitest run tests/integration/wdk-transfer.manual.test.ts` remains an optional reproducibility path and MUST NOT cause a duplicate broadcast; rollback additions.
 - [x] 2.3 **REFACTOR/VERIFY:** Populate preview/broadcast/failure/closure fixtures; audit `rg -n -i --glob '*.json' '(seed|mnemonic|passphrase|private.?key|api.?key|credential|secret.?config)' tests/integration/wdk-fixtures`; reject matches and normalized/API/session fields. Depends 2.1 evidence-contract implementation; rollback fixtures.
 
 ## Phase 3: Handoff
 
 - [x] 3.1 Update `docs/architecture.md` with active spec `openspec/changes/developer-1-wdk-blockchain-flow/specs/wdk-blockchain-evidence/spec.md`, versions, Sepolia USD₮/ETH-gas-only boundary, raw fields, lifecycle, failures, gate, handoff. Verify `rg -n 'wdk-mcp|22.18.0|beta.14|beta.2|Sepolia|USD₮|gas|dryRun|locked|expired|unavailable|stale' docs/architecture.md`; rollback docs.
-- [ ] 3.2 Run reads with `WDK_LIVE=1 npx vitest run tests/integration/wdk-mcp.test.ts`; launch one approved broadcast only with `WDK_LIVE=1 WDK_ALLOW_BROADCAST=1 npx vitest run tests/integration/wdk-transfer.manual.test.ts`. Record hash/explorer or unavailable, lock/TTL, protected-call failure; rollback run artifacts/wallet.
+- [x] 3.2 Run reads with `WDK_LIVE=1 npx vitest run tests/integration/wdk-mcp.test.ts`; launch one approved broadcast only with `WDK_LIVE=1 WDK_ALLOW_BROADCAST=1 npx vitest run tests/integration/wdk-transfer.manual.test.ts`. **Closure acceptance amendment (2026-08-23):** the recorded production `handleMessage` + bundled `wdk-mcp` E2E is accepted instead: it includes preview, one explicit-confirmation broadcast, real hash, independent receipt, post-balances, wallet lock, and protected-call failure. The named commands remain optional reproducibility paths only and MUST NOT cause a duplicate broadcast; rollback run artifacts/wallet.
+
+### Live E2E evidence disposition (2026-08-23)
+
+Sanitized evidence for a real agent/MCP preview, explicit confirmation, one
+Sepolia USD₮ broadcast, receipt verification, post-balances, and wallet lock
+is recorded in `apply-progress.md`. The user explicitly authorized this
+task-level acceptance amendment for closure: the production `handleMessage`
+agent path with bundled `wdk-mcp` is accepted as the equivalent runtime
+harness for 2.2 and 3.2. This is not retroactive invention of evidence; the
+original operator-gated commands remain optional reproducibility paths and
+MUST NOT initiate another broadcast.
