@@ -5,11 +5,18 @@ export type RecipientReference =
   | { kind: 'query'; query: string };
 
 const TRANSFER_PREFIX = /^(?:send|transfer|mandale|mandá|manda|enviá|envia)\s+(?:money|funds|plata|dinero)?\s*(?:to|a)?\s*/i;
+const LEADING_VOCATIVE = /^(?:(?:hey|hi|hello|hola)\s+)?(?:nana|nani)\s*[,!:.-]?\s*/i;
+const LEADING_POLITENESS = /^(?:please|por\s+favor)\s*[,!:.-]?\s*/i;
 const PRONOUN = /^(?:him|her|them|él|el|ella|ellos|ellas|le)$/i;
 const RELATIONSHIP = /\b(?:my|mi|mis|your|tu|tus)\s+(?:grandson|granddaughter|grandchild|nieto|nieta|hijo|hija|hijos|padre|madre|sibling|hermano|hermana)\b/i;
+const QUALIFIED_RELATIONSHIP = /^((?:my|mi|mis|your|tu|tus)\s+(?:grandson|granddaughter|grandchild|nieto|nieta|hijo|hija|hijos|padre|madre|sibling|hermano|hermana))\s+([\p{L}][\p{L}\p{M}'’-]*(?:\s+[\p{L}][\p{L}\p{M}'’-]*)*)$/iu;
 const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 const ADDRESS_IN_TEXT = /\b0x[a-fA-F0-9]{40}\b/;
-const AMOUNT_AND_TOKEN_BEFORE_PREPOSITION = /^\s*\d+(?:[.,]\d+)?(?:\s+[A-Za-z][\w-]*)?\s+(?:to|a)\s+/i;
+const WRITTEN_AMOUNT = '(?:one|two|three|four|five|six|seven|eight|nine|ten|twenty|un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte)';
+const AMOUNT_AND_TOKEN_BEFORE_PREPOSITION = new RegExp(
+  `^\\s*(?:\\d+(?:[.,]\\d+)?|${WRITTEN_AMOUNT})(?:\\s+[A-Za-z][\\w-]*)?\\s+(?:to|a)\\s+`,
+  'i',
+);
 
 function cleanReference(value: string): string {
   return value
@@ -25,12 +32,21 @@ function cleanReference(value: string): string {
  * handled by the existing WDK path and recipient memory never indexes them.
  */
 export function detectRecipientReference(text: string): RecipientReference {
-  const matched = text.trim().match(TRANSFER_PREFIX);
+  const normalizedTurn = text
+    .trim()
+    .replace(LEADING_VOCATIVE, '')
+    .replace(LEADING_POLITENESS, '');
+  const matched = normalizedTurn.match(TRANSFER_PREFIX);
   if (!matched) return { kind: 'none' };
-  const remainder = text.trim().slice(matched[0].length);
+  const remainder = normalizedTurn.slice(matched[0].length);
   const reference = cleanReference(remainder.replace(AMOUNT_AND_TOKEN_BEFORE_PREPOSITION, ''));
   if (!reference || ADDRESS.test(reference)) return { kind: 'none' };
   if (PRONOUN.test(reference)) return { kind: 'pronoun' };
+  const qualifiedRelationship = reference.match(QUALIFIED_RELATIONSHIP);
+  if (qualifiedRelationship) {
+    const [, relationship, name] = qualifiedRelationship;
+    return { kind: 'query', query: `${name} ${relationship}` };
+  }
   if (RELATIONSHIP.test(reference)) return { kind: 'relationship', query: reference };
   return { kind: 'query', query: reference };
 }

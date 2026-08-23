@@ -15,6 +15,14 @@ describe('recipient transfer intent', () => {
     expect(detectRecipientReference('send 10 USDT to my grandson')).toEqual({ kind: 'relationship', query: 'my grandson' });
   });
 
+  it('accepts a Nana greeting, politeness, and a written amount', () => {
+    expect(detectRecipientReference('Hey Nana, send 20 USDT to Lucas.')).toEqual({ kind: 'query', query: 'Lucas' });
+    expect(detectRecipientReference('Hey Nana, please send one USDT to my grandson Lucas.')).toEqual({
+      kind: 'query',
+      query: 'Lucas my grandson',
+    });
+  });
+
   it('RED: recognizes contextual pronouns without inventing a name or address', () => {
     expect(detectRecipientReference('Mandale plata a él')).toEqual({ kind: 'pronoun' });
     expect(detectRecipientReference('Send him money')).toEqual({ kind: 'pronoun' });

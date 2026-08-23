@@ -58,6 +58,22 @@ describe('recipient resolution before a transfer preview', () => {
     expect(memory.search_user_memory).toHaveBeenCalledWith({ query: 'mi nieto' });
   });
 
+  it('resolves a greeted, explicitly named relationship through the qualified recipient query', async () => {
+    resetSessionStore();
+    const memory = tools();
+
+    await expect(resolveTransferRecipient(
+      'Hey Nana, please send one USDT to my grandson Lucas.',
+      createSession(),
+      memory,
+    )).resolves.toMatchObject({
+      status: 'resolved',
+      recipient: { recipientId: candidate.id, version: 3 },
+    });
+    expect(memory.search_recipients).toHaveBeenCalledWith({ query: 'Lucas my grandson' });
+    expect(memory.search_user_memory).not.toHaveBeenCalled();
+  });
+
   it('RED: keeps an unresolved pronoun and dependency failure ahead of address lookup or preview', async () => {
     resetSessionStore();
     await expect(resolveTransferRecipient('Send him money', createSession(), tools())).resolves.toEqual({ status: 'clarification_required', candidates: [] });
