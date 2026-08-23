@@ -119,6 +119,7 @@
 @layer base {
   html {
     font-size: 112.5%;
+    min-height: 100%;
   }
 
   * {
@@ -134,6 +135,18 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+  }
+}
+
+@supports (padding: max(0px)) {
+  main {
+    padding-top: max(3rem, env(safe-area-inset-top));
+  }
+
+  nav[aria-label="Navegación principal"] > div {
+    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
   }
 }
 
