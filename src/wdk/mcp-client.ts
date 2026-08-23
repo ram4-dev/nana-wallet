@@ -420,7 +420,7 @@ function mcpErrorMessage(value: unknown): string {
   return 'WDK MCP tool returned isError=true.';
 }
 
-function decodeMcpText(value: unknown): unknown {
+export function decodeMcpText(value: unknown): unknown {
   if (!value || typeof value !== 'object') return value;
   const content = (value as Record<string, unknown>).content;
   if (!Array.isArray(content)) return value;

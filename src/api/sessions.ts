@@ -6,6 +6,7 @@ import {
   sessionMessageRequestSchema,
   type ConversationMessage,
   type CreateSessionResponse,
+  type RecipientMemoryInspection,
   type SessionInspectResponse,
 } from '../contracts/http.js';
 
@@ -23,6 +24,18 @@ function toConversationMessages(messages: ModelMessage[]): ConversationMessage[]
       m.role === 'user' || m.role === 'assistant',
     )
     .map((m) => ({ role: m.role, content: toText(m.content) }));
+}
+
+function toRecipientMemoryInspection(session: store.DemoSession): RecipientMemoryInspection | undefined {
+  const memory = session.recipientMemory;
+  if (!memory) return undefined;
+  return {
+    selectedRecipient: memory.selectedRecipient,
+    clarification: memory.clarification,
+    // The draft may contain an exact address. Inspection exposes only expiry,
+    // never the staged content or confirmation identifier.
+    pendingWrite: memory.pendingWrite ? { expiresAt: new Date(memory.pendingWrite.expiresAt).toISOString() } : undefined,
+  };
 }
 
 export async function registerSessionRoutes(app: FastifyInstance): Promise<void> {
@@ -46,6 +59,7 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         id: session.id,
         messages: toConversationMessages(session.messages),
         pendingTransfer: session.pendingTransfer,
+        recipientMemory: toRecipientMemoryInspection(session),
         lastTransactionHash: session.lastTransactionHash,
         createdAt: session.createdAt,
       };

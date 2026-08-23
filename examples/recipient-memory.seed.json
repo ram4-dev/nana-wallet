@@ -1,0 +1,15 @@
+{
+  "recipients": [
+    {
+      "name": "Lucas",
+      "description": "mi nieto",
+      "address": "0x1234567890123456789012345678901234567890"
+    }
+  ],
+  "facts": [
+    {
+      "fact": "Lucas is my grandson",
+      "kind": "relationship"
+    }
+  ]
+}

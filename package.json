@@ -15,11 +15,16 @@
     "test:watch": "vitest",
     "test:wdk": "vitest run tests/integration/wdk-mcp.test.ts",
     "test:wdk-manual": "vitest run tests/integration/wdk-transfer.manual.test.ts",
-    "test:e2e:wdk-mcp": "WDK_E2E=1 vitest run tests/e2e/wdk-mcp-connection.e2e.test.ts"
+    "test:e2e:wdk-mcp": "WDK_E2E=1 vitest run tests/e2e/wdk-mcp-connection.e2e.test.ts",
+    "test:e2e:recipient-memory-llm": "RECIPIENT_MEMORY_LLM_E2E=1 vitest run tests/e2e/recipient-memory-llm.e2e.test.ts",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:seed": "tsx src/memory/seed.ts",
+    "memory:prefetch": "tsx src/memory/prefetch.ts"
   },
   "dependencies": {
     "@ai-sdk/mcp": "2.0.36",
     "@ai-sdk/openai-compatible": "3.0.35",
+    "@huggingface/transformers": "4.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@tetherto/wdk": "1.0.0-beta.14",
     "@tetherto/wdk-cli": "1.0.0-beta.2",
@@ -27,10 +32,12 @@
     "ai": "7.0.77",
     "dotenv": "17.4.2",
     "fastify": "5.12.1",
+    "pg": "8.23.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "22.15.3",
+    "@types/pg": "8.23.1",
     "tsx": "4.23.12",
     "typescript": "6.0.3",
     "vitest": "4.1.11"

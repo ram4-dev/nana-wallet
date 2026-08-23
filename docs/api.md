@@ -88,6 +88,7 @@ The response `status` is one of:
 | `status` | When | Shape |
 | --- | --- | --- |
 | `answer` | A wallet question was answered from tool results. | `{ status, message }` |
+| `clarification_required` | Recipient retrieval found more than one safe candidate. | `{ status, message, candidates: [{ id, name, description, version, evidence?, score? }] }` |
 | `confirmation_required` | A transfer dry-run preview was produced. | `{ status, message, preview: { network, token, recipient, amount, estimatedFee } }` |
 | `sent` | A confirmed transfer was broadcast. | `{ status, message, transaction: { network, transactionHash, explorerUrl } }` |
 | `cancelled` | The user cancelled a pending transfer. | `{ status, message }` |
@@ -100,3 +101,37 @@ preview — the guarded `send_token` wrapper rejected it), `agent_error`.
 HTTP status codes: `200` for `answer` / `confirmation_required` / `sent` /
 `cancelled`, `422` for `error`, `404` for an unknown session, `400` for an
 invalid request body.
+
+## Recipient-memory behaviour
+
+When `RECIPIENT_MEMORY_ENABLED=true`, a named or relationship recipient goes
+through the server-configured `DEMO_USER_ID`; the client cannot send a tenant
+ID. Search output can include a stable recipient ID, version, name,
+description, evidence, and score, but never an address. The exact address is
+an internal, session-bound tool result only after safe resolution.
+
+`GET /v1/sessions/:sessionId` may contain this safe inspection data:
+
+```json
+{
+  "recipientMemory": {
+    "selectedRecipient": {
+      "recipientId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "version": 1
+    },
+    "clarification": [
+      {
+        "recipientId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "version": 1,
+        "name": "Lucas",
+        "description": "el electricista"
+      }
+    ],
+    "pendingWrite": { "expiresAt": "2026-08-23T20:00:00.000Z" }
+  }
+}
+```
+
+The endpoint never returns a staged draft, exact address, or memory-write
+confirmation ID. A changed, inactive, or missing recipient invalidates the
+pending preview before WDK can receive `dryRun: false`.
