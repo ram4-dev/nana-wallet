@@ -1,0 +1,20 @@
+services:
+  db:
+    image: pgvector/pgvector:0.8.1-pg16
+    environment:
+      POSTGRES_DB: wdk_agent
+      POSTGRES_USER: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - recipient_memory_postgres:/var/lib/postgresql/data
+      - ./docker/init/001-recipient-app.sql:/docker-entrypoint-initdb.d/001-recipient-app.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wdk_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  recipient_memory_postgres:

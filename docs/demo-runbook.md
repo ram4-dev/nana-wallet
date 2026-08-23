@@ -1,99 +1,154 @@
-# Demo runbook
+# Recipient-memory demo runbook
 
-Mirrors §13 of `docs/wdk-agent-development-plan.md`. Run against fixtures
-first (`WDK_TOOLS_SOURCE=fixture`, the default) to rehearse, then switch to
-`WDK_TOOLS_SOURCE=live` once Developer A's wallet is unlocked and `wdk-mcp`
-is confirmed working, for the real recorded take.
+This runbook records the safe RAG path from a natural-language recipient to a
+WDK transfer preview. Start in fixture mode. The final live-wallet take is
+optional and never needs to broadcast to prove recipient retrieval.
 
-## 0. Setup
+## Quick rehearsal
 
 ```bash
-cp .env.example .env       # fill in OPENCODE_GO_API_KEY, and WDK_* once Dev A confirms
+cp .env.example .env
+npm ci
+docker compose up -d db
+```
+
+Set these values in `.env`:
+
+```dotenv
+RECIPIENT_MEMORY_ENABLED=true
+DATABASE_URL=postgresql://recipient_app@127.0.0.1:5432/wdk_agent
+DATABASE_ADMIN_URL=postgresql://postgres@127.0.0.1:5432/wdk_agent
+DEMO_USER_ID=11111111-1111-4111-8111-111111111111
+RECIPIENT_MEMORY_SEED_FILE=examples/recipient-memory.seed.json
+WDK_TOOLS_SOURCE=fixture
+```
+
+Then prepare the database, local model, and API:
+
+```bash
+npm run db:migrate
+npm run memory:prefetch
+npm run db:seed
+npm run dev
+```
+
+For a frontend textual E2E (LLM + WDK fixtures, no live broadcast), configure
+and start the Nana wallet in another terminal. If `:3000` is taken, use
+`PORT=3001` for the API and `VITE_API_URL=http://localhost:3001` below.
+
+```bash
+cp apps/nana-wallet/.env.example apps/nana-wallet/.env.local
+# keep WDK_TOOLS_SOURCE=fixture and AGENT_RUNTIME=llm in the backend .env
+# set VITE_AGENT_BACKEND=1 so the chat bypasses MSW and hits this API
+cd apps/nana-wallet
 npm install
-npm run dev                # Fastify on http://localhost:3000
+npm run dev -- --host 0.0.0.0 --port 8083
 ```
 
-For the live take only — done by Developer A before starting the API:
+Type a natural-language transfer request, then Confirm. With fixtures, expect
+a fixture `transactionHash`, never a live broadcast. For a parser-only
+rehearsal without a model provider, set `AGENT_RUNTIME=deterministic`.
 
-```bash
-wdk wallet unlock --name agent-demo --ttl 60
-```
+The seed contains confirmed demo data only: one Lucas described as `mi nieto`
+and the fact `Lucas is my grandson`. It is not a real address book.
 
-## 1. Health check
-
-```bash
-curl -s http://localhost:3000/health | jq
-```
-
-## 2. Wallet address + balance
-
-```bash
-curl -s http://localhost:3000/v1/wallet/address | jq
-curl -s "http://localhost:3000/v1/wallet/balance?network=sepolia&token=USDT" | jq
-```
-
-## 3. Create a session
+## Session setup
 
 ```bash
 SESSION_ID=$(curl -s -X POST http://localhost:3000/v1/sessions | jq -r .sessionId)
 echo "$SESSION_ID"
 ```
 
-## 4. Ask for the current balance in natural language
+Inspecting a session is safe for the screen recording: it can show selected ID,
+version, descriptions, and write expiry, but must never show a staged address
+or confirmation ID.
+
+```bash
+curl -s "http://localhost:3000/v1/sessions/$SESSION_ID" | jq
+```
+
+## Demo sequence
+
+### 1. Named and relationship retrieval
+
+Send either prompt:
 
 ```bash
 curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID/messages" \
   -H 'Content-Type: application/json' \
-  -d '{"message": "How much USDT do I have?"}' | jq
+  -d '{"message":"Mandale plata a Lucas"}' | jq
 ```
-
-## 5. Ask the agent to send a small amount
 
 ```bash
 curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID/messages" \
   -H 'Content-Type: application/json' \
-  -d '{"message": "Send 10 USDT to 0x1234...abcd"}' | jq
+  -d '{"message":"Send money to my grandson"}' | jq
 ```
 
-Expect `status: "confirmation_required"` with a `preview` — no broadcast yet.
+The agent first detects transfer intent. It searches current-user recipient data
+or confirmed relationship facts, obtains exactly one ID/version, retrieves the
+address internally, revalidates it, and returns a `confirmation_required`
+preview. Retrieval itself never returns an address.
 
-## 6. Confirm
+### 2. Approval boundary
+
+Verify that the preview names the network, USD₮, amount, recipient, and fee.
+Only then send the separate confirmation:
 
 ```bash
 curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID/messages" \
   -H 'Content-Type: application/json' \
-  -d '{"message": "Confirm"}' | jq
+  -d '{"message":"confirm"}' | jq
 ```
 
-Expect `status: "sent"` with a real `transaction.transactionHash` (live mode)
-or a fixture hash (rehearsal mode). Open `transaction.explorerUrl` on the live
-take.
+Fixture mode returns a fixture transaction hash. For a live take, use only a
+dedicated limited-funds Sepolia wallet, let a human unlock it with a finite TTL,
+and capture the post-transfer explorer evidence. Do not use a mainnet wallet.
 
-## 7. Wallet history
+### 3. Ambiguity and description qualification
+
+For an ambiguity recording, seed two confirmed current-user records named
+`Lucas`, with descriptions such as `mi nieto` and `el electricista`, then ask:
+
+```text
+Mandale plata a Lucas
+```
+
+Expected: `clarification_required`, candidates with descriptions, no selected
+address, and no preview. Follow with a qualifier such as:
+
+```text
+Mandale plata a Lucas el electricista
+```
+
+The hybrid lexical + cosine ranking can resolve only when its score threshold
+and margin are safe; otherwise it continues to ask for clarification.
+
+### 4. Confirmed memory write
+
+Ask the agent to remember a recipient or relationship in ordinary language.
+It must call `stage_user_memory`, display the exact draft (including an address
+only when one was supplied), and wait for an explicit confirmation. A bare
+`confirm` persists only the active session's one-time, five-minute draft.
+Rejected, expired, reused, or missing confirmations do not change the database.
+
+## Release checks
 
 ```bash
-curl -s "http://localhost:3000/v1/wallet/history?network=sepolia" | jq
+npm run typecheck
+npm test
+npm run build
+npm run test:e2e:wdk-mcp
 ```
 
-## 8. Cancel flow (second session)
+Run `npm run db:migrate` once more after the test pass. It must report that the
+schema is already current. The WDK MCP test is read-only: it discovers tools
+and reads Sepolia/USD₮ metadata but never sends tokens.
 
-```bash
-SESSION_ID_2=$(curl -s -X POST http://localhost:3000/v1/sessions | jq -r .sessionId)
-curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID_2/messages" \
-  -H 'Content-Type: application/json' \
-  -d '{"message": "Send 5 USDT to 0x1234...abcd"}' | jq
-curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID_2/messages" \
-  -H 'Content-Type: application/json' \
-  -d '{"message": "Cancel"}' | jq
-```
+## Failure expectations
 
-Expect `status: "cancelled"` and no second `send_token` broadcast call.
-
-## 9. Wrap up (live take only)
-
-```bash
-wdk wallet lock --name agent-demo
-```
-
-Restarting the Fastify process clears all sessions (in-memory only) — start
-a fresh `POST /v1/sessions` after any restart.
+Database/model unavailability, no match, conflicting facts, stale versions,
+or an inactive recipient stop before preview. If a recipient changes after the
+preview, its ID/version revalidation clears both the selection and approval;
+the user must resolve it again. Explicit user-supplied addresses retain the
+existing transfer path and are not stored or embedded by recipient memory.

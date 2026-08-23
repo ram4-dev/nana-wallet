@@ -80,6 +80,18 @@ export type TransactionResult = z.infer<typeof transactionResultSchema>;
 export const sessionMessageResponseSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('answer'), message: z.string() }),
   z.object({
+    status: z.literal('clarification_required'),
+    message: z.string(),
+    candidates: z.array(z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      description: z.string(),
+      version: z.number().int().positive(),
+      evidence: z.string().optional(),
+      score: z.number().optional(),
+    })),
+  }),
+  z.object({
     status: z.literal('confirmation_required'),
     message: z.string(),
     preview: transferPreviewSchema,
@@ -107,13 +119,31 @@ export const pendingTransferSchema = z.object({
   amount: z.string(),
   wallet: z.string(),
   preview: transferPreviewSchema,
+  recipientId: z.string().uuid().optional(),
+  recipientVersion: z.number().int().positive().optional(),
 });
 export type PendingTransfer = z.infer<typeof pendingTransferSchema>;
+
+export const recipientMemoryInspectionSchema = z.object({
+  selectedRecipient: z.object({
+    recipientId: z.string().uuid(),
+    version: z.number().int().positive(),
+  }).optional(),
+  clarification: z.array(z.object({
+    recipientId: z.string().uuid(),
+    version: z.number().int().positive(),
+    name: z.string(),
+    description: z.string(),
+  })).optional(),
+  pendingWrite: z.object({ expiresAt: z.string() }).optional(),
+});
+export type RecipientMemoryInspection = z.infer<typeof recipientMemoryInspectionSchema>;
 
 export const sessionInspectResponseSchema = z.object({
   id: z.string(),
   messages: z.array(conversationMessageSchema),
   pendingTransfer: pendingTransferSchema.optional(),
+  recipientMemory: recipientMemoryInspectionSchema.optional(),
   lastTransactionHash: z.string().optional(),
   createdAt: z.string(),
 });

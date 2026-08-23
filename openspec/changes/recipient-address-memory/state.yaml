@@ -1,15 +1,20 @@
 schema: sdd-state/v1
 change: recipient-address-memory
 artifact_store: openspec
-delivery_strategy: ask-on-risk
-updated_at: 2026-08-22
+delivery_strategy: exception-ok
+updated_at: 2026-08-23
 phases:
   init: completed
   explore: completed
   propose: completed
   spec: completed
   design: completed
-  tasks: not_started
-  apply: not_started
-  verify: not_started
+  tasks: completed
+  apply: completed
+  verify: completed
   archive: not_started
+apply_progress:
+  completed_tasks: [1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3]
+  next_task: null
+  foundation_runtime_evidence: verified
+  release_evidence: verified

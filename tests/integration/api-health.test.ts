@@ -15,4 +15,23 @@ describe('GET /health', () => {
 
     await app.close();
   });
+
+  it('allows the configured frontend origin without reflecting an unknown origin', async () => {
+    const app = buildServer();
+    const allowed = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { origin: 'http://localhost:8083' },
+    });
+    const unknown = await app.inject({
+      method: 'GET',
+      url: '/health',
+      headers: { origin: 'https://untrusted.example' },
+    });
+
+    expect(allowed.headers['access-control-allow-origin']).toBe('http://localhost:8083');
+    expect(unknown.headers['access-control-allow-origin']).toBeUndefined();
+
+    await app.close();
+  });
 });

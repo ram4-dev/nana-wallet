@@ -2,9 +2,9 @@ schema: spec-driven
 
 context: |
   Project: Aleph Hackathon WDK Transaction Agent.
-  Repository state: documentation-only bootstrap; implementation is not present.
-  Intended stack from docs: Node.js, TypeScript, Fastify, AI SDK Core, @ai-sdk/mcp, WDK.
-  Intended testing from docs: Vitest unit and API tests; not installed or detectable yet.
+  Repository state: Node.js TypeScript Fastify backend with a fixture/live WDK agent boundary.
+  Stack: Node.js, TypeScript, Fastify, AI SDK Core, @ai-sdk/mcp, WDK, Vitest.
+  Recipient-memory foundation: PostgreSQL 16 with pgvector, pg, and Transformers.js.
   Canonical planning document: docs/wdk-agent-development-plan.md.
   Artifact persistence: OpenSpec files under openspec/.
   Strict TDD is disabled until a test runner and implementation workspace exist.
@@ -12,21 +12,21 @@ context: |
 strict_tdd: false
 
 testing:
-  status: unavailable
-  test_command: ""
-  framework: ""
-  unit: false
-  integration: false
-  e2e: false
+  status: available
+  test_command: "npm test"
+  framework: Vitest
+  unit: true
+  integration: true
+  e2e: true
   coverage: false
   coverage_command: ""
   linter: false
   lint_command: ""
-  type_checker: false
-  typecheck_command: ""
+  type_checker: true
+  typecheck_command: "npm run typecheck"
   formatter: false
   format_command: ""
-  notes: "No package.json, lockfile, source tree, test files, CI workflows, or test configuration detected. The development plan names Vitest as an intended future tool."
+  notes: "Database integration requires the local pgvector compose service; WDK E2E is opt-in through WDK_E2E=1."
 
 rules:
   proposal:
@@ -45,12 +45,12 @@ rules:
   apply:
     guidelines:
       - Follow the implementation plan and existing project conventions.
-      - Establish executable tests before enabling strict TDD.
+      - Keep strict TDD disabled; use focused Vitest coverage and runtime harnesses.
     tdd: false
-    test_command: ""
+    test_command: "npm test"
   verify:
-    test_command: ""
-    build_command: ""
+    test_command: "npm test"
+    build_command: "npm run build"
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas into main specifications.

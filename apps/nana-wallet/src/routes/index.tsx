@@ -14,6 +14,7 @@ import {
   shouldLockAfterSessionResolution,
   UNKNOWN_SESSION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
+import { classifySessionSubmission } from "@/lib/session-resolution";
 import { useVoicePlayback } from "@/lib/use-voice-playback";
 
 export const Route = createFileRoute("/")({
@@ -154,12 +155,28 @@ function AgentePage() {
     void request;
   }
 
+  function submitSessionText(rawMessage: string) {
+    const cleanText = rawMessage.trim();
+    if (!cleanText) return;
+
+    const submission = classifySessionSubmission(cleanText, confirmationPendingRef.current);
+    if (submission.kind === "blocked") {
+      setMessage(
+        "Hay una transferencia esperando tu decisión. Escribí “confirmar la transferencia” o “cancelar la transferencia”.",
+      );
+      return;
+    }
+
+    sendTurn(submission.message, submission.kind);
+  }
+
   function sendText() {
     const cleanText = text.trim();
     if (!cleanText) return;
+
     setText("");
     setLastTranscript(null);
-    sendTurn(cleanText);
+    submitSessionText(cleanText);
   }
 
   async function startRecording() {
@@ -219,7 +236,7 @@ function AgentePage() {
               return;
             }
             setLastTranscript(cleanTranscript);
-            sendTurn(cleanTranscript);
+            submitSessionText(cleanTranscript);
           })
           .catch((error) => setMessage(getErrorMessage(error)))
           .finally(() => setIsPreparingAudio(false));
@@ -253,7 +270,7 @@ function AgentePage() {
   }
 
   function rejectProposal() {
-    sendTurn("cancel", "resolution");
+    sendTurn("cancelar la transferencia", "resolution");
   }
 
   if (meQuery.isPending) return <RoutePending label="Estamos preparando al agente" />;
@@ -400,7 +417,7 @@ function AgentePage() {
             </Button>
             <Button
               className="press min-h-16 whitespace-normal text-lg font-extrabold"
-              onClick={() => sendTurn("confirm", "resolution")}
+              onClick={() => sendTurn("confirmar la transferencia", "resolution")}
               disabled={isSessionActionPending || areSessionActionsLocked}
             >
               Confirmar
@@ -428,7 +445,7 @@ function AgentePage() {
         <Input
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder="Escribime acá"
+          placeholder={isConfirmationPending ? "Confirmar o cancelar" : "Escribime acá"}
           aria-label="Mensaje para el agente"
           disabled={interactionDisabled}
           className="h-10 min-w-0 flex-1 rounded-full border-0 bg-transparent px-4 py-2 text-base shadow-none focus-visible:ring-0 md:text-base"
