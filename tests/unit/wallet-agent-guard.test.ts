@@ -66,6 +66,20 @@ describe('guarded send_token tool', () => {
     expect(result.error).toBe('confirmation_required');
   });
 
+  it('refuses a dryRun:false call whose wallet does not match the pending transfer', async () => {
+    resetSessionStore();
+    const session = createSession();
+    setPendingTransfer(session.id, pendingFixture);
+    const tools = buildGuardedTools(createWdkToolsFixture(), session);
+
+    const result = (await tools.send_token.execute!(
+      { network: 'sepolia', token: 'USDT', to: '0x1234...abcd', amount: '10', wallet: 'other-wallet', dryRun: false },
+      toolOptions,
+    )) as { error?: string };
+
+    expect(result.error).toBe('confirmation_required');
+  });
+
   it('allows a dryRun:false call that matches the pending transfer', async () => {
     resetSessionStore();
     const session = createSession();

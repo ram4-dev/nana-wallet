@@ -12,6 +12,7 @@ import {
   shouldLockAfterSessionResolution,
   UNKNOWN_SESSION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
+import { classifySessionSubmission } from "@/lib/session-resolution";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -153,8 +154,17 @@ function AgentePage() {
   function sendText() {
     const cleanText = text.trim();
     if (!cleanText) return;
+
+    const submission = classifySessionSubmission(cleanText, confirmationPendingRef.current);
+    if (submission.kind === "blocked") {
+      setMessage(
+        "Hay una transferencia esperando tu decisión. Escribí “confirmar la transferencia” o “cancelar la transferencia”.",
+      );
+      return;
+    }
+
     setText("");
-    sendTurn(cleanText);
+    sendTurn(submission.message, submission.kind);
   }
 
   function handleMicrophone() {
@@ -162,7 +172,7 @@ function AgentePage() {
   }
 
   function rejectProposal() {
-    sendTurn("cancel", "resolution");
+    sendTurn("cancelar la transferencia", "resolution");
   }
 
   function refreshMoneyQueries() {
@@ -258,7 +268,7 @@ function AgentePage() {
             </Button>
             <Button
               className="press min-h-16 whitespace-normal text-lg font-extrabold"
-              onClick={() => sendTurn("confirm", "resolution")}
+              onClick={() => sendTurn("confirmar la transferencia", "resolution")}
               disabled={isSessionActionPending || areSessionActionsLocked}
             >
               Confirmar
@@ -296,9 +306,9 @@ function AgentePage() {
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder="Escribime acá"
+          placeholder={isConfirmationPending ? "Confirmar o cancelar" : "Escribime acá"}
           aria-label="Mensaje para el agente"
-          disabled={isSessionActionPending || isConfirmationPending || areSessionActionsLocked}
+          disabled={isSessionActionPending || areSessionActionsLocked}
           className="min-w-0 flex-1 rounded-xl bg-transparent px-2 py-3 text-lg focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
         <Button
@@ -306,12 +316,7 @@ function AgentePage() {
           variant="ghost"
           className="press size-14 shrink-0 rounded-2xl text-primary"
           aria-label="Enviar mensaje"
-          disabled={
-            isSessionActionPending ||
-            isConfirmationPending ||
-            areSessionActionsLocked ||
-            !text.trim()
-          }
+          disabled={isSessionActionPending || areSessionActionsLocked || !text.trim()}
         >
           <Send className="size-7" strokeWidth={2.4} />
         </Button>

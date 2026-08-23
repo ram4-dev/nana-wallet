@@ -13,6 +13,8 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+const apiBase = (import.meta.env["VITE_API_URL"] || "http://localhost:3000").replace(/\/$/, "");
+
 afterEach(() => {
   vi.unstubAllGlobals();
   setApiToken(null);
@@ -105,12 +107,12 @@ describe("session API", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "http://localhost:3000/v1/sessions",
+      `${apiBase}/v1/sessions`,
       expect.objectContaining({ method: "POST", body: "{}" }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:3000/v1/sessions/session-1/messages",
+      `${apiBase}/v1/sessions/session-1/messages`,
       expect.objectContaining({ method: "POST", body: JSON.stringify({ message: "hola" }) }),
     );
 
@@ -205,9 +207,9 @@ describe("session API", () => {
     });
     expect(sessionId).toBe("replacement-session");
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
-      "http://localhost:3000/v1/sessions/expired-session/messages",
-      "http://localhost:3000/v1/sessions",
-      "http://localhost:3000/v1/sessions/replacement-session/messages",
+      `${apiBase}/v1/sessions/expired-session/messages`,
+      `${apiBase}/v1/sessions`,
+      `${apiBase}/v1/sessions/replacement-session/messages`,
     ]);
   });
 });

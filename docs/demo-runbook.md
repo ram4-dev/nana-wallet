@@ -32,6 +32,23 @@ npm run db:seed
 npm run dev
 ```
 
+For a frontend textual E2E (LLM + WDK fixtures, no live broadcast), configure
+and start the Nana wallet in another terminal. If `:3000` is taken, use
+`PORT=3001` for the API and `VITE_API_URL=http://localhost:3001` below.
+
+```bash
+cp apps/nana-wallet/.env.example apps/nana-wallet/.env.local
+# keep WDK_TOOLS_SOURCE=fixture and AGENT_RUNTIME=llm in the backend .env
+# set VITE_AGENT_BACKEND=1 so the chat bypasses MSW and hits this API
+cd apps/nana-wallet
+npm install
+npm run dev -- --host 0.0.0.0 --port 8083
+```
+
+Type a natural-language transfer request, then Confirm. With fixtures, expect
+a fixture `transactionHash`, never a live broadcast. For a parser-only
+rehearsal without a model provider, set `AGENT_RUNTIME=deterministic`.
+
 The seed contains confirmed demo data only: one Lucas described as `mi nieto`
 and the fact `Lucas is my grandson`. It is not a real address book.
 

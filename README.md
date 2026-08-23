@@ -250,6 +250,15 @@ contain it.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `OPENCODE_GO_API_KEY` | — | API key for OpenCode Go (`opencode.ai/auth`), used as the model provider. |
+| `OPENCODE_GO_BASE_URL` | `https://opencode.ai/zen/go/v1` | OpenCode Go-compatible API base URL. |
+| `OPENCODE_GO_MODEL` | `deepseek-v4-flash` | Default conversational agent model. |
+| `WDK_WALLET_NAME` | `agent-demo` | WDK wallet used by wallet tools. |
+| `WDK_NETWORK` | `sepolia` | Default WDK network. |
+| `WDK_TOKEN` | `USDT` | Default token alias. |
+| `WDK_TOOLS_SOURCE` | `fixture` | `fixture` requires no WDK process; `live` starts the real `wdk-mcp` process. |
+| `AGENT_RUNTIME` | `llm` | `llm` uses the conversational `ToolLoopAgent`; `deterministic` uses the parser-only path. |
+| `PORT` | `3000` | Fastify HTTP port. |
 | `RECIPIENT_MEMORY_ENABLED` | `false` | Feature flag. When false, no DB/model/memory tools are initialized and explicit-address transfers remain available. |
 | `DATABASE_URL` | — | Application connection as `recipient_app`; required when memory is enabled. |
 | `DATABASE_ADMIN_URL` | — | Migration-only admin connection. Do not use it for the application runtime. |

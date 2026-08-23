@@ -83,4 +83,77 @@ describe('session endpoints', () => {
     expect(response.body).not.toContain('0x1234567890123456789012345678901234567890');
     await app.close();
   });
+
+  it('allows a browser preflight from the frontend origin', async () => {
+    const app = buildServer();
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/sessions',
+      headers: {
+        origin: 'http://localhost:8083',
+        'access-control-request-method': 'POST',
+      },
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:8083');
+    await app.close();
+  });
+
+  it('does not reflect a disallowed Origin', async () => {
+    const app = buildServer();
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/sessions',
+      headers: {
+        origin: 'https://evil.example',
+        'access-control-request-method': 'POST',
+      },
+    });
+
+    expect(res.statusCode).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    await app.close();
+  });
+
+  it('runs a fixture preview and confirm over HTTP without an LLM', async () => {
+    const previousRuntime = process.env.AGENT_RUNTIME;
+    process.env.AGENT_RUNTIME = 'deterministic';
+    const app = buildServer();
+    try {
+      const { sessionId } = (await app.inject({ method: 'POST', url: '/v1/sessions' })).json();
+
+      const preview = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/messages`,
+        headers: { origin: 'http://localhost:8083' },
+        payload: { message: 'Send 10 USDT to 0x1234000000000000000000000000000000abcd' },
+      });
+
+      expect(preview.statusCode).toBe(200);
+      expect(preview.headers['access-control-allow-origin']).toBe('http://localhost:8083');
+      expect(preview.json()).toMatchObject({
+        status: 'confirmation_required',
+        preview: {
+          network: 'sepolia',
+          token: 'USDT',
+          amount: '10',
+        },
+      });
+
+      const confirm = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/messages`,
+        payload: { message: 'Confirm' },
+      });
+
+      expect(confirm.statusCode).toBe(200);
+      expect(confirm.json().status).toBe('sent');
+      expect(confirm.json().transaction.transactionHash).toMatch(/^0xfixturetx/);
+    } finally {
+      await app.close();
+      if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
+      else process.env.AGENT_RUNTIME = previousRuntime;
+    }
+  });
 });
