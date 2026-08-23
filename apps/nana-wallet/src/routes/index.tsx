@@ -277,7 +277,7 @@ function AgentePage() {
           ? "No te entendí bien"
           : turn
             ? "Estoy listo para ayudarte"
-            : "Tocá a Nani y hablale";
+            : null;
   const interactionDisabled =
     isAgentWorking || isConfirmationPending || areSessionActionsLocked || isRecording;
 
@@ -315,9 +315,11 @@ function AgentePage() {
           ) : null}
         </button>
 
-        <span className="mt-3 rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
-          {agentStatus}
-        </span>
+        {agentStatus ? (
+          <span className="mt-3 rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
+            {agentStatus}
+          </span>
+        ) : null}
       </div>
 
       {isRecording ? (
