@@ -105,9 +105,111 @@ function normalizeSendTokenInput(input: SendTokenInput, configuredToken: string)
 }
 
 const guardedSendTokenErrorSchema = z.object({
-  error: z.enum(['confirmation_required', 'recipient_revalidation_required']),
+  error: z.enum(['confirmation_required', 'recipient_revalidation_required', 'policy_rejected']),
   message: z.string().trim().min(1),
 });
+
+const DECIMAL_AMOUNT = /^\d+(?:\.\d+)?$/u;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
+
+type ParsedDecimal = {
+  integer: string;
+  fraction: string;
+};
+
+function parsePositiveDecimal(value: string): ParsedDecimal | null {
+  const normalized = value.trim();
+  if (!DECIMAL_AMOUNT.test(normalized)) return null;
+  const [rawInteger, fraction = ''] = normalized.split('.');
+  const integer = rawInteger.replace(/^0+(?=\d)/u, '');
+  if (!/[1-9]/u.test(`${integer}${fraction}`)) return null;
+  return { integer, fraction };
+}
+
+function compareDecimals(left: ParsedDecimal, right: ParsedDecimal): number {
+  if (left.integer.length !== right.integer.length) {
+    return left.integer.length < right.integer.length ? -1 : 1;
+  }
+  if (left.integer !== right.integer) return left.integer < right.integer ? -1 : 1;
+  const fractionLength = Math.max(left.fraction.length, right.fraction.length);
+  const leftFraction = left.fraction.padEnd(fractionLength, '0');
+  const rightFraction = right.fraction.padEnd(fractionLength, '0');
+  if (leftFraction === rightFraction) return 0;
+  return leftFraction < rightFraction ? -1 : 1;
+}
+
+function isBurnAddress(address: string): boolean {
+  const normalized = address.toLocaleLowerCase('en-US');
+  return normalized === ZERO_ADDRESS || normalized === DEAD_ADDRESS;
+}
+
+function rejectByPolicy(message: string): { error: 'policy_rejected'; message: string } {
+  return { error: 'policy_rejected', message };
+}
+
+function validateLiveTransferPolicy(
+  input: SendTokenInput,
+  config: WalletAgentConfig,
+): { error: 'policy_rejected'; message: string } | null {
+  if (process.env.WDK_TOOLS_SOURCE !== 'live') return null;
+
+  const maxAmount = process.env.WDK_MAX_TRANSFER_AMOUNT?.trim();
+  const allowedRecipients = process.env.WDK_ALLOWED_RECIPIENTS?.split(',')
+    .map((address) => address.trim())
+    .filter(Boolean);
+  if (!maxAmount || !allowedRecipients?.length) {
+    return rejectByPolicy(
+      'Live transfer policy is not configured: set WDK_MAX_TRANSFER_AMOUNT and WDK_ALLOWED_RECIPIENTS.',
+    );
+  }
+
+  const parsedMaxAmount = parsePositiveDecimal(maxAmount);
+  if (!parsedMaxAmount) {
+    return rejectByPolicy(
+      'Live transfer policy is invalid: WDK_MAX_TRANSFER_AMOUNT must be a positive plain decimal.',
+    );
+  }
+  if (allowedRecipients.some((address) => !isValidEvmAddress(address) || isBurnAddress(address))) {
+    return rejectByPolicy(
+      'Live transfer policy is invalid: WDK_ALLOWED_RECIPIENTS must contain only valid non-burn EVM addresses.',
+    );
+  }
+
+  if (
+    input.wallet !== config.wallet ||
+    input.network !== config.network ||
+    input.token !== config.token
+  ) {
+    return rejectByPolicy(
+      'Refusing live transfer: wallet, network, and token must exactly match the configured wallet.',
+    );
+  }
+
+  const parsedAmount = parsePositiveDecimal(input.amount);
+  if (!parsedAmount) {
+    return rejectByPolicy('Refusing live transfer: amount must be a positive plain decimal.');
+  }
+  if (compareDecimals(parsedAmount, parsedMaxAmount) > 0) {
+    return rejectByPolicy('Refusing live transfer: amount exceeds WDK_MAX_TRANSFER_AMOUNT.');
+  }
+
+  if (!isValidEvmAddress(input.to)) {
+    return rejectByPolicy('Refusing live transfer: recipient must be a valid EVM address.');
+  }
+  if (isBurnAddress(input.to)) {
+    return rejectByPolicy('Refusing live transfer: zero and burn addresses are prohibited.');
+  }
+  const normalizedRecipient = input.to.toLocaleLowerCase('en-US');
+  const allowlist = new Set(
+    allowedRecipients.map((address) => address.toLocaleLowerCase('en-US')),
+  );
+  if (!allowlist.has(normalizedRecipient)) {
+    return rejectByPolicy('Refusing live transfer: recipient is not in WDK_ALLOWED_RECIPIENTS.');
+  }
+
+  return null;
+}
 
 const transactionReceiptOutcomeSchema = z.object({
   status: z.enum(['confirmed', 'reverted']),
@@ -294,6 +396,8 @@ export function buildGuardedTools(
     inputSchema: sendTokenInputSchema,
     execute: async (input: SendTokenInput, options) => {
       const normalizedInput = normalizeSendTokenInput(input, config.token);
+      const policyRejection = validateLiveTransferPolicy(normalizedInput, config);
+      if (policyRejection) return policyRejection;
       const selected = session.recipientMemory?.selectedRecipient;
       const previewed = session.recipientMemory?.previewedRecipient;
       const pending = session.pendingTransfer;

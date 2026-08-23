@@ -13,6 +13,10 @@ or a secret to a remote platform.
   values into `VITE_*` variables or commit them.
 - A transfer can only broadcast after a live preview and an explicit text or
   voice confirmation in the same backend session.
+- Both preview and broadcast are blocked unless the exact configured wallet,
+  network, and token are used, the amount is within the decimal spending cap,
+  and the recipient is a valid, non-burn address on the case-insensitive
+  allowlist.
 - The address book is local Postgres data. The sample seed is demo-only and
   must not be used as a real recipient list.
 
@@ -54,6 +58,9 @@ WDK_TOOLS_SOURCE=live
 WDK_WALLET_NAME=agent-dev
 WDK_NETWORK=sepolia
 WDK_TOKEN=usdt-test
+# Required in live mode. Replace the example with approved Sepolia recipients.
+WDK_MAX_TRANSFER_AMOUNT=0.05
+WDK_ALLOWED_RECIPIENTS=0x1111111111111111111111111111111111111111
 AGENT_RUNTIME=llm
 CORS_ORIGINS=http://localhost:8083,http://127.0.0.1:8083
 
@@ -119,7 +126,10 @@ Expected health fields:
 
 The balance response must show the expected Sepolia test token and a real
 balance. If `mode` is `fixture`, stop, set `WDK_TOOLS_SOURCE=live`, and restart
-the API. Do not confirm a preview from that process.
+the API. Do not confirm a preview from that process. If either live transfer
+policy variable is missing, empty, malformed, or contains an invalid address,
+the API rejects the transfer before calling WDK. The amount comparison is an
+exact decimal comparison; exponent notation is not accepted.
 
 ## Conversational E2E
 
