@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "wdk-evidence/v1",
+  "status": "not-run",
+  "recipient": null,
+  "token": "usdt",
+  "amount": null,
+  "fee": null,
+  "error": null,
+  "network": "sepolia",
+  "asset": "USD₮",
+  "ethRole": "gas-only",
+  "historyStates": ["unavailable", "stale", "empty", "non-empty"],
+  "rawOutcome": null
+}

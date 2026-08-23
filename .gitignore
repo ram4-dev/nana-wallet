@@ -1,0 +1,8 @@
+# Local Pi runtime state
+.atl/
+.codegraph/
+
+node_modules/
+dist/
+.env
+*.log

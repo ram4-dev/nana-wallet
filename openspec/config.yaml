@@ -1,0 +1,56 @@
+schema: spec-driven
+
+context: |
+  Project: Aleph Hackathon WDK Transaction Agent.
+  Repository state: documentation-only bootstrap; implementation is not present.
+  Intended stack from docs: Node.js, TypeScript, Fastify, AI SDK Core, @ai-sdk/mcp, WDK.
+  Intended testing from docs: Vitest unit and API tests; not installed or detectable yet.
+  Canonical planning document: docs/wdk-agent-development-plan.md.
+  Artifact persistence: OpenSpec files under openspec/.
+  Strict TDD is disabled until a test runner and implementation workspace exist.
+
+strict_tdd: false
+
+testing:
+  status: unavailable
+  test_command: ""
+  framework: ""
+  unit: false
+  integration: false
+  e2e: false
+  coverage: false
+  coverage_command: ""
+  linter: false
+  lint_command: ""
+  type_checker: false
+  typecheck_command: ""
+  formatter: false
+  format_command: ""
+  notes: "No package.json, lockfile, source tree, test files, CI workflows, or test configuration detected. The development plan names Vitest as an intended future tool."
+
+rules:
+  proposal:
+    - Keep scope aligned with the backend-only WDK transaction-agent demo in docs/wdk-agent-development-plan.md.
+    - Include a rollback plan for risky changes involving wallet or transaction behavior.
+  specs:
+    - Use Given/When/Then scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - Preserve the explicit demo boundary and testnet-only scope.
+  design:
+    - Document architecture decisions with rationale.
+    - Include sequence diagrams for conversational transfer and WDK tool flows.
+  tasks:
+    - Group work by phase and use hierarchical numbering.
+    - Keep tasks completable in one session.
+  apply:
+    guidelines:
+      - Follow the implementation plan and existing project conventions.
+      - Establish executable tests before enabling strict TDD.
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas into main specifications.

@@ -158,3 +158,41 @@ npm run mobile:sync
 - No se incluyen fondos reales ni claves privadas.
 - El repositorio todavía no produce un APK o IPA automáticamente; esos binarios se compilan con Android Studio o Xcode.
 - La conexión completa entre el contrato del frontend y el backend WDK sigue pendiente.
+
+## Backend WDK Transaction Agent
+
+Además del frontend, este repositorio incluye un backend HTTP para el track WDK, que interpreta instrucciones en lenguaje natural y opera con `wdk-mcp` a través de un `ToolLoopAgent`.
+
+Ver detalles en `docs/wdk-agent-development-plan.md`, `docs/api.md` y `docs/demo-runbook.md`.
+
+### Setup backend
+
+```bash
+cp .env.example .env
+npm install
+npm run dev
+```
+
+El servidor escucha en `PORT` (por defecto `3000`).
+
+### Variables de entorno backend
+
+| Var | Purpose |
+| --- | --- |
+| `OPENCODE_GO_API_KEY` | API key for OpenCode Go (opencode.ai/auth), used as the model provider. |
+| `OPENCODE_GO_BASE_URL` | Defaults to `https://opencode.ai/zen/go/v1`. |
+| `OPENCODE_GO_MODEL` | Defaults to `deepseek-v4-flash`. |
+| `WDK_WALLET_NAME`, `WDK_NETWORK`, `WDK_TOKEN` | Supplied by Developer A once the demo wallet is set up. |
+| `WDK_TOOLS_SOURCE` | `fixture` (default, no WDK required) or `live` (spawns the real `wdk-mcp` process). |
+| `PORT` | Fastify port, default `3000`. |
+
+### Scripts backend
+
+- `npm run dev` — watch mode (`tsx`).
+- `npm run build` / `npm start` — compile then run the built server.
+- `npm test` — unit + integration tests (vitest), all against fixtures — no WDK wallet or model API key required.
+
+### Notes backend
+
+- Sessions are in-memory only: restarting the server clears all conversations and pending transfer previews.
+- `WDK_TOOLS_SOURCE=fixture` es el valor por defecto para desarrollar y testear sin una wallet WDK en vivo.
