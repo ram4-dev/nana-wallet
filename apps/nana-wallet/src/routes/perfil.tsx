@@ -287,7 +287,7 @@ function PerfilPage() {
       </section>
 
       <h2 className="mt-10 flex items-center gap-2 text-xl font-extrabold">
-        <Users className="size-6 text-primary" strokeWidth={2.4} aria-hidden="true" /> Mi familia
+        <Users className="size-6 text-brand-ink" strokeWidth={2.4} aria-hidden="true" /> Mi familia
         guardada
       </h2>
       {contacts.length === 0 ? (
@@ -330,8 +330,8 @@ function PerfilPage() {
 
       <section className="mt-10 rounded-2xl border border-border bg-secondary p-5">
         <h2 className="flex items-center gap-2 text-xl font-extrabold">
-          <CalendarHeart className="size-7 text-primary" strokeWidth={2.4} aria-hidden="true" /> Mi
-          agenda
+          <CalendarHeart className="size-7 text-brand-ink" strokeWidth={2.4} aria-hidden="true" />{" "}
+          Mi agenda
         </h2>
         <p className="mt-2 text-lg text-muted-foreground">
           Cumpleaños, turnos y recordatorios importantes.
@@ -345,7 +345,7 @@ function PerfilPage() {
             {events.map((event) => (
               <li key={event.id} className="rounded-2xl border border-border bg-card p-4">
                 <p className="text-lg font-extrabold">{event.title}</p>
-                <p className="mt-1 text-base font-bold text-primary">
+                <p className="mt-1 text-base font-bold text-brand-ink">
                   {formatAgendaDate(event.date)}
                 </p>
                 {event.note ? (
@@ -374,7 +374,7 @@ function PerfilPage() {
       </section>
 
       {agentTurn ? (
-        <section className="surface-card mt-5 border-2 border-primary p-5" aria-live="polite">
+        <section className="surface-card mt-5 border-2 border-brand-ink p-5" aria-live="polite">
           <p className="text-lg leading-relaxed">{agentTurn.message}</p>
           {agentTurn.status === "confirmation_required" ? (
             <>
@@ -411,7 +411,7 @@ function PerfilPage() {
           ) : null}
           {agentTurn.status === "sent" ? (
             <a
-              className="mt-4 inline-block break-all font-bold text-primary underline"
+              className="mt-4 inline-block break-all font-bold text-brand-ink underline"
               href={agentTurn.transaction.explorerUrl}
               target="_blank"
               rel="noreferrer"
@@ -423,7 +423,7 @@ function PerfilPage() {
       ) : null}
 
       <h2 className="mt-10 flex items-center gap-2 text-xl font-extrabold">
-        <CalendarDays className="size-6 text-primary" strokeWidth={2.4} aria-hidden="true" />
+        <CalendarDays className="size-6 text-brand-ink" strokeWidth={2.4} aria-hidden="true" />
         Facturas del mes
       </h2>
       {bills.length === 0 ? (

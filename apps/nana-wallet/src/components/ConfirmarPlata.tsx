@@ -170,7 +170,7 @@ export function ConfirmarPlata({
               className="flex flex-1 flex-col items-center justify-center text-center"
               role="status"
             >
-              <Loader2 className="size-20 animate-spin text-primary" aria-hidden="true" />
+              <Loader2 className="size-20 animate-spin text-brand-ink" aria-hidden="true" />
               <AlertDialogTitle className="mt-6 text-3xl font-extrabold">
                 Nana está haciendo la operación
               </AlertDialogTitle>
@@ -201,8 +201,8 @@ export function ConfirmarPlata({
           ) : (
             <>
               <header className="text-center">
-                <ShieldCheck className="mx-auto size-14 text-primary" aria-hidden="true" />
-                <p className="mt-3 text-lg font-bold text-primary">Revisá antes de confirmar</p>
+                <ShieldCheck className="mx-auto size-14 text-brand-ink" aria-hidden="true" />
+                <p className="mt-3 text-lg font-bold text-brand-ink">Revisá antes de confirmar</p>
                 <AlertDialogTitle className="mt-2 text-3xl leading-tight font-extrabold">
                   {intent.confirmation.headline}
                 </AlertDialogTitle>

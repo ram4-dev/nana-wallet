@@ -6,7 +6,7 @@ const config: CapacitorConfig = {
   appId: "com.nanawallet.app",
   appName: "Nana Wallet",
   webDir: "dist/client",
-  backgroundColor: "#fbf8f2",
+  backgroundColor: "#f5f3ed",
   ...(devServerUrl
     ? {
         server: {

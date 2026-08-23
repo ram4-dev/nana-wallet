@@ -12,7 +12,7 @@ export function BottomNav() {
       <div className="relative mx-auto flex h-[76px] max-w-md items-center justify-between px-7 pt-1 pb-2">
         <Link
           to="/perfil"
-          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-primary"
+          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-brand-ink"
           activeProps={{ className: "active bg-secondary" }}
           aria-current={pathname === "/perfil" ? "page" : undefined}
         >
@@ -32,7 +32,7 @@ export function BottomNav() {
 
         <Link
           to="/mi-plata"
-          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-primary"
+          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-brand-ink"
           activeProps={{ className: "active bg-secondary" }}
           aria-current={pathname === "/mi-plata" ? "page" : undefined}
         >

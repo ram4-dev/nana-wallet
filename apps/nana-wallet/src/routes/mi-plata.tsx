@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Sparkles } from "lucide-react";
 
 import { EmptyState, RouteError, RoutePending } from "@/components/RouteStates";
 import { api, queryKeys } from "@/lib/api";
@@ -65,17 +65,18 @@ function MiPlataPage() {
     <main className="mx-auto max-w-md px-6 pt-12 pb-40">
       <h1 className="text-2xl font-extrabold">Mi plata</h1>
 
-      <section className="plastic relative mt-5 overflow-hidden rounded-[2rem] px-7 py-6">
+      <section className="surface-card relative mt-5 overflow-hidden rounded-[2rem] px-7 py-6">
         <span
-          className="absolute -top-14 -right-12 size-40 rounded-full border-[18px] border-primary-foreground/10"
+          className="absolute -top-10 -right-8 size-28 rounded-full bg-primary"
           aria-hidden="true"
         />
-        <span
-          className="absolute -right-3 -bottom-14 size-28 rounded-full bg-primary-foreground/10 blur-xl"
+        <Sparkles
+          className="absolute top-6 right-6 size-7 text-foreground"
+          strokeWidth={2.4}
           aria-hidden="true"
         />
         <div className="relative">
-          <p className="text-base font-bold opacity-90">Total en pesos</p>
+          <p className="text-base font-bold text-muted-foreground">Total en pesos</p>
           <p className="mt-1 text-4xl font-extrabold tracking-tight">{summary.total.display}</p>
         </div>
       </section>
