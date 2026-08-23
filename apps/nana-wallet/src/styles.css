@@ -47,22 +47,22 @@
 
 :root {
   --radius: 1.5rem;
-  --background: #f5f3ed;
+  --background: #f4f1ea;
   --foreground: #171717;
-  --card: #fffefa;
+  --card: #fdfbf8;
   --card-foreground: #171717;
-  --popover: #fffefa;
+  --popover: #fdfbf8;
   --popover-foreground: #171717;
-  --primary: #c8ff3d;
-  --primary-foreground: #171717;
-  --primary-glow: #dcff85;
-  --brand-ink: #365314;
-  --secondary: #e8e5dd;
-  --secondary-foreground: #34332f;
-  --muted: #edebe5;
-  --muted-foreground: #57564f;
-  --accent: #ecffc1;
-  --accent-foreground: #2a3f0d;
+  --primary: #684cf6;
+  --primary-foreground: #ffffff;
+  --primary-glow: #a996ff;
+  --brand-ink: #4631ba;
+  --secondary: #e7e3f0;
+  --secondary-foreground: #2f2b37;
+  --muted: #ebe8e3;
+  --muted-foreground: #5a5860;
+  --accent: #ede8ff;
+  --accent-foreground: #3f2cac;
   --destructive: oklch(0.52 0.2 22);
   --destructive-foreground: oklch(1 0 0);
   --success: oklch(0.52 0.15 155);
@@ -78,9 +78,9 @@
   --destructive-surface-foreground: oklch(0.42 0.12 22);
   --success-surface: oklch(0.955 0.045 155);
   --success-surface-foreground: oklch(0.42 0.12 155);
-  --border: #c9c6bd;
-  --input: #c9c6bd;
-  --ring: #365314;
+  --border: #c8c3d3;
+  --input: #c8c3d3;
+  --ring: #4631ba;
 
   /* Sin relieve: la jerarquia la dan el borde y el relleno, no la sombra. */
   --shadow-soft: none;

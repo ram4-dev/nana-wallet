@@ -65,18 +65,18 @@ function MiPlataPage() {
     <main className="mx-auto max-w-md px-6 pt-12 pb-40">
       <h1 className="text-2xl font-extrabold">Mi plata</h1>
 
-      <section className="surface-card relative mt-5 overflow-hidden rounded-[2rem] px-7 py-6">
+      <section className="relative mt-5 overflow-hidden rounded-[2rem] border border-foreground bg-foreground px-7 py-6 text-background">
         <span
           className="absolute -top-10 -right-8 size-28 rounded-full bg-primary"
           aria-hidden="true"
         />
         <Sparkles
-          className="absolute top-6 right-6 size-7 text-foreground"
+          className="absolute top-6 right-6 size-7 text-primary-foreground"
           strokeWidth={2.4}
           aria-hidden="true"
         />
         <div className="relative">
-          <p className="text-base font-bold text-muted-foreground">Total en pesos</p>
+          <p className="text-base font-bold text-background/70">Total en pesos</p>
           <p className="mt-1 text-4xl font-extrabold tracking-tight">{summary.total.display}</p>
         </div>
       </section>
