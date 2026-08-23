@@ -1,0 +1,178 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 8px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 8px);
+  --radius-2xl: calc(var(--radius) + 16px);
+  --radius-3xl: calc(var(--radius) + 24px);
+  --font-sans: "Nunito", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Fredoka", "Nunito", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-agent-skin: var(--agent-skin);
+  --color-agent-skin-shadow: var(--agent-skin-shadow);
+  --color-agent-hair: var(--agent-hair);
+  --color-agent-hair-shadow: var(--agent-hair-shadow);
+  --color-agent-glasses: var(--agent-glasses);
+  --color-agent-blush: var(--agent-blush);
+  --color-agent-mouth: var(--agent-mouth);
+  --color-agent-dress: var(--agent-dress);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+:root {
+  --radius: 1.5rem;
+  --background: oklch(0.995 0.002 265);
+  --foreground: oklch(0.12 0.012 270);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.12 0.012 270);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.12 0.012 270);
+  --primary: oklch(0.48 0.31 275);
+  --primary-foreground: oklch(1 0 0);
+  --primary-glow: oklch(0.58 0.27 272);
+  --secondary: oklch(0.965 0.018 270);
+  --secondary-foreground: oklch(0.43 0.25 275);
+  --muted: oklch(0.975 0.006 270);
+  --muted-foreground: oklch(0.5 0.018 270);
+  --accent: oklch(0.48 0.31 275);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.62 0.22 20);
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.67 0.18 155);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.82 0.16 80);
+  --warning-foreground: oklch(0.2 0.02 80);
+  --agent-skin: oklch(0.89 0.085 55);
+  --agent-skin-shadow: oklch(0.77 0.11 47);
+  --agent-hair: oklch(0.95 0.012 260);
+  --agent-hair-shadow: oklch(0.78 0.025 260);
+  --agent-glasses: oklch(0.24 0.035 275);
+  --agent-blush: oklch(0.72 0.15 25);
+  --agent-mouth: oklch(0.46 0.17 24);
+  --agent-dress: oklch(0.57 0.24 278);
+  --border: oklch(0.9 0.012 270);
+  --input: oklch(0.9 0.012 270);
+  --ring: oklch(0.48 0.31 275);
+
+  /* plastic / rubber design system */
+  --gradient-plastic: linear-gradient(
+    165deg,
+    var(--primary-glow) 0%,
+    var(--primary) 62%,
+    color-mix(in oklab, var(--primary) 88%, black) 100%
+  );
+  --gradient-rubber-warm: linear-gradient(
+    165deg,
+    var(--primary-glow) 0%,
+    var(--primary) 62%,
+    color-mix(in oklab, var(--primary) 88%, black) 100%
+  );
+  --shadow-rubber:
+    0 1px 0 1px color-mix(in oklab, white 36%, transparent) inset,
+    0 -5px 10px -6px color-mix(in oklab, black 24%, transparent) inset,
+    0 12px 24px -10px color-mix(in oklab, var(--primary) 42%, transparent);
+  --shadow-soft: 0 1px 2px color-mix(in oklab, var(--foreground) 6%, transparent);
+  --shadow-press:
+    0 1px 0 1px color-mix(in oklab, white 40%, transparent) inset,
+    0 6px 14px -6px color-mix(in oklab, black 30%, transparent) inset;
+  --shadow-agent:
+    0 2px 0 1px color-mix(in oklab, white 48%, transparent) inset,
+    0 -8px 14px -9px color-mix(in oklab, var(--agent-skin-shadow) 64%, transparent) inset,
+    0 18px 30px -14px color-mix(in oklab, var(--primary) 30%, transparent);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@utility surface-card {
+  background-color: var(--card);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-soft);
+  border: 1px solid var(--border);
+}
+
+@utility plastic {
+  background-image: var(--gradient-plastic);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-rubber);
+  border-radius: var(--radius-2xl);
+}
+
+@utility plastic-warm {
+  background-image: var(--gradient-rubber-warm);
+  color: var(--primary-foreground);
+  box-shadow: var(--shadow-rubber);
+  border-radius: var(--radius-2xl);
+}
+
+@utility press {
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease;
+  &:active {
+    transform: translateY(3px) scale(0.985);
+    box-shadow: var(--shadow-press);
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1) translateY(0);
+  }
+  50% {
+    transform: scale(1.03) translateY(-6px);
+  }
+}
+
+@utility breathe {
+  animation: breathe 4.5s ease-in-out infinite;
+}
+
+@utility agent-rubber {
+  box-shadow: var(--shadow-agent);
+  border: 1px solid color-mix(in oklab, white 55%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .breathe {
+    animation: none;
+  }
+}
