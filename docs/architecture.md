@@ -1,5 +1,51 @@
 # WDK blockchain evidence boundary
 
+## Recipient address memory boundary
+
+Recipient references are durable application data in PostgreSQL 16 + pgvector,
+not model context. `recipients` stores a versioned exact address payload with a
+384D embedding of normalized name + description only; `user_memories` stores
+confirmed relationship facts with a 384D fact embedding. The pinned local
+model is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` via
+Transformers.js, so retrieval needs no hosted embedding credential.
+
+Every repository transaction applies the server-owned demo tenant UUID and
+sets PostgreSQL RLS context under the restricted `recipient_app` role. Search
+uses tenant-filtered lexical name boost plus cosine similarity and returns only
+candidate metadata. A score threshold/margin or duplicate exact name produces
+clarification, never an inferred address. The fixed `DEMO_USER_ID` is only a
+hackathon identity seam; production must replace it with an authenticated
+principal.
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant A as Agent/session
+  participant M as Memory tools
+  participant P as PostgreSQL + pgvector
+  participant W as Bundled wdk-mcp
+  U->>A: Send money to my grandson
+  A->>M: relationship and recipient search
+  M->>P: tenant-filtered lexical + cosine query
+  P-->>M: id/version/evidence only
+  alt unsafe match
+    M-->>A: clarification, no address
+    A-->>U: ask which person
+  else one grounded record
+    A->>M: get address(id, version)
+    M->>P: revalidate current record
+    M-->>A: exact address internally
+    A->>W: send_token(to=exact address, dryRun=true)
+  end
+```
+
+Writes use `stage_user_memory` followed by a session-bound, single-use,
+five-minute confirmation. The draft is the only point at which an exact new
+address can be shown for explicit user approval. Session inspection, candidate
+search, embeddings, and release evidence redact or omit addresses. Before the
+WDK preview and again before broadcast, the recipient ID/version/address are
+revalidated; any mismatch clears both selection and pending approval.
+
 This implementation proves the Track 1 integration boundary with the scoped
 `@tetherto/wdk-cli@1.0.0-beta.2` package and direct
 `@tetherto/wdk@1.0.0-beta.14` dependency. It requires Node.js `>=22.18.0`.
@@ -22,9 +68,9 @@ not be treated as interchangeable runtime proof.
 The product asset is the registered Sepolia token slug `usdt` (test USD₮).
 Sepolia ETH is gas only and is never a product-transfer fallback. The raw MCP context retains network, token,
 recipient, decimal amount, `baseUnits`, wallet/index, `dryRun`, fee or gas
-fields, result, error, transaction hash, and verification state. Developer B
-uses those fields to implement caps, allowlists, confirmation, and API/session
-contracts; this module intentionally makes none of those product decisions.
+fields, result, error, transaction hash, and verification state. The agent and
+HTTP layers use those fields to implement confirmation and session contracts;
+this module intentionally makes none of those product decisions.
 
 ## Lifecycle and evidence
 
@@ -96,7 +142,7 @@ Failures retain their stage (`handshake`, `connection`, `discovery`, `call`,
 `validation`, or `closure`), a sanitized message, and broadcast status.
 Sensitive-shaped evidence is rejected before persistence. Fixtures use
 `wdk-evidence/v1` and preserve raw WDK outcome shapes rather than a normalized
-product contract. Developer B must treat the fixture status and live evidence
+product contract. The application must treat fixture status and live evidence
 as authoritative and must not infer a successful transaction from a preview,
 unavailable indexer, or a missing hash.
 

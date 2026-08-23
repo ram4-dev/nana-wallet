@@ -5,6 +5,11 @@ import { WALLET_AGENT_INSTRUCTIONS } from './instructions.js';
 import { getWdkTools } from './wdk-tools.js';
 import * as store from '../sessions/in-memory-store.js';
 import type { DemoSession } from '../sessions/in-memory-store.js';
+import { createRecipientMemoryTools } from '../memory/tools.js';
+import { isValidEvmAddress } from '../memory/address.js';
+import { getConfiguredRecipientMemoryRuntime, type RecipientMemoryRuntime } from '../memory/runtime.js';
+import { resolveTransferRecipient, type RecipientMemoryToolPort } from './recipient-resolution.js';
+import { hasExplicitTransferAddress } from './recipient-intent.js';
 import type {
   SessionMessageResponse,
   TransferPreview,
@@ -23,6 +28,19 @@ const sendTokenInputSchema = z.object({
   dryRun: z.boolean(),
 });
 type SendTokenInput = z.infer<typeof sendTokenInputSchema>;
+
+type HandleMessageOptions = {
+  model?: LanguageModel;
+  recipientMemory?: RecipientMemoryRuntime;
+};
+
+const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
+const memoryAddressSchema = z.object({ recipientId: z.string().uuid(), expectedVersion: z.number().int().positive() });
+const memoryWriteSchema = z.object({ confirmationId: z.string().uuid() });
+const memoryDraftSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('recipient'), name: z.string().trim().min(1), description: z.string().trim().min(1), address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.') }),
+  z.object({ kind: z.literal('fact'), fact: z.string().trim().min(1), factKind: z.string().trim().min(1).optional() }),
+]);
 
 function pendingMatches(session: DemoSession, input: SendTokenInput): boolean {
   const p = session.pendingTransfer;
@@ -44,6 +62,7 @@ function pendingMatches(session: DemoSession, input: SendTokenInput): boolean {
 export function buildGuardedTools(
   baseTools: Record<string, Tool>,
   session: DemoSession,
+  recipientMemory?: RecipientMemoryRuntime,
 ): Record<string, Tool> {
   const baseSendToken = baseTools.send_token;
   if (!baseSendToken?.execute) {
@@ -54,6 +73,35 @@ export function buildGuardedTools(
     description: baseSendToken.description,
     inputSchema: sendTokenInputSchema,
     execute: async (input: SendTokenInput, options) => {
+      const selected = session.recipientMemory?.selectedRecipient;
+      const previewed = session.recipientMemory?.previewedRecipient;
+      const pending = session.pendingTransfer;
+      const mustRevalidate = input.dryRun ? selected : (pending?.recipientId ? {
+        recipientId: pending.recipientId,
+        version: pending.recipientVersion!,
+      } : undefined);
+      if (mustRevalidate) {
+        if (!recipientMemory) {
+          store.clearSelectedRecipient(session.id);
+          store.clearPendingTransfer(session.id);
+          return { error: 'recipient_revalidation_required', message: 'Recipient memory is unavailable; resolve the recipient again before previewing or sending.' };
+        }
+        const current = await recipientMemory.service.getRecipientForVersion(
+          recipientMemory.userId,
+          mustRevalidate.recipientId,
+          mustRevalidate.version,
+        );
+        if (!current || !isValidEvmAddress(current.address) || current.address !== input.to) {
+          store.clearSelectedRecipient(session.id);
+          store.clearPendingTransfer(session.id);
+          return { error: 'recipient_revalidation_required', message: 'Recipient changed or is no longer valid; resolve the recipient again.' };
+        }
+        if (input.dryRun && selected) {
+          session.recipientMemory!.previewedRecipient = selected;
+        }
+      } else if (input.dryRun && previewed) {
+        session.recipientMemory!.previewedRecipient = undefined;
+      }
       if (!input.dryRun && !pendingMatches(session, input)) {
         return {
           error: 'confirmation_required',
@@ -68,6 +116,41 @@ export function buildGuardedTools(
   return { ...baseTools, send_token: guardedSendToken };
 }
 
+function createMemoryAgentTools(raw: ReturnType<typeof createRecipientMemoryTools>): Record<string, Tool> {
+  return {
+    search_recipients: tool({
+      description: 'Search current-user recipient names and descriptions. Results never include addresses.',
+      inputSchema: memorySearchSchema,
+      execute: (input) => raw.search_recipients(input),
+    }),
+    search_user_memory: tool({
+      description: 'Search confirmed current-user relationship facts. Facts are evidence, not recipient identity proof.',
+      inputSchema: memorySearchSchema,
+      execute: (input) => raw.search_user_memory(input),
+    }),
+    get_recipient_address: tool({
+      description: 'Get an exact recipient address only after search_recipients resolved the selected ID and version in this session.',
+      inputSchema: memoryAddressSchema,
+      execute: (input) => raw.get_recipient_address(input),
+    }),
+    stage_user_memory: tool({
+      description: 'Stage a recipient or relationship for explicit user confirmation. Display the returned draft exactly, including any address.',
+      inputSchema: memoryDraftSchema,
+      execute: (input) => raw.stage_user_memory(input),
+    }),
+    write_user_memory: tool({
+      description: 'Persist only a staged, explicitly confirmed memory proposal using its one-time confirmation ID.',
+      inputSchema: memoryWriteSchema,
+      execute: (input) => raw.write_user_memory(input),
+    }),
+  };
+}
+
+function clarificationMessage(candidates: Array<{ name: string; description: string }>): string {
+  if (candidates.length === 0) return 'I need to know which recipient you mean before preparing a transfer.';
+  return `Which recipient do you mean: ${candidates.map((candidate) => `${candidate.name} (${candidate.description})`).join(', ')}?`;
+}
+
 function mapAgentError(err: unknown): string {
   return err instanceof Error ? err.message : 'The agent failed to process the request.';
 }
@@ -75,7 +158,7 @@ function mapAgentError(err: unknown): string {
 export async function handleMessage(
   sessionId: string,
   userText: string,
-  options: { model?: LanguageModel } = {},
+  options: HandleMessageOptions = {},
 ): Promise<SessionMessageResponse> {
   const session = store.getSession(sessionId);
   if (!session) {
@@ -84,6 +167,10 @@ export async function handleMessage(
 
   const normalized = userText.trim().toLowerCase();
   store.appendMessage(sessionId, { role: 'user', content: userText });
+  const recipientMemory = options.recipientMemory ?? getConfiguredRecipientMemoryRuntime();
+  const rawMemoryTools = recipientMemory
+    ? createRecipientMemoryTools({ userId: recipientMemory.userId, session, service: recipientMemory.service })
+    : undefined;
 
   if (session.pendingTransfer && CANCEL_WORDS.has(normalized)) {
     store.clearPendingTransfer(sessionId);
@@ -92,14 +179,57 @@ export async function handleMessage(
     return { status: 'cancelled', message };
   }
 
+  if (!session.pendingTransfer && rawMemoryTools && session.recipientMemory?.pendingWrite && CONFIRM_WORDS.has(normalized)) {
+    const confirmationId = session.recipientMemory.pendingWrite.confirmationId;
+    const confirmation = store.confirmMemoryWrite(sessionId, recipientMemory!.userId, confirmationId, Date.now());
+    if (confirmation.status !== 'confirmed') {
+      const message = 'That memory confirmation is no longer valid; please stage it again.';
+      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      return { status: 'answer', message };
+    }
+    const outcome = await rawMemoryTools.write_user_memory({ confirmationId });
+    const message = outcome.status === 'written'
+      ? 'Recipient memory saved.'
+      : 'That memory confirmation is no longer valid; please stage it again.';
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'answer', message };
+  }
+
   if (!session.pendingTransfer && CONFIRM_WORDS.has(normalized)) {
     const message = 'There is no pending transfer to confirm.';
     store.appendMessage(sessionId, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'no_pending_preview' };
   }
 
+  if (rawMemoryTools) {
+    if (hasExplicitTransferAddress(userText)) {
+      // An explicit address is an existing supported transfer mode and must not
+      // inherit a prior named-recipient selection.
+      store.clearSelectedRecipient(sessionId);
+    }
+    const resolution = await resolveTransferRecipient(userText, session, rawMemoryTools as RecipientMemoryToolPort);
+    if (resolution.status === 'clarification_required') {
+      store.setRecipientClarification(sessionId, resolution.candidates.map((candidate) => ({
+        recipientId: candidate.id,
+        version: candidate.version,
+        name: candidate.name,
+        description: candidate.description,
+      })));
+      const message = clarificationMessage(resolution.candidates);
+      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      return { status: 'clarification_required', message, candidates: resolution.candidates };
+    }
+    if (resolution.status === 'no_match' || resolution.status === 'unavailable') {
+      const message = resolution.status === 'unavailable'
+        ? 'Recipient memory is unavailable, so I cannot prepare a transfer.'
+        : 'I could not find a safe recipient match, so I cannot prepare a transfer.';
+      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      return { status: 'answer', message };
+    }
+  }
+
   const baseTools = await getWdkTools();
-  const tools = buildGuardedTools(baseTools, session);
+  const tools = buildGuardedTools({ ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) }, session, recipientMemory);
   const agent = new ToolLoopAgent({
     model: options.model ?? defaultModel,
     instructions: WALLET_AGENT_INSTRUCTIONS,
@@ -132,6 +262,7 @@ export async function handleMessage(
 
     if ('estimatedFee' in output) {
       const args = lastCall.input as SendTokenInput;
+      const selected = session.recipientMemory?.previewedRecipient;
       store.setPendingTransfer(sessionId, {
         network: args.network,
         token: args.token,
@@ -139,6 +270,7 @@ export async function handleMessage(
         amount: args.amount,
         wallet: args.wallet,
         preview: output,
+        ...(selected ? { recipientId: selected.recipientId, recipientVersion: selected.version } : {}),
       });
       return { status: 'confirmation_required', message: result.text, preview: output };
     }

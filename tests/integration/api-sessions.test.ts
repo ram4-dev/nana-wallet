@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildServer } from '../../src/server.js';
+import { createSession, resetSessionStore, stageMemoryWrite } from '../../src/sessions/in-memory-store.js';
 
 describe('session endpoints', () => {
   it('creates a session and allows inspecting it', async () => {
@@ -56,6 +57,30 @@ describe('session endpoints', () => {
     });
 
     expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('inspection exposes selection state but never staged recipient addresses', async () => {
+    resetSessionStore();
+    const session = createSession();
+    stageMemoryWrite(session.id, {
+      confirmationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      userId: '11111111-1111-4111-8111-111111111111',
+      draft: {
+        kind: 'recipient',
+        name: 'Lucas',
+        description: 'mi nieto',
+        address: '0x1234567890123456789012345678901234567890',
+      },
+      expiresAt: Date.now() + 60_000,
+      stagedUserTurn: 0,
+    });
+    const app = buildServer();
+    const response = await app.inject({ method: 'GET', url: `/v1/sessions/${session.id}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().recipientMemory).toMatchObject({ pendingWrite: { expiresAt: expect.any(String) } });
+    expect(response.body).not.toContain('0x1234567890123456789012345678901234567890');
     await app.close();
   });
 });
