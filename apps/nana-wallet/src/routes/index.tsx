@@ -1,10 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Calculator, Mic, Send, Volume2, VolumeX } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { Send, Volume2, VolumeX } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AgenteAvatar } from "@/components/agente/AgenteAvatar";
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { api, createSessionMessageSender, getErrorMessage, queryKeys } from "@/lib/api";
 import type { SessionMessageResponse } from "@/lib/api-types";
 import {
@@ -13,7 +15,6 @@ import {
   UNKNOWN_SESSION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
 import { useVoicePlayback } from "@/lib/use-voice-playback";
-import { useVoiceRecorder } from "@/lib/use-voice-recorder";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -38,47 +39,18 @@ export const Route = createFileRoute("/")({
   component: AgentePage,
 });
 
-function AgentCharacter() {
-  return (
-    <div className="breathe relative h-64 w-60">
-      <div className="agent-rubber absolute bottom-0 left-1/2 h-24 w-48 -translate-x-1/2 rounded-[4.5rem_4.5rem_2.5rem_2.5rem] bg-agent-dress" />
-      <div className="absolute bottom-8 left-1/2 h-16 w-20 -translate-x-1/2 bg-card [clip-path:polygon(0_0,100%_0,50%_100%)]" />
-      <div className="absolute bottom-5 left-1/2 h-14 w-5 -translate-x-1/2 bg-agent-glasses [clip-path:polygon(50%_0,100%_24%,72%_100%,28%_100%,0_24%)]" />
-      <div className="agent-rubber absolute right-8 bottom-5 flex size-11 items-center justify-center rounded-xl bg-card text-primary">
-        <Calculator className="size-6" strokeWidth={2.5} />
-      </div>
+const MAX_RECORDING_MS = 20_000;
 
-      <div className="agent-rubber absolute top-24 left-7 h-12 w-8 rounded-full bg-agent-skin" />
-      <div className="agent-rubber absolute top-24 right-7 h-12 w-8 rounded-full bg-agent-skin" />
-      <div className="agent-rubber absolute top-7 left-8 h-20 w-12 -rotate-12 rounded-full bg-agent-hair-shadow" />
-      <div className="agent-rubber absolute top-7 right-8 h-20 w-12 rotate-12 rounded-full bg-agent-hair-shadow" />
-      <div className="absolute top-5 left-12 h-10 w-10 -rotate-12 rounded-full bg-agent-hair" />
-      <div className="absolute top-5 right-12 h-10 w-10 rotate-12 rounded-full bg-agent-hair" />
-
-      <div className="agent-rubber absolute top-8 left-1/2 h-40 w-40 -translate-x-1/2 rounded-[48%_48%_46%_46%] bg-agent-skin">
-        <span className="absolute top-3 left-1/2 h-5 w-16 -translate-x-1/2 rounded-full bg-card/35 blur-[1px]" />
-        <div className="absolute top-14 left-3 size-4 rounded-full bg-agent-blush/55" />
-        <div className="absolute top-14 right-3 size-4 rounded-full bg-agent-blush/55" />
-
-        <span className="absolute top-7 left-7 h-1.5 w-9 -rotate-6 rounded-full bg-agent-hair-shadow" />
-        <span className="absolute top-7 right-7 h-1.5 w-9 rotate-6 rounded-full bg-agent-hair-shadow" />
-        <div className="absolute top-9 left-6 flex size-11 items-center justify-center rounded-full border-[3px] border-agent-glasses bg-card/35">
-          <span className="size-2.5 rounded-full bg-agent-glasses" />
-        </div>
-        <div className="absolute top-9 right-6 flex size-11 items-center justify-center rounded-full border-[3px] border-agent-glasses bg-card/35">
-          <span className="size-2.5 rounded-full bg-agent-glasses" />
-        </div>
-        <span className="absolute top-[3.85rem] left-1/2 h-[3px] w-4 -translate-x-1/2 bg-agent-glasses" />
-        <span className="absolute top-[4.15rem] left-1/2 h-5 w-3 -translate-x-1/2 rounded-full border-r-2 border-agent-skin-shadow/55" />
-
-        <div className="absolute top-[5.65rem] left-1/2 h-5 w-10 -translate-x-1/2 rounded-b-full border-b-[3px] border-agent-mouth" />
-        <span className="absolute top-[7.1rem] left-10 h-px w-5 rotate-6 bg-agent-skin-shadow/60" />
-        <span className="absolute top-[7.1rem] right-10 h-px w-5 -rotate-6 bg-agent-skin-shadow/60" />
-      </div>
-
-      <div className="agent-rubber absolute top-[10.4rem] left-1/2 h-9 w-20 -translate-x-1/2 rounded-full bg-agent-skin" />
-    </div>
-  );
+function readBlobAsBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve(result.split(",")[1] ?? "");
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 function AgentePage() {
@@ -91,18 +63,17 @@ function AgentePage() {
   const sessionActionsLockedRef = useRef(false);
   const [turn, setTurn] = useState<SessionMessageResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [lastTranscript, setLastTranscript] = useState<string | null>(null);
   const [isSessionActionPending, setIsSessionActionPending] = useState(false);
   const [isConfirmationPending, setIsConfirmationPending] = useState(false);
   const [areSessionActionsLocked, setAreSessionActionsLocked] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isPreparingAudio, setIsPreparingAudio] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimeoutRef = useRef<number | null>(null);
   const { isMuted, toggleMuted, speak: speakReply } = useVoicePlayback();
-  const {
-    isRecording,
-    isTranscribing,
-    toggle: toggleRecording,
-  } = useVoiceRecorder(
-    (transcribedText) => sendTurn(transcribedText),
-    (voiceError) => setMessage(voiceError),
-  );
   const sendSessionMessage = useMemo(
     () =>
       createSessionMessageSender(
@@ -115,7 +86,28 @@ function AgentePage() {
     [],
   );
 
+  useEffect(
+    () => () => {
+      const recorder = recorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.onstop = null;
+        recorder.stop();
+      }
+      if (recordingTimeoutRef.current !== null) {
+        window.clearTimeout(recordingTimeoutRef.current);
+      }
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    [],
+  );
+
   const meQuery = useQuery({ queryKey: queryKeys.me, queryFn: api.getMe });
+
+  function refreshMoneyQueries() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.wallet });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.movements });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.bills });
+  }
 
   function lockUnknownOutcome() {
     confirmationPendingRef.current = false;
@@ -166,17 +158,102 @@ function AgentePage() {
     const cleanText = text.trim();
     if (!cleanText) return;
     setText("");
+    setLastTranscript(null);
     sendTurn(cleanText);
+  }
+
+  async function startRecording() {
+    if (
+      isSessionActionPending ||
+      isConfirmationPending ||
+      areSessionActionsLocked ||
+      sessionActionLockRef.current
+    ) {
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setMessage("Este teléfono no pudo abrir el micrófono. Podés escribirme abajo.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const preferredMimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+          ? "audio/mp4"
+          : "";
+      const recorder = new MediaRecorder(
+        stream,
+        preferredMimeType ? { mimeType: preferredMimeType } : undefined,
+      );
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        if (recordingTimeoutRef.current !== null) {
+          window.clearTimeout(recordingTimeoutRef.current);
+          recordingTimeoutRef.current = null;
+        }
+        const mimeType = recorder.mimeType || preferredMimeType || "audio/mp4";
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+        recorderRef.current = null;
+        setIsRecording(false);
+
+        if (blob.size === 0) {
+          setMessage("No llegué a escuchar nada. Tocá a Nani y probá de nuevo.");
+          return;
+        }
+
+        setIsPreparingAudio(true);
+        void readBlobAsBase64(blob)
+          .then((audioBase64) => api.transcribeAgentAudio({ audioBase64, mimeType }))
+          .then(({ transcript }) => {
+            const cleanTranscript = transcript.trim();
+            if (!cleanTranscript) {
+              setMessage("No llegué a entenderte. Tocá a Nani y probá de nuevo.");
+              return;
+            }
+            setLastTranscript(cleanTranscript);
+            sendTurn(cleanTranscript);
+          })
+          .catch((error) => setMessage(getErrorMessage(error)))
+          .finally(() => setIsPreparingAudio(false));
+      };
+      recorderRef.current = recorder;
+      recorder.start();
+      recordingTimeoutRef.current = window.setTimeout(() => {
+        if (recorder.state !== "inactive") recorder.stop();
+      }, MAX_RECORDING_MS);
+      setIsRecording(true);
+      setTurn(null);
+      setLastTranscript(null);
+      setMessage(null);
+    } catch {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      setMessage("No pude usar el micrófono. Revisá el permiso o escribime abajo.");
+    }
+  }
+
+  function handleMicrophone() {
+    if (isRecording) {
+      if (recordingTimeoutRef.current !== null) {
+        window.clearTimeout(recordingTimeoutRef.current);
+        recordingTimeoutRef.current = null;
+      }
+      recorderRef.current?.stop();
+      return;
+    }
+    void startRecording();
   }
 
   function rejectProposal() {
     sendTurn("cancel", "resolution");
-  }
-
-  function refreshMoneyQueries() {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.wallet });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.movements });
-    void queryClient.invalidateQueries({ queryKey: queryKeys.bills });
   }
 
   if (meQuery.isPending) return <RoutePending label="Estamos preparando al agente" />;
@@ -184,49 +261,73 @@ function AgentePage() {
     return <RouteError error={meQuery.error} onRetry={() => void meQuery.refetch()} />;
   }
 
+  const isAgentWorking = isPreparingAudio || isSessionActionPending;
+  const agentState = isRecording
+    ? "escuchando"
+    : isAgentWorking
+      ? "pensando"
+      : turn?.status === "confirmation_required"
+        ? "esperando_confirmacion"
+        : turn?.status === "error"
+          ? "no_entendi"
+          : "listo";
   const agentStatus = isRecording
     ? "Te estoy escuchando"
-    : isTranscribing
-      ? "Entendiendo lo que dijiste"
-      : isSessionActionPending
-        ? "Estoy pensando"
-        : turn?.status === "confirmation_required"
-          ? "Esperando que revises"
-          : turn?.status === "error"
-            ? "No te entendí bien"
-            : turn
-              ? "Estoy listo para ayudarte"
-              : "Tu contador de confianza";
+    : isAgentWorking
+      ? "Estoy resolviéndolo"
+      : turn?.status === "confirmation_required"
+        ? "Esperando que revises"
+        : turn?.status === "error"
+          ? "No te entendí bien"
+          : turn
+            ? "Estoy listo para ayudarte"
+            : null;
+  const interactionDisabled =
+    isAgentWorking || isConfirmationPending || areSessionActionsLocked || isRecording;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
-      <p className="mb-3 rounded-full bg-secondary px-4 py-2 text-sm font-extrabold tracking-[0.16em] text-primary">
-        NANA WALLET
-      </p>
       <h1 className="text-center text-3xl leading-tight font-extrabold">
-        Hola, {meQuery.data.greetingName}
+        <span className="block">Hola, soy Nani.</span>
+        <span className="mt-2 block">Hablame.</span>
       </h1>
-      <p className="mt-2 text-center text-lg text-muted-foreground">
-        Pedime lo que necesites. Yo te ayudo.
-      </p>
 
       <div className="relative mt-8 flex flex-col items-center">
-        <div
-          className="agent-stage relative flex h-64 w-64 items-center justify-center"
-          aria-hidden="true"
+        <button
+          type="button"
+          className={`agent-stage press relative flex h-64 w-64 items-center justify-center rounded-full focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 disabled:cursor-wait disabled:opacity-80 ${
+            isRecording ? "listening" : ""
+          }`}
+          aria-label={isRecording ? "Terminar de hablar con Nani" : "Hablar con Nani"}
+          aria-pressed={isRecording}
+          onClick={handleMicrophone}
+          disabled={
+            !isRecording && (isAgentWorking || isConfirmationPending || areSessionActionsLocked)
+          }
         >
-          <AgentCharacter />
-        </div>
+          <AgenteAvatar estado={agentState} size={256} />
+          {isRecording ? (
+            <div className="sound-waves">
+              <i />
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+          ) : null}
+        </button>
 
         <div className="mt-3 flex items-center gap-2">
-          <span className="rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
-            {agentStatus}
-          </span>
+          {agentStatus ? (
+            <span className="rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
+              {agentStatus}
+            </span>
+          ) : null}
           <Button
             type="button"
             variant="ghost"
             className="press size-11 shrink-0 rounded-full text-muted-foreground"
-            aria-label={isMuted ? "Activar la voz del agente" : "Silenciar la voz del agente"}
+            aria-label={isMuted ? "Activar la voz de Nani" : "Silenciar la voz de Nani"}
             aria-pressed={isMuted}
             onClick={toggleMuted}
           >
@@ -235,17 +336,30 @@ function AgentePage() {
         </div>
       </div>
 
+      {isRecording ? (
+        <p
+          className="mt-5 rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 text-center text-lg font-bold"
+          role="status"
+        >
+          Hablá con Nani y tocala cuando termines. Si no, se envía sola después de 20 segundos.
+        </p>
+      ) : null}
+
       <div className="mt-6 w-full space-y-4" aria-live="polite">
         {turn ? (
           <section className="surface-card p-5">
+            {lastTranscript ? (
+              <div className="mb-4 rounded-2xl bg-secondary p-4">
+                <p className="text-base font-bold text-muted-foreground">Nani entendió:</p>
+                <p className="mt-1 text-xl font-extrabold">“{lastTranscript}”</p>
+              </div>
+            ) : null}
             <p className="text-lg leading-relaxed">{turn.message}</p>
             {turn.status === "confirmation_required" ? (
-              <dl className="mt-4 space-y-2 text-base">
+              <dl className="mt-4 space-y-3 text-base">
                 <div className="flex justify-between gap-4">
                   <dt className="font-bold">Monto</dt>
-                  <dd>
-                    {turn.preview.amount} {turn.preview.token}
-                  </dd>
+                  <dd>{turn.preview.amountFormatted}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt className="font-bold">Destino</dt>
@@ -254,6 +368,10 @@ function AgentePage() {
                 <div className="flex justify-between gap-4">
                   <dt className="font-bold">Red</dt>
                   <dd>{turn.preview.network}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="font-bold">Costo estimado</dt>
+                  <dd>{turn.preview.estimatedFeeFormatted}</dd>
                 </div>
               </dl>
             ) : null}
@@ -292,7 +410,7 @@ function AgentePage() {
 
         {message ? (
           <p
-            className="rounded-2xl bg-destructive/10 p-4 text-lg font-bold text-destructive"
+            className="rounded-2xl bg-destructive-surface text-destructive-surface-foreground border border-border p-4 text-lg font-bold"
             role="alert"
           >
             {message}
@@ -301,51 +419,28 @@ function AgentePage() {
       </div>
 
       <form
-        className="surface-card mt-8 flex w-full items-center gap-2 px-2 py-2"
+        className="mt-10 flex w-full items-center gap-1 rounded-full border border-input bg-card p-1 focus-within:ring-4 focus-within:ring-ring/20"
         onSubmit={(event) => {
           event.preventDefault();
           sendText();
         }}
       >
-        <Button
-          type="button"
-          variant="ghost"
-          className={`press size-14 shrink-0 rounded-2xl ${isRecording ? "animate-pulse bg-destructive/15 text-destructive" : "text-primary"}`}
-          aria-label={
-            isRecording ? "Tocá para enviar lo que dijiste" : "Tocá para hablarle al agente"
-          }
-          aria-pressed={isRecording}
-          onClick={toggleRecording}
-          disabled={
-            isSessionActionPending ||
-            isConfirmationPending ||
-            areSessionActionsLocked ||
-            isTranscribing
-          }
-        >
-          <Mic className="size-7" strokeWidth={2.4} />
-        </Button>
-        <input
+        <Input
           value={text}
           onChange={(event) => setText(event.target.value)}
           placeholder="Escribime acá"
           aria-label="Mensaje para el agente"
-          disabled={isSessionActionPending || isConfirmationPending || areSessionActionsLocked}
-          className="min-w-0 flex-1 rounded-xl bg-transparent px-2 py-3 text-lg focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-2"
+          disabled={interactionDisabled}
+          className="h-10 min-w-0 flex-1 rounded-full border-0 bg-transparent px-4 py-2 text-base shadow-none focus-visible:ring-0 md:text-base"
         />
         <Button
           type="submit"
-          variant="ghost"
-          className="press size-14 shrink-0 rounded-2xl text-primary"
+          size="icon"
+          className="press size-10 shrink-0 rounded-full"
           aria-label="Enviar mensaje"
-          disabled={
-            isSessionActionPending ||
-            isConfirmationPending ||
-            areSessionActionsLocked ||
-            !text.trim()
-          }
+          disabled={interactionDisabled || !text.trim()}
         >
-          <Send className="size-7" strokeWidth={2.4} />
+          <Send className="size-5" strokeWidth={2.4} />
         </Button>
       </form>
     </main>

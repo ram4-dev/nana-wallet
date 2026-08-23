@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { voiceSpeakRequestSchema, type VoiceTranscribeResponse } from '../contracts/http.js';
+import {
+  agentTranscribeRequestSchema,
+  voiceSpeakRequestSchema,
+  type AgentTranscribeResponse,
+} from '../contracts/http.js';
 
 const NAN_BASE_URL = 'https://api.nan.builders/v1';
 const NAN_STT_MODEL = process.env.NAN_STT_MODEL ?? 'whisper-large-v3';
@@ -8,59 +12,61 @@ const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? '21m00Tcm4TlvDq8ikWAM';
 const ELEVENLABS_MODEL = process.env.ELEVENLABS_MODEL ?? 'eleven_multilingual_v2';
 
+async function transcribeWithWhisper(audio: Buffer, mimeType: string): Promise<string> {
+  const apiKey = process.env.NAN_API_KEY;
+  if (!apiKey) throw { code: 'ERROR_INTERNO', message: 'Speech-to-text is not configured.' };
+
+  const form = new FormData();
+  form.append('model', NAN_STT_MODEL);
+  form.append('file', new Blob([audio], { type: mimeType }), 'recording.webm');
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(`${NAN_BASE_URL}/audio/transcriptions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    });
+  } catch {
+    throw { code: 'SERVICIO_CAIDO', message: 'Could not reach the transcription service.' };
+  }
+
+  if (!upstream.ok) {
+    throw { code: 'SERVICIO_CAIDO', message: 'Transcription failed.' };
+  }
+
+  const result = (await upstream.json()) as { text?: string };
+  return result.text ?? '';
+}
+
 export async function registerVoiceRoutes(app: FastifyInstance): Promise<void> {
-  app.addContentTypeParser(/^audio\//, { parseAs: 'buffer' }, (_request, body, done) => {
-    done(null, body);
-  });
-
   app.post(
-    '/v1/voice/transcribe',
+    '/v1/agent/transcribe',
     async (
-      request: FastifyRequest<{ Body: Buffer }>,
+      request: FastifyRequest<{ Body: unknown }>,
       reply,
-    ): Promise<VoiceTranscribeResponse | void> => {
-      const apiKey = process.env.NAN_API_KEY;
-      if (!apiKey) {
-        reply.code(500);
-        return reply.send({
-          status: 'error',
-          message: 'Speech-to-text is not configured.',
-          code: 'stt_not_configured',
-        });
-      }
-      if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
-        reply.code(400);
-        return reply.send({ status: 'error', message: 'No audio received.', code: 'invalid_body' });
+    ): Promise<
+      | { ok: true; data: AgentTranscribeResponse }
+      | { ok: false; error: { code: string; message: string; field?: string } }
+    > => {
+      const parsed = agentTranscribeRequestSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(422);
+        return {
+          ok: false,
+          error: { code: 'DATOS_INVALIDOS', message: 'No pude leer esa grabación.', field: 'audioBase64' },
+        };
       }
 
-      const contentType = request.headers['content-type'] ?? 'audio/webm';
-      const form = new FormData();
-      form.append('model', NAN_STT_MODEL);
-      form.append('file', new Blob([request.body], { type: contentType }), 'recording.webm');
-
-      let upstream: Response;
       try {
-        upstream = await fetch(`${NAN_BASE_URL}/audio/transcriptions`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${apiKey}` },
-          body: form,
-        });
-      } catch {
+        const audio = Buffer.from(parsed.data.audioBase64, 'base64');
+        const transcript = await transcribeWithWhisper(audio, parsed.data.mimeType);
+        return { ok: true, data: { transcript } };
+      } catch (error) {
         reply.code(502);
-        return reply.send({
-          status: 'error',
-          message: 'Could not reach the transcription service.',
-          code: 'stt_unreachable',
-        });
+        const { code, message } = error as { code: string; message: string };
+        return { ok: false, error: { code, message } };
       }
-
-      if (!upstream.ok) {
-        reply.code(502);
-        return reply.send({ status: 'error', message: 'Transcription failed.', code: 'stt_failed' });
-      }
-
-      const result = (await upstream.json()) as { text?: string };
-      return { text: result.text ?? '' };
     },
   );
 

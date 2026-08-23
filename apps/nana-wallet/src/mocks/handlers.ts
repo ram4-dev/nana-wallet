@@ -2,6 +2,8 @@ import { http, HttpResponse } from "msw";
 
 import type {
   AgendaEvent,
+  AgentAudioTranscription,
+  AgentAudioTranscriptionInput,
   ApiEnvelope,
   Bill,
   Contact,
@@ -538,6 +540,14 @@ export const handlers = [
   http.post(apiPath("/transfers/:intentId/confirm"), ({ params, request }) =>
     confirmIntent(request, String(params["intentId"]), "transfer"),
   ),
+
+  http.post(apiPath("/agent/transcribe"), async ({ request }) => {
+    const input = (await request.json()) as AgentAudioTranscriptionInput;
+    if (!input.audioBase64 || !input.mimeType.startsWith("audio/")) {
+      return err("DATOS_INVALIDOS", "No pude leer esa grabación.", 422, "audioBase64");
+    }
+    return ok<AgentAudioTranscription>({ transcript: "Mandale 20 USDC a Sofi" });
+  }),
 
   http.post(apiPath("/sessions"), () => {
     const sessionId = crypto.randomUUID();

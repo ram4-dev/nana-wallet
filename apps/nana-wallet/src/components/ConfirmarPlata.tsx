@@ -141,9 +141,9 @@ export function ConfirmarPlata({
                     Se cortó la comunicación justo cuando mandábamos la orden. Puede que se haya
                     hecho y puede que no.
                   </p>
-                  <p className="rounded-2xl bg-warning/15 p-4 font-bold">
-                    Si tocás "Confirmar de nuevo" no se va a duplicar. Es la misma operación, no una
-                    nueva.
+                  <p className="rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 font-bold">
+                    Si tocás "Reintentar operación" no se va a duplicar. Es la misma operación, no
+                    una nueva.
                   </p>
                 </div>
               </AlertDialogDescription>
@@ -153,7 +153,7 @@ export function ConfirmarPlata({
                   onClick={() => void handleConfirm()}
                   disabled={isConfirming}
                 >
-                  Confirmar de nuevo
+                  Reintentar operación
                 </Button>
                 <Button
                   variant="outline"
@@ -172,10 +172,10 @@ export function ConfirmarPlata({
             >
               <Loader2 className="size-20 animate-spin text-primary" aria-hidden="true" />
               <AlertDialogTitle className="mt-6 text-3xl font-extrabold">
-                Estamos confirmando
+                Nana está haciendo la operación
               </AlertDialogTitle>
               <AlertDialogDescription className="mt-4 text-lg leading-relaxed text-foreground">
-                Esperá un momento y no cierres esta pantalla. Te avisamos apenas termine.
+                Esperá un momento. Te mostramos el comprobante apenas termine.
               </AlertDialogDescription>
             </div>
           ) : expiredMessage || secondsLeft <= 0 ? (
@@ -234,7 +234,10 @@ export function ConfirmarPlata({
                     </p>
                   ))}
                   {intent.confirmation.warnings.map((warning) => (
-                    <p key={warning} className="rounded-2xl bg-warning/15 p-4 text-lg font-bold">
+                    <p
+                      key={warning}
+                      className="rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 text-lg font-bold"
+                    >
                       {warning}
                     </p>
                   ))}
@@ -251,7 +254,7 @@ export function ConfirmarPlata({
 
               {errorMessage ? (
                 <p
-                  className="mt-5 rounded-2xl bg-destructive/10 p-4 text-lg font-bold text-destructive"
+                  className="mt-5 rounded-2xl bg-destructive-surface text-destructive-surface-foreground border border-border p-4 text-lg font-bold"
                   role="alert"
                 >
                   {errorMessage}

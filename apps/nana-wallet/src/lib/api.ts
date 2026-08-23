@@ -1,5 +1,7 @@
 import type {
   AgendaEvent,
+  AgentAudioTranscription,
+  AgentAudioTranscriptionInput,
   ApiEnvelope,
   Bill,
   BillPaymentIntentInput,
@@ -258,6 +260,9 @@ export const api = {
       idempotencyKey,
     ),
 
+  transcribeAgentAudio: (input: AgentAudioTranscriptionInput) =>
+    request<AgentAudioTranscription>("/v1/agent/transcribe", jsonRequest("POST", input)),
+
   createSession: () =>
     rawSessionRequest<CreateSessionResponse>("/v1/sessions", jsonRequest("POST", {})),
 
@@ -270,42 +275,8 @@ export const api = {
 
   getMe: () => request<Me>("/v1/me"),
 
-  transcribeAudio: (blob: Blob) => transcribeAudio(blob),
-
   speak: (text: string) => speak(text),
 };
-
-async function transcribeAudio(blob: Blob): Promise<string> {
-  const headers = new Headers();
-  headers.set("Authorization", `Bearer ${getApiToken()}`);
-  headers.set("Content-Type", blob.type || "audio/webm");
-
-  let response: Response;
-  try {
-    response = await fetch(makeUrl("/v1/voice/transcribe"), {
-      method: "POST",
-      headers,
-      body: blob,
-    });
-  } catch {
-    throw new ApiError("SERVICIO_CAIDO", FALLBACK_ERROR_MESSAGE, { ambiguous: true });
-  }
-
-  const body = (await response.json().catch(() => null)) as {
-    text?: string;
-    message?: string;
-  } | null;
-
-  if (!response.ok || !body) {
-    throw new ApiError(
-      response.status >= 500 ? "ERROR_INTERNO" : "DATOS_INVALIDOS",
-      body?.message ?? "No pudimos escucharte. Probá de nuevo.",
-      { status: response.status, ambiguous: response.status >= 500 },
-    );
-  }
-
-  return body.text ?? "";
-}
 
 async function speak(text: string): Promise<Blob> {
   const headers = new Headers();

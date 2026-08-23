@@ -33,14 +33,12 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
-  --color-agent-skin: var(--agent-skin);
-  --color-agent-skin-shadow: var(--agent-skin-shadow);
-  --color-agent-hair: var(--agent-hair);
-  --color-agent-hair-shadow: var(--agent-hair-shadow);
-  --color-agent-glasses: var(--agent-glasses);
-  --color-agent-blush: var(--agent-blush);
-  --color-agent-mouth: var(--agent-mouth);
-  --color-agent-dress: var(--agent-dress);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-surface-foreground: var(--warning-surface-foreground);
+  --color-destructive-surface: var(--destructive-surface);
+  --color-destructive-surface-foreground: var(--destructive-surface-foreground);
+  --color-success-surface: var(--success-surface);
+  --color-success-surface-foreground: var(--success-surface-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -48,72 +46,42 @@
 
 :root {
   --radius: 1.5rem;
-  --background: oklch(0.995 0.002 265);
-  --foreground: oklch(0.12 0.012 270);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.12 0.012 270);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.12 0.012 270);
-  --primary: oklch(0.48 0.18 258);
+  --background: oklch(0.985 0.012 75);
+  --foreground: oklch(0.21 0.025 300);
+  --card: oklch(0.998 0.004 75);
+  --card-foreground: oklch(0.21 0.025 300);
+  --popover: oklch(0.998 0.004 75);
+  --popover-foreground: oklch(0.21 0.025 300);
+  --primary: oklch(0.48 0.19 300);
   --primary-foreground: oklch(1 0 0);
-  --primary-glow: oklch(0.58 0.15 258);
-  --secondary: oklch(0.965 0.018 270);
-  --secondary-foreground: oklch(0.4 0.16 258);
-  --muted: oklch(0.975 0.006 270);
-  --muted-foreground: oklch(0.5 0.018 270);
-  --accent: oklch(0.48 0.18 258);
-  --accent-foreground: oklch(1 0 0);
+  --primary-glow: oklch(0.65 0.17 305);
+  --secondary: oklch(0.945 0.035 300);
+  --secondary-foreground: oklch(0.38 0.15 300);
+  --muted: oklch(0.965 0.012 75);
+  --muted-foreground: oklch(0.46 0.035 300);
+  --accent: oklch(0.945 0.035 300);
+  --accent-foreground: oklch(0.38 0.15 300);
   --destructive: oklch(0.52 0.2 22);
   --destructive-foreground: oklch(1 0 0);
   --success: oklch(0.52 0.15 155);
   --success-foreground: oklch(1 0 0);
   --warning: oklch(0.55 0.13 75);
   --warning-foreground: oklch(1 0 0);
-  --agent-skin: oklch(0.89 0.085 55);
-  --agent-skin-shadow: oklch(0.77 0.11 47);
-  --agent-hair: oklch(0.95 0.012 260);
-  --agent-hair-shadow: oklch(0.78 0.025 260);
-  --agent-glasses: oklch(0.24 0.035 275);
-  --agent-blush: oklch(0.72 0.15 25);
-  --agent-mouth: oklch(0.46 0.17 24);
-  --agent-dress: oklch(0.57 0.24 278);
-  --border: oklch(0.66 0.015 270);
-  --input: oklch(0.66 0.015 270);
-  --ring: oklch(0.48 0.18 258);
 
-  --gradient-plastic:
-    radial-gradient(
-      ellipse 38% 26% at 32% 18%,
-      rgba(255, 255, 255, 0.72) 0%,
-      rgba(255, 255, 255, 0.28) 45%,
-      transparent 72%
-    ),
-    linear-gradient(
-      165deg,
-      var(--primary-glow) 0%,
-      var(--primary) 62%,
-      color-mix(in oklab, var(--primary) 88%, black) 100%
-    );
-  --gradient-rubber-warm: linear-gradient(
-    165deg,
-    var(--primary-glow) 0%,
-    var(--primary) 62%,
-    color-mix(in oklab, var(--primary) 88%, black) 100%
-  );
-  --shadow-rubber:
-    0 1px 0 1px color-mix(in oklab, white 36%, transparent) inset,
-    0 -1px 0 1px color-mix(in oklab, white 22%, transparent) inset,
-    0 -5px 10px -6px color-mix(in oklab, black 24%, transparent) inset,
-    0 3px 5px -2px color-mix(in oklab, var(--primary) 55%, transparent),
-    0 16px 28px -12px color-mix(in oklab, var(--primary) 34%, transparent);
-  --shadow-soft: 0 1px 2px color-mix(in oklab, var(--foreground) 6%, transparent);
-  --shadow-press:
-    0 1px 0 1px color-mix(in oklab, white 40%, transparent) inset,
-    0 6px 14px -6px color-mix(in oklab, black 30%, transparent) inset;
-  --shadow-agent:
-    0 2px 0 1px color-mix(in oklab, white 48%, transparent) inset,
-    0 -8px 14px -9px color-mix(in oklab, var(--agent-skin-shadow) 64%, transparent) inset,
-    0 18px 30px -14px color-mix(in oklab, var(--primary) 30%, transparent);
+  /* Superficies de estado: relleno solido, no alfa. El texto de cada una
+     pasa 7:1 sobre su propia superficie. */
+  --warning-surface: oklch(0.955 0.045 75);
+  --warning-surface-foreground: oklch(0.42 0.12 75);
+  --destructive-surface: oklch(0.955 0.045 22);
+  --destructive-surface-foreground: oklch(0.42 0.12 22);
+  --success-surface: oklch(0.955 0.045 155);
+  --success-surface-foreground: oklch(0.42 0.12 155);
+  --border: oklch(0.77 0.035 300);
+  --input: oklch(0.77 0.035 300);
+  --ring: oklch(0.48 0.19 300);
+
+  /* Sin relieve: la jerarquia la dan el borde y el relleno, no la sombra. */
+  --shadow-soft: none;
 }
 
 @layer base {
@@ -146,41 +114,33 @@
   }
 
   nav[aria-label="Navegación principal"] > div {
-    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
   }
 }
 
 @utility surface-card {
   background-color: var(--card);
   border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-soft);
   border: 1px solid var(--border);
 }
 
 @utility plastic {
-  background-image: var(--gradient-plastic);
+  background-color: var(--primary);
   color: var(--primary-foreground);
-  box-shadow: var(--shadow-rubber);
-  border: 1px solid color-mix(in oklab, var(--primary) 70%, black);
+  border: 1px solid var(--primary);
 }
 
 @utility plastic-warm {
-  background-image: var(--gradient-rubber-warm);
-  color: var(--primary-foreground);
-  box-shadow: var(--shadow-rubber);
+  background-color: var(--secondary);
+  color: var(--secondary-foreground);
+  border: 1px solid var(--border);
   border-radius: var(--radius-2xl);
 }
 
 @utility press {
-  transition:
-    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 180ms ease;
+  transition: opacity 120ms ease;
   &:active {
-    transform: translateY(2px) scale(0.972);
-    box-shadow: var(--shadow-press);
-    transition:
-      transform 90ms cubic-bezier(0.4, 0, 1, 1),
-      box-shadow 90ms cubic-bezier(0.4, 0, 1, 1);
+    opacity: 0.8;
   }
 }
 
@@ -208,9 +168,65 @@
   animation: breathe 4.5s ease-in-out infinite;
 }
 
-@utility agent-rubber {
-  box-shadow: var(--shadow-agent);
-  border: 1px solid color-mix(in oklab, white 55%, transparent);
+.nani-avatar-frame {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid color-mix(in oklch, var(--primary) 34%, white);
+  border-radius: 999px;
+  background:
+    radial-gradient(
+      circle at 50% 45%,
+      color-mix(in oklch, white 88%, transparent) 0 42%,
+      transparent 70%
+    ),
+    linear-gradient(155deg, color-mix(in oklch, var(--secondary) 72%, white), white);
+}
+
+.nani-avatar-frame::after {
+  position: absolute;
+  z-index: -1;
+  right: 12%;
+  bottom: 8%;
+  left: 12%;
+  height: 20%;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
+  filter: blur(18px);
+  content: "";
+}
+
+.nani-avatar-image {
+  position: absolute;
+  max-width: none;
+  object-fit: contain;
+  object-position: center bottom;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 10px 10px color-mix(in oklch, var(--primary) 14%, transparent));
+  transform-origin: center bottom;
+}
+
+.nani-avatar-image--lista {
+  right: -4%;
+  bottom: -9%;
+  width: 108%;
+  height: 108%;
+}
+
+.nani-avatar-image--escuchando {
+  right: -3%;
+  bottom: -5%;
+  width: 106%;
+  height: 106%;
+}
+
+.nani-avatar-image--pensando {
+  right: -5%;
+  bottom: -7%;
+  width: 110%;
+  height: 110%;
 }
 
 .agent-stage.listening .breathe {
@@ -225,11 +241,17 @@
 
 .sound-waves {
   position: absolute;
+  z-index: 2;
   bottom: 20px;
   display: flex;
   align-items: center;
   height: 28px;
   gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in oklch, var(--primary) 24%, white);
+  border-radius: 999px;
+  background: color-mix(in oklch, white 88%, transparent);
+  backdrop-filter: blur(8px);
 }
 
 .sound-waves i {

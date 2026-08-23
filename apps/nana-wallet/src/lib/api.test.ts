@@ -19,6 +19,22 @@ afterEach(() => {
 });
 
 describe("session API", () => {
+  it("separa la transcripción de audio del turno del agente", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({
+          ok: true,
+          data: { transcript: "Mandale 20 USDC a Sofi" },
+        }),
+      ),
+    );
+
+    await expect(
+      api.transcribeAgentAudio({ audioBase64: "YXVkaW8=", mimeType: "audio/webm" }),
+    ).resolves.toEqual({ transcript: "Mandale 20 USDC a Sofi" });
+  });
+
   it("rejects a second session action synchronously until the first settles", async () => {
     const lock = { current: false };
     let releaseFirst: () => void = () => {};

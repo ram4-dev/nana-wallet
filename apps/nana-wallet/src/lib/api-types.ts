@@ -157,6 +157,15 @@ export type CreateSessionResponse = {
   status: "active";
 };
 
+export type AgentAudioTranscriptionInput = {
+  audioBase64: string;
+  mimeType: string;
+};
+
+export type AgentAudioTranscription = {
+  transcript: string;
+};
+
 export type TransferPreview = {
   network: string;
   token: string;

@@ -86,7 +86,7 @@ describe("ConfirmarPlata", () => {
     await new Promise((resolve) => setTimeout(resolve, 1600));
 
     expect(screen.queryByText(/hay que empezar de nuevo/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/estamos confirmando/i)).toBeInTheDocument();
+    expect(screen.getByText(/nana está haciendo la operación/i)).toBeInTheDocument();
     expect(props.onExpired).not.toHaveBeenCalled();
 
     resolveConfirm(receipt);
@@ -118,7 +118,7 @@ describe("ConfirmarPlata", () => {
     expect(screen.getByText(/no se va a duplicar/i)).toBeInTheDocument();
     expect(props.onCancel).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /confirmar de nuevo/i }));
+    await user.click(screen.getByRole("button", { name: /reintentar operación/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Listo, le mandaste plata a Sofía")).toBeInTheDocument();

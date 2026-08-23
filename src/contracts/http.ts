@@ -126,10 +126,18 @@ export const errorResponseSchema = z.object({
 });
 export type ErrorResponse = z.infer<typeof errorResponseSchema>;
 
-export const voiceTranscribeResponseSchema = z.object({
-  text: z.string(),
+export const agentTranscribeRequestSchema = z.object({
+  audioBase64: z.string().min(1),
+  mimeType: z.string().refine((value) => value.startsWith('audio/'), {
+    message: 'mimeType must be an audio/* type',
+  }),
 });
-export type VoiceTranscribeResponse = z.infer<typeof voiceTranscribeResponseSchema>;
+export type AgentTranscribeRequest = z.infer<typeof agentTranscribeRequestSchema>;
+
+export const agentTranscribeResponseSchema = z.object({
+  transcript: z.string(),
+});
+export type AgentTranscribeResponse = z.infer<typeof agentTranscribeResponseSchema>;
 
 export const voiceSpeakRequestSchema = z.object({
   text: z.string().min(1),

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildServer } from '../../src/server.js';
 
 const originalFetch = global.fetch;
@@ -11,48 +11,54 @@ afterEach(() => {
   process.env.ELEVENLABS_API_KEY = originalElevenKey;
 });
 
-describe('POST /v1/voice/transcribe', () => {
-  it('returns 500 when NAN_API_KEY is not configured', async () => {
+describe('POST /v1/agent/transcribe', () => {
+  it('rejects a body without an audio mimeType', async () => {
+    process.env.NAN_API_KEY = 'test-key';
+    const app = buildServer();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/agent/transcribe',
+      payload: { audioBase64: 'YXVkaW8=', mimeType: 'text/plain' },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toEqual({
+      ok: false,
+      error: { code: 'DATOS_INVALIDOS', message: 'No pude leer esa grabación.', field: 'audioBase64' },
+    });
+    await app.close();
+  });
+
+  it('returns an enveloped error when NAN_API_KEY is not configured', async () => {
     delete process.env.NAN_API_KEY;
     const app = buildServer();
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/voice/transcribe',
-      headers: { 'content-type': 'audio/webm' },
-      payload: Buffer.from([1, 2, 3]),
+      url: '/v1/agent/transcribe',
+      payload: { audioBase64: 'YXVkaW8=', mimeType: 'audio/webm' },
     });
-    expect(res.statusCode).toBe(500);
-    expect(res.json().code).toBe('stt_not_configured');
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toEqual({
+      ok: false,
+      error: { code: 'ERROR_INTERNO', message: 'Speech-to-text is not configured.' },
+    });
     await app.close();
   });
 
-  it('rejects an empty body', async () => {
+  it('forwards audio upstream and returns the transcript enveloped', async () => {
     process.env.NAN_API_KEY = 'test-key';
-    const app = buildServer();
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v1/voice/transcribe',
-      headers: { 'content-type': 'audio/webm' },
-      payload: Buffer.alloc(0),
-    });
-    expect(res.statusCode).toBe(400);
-    await app.close();
-  });
-
-  it('forwards audio upstream and returns the transcribed text', async () => {
-    process.env.NAN_API_KEY = 'test-key';
-    beforeEachFetchMock({ text: 'Mandale diez mil pesos a mi hija' });
+    global.fetch = vi.fn(
+      async () => new Response(JSON.stringify({ text: 'Mandale diez mil pesos a mi hija' }), { status: 200 }),
+    ) as unknown as typeof fetch;
 
     const app = buildServer();
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/voice/transcribe',
-      headers: { 'content-type': 'audio/webm' },
-      payload: Buffer.from([1, 2, 3]),
+      url: '/v1/agent/transcribe',
+      payload: { audioBase64: 'YXVkaW8=', mimeType: 'audio/webm' },
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ text: 'Mandale diez mil pesos a mi hija' });
+    expect(res.json()).toEqual({ ok: true, data: { transcript: 'Mandale diez mil pesos a mi hija' } });
     await app.close();
   });
 
@@ -63,13 +69,12 @@ describe('POST /v1/voice/transcribe', () => {
     const app = buildServer();
     const res = await app.inject({
       method: 'POST',
-      url: '/v1/voice/transcribe',
-      headers: { 'content-type': 'audio/webm' },
-      payload: Buffer.from([1, 2, 3]),
+      url: '/v1/agent/transcribe',
+      payload: { audioBase64: 'YXVkaW8=', mimeType: 'audio/webm' },
     });
 
     expect(res.statusCode).toBe(502);
-    expect(res.json().code).toBe('stt_failed');
+    expect(res.json()).toEqual({ ok: false, error: { code: 'SERVICIO_CAIDO', message: 'Transcription failed.' } });
     await app.close();
   });
 });
@@ -120,9 +125,3 @@ describe('POST /v1/voice/speak', () => {
     await app.close();
   });
 });
-
-function beforeEachFetchMock(body: { text: string }) {
-  global.fetch = vi.fn(
-    async () => new Response(JSON.stringify(body), { status: 200 }),
-  ) as unknown as typeof fetch;
-}
