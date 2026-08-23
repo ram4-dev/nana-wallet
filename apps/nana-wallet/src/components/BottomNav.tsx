@@ -23,11 +23,11 @@ export function BottomNav() {
         <Link
           to="/"
           activeOptions={{ exact: true }}
-          className="press plastic absolute -top-9 left-1/2 flex size-24 -translate-x-1/2 flex-col items-center justify-center gap-1 rounded-full"
+          className="press plastic absolute -top-9 left-1/2 flex size-24 -translate-x-1/2 items-center justify-center rounded-full"
+          aria-label="Nani"
           aria-current={pathname === "/" ? "page" : undefined}
         >
-          <Sparkles className="size-9" strokeWidth={2.4} />
-          <span className="text-base font-extrabold">Agente</span>
+          <Sparkles className="size-12" strokeWidth={2.2} aria-hidden="true" />
         </Link>
 
         <Link
