@@ -12,7 +12,7 @@ export function BottomNav() {
       <div className="relative mx-auto flex h-[76px] max-w-md items-center justify-between px-7 pt-1 pb-2">
         <Link
           to="/perfil"
-          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-primary"
+          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-brand-ink"
           activeProps={{ className: "active bg-secondary" }}
           aria-current={pathname === "/perfil" ? "page" : undefined}
         >
@@ -23,16 +23,16 @@ export function BottomNav() {
         <Link
           to="/"
           activeOptions={{ exact: true }}
-          className="press plastic absolute -top-9 left-1/2 flex size-24 -translate-x-1/2 flex-col items-center justify-center gap-1 rounded-full"
+          className="press plastic absolute -top-9 left-1/2 flex size-24 -translate-x-1/2 items-center justify-center rounded-full"
+          aria-label="Nani"
           aria-current={pathname === "/" ? "page" : undefined}
         >
-          <Sparkles className="size-9" strokeWidth={2.4} />
-          <span className="text-base font-extrabold">Agente</span>
+          <Sparkles className="size-12" strokeWidth={2.2} aria-hidden="true" />
         </Link>
 
         <Link
           to="/mi-plata"
-          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-primary"
+          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-brand-ink"
           activeProps={{ className: "active bg-secondary" }}
           aria-current={pathname === "/mi-plata" ? "page" : undefined}
         >

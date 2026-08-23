@@ -377,7 +377,7 @@ function AgentePage() {
             ) : null}
             {turn.status === "sent" ? (
               <a
-                className="mt-4 inline-block break-all font-bold text-primary underline"
+                className="mt-4 inline-block break-all font-bold text-brand-ink underline"
                 href={turn.transaction.explorerUrl}
                 target="_blank"
                 rel="noreferrer"
