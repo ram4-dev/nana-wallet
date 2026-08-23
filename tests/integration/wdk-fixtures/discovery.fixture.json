@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "wdk-evidence/v1",
+  "status": "not-run",
+  "recipient": null,
+  "token": "usdt",
+  "amount": null,
+  "fee": null,
+  "error": null,
+  "liveCaptureRequired": true,
+  "nodeRequirement": ">=22.18.0",
+  "directDependencies": {
+    "@tetherto/wdk": "1.0.0-beta.14",
+    "@tetherto/wdk-cli": "1.0.0-beta.2"
+  },
+  "mcpBoundary": "@tetherto/wdk-cli/bin/wdk-mcp.mjs",
+  "requiredTools": [
+    "get_networks",
+    "list_tokens",
+    "get_token",
+    "get_address",
+    "get_balance",
+    "get_history",
+    "send_token"
+  ]
+}
