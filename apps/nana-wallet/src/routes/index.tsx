@@ -234,6 +234,13 @@ function AgentePage() {
     return <RouteError error={meQuery.error} onRetry={() => void meQuery.refetch()} />;
   }
 
+  const isAgentListening = isRecording || turn?.agentState === "escuchando";
+  const agentStatus = isRecording
+    ? "Te estoy escuchando"
+    : turn
+      ? agentStateLabels[turn.agentState]
+      : "Tu contador de confianza";
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
       <p className="mb-3 rounded-full bg-secondary px-4 py-2 text-sm font-extrabold tracking-[0.16em] text-primary">
@@ -249,12 +256,12 @@ function AgentePage() {
       <div className="relative mt-8 flex flex-col items-center">
         <div
           className={`agent-stage relative flex h-64 w-64 items-center justify-center ${
-            turn?.agentState === "escuchando" ? "listening" : ""
+            isAgentListening ? "listening" : ""
           }`}
           aria-hidden="true"
         >
           <AgentCharacter />
-          {turn?.agentState === "escuchando" ? (
+          {isAgentListening ? (
             <div className="sound-waves">
               <i />
               <i />
@@ -265,11 +272,9 @@ function AgentePage() {
           ) : null}
         </div>
 
-        {turn ? (
-          <span className="mt-3 rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
-            {agentStateLabels[turn.agentState]}
-          </span>
-        ) : null}
+        <span className="mt-3 rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
+          {agentStatus}
+        </span>
       </div>
 
       {isRecording ? (
