@@ -12,19 +12,21 @@ Nana es una wallet agéntica para personas mayores y personas con discapacidad. 
 
 ### WDK usado
 
-Los paquetes WDK declarados en [`package.json`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/package.json#L30-L32) son:
+Los paquetes WDK declarados en [`package.json`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/package.json#L30-L32) son:
 
 - `@tetherto/wdk@1.0.0-beta.14` — runtime WDK.
 - `@tetherto/wdk-cli@1.0.0-beta.2` — CLI y proceso MCP (`wdk-mcp`).
 - `@tetherto/wdk-wallet-evm@1.0.0-beta.11` — wallet EVM.
 
-Permalinks de la integración WDK en el commit público [`12881bf`](https://github.com/rober8b/aleph-hackathon/commit/12881bf226f53bc3c5203d1a812e0adfe3e1e345):
+Permalinks de la integración WDK en el commit público [`71509cc`](https://github.com/rober8b/aleph-hackathon/commit/71509cc1957d90fedd95255f0a1241fddbf0ff0b):
 
-- [`src/wdk/mcp-client.ts#L117-L119`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/wdk/mcp-client.ts#L117-L119) — resuelve el proceso MCP WDK incluido.
-- [`src/wdk/mcp-client.ts#L213-L223`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/wdk/mcp-client.ts#L213-L223) — configura el spawn del proceso bundled `wdk-mcp` por stdio.
-- [`src/agent/wdk-tools.ts#L60-L92`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/agent/wdk-tools.ts#L60-L92) — expone las herramientas WDK al agente, incluido `send_token`.
-- [`src/agent/wallet-agent.ts#L292-L349`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/agent/wallet-agent.ts#L292-L349) — aplica preview `dryRun`, confirmación separada y guardas antes de una ejecución live.
-- [`src/wdk/transaction-receipt.ts#L164-L212`](https://github.com/rober8b/aleph-hackathon/blob/12881bf226f53bc3c5203d1a812e0adfe3e1e345/src/wdk/transaction-receipt.ts#L164-L212) — verifica chain ID Sepolia, hash, receipt y estado confirmado/revertido después del broadcast.
+- [`src/wdk/mcp-client.ts#L117-L118`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/wdk/mcp-client.ts#L117-L118) — resuelve el proceso MCP WDK incluido.
+- [`src/wdk/mcp-client.ts#L213-L220`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/wdk/mcp-client.ts#L213-L220) — configura el spawn del proceso bundled `wdk-mcp` por stdio.
+- [`src/agent/wdk-tools.ts#L39-L49`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/agent/wdk-tools.ts#L39-L49) — propaga `WDK_INDEXER_API_KEY` al proceso WDK sin exponerla.
+- [`src/agent/wdk-tools.ts#L72-L103`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/agent/wdk-tools.ts#L72-L103) — expone las herramientas WDK al agente, incluido `send_token`.
+- [`src/api/wallet.ts#L17-L50`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/api/wallet.ts#L17-L50) y [`#L52-L100`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/api/wallet.ts#L52-L100) — adapta las respuestas oficiales de balance e historial WDK al contrato HTTP.
+- [`src/agent/wallet-agent.ts#L147-L211`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/agent/wallet-agent.ts#L147-L211) y [`#L394-L455`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/agent/wallet-agent.ts#L394-L455) — aplica la policy live y las guardas de preview/confirmación al `send_token`.
+- [`src/wdk/transaction-receipt.ts#L164-L212`](https://github.com/rober8b/aleph-hackathon/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/src/wdk/transaction-receipt.ts#L164-L212) — verifica chain ID Sepolia, hash, receipt y estado confirmado/revertido después del broadcast.
 
 ### Demo
 
