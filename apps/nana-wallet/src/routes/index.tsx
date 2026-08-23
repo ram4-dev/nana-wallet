@@ -284,7 +284,8 @@ function AgentePage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
       <h1 className="text-center text-3xl leading-tight font-extrabold">
-        Hola, {meQuery.data.greetingName}
+        <span className="block">Hola, soy Nani.</span>
+        <span className="mt-2 block">Hablame.</span>
       </h1>
 
       <div className="relative mt-8 flex flex-col items-center">
