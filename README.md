@@ -1,12 +1,171 @@
-# WDK Transaction Agent
+# Nana Wallet
 
-Backend-only HTTP agent for the Aleph Hackathon 2026 WDK Track: reads a WDK
-wallet and sends tokens from natural-language instructions, backed directly
-by the bundled `wdk-mcp` MCP server and an AI SDK `ToolLoopAgent`. See
-`docs/wdk-agent-development-plan.md` for the full design and
-`docs/api.md` / `docs/demo-runbook.md` for usage.
+Wallet agéntica argentina diseñada para personas mayores y personas con discapacidad. Nana reduce la complejidad de una billetera tradicional: el usuario puede pedir una acción con lenguaje cotidiano, revisar claramente qué va a ocurrir y confirmar antes de mover dinero.
 
-## Setup
+> **Estado:** frontend funcional para web, Android e iOS. La demo local usa endpoints simulados con MSW; la conexión con el backend WDK y las transacciones reales todavía está en integración.
+
+## Experiencia
+
+La aplicación se organiza en tres espacios sencillos:
+
+- **Mi perfil:** familia y contactos guardados, agenda, facturas y datos personales.
+- **Nana:** agente por texto o voz que interpreta pedidos y prepara acciones para confirmar.
+- **Mi plata:** saldo disponible, cuentas y movimientos.
+
+El flujo de pago siempre muestra destinatario, importe, cuenta de origen y advertencias antes de habilitar la confirmación. Las confirmaciones usan una clave de idempotencia y distinguen un rechazo definitivo de un error de red ambiguo para evitar informar incorrectamente que una operación falló.
+
+## Stack
+
+- React 19 y TypeScript
+- TanStack Start, Router y Query
+- Tailwind CSS 4 y shadcn/ui
+- Capacitor 8 para Android e iOS
+- MSW para la API simulada local
+- Vitest y Testing Library
+- Backend WDK planificado con Node.js, Fastify y Tether WDK/MCP
+
+## Estructura
+
+```text
+.
+├── apps/
+│   └── nana-wallet/           # Frontend web y proyectos Capacitor
+│       ├── android/           # Proyecto nativo Android
+│       ├── ios/               # Proyecto nativo iOS
+│       └── src/               # Rutas, componentes, API y mocks
+└── docs/
+    └── wdk-agent-development-plan.md
+```
+
+## Ejecutar localmente
+
+Requisitos:
+
+- Node.js 22.22 o superior
+- npm
+
+Desde la raíz del repositorio:
+
+```sh
+cd apps/nana-wallet
+npm ci
+npm run dev -- --host 0.0.0.0 --port 8083
+```
+
+Abrí [http://localhost:8083](http://localhost:8083). En desarrollo, MSW inicia automáticamente y permite recorrer la demo sin levantar un backend.
+
+### Probar desde un teléfono
+
+El teléfono y la computadora deben estar conectados a la misma red Wi-Fi. En macOS, consultá la IP local con:
+
+```sh
+ipconfig getifaddr en0
+```
+
+Después abrí `http://TU_IP:8083` desde el navegador del teléfono, por ejemplo `http://192.168.1.20:8083`.
+
+## Aplicación móvil con Capacitor
+
+El build móvil genera una SPA en `dist/client` y la copia en los proyectos nativos. El build web se mantiene separado y conserva la salida de TanStack Start/Nitro.
+
+```sh
+cd apps/nana-wallet
+
+# Generar el build móvil y sincronizar Android e iOS
+npm run mobile:sync
+
+# Abrir el proyecto correspondiente
+npm run mobile:android
+npm run mobile:ios
+```
+
+Requisitos adicionales:
+
+- **Android:** Android Studio, Java y Android SDK.
+- **iOS:** macOS y Xcode. El proyecto utiliza Swift Package Manager.
+
+Para que una app nativa cargue el servidor de desarrollo desde la red local:
+
+```sh
+# Terminal 1
+npm run dev -- --host 0.0.0.0 --port 8083
+
+# Terminal 2
+CAPACITOR_DEV_SERVER_URL=http://TU_IP:8083 npm run mobile:android
+```
+
+Para generar una app empaquetada contra un backend real, no definas `CAPACITOR_DEV_SERVER_URL` y configurá una URL HTTPS:
+
+```sh
+VITE_API_URL=https://api.ejemplo.com npm run mobile:sync
+```
+
+El identificador nativo de Nana Wallet es `com.nanawallet.app`.
+
+## Variables de entorno
+
+Copiá el archivo de ejemplo si querés apuntar el frontend a otro servidor:
+
+```sh
+cd apps/nana-wallet
+cp .env.example .env.local
+```
+
+```env
+VITE_API_URL=http://localhost:3000
+```
+
+Nunca guardes seeds, claves privadas ni secretos del backend en variables `VITE_*`: quedan incluidas en el bundle que recibe el usuario.
+
+## Comandos útiles
+
+Ejecutalos desde `apps/nana-wallet`:
+
+| Comando | Descripción |
+| --- | --- |
+| `npm run dev` | Inicia el servidor de desarrollo. |
+| `npm run build` | Genera el build web de producción. |
+| `npm run build:mobile` | Genera la SPA usada por Capacitor. |
+| `npm run mobile:sync` | Compila y sincroniza los proyectos nativos. |
+| `npm run mobile:doctor` | Revisa la instalación de Capacitor. |
+| `npm run lint` | Ejecuta ESLint. |
+| `npm run typecheck` | Valida TypeScript sin emitir archivos. |
+| `npm test` | Ejecuta los tests con Vitest. |
+
+## API e integración WDK
+
+El frontend consume un contrato `/v1` tipado para agente, contactos, agenda, facturas, saldo, movimientos e intenciones de pago. Durante el desarrollo esas rutas son respondidas por MSW.
+
+La integración prevista usa el backend WDK para consultar la wallet, preparar una transferencia con `dryRun`, solicitar confirmación y recién entonces transmitirla. El plan técnico está en [docs/wdk-agent-development-plan.md](docs/wdk-agent-development-plan.md).
+
+La confirmación conversacional es parte de la experiencia de la demo, no una frontera de autorización suficiente para producción. Una versión productiva debe mantener las claves fuera del agente y aplicar almacenamiento seguro, autenticación local, límites y políticas de riesgo.
+
+## Verificación antes de subir cambios
+
+```sh
+cd apps/nana-wallet
+npm run lint
+npm run typecheck
+npm test
+npm run build
+npm run mobile:sync
+```
+
+## Alcance actual
+
+- La interfaz web y los proyectos Capacitor están implementados.
+- Los flujos locales funcionan con datos simulados.
+- No se incluyen fondos reales ni claves privadas.
+- El repositorio todavía no produce un APK o IPA automáticamente; esos binarios se compilan con Android Studio o Xcode.
+- La conexión completa entre el contrato del frontend y el backend WDK sigue pendiente.
+
+## Backend WDK Transaction Agent
+
+Además del frontend, este repositorio incluye un backend HTTP para el track WDK, que interpreta instrucciones en lenguaje natural y opera con `wdk-mcp` a través de un `ToolLoopAgent`.
+
+Ver detalles en `docs/wdk-agent-development-plan.md`, `docs/api.md` y `docs/demo-runbook.md`.
+
+### Setup backend
 
 ```bash
 cp .env.example .env
@@ -14,9 +173,9 @@ npm install
 npm run dev
 ```
 
-Server listens on `PORT` (default `3000`).
+El servidor escucha en `PORT` (por defecto `3000`).
 
-## Environment variables
+### Variables de entorno backend
 
 | Var | Purpose |
 | --- | --- |
@@ -27,18 +186,13 @@ Server listens on `PORT` (default `3000`).
 | `WDK_TOOLS_SOURCE` | `fixture` (default, no WDK required) or `live` (spawns the real `wdk-mcp` process). |
 | `PORT` | Fastify port, default `3000`. |
 
-## Scripts
+### Scripts backend
 
 - `npm run dev` — watch mode (`tsx`).
 - `npm run build` / `npm start` — compile then run the built server.
-- `npm test` — unit + integration tests (vitest), all against fixtures — no
-  WDK wallet or model API key required.
+- `npm test` — unit + integration tests (vitest), all against fixtures — no WDK wallet or model API key required.
 
-## Notes
+### Notes backend
 
-- Sessions are in-memory only — restarting the server clears all
-  conversations and pending transfer previews.
-- `WDK_TOOLS_SOURCE=fixture` is the default so the API and agent can be
-  developed and tested without a live WDK wallet; switch to `live` once
-  Developer A confirms `wdk-mcp` starts cleanly with the demo wallet
-  unlocked.
+- Sessions are in-memory only: restarting the server clears all conversations and pending transfer previews.
+- `WDK_TOOLS_SOURCE=fixture` es el valor por defecto para desarrollar y testear sin una wallet WDK en vivo.
