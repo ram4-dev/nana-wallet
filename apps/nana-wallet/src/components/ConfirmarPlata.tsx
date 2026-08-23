@@ -24,6 +24,8 @@ type ConfirmarPlataProps = {
   onExpired: () => void;
   /** Se llama cuando el usuario sale sin saber si la plata se movió. Debe refrescar saldo y movimientos. */
   onUnknownOutcome: () => void;
+  /** Texto reconocido por voz. Se muestra antes de que el usuario autorice la operación. */
+  transcript?: string | null;
 };
 
 function secondsUntil(expiresAt: string) {
@@ -42,6 +44,7 @@ export function ConfirmarPlata({
   onCloseReceipt,
   onExpired,
   onUnknownOutcome,
+  transcript,
 }: ConfirmarPlataProps) {
   const [secondsLeft, setSecondsLeft] = useState(() => secondsUntil(intent.expiresAt));
   const [idempotencyKey] = useState(createIdempotencyKey);
@@ -142,8 +145,8 @@ export function ConfirmarPlata({
                     hecho y puede que no.
                   </p>
                   <p className="rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 font-bold">
-                    Si tocás "Confirmar de nuevo" no se va a duplicar. Es la misma operación, no una
-                    nueva.
+                    Si tocás "Reintentar operación" no se va a duplicar. Es la misma operación, no
+                    una nueva.
                   </p>
                 </div>
               </AlertDialogDescription>
@@ -153,7 +156,7 @@ export function ConfirmarPlata({
                   onClick={() => void handleConfirm()}
                   disabled={isConfirming}
                 >
-                  Confirmar de nuevo
+                  Reintentar operación
                 </Button>
                 <Button
                   variant="outline"
@@ -172,10 +175,10 @@ export function ConfirmarPlata({
             >
               <Loader2 className="size-20 animate-spin text-primary" aria-hidden="true" />
               <AlertDialogTitle className="mt-6 text-3xl font-extrabold">
-                Estamos confirmando
+                Nana está haciendo la operación
               </AlertDialogTitle>
               <AlertDialogDescription className="mt-4 text-lg leading-relaxed text-foreground">
-                Esperá un momento y no cierres esta pantalla. Te avisamos apenas termine.
+                Esperá un momento. Te mostramos el comprobante apenas termine.
               </AlertDialogDescription>
             </div>
           ) : expiredMessage || secondsLeft <= 0 ? (
@@ -210,6 +213,12 @@ export function ConfirmarPlata({
 
               <AlertDialogDescription asChild>
                 <div className="surface-card mt-7 space-y-6 p-6 text-foreground">
+                  {transcript ? (
+                    <div className="rounded-2xl bg-secondary p-4">
+                      <p className="text-base font-bold text-muted-foreground">Nana entendió:</p>
+                      <p className="mt-1 text-xl font-extrabold">“{transcript}”</p>
+                    </div>
+                  ) : null}
                   <div>
                     <p className="text-lg font-bold text-muted-foreground">A quién</p>
                     <p className="mt-1 text-2xl font-extrabold">

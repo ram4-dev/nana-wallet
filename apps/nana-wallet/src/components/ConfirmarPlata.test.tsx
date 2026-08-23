@@ -65,6 +65,23 @@ afterEach(() => {
 });
 
 describe("ConfirmarPlata", () => {
+  it("muestra la transcripción y espera la confirmación antes de ejecutar", async () => {
+    confirmMoneyIntent.mockResolvedValue(receipt);
+    const user = userEvent.setup();
+
+    renderConfirmar(buildIntent(120), { transcript: "mandale veinte mil a Sofi" });
+
+    expect(screen.getByText(/mandale veinte mil a Sofi/i)).toBeInTheDocument();
+    expect(confirmMoneyIntent).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /sí, mandar/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Listo, le mandaste plata a Sofía")).toBeInTheDocument();
+    });
+    expect(confirmMoneyIntent).toHaveBeenCalledTimes(1);
+  });
+
   it("no abandona una confirmación en vuelo cuando se termina el tiempo", async () => {
     // El intent vence en 1 segundo. La confirmación tarda más que eso.
     // Si el reloj del cliente ganara, la pantalla saltaría a "empezá de nuevo"
@@ -86,7 +103,7 @@ describe("ConfirmarPlata", () => {
     await new Promise((resolve) => setTimeout(resolve, 1600));
 
     expect(screen.queryByText(/hay que empezar de nuevo/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/estamos confirmando/i)).toBeInTheDocument();
+    expect(screen.getByText(/nana está haciendo la operación/i)).toBeInTheDocument();
     expect(props.onExpired).not.toHaveBeenCalled();
 
     resolveConfirm(receipt);
@@ -118,7 +135,7 @@ describe("ConfirmarPlata", () => {
     expect(screen.getByText(/no se va a duplicar/i)).toBeInTheDocument();
     expect(props.onCancel).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /confirmar de nuevo/i }));
+    await user.click(screen.getByRole("button", { name: /reintentar operación/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Listo, le mandaste plata a Sofía")).toBeInTheDocument();

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Mic, Send, Square } from "lucide-react";
+import { Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { AgenteAvatar } from "@/components/agente/AgenteAvatar";
@@ -41,6 +41,8 @@ const agentStateLabels: Record<AgentTurn["agentState"], string> = {
   no_entendi: "No te entendí bien",
 };
 
+const MAX_RECORDING_MS = 20_000;
+
 function readBlobAsBase64(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -61,9 +63,11 @@ function AgentePage() {
   const [activeIntent, setActiveIntent] = useState<ConfirmableIntent | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isPreparingAudio, setIsPreparingAudio] = useState(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimeoutRef = useRef<number | null>(null);
 
   useEffect(
     () => () => {
@@ -71,6 +75,9 @@ function AgentePage() {
       if (recorder && recorder.state !== "inactive") {
         recorder.onstop = null;
         recorder.stop();
+      }
+      if (recordingTimeoutRef.current !== null) {
+        window.clearTimeout(recordingTimeoutRef.current);
       }
       streamRef.current?.getTracks().forEach((track) => track.stop());
     },
@@ -84,7 +91,7 @@ function AgentePage() {
     onSuccess: (nextTurn) => {
       setSessionId(nextTurn.sessionId);
       setTurn(nextTurn);
-      setActiveIntent(null);
+      setActiveIntent(nextTurn.proposal);
       setMessage(null);
     },
     onError: (error) => {
@@ -123,19 +130,32 @@ function AgentePage() {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
       recorder.onstop = () => {
+        if (recordingTimeoutRef.current !== null) {
+          window.clearTimeout(recordingTimeoutRef.current);
+          recordingTimeoutRef.current = null;
+        }
         const mimeType = supportsWebm ? "audio/webm" : "audio/m4a";
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
         recorderRef.current = null;
         setIsRecording(false);
+        setIsPreparingAudio(true);
         void readBlobAsBase64(blob)
-          .then((audioBase64) => sendTurn({ kind: "audio", audioBase64, mimeType }))
-          .catch(() => setMessage("No pude leer esa grabación. Probá de nuevo o escribime."));
+          .then((audioBase64) => {
+            sendTurn({ kind: "audio", audioBase64, mimeType });
+          })
+          .catch(() => setMessage("No pude leer esa grabación. Probá de nuevo o escribime."))
+          .finally(() => setIsPreparingAudio(false));
       };
       recorderRef.current = recorder;
       recorder.start();
+      recordingTimeoutRef.current = window.setTimeout(() => {
+        if (recorder.state !== "inactive") recorder.stop();
+      }, MAX_RECORDING_MS);
       setIsRecording(true);
+      setTurn(null);
+      setActiveIntent(null);
       setMessage(null);
     } catch {
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -146,6 +166,10 @@ function AgentePage() {
 
   function handleMicrophone() {
     if (isRecording) {
+      if (recordingTimeoutRef.current !== null) {
+        window.clearTimeout(recordingTimeoutRef.current);
+        recordingTimeoutRef.current = null;
+      }
       recorderRef.current?.stop();
       return;
     }
@@ -192,16 +216,21 @@ function AgentePage() {
     return <RouteError error={meQuery.error} onRetry={() => void meQuery.refetch()} />;
   }
 
+  const isAgentWorking = isPreparingAudio || turnMutation.isPending;
   const isAgentListening = isRecording || turn?.agentState === "escuchando";
   // Mientras graba, el avatar escucha aunque todavía no haya vuelto ningún turno.
   const agentState: AgentTurn["agentState"] = isAgentListening
     ? "escuchando"
-    : (turn?.agentState ?? "listo");
+    : isAgentWorking
+      ? "pensando"
+      : (turn?.agentState ?? "listo");
   const agentStatus = isRecording
     ? "Te estoy escuchando"
-    : turn
-      ? agentStateLabels[turn.agentState]
-      : "Tu contador de confianza";
+    : isAgentWorking
+      ? "Estoy resolviéndolo"
+      : turn
+        ? agentStateLabels[turn.agentState]
+        : "Tocá a Nani y hablale";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
@@ -216,10 +245,15 @@ function AgentePage() {
       </p>
 
       <div className="relative mt-8 flex flex-col items-center">
-        <div
-          className={`agent-stage relative flex h-64 w-64 items-center justify-center ${
+        <button
+          type="button"
+          className={`agent-stage press relative flex h-64 w-64 items-center justify-center rounded-full focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 disabled:cursor-wait disabled:opacity-80 ${
             isAgentListening ? "listening" : ""
           }`}
+          aria-label={isRecording ? "Terminar de hablar con Nana" : "Hablar con Nana"}
+          aria-pressed={isRecording}
+          onClick={handleMicrophone}
+          disabled={isAgentWorking || Boolean(activeIntent)}
         >
           <AgenteAvatar estado={agentState} size={256} />
           {isAgentListening ? (
@@ -231,7 +265,7 @@ function AgentePage() {
               <i />
             </div>
           ) : null}
-        </div>
+        </button>
 
         <span className="mt-3 rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
           {agentStatus}
@@ -243,40 +277,20 @@ function AgentePage() {
           className="mt-5 rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 text-center text-lg font-bold"
           role="status"
         >
-          Grabando tu voz. Tocá el micrófono otra vez cuando termines.
+          Hablá con Nana y tocala cuando termines. Si no, se envía sola después de 20 segundos.
         </p>
       ) : null}
 
       <div className="mt-6 w-full space-y-4" aria-live="polite">
-        {turn?.transcript ? (
-          <section className="surface-card border border-border p-5">
-            <p className="text-lg font-extrabold">Escuché:</p>
-            <p className="mt-2 text-xl">{turn.transcript}</p>
-          </section>
-        ) : null}
-
-        {turn ? (
+        {turn && !turn.proposal ? (
           <section className="surface-card p-5">
+            {turn.transcript ? (
+              <p className="mb-2 text-base font-bold text-muted-foreground">
+                Entendí: “{turn.transcript}”
+              </p>
+            ) : null}
             <p className="text-lg leading-relaxed">{turn.say.text}</p>
           </section>
-        ) : null}
-
-        {turn?.proposal ? (
-          <div className="grid grid-cols-2 gap-6">
-            <Button
-              variant="outline"
-              className="press min-h-16 whitespace-normal text-lg font-extrabold"
-              onClick={() => void rejectProposal()}
-            >
-              No entendiste bien
-            </Button>
-            <Button
-              className="press min-h-16 whitespace-normal text-lg font-extrabold"
-              onClick={() => setActiveIntent(turn.proposal)}
-            >
-              Revisar antes de confirmar
-            </Button>
-          </div>
         ) : null}
 
         {turn?.suggestions.map((suggestion) => (
@@ -301,39 +315,26 @@ function AgentePage() {
       </div>
 
       <form
-        className="surface-card mt-8 flex w-full items-center gap-2 px-2 py-2"
+        className="surface-card mt-8 flex w-full items-center gap-2 px-3 py-2"
         onSubmit={(event) => {
           event.preventDefault();
           sendText();
         }}
       >
-        <Button
-          type="button"
-          variant="ghost"
-          className="press size-14 shrink-0 rounded-2xl text-primary"
-          aria-label={isRecording ? "Terminar de hablar" : "Empezar a hablar"}
-          onClick={handleMicrophone}
-          disabled={turnMutation.isPending}
-        >
-          {isRecording ? (
-            <Square className="size-6 fill-current" strokeWidth={2.4} />
-          ) : (
-            <Mic className="size-7" strokeWidth={2.4} />
-          )}
-        </Button>
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
           placeholder="Escribime acá"
           aria-label="Mensaje para el agente"
           className="min-w-0 flex-1 rounded-xl bg-transparent px-2 py-3 text-lg focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-2"
+          disabled={isRecording || isAgentWorking}
         />
         <Button
           type="submit"
           variant="ghost"
           className="press size-14 shrink-0 rounded-2xl text-primary"
           aria-label="Enviar mensaje"
-          disabled={turnMutation.isPending || !text.trim()}
+          disabled={isRecording || isAgentWorking || !text.trim()}
         >
           <Send className="size-7" strokeWidth={2.4} />
         </Button>
@@ -347,6 +348,7 @@ function AgentePage() {
           onExpired={() => void rejectProposal()}
           onCloseReceipt={closeReceipt}
           onUnknownOutcome={closeAfterUnknownOutcome}
+          transcript={turn?.transcript ?? null}
         />
       ) : null}
     </main>
