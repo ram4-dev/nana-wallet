@@ -1,0 +1,16 @@
+schema: sdd-state/v1
+change: developer-1-wdk-blockchain-flow
+artifact_store: openspec
+delivery_strategy: exception-ok
+workload_decision: size-exception
+updated_at: 2026-08-22
+phases:
+  init: completed
+  explore: completed
+  propose: completed
+  spec: completed
+  design: completed
+  tasks: completed
+  apply: in_progress
+  verify: not_started
+  archive: not_started
