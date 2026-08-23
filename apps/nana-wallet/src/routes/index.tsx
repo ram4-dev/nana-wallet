@@ -283,9 +283,6 @@ function AgentePage() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
-      <p className="mb-3 rounded-full bg-secondary px-4 py-2 text-sm font-extrabold tracking-[0.16em] text-primary">
-        NANA WALLET
-      </p>
       <h1 className="text-center text-3xl leading-tight font-extrabold">
         Hola, {meQuery.data.greetingName}
       </h1>
