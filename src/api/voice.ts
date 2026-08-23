@@ -6,7 +6,7 @@ import {
 } from '../contracts/http.js';
 
 const NAN_BASE_URL = 'https://api.nan.builders/v1';
-const NAN_STT_MODEL = process.env.NAN_STT_MODEL ?? 'whisper-large-v3';
+const NAN_STT_MODEL = process.env.NAN_STT_MODEL ?? 'whisper';
 
 const ELEVENLABS_BASE_URL = 'https://api.elevenlabs.io/v1';
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID ?? '21m00Tcm4TlvDq8ikWAM';
@@ -32,6 +32,7 @@ async function transcribeWithWhisper(audio: Buffer, mimeType: string): Promise<s
   }
 
   if (!upstream.ok) {
+    console.error('nan.builders transcription failed', upstream.status, await upstream.text());
     throw { code: 'SERVICIO_CAIDO', message: 'Transcription failed.' };
   }
 
