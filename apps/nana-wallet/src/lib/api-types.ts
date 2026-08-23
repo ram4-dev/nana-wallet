@@ -152,35 +152,36 @@ export type TransferIntentInput = {
 
 export type BillPaymentIntentInput = { accountId: string };
 
-export type AgentTurnInput =
-  | { kind: "text"; text: string }
-  | {
-      kind: "audio";
-      audioBase64: string;
-      mimeType: "audio/webm" | "audio/m4a";
-    };
-
-export type AgentProposal = {
-  kind: "transfer" | "bill_payment";
-  intentId: string;
-  expiresAt: ISODateTime;
-  confirmation: PaymentConfirmation;
-};
-
-export type AgentTurn = {
+export type CreateSessionResponse = {
   sessionId: string;
-  turnId: string;
-  agentState: "escuchando" | "pensando" | "esperando_confirmacion" | "listo" | "no_entendi";
-  say: { text: string; audioUrl: string | null };
-  transcript: string | null;
-  proposal: AgentProposal | null;
-  suggestions: string[];
+  status: "active";
 };
 
-export type AgentTurnRequest = {
-  sessionId: string | null;
-  input: AgentTurnInput;
+export type TransferPreview = {
+  network: string;
+  token: string;
+  tokenAddress: string;
+  recipient: string;
+  amount: string;
+  amountBaseUnits: string;
+  amountFormatted: string;
+  estimatedFee: string;
+  estimatedFeeBaseUnits: string;
+  estimatedFeeFormatted: string;
 };
+
+export type TransactionResult = {
+  network: string;
+  transactionHash: string;
+  explorerUrl: string;
+};
+
+export type SessionMessageResponse =
+  | { status: "answer"; message: string }
+  | { status: "confirmation_required"; message: string; preview: TransferPreview }
+  | { status: "sent"; message: string; transaction: TransactionResult }
+  | { status: "cancelled"; message: string }
+  | { status: "error"; message: string; code: string };
 
 export type Me = {
   displayName: string;
@@ -194,6 +195,11 @@ export type Me = {
   dailySpent: Money;
 };
 
-export type ConfirmableIntent = AgentProposal;
+export type ConfirmableIntent = {
+  kind: "transfer" | "bill_payment";
+  intentId: string;
+  expiresAt: ISODateTime;
+  confirmation: PaymentConfirmation;
+};
 
 export type EmptyResponse = Record<string, never>;

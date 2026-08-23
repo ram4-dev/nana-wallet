@@ -1,13 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Calculator, Mic, Send, Square } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Calculator, Mic, Send } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 
-import { ConfirmarPlata } from "@/components/ConfirmarPlata";
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
-import { api, getErrorMessage, queryKeys } from "@/lib/api";
-import type { AgentTurn, AgentTurnInput, ConfirmableIntent } from "@/lib/api-types";
+import { api, createSessionMessageSender, getErrorMessage, queryKeys } from "@/lib/api";
+import type { SessionMessageResponse } from "@/lib/api-types";
+import {
+  runExclusiveSessionAction,
+  shouldLockAfterSessionResolution,
+  UNKNOWN_SESSION_OUTCOME_MESSAGE,
+} from "@/lib/session-action-lock";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -31,26 +35,6 @@ export const Route = createFileRoute("/")({
   errorComponent: ({ error, reset }) => <RouteError error={error} onRetry={reset} />,
   component: AgentePage,
 });
-
-const agentStateLabels: Record<AgentTurn["agentState"], string> = {
-  escuchando: "Estoy escuchando",
-  pensando: "Estoy pensando",
-  esperando_confirmacion: "Esperando que revises",
-  listo: "Estoy listo para ayudarte",
-  no_entendi: "No te entendí bien",
-};
-
-function readBlobAsBase64(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      resolve(result.split(",")[1] ?? "");
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
 
 function AgentCharacter() {
   return (
@@ -98,112 +82,87 @@ function AgentCharacter() {
 function AgentePage() {
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [turn, setTurn] = useState<AgentTurn | null>(null);
-  const [activeIntent, setActiveIntent] = useState<ConfirmableIntent | null>(null);
+  const [, setSessionId] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionActionLockRef = useRef(false);
+  const confirmationPendingRef = useRef(false);
+  const sessionActionsLockedRef = useRef(false);
+  const [turn, setTurn] = useState<SessionMessageResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-
-  useEffect(
-    () => () => {
-      const recorder = recorderRef.current;
-      if (recorder && recorder.state !== "inactive") {
-        recorder.onstop = null;
-        recorder.stop();
-      }
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-    },
+  const [isSessionActionPending, setIsSessionActionPending] = useState(false);
+  const [isConfirmationPending, setIsConfirmationPending] = useState(false);
+  const [areSessionActionsLocked, setAreSessionActionsLocked] = useState(false);
+  const sendSessionMessage = useMemo(
+    () =>
+      createSessionMessageSender(
+        () => sessionIdRef.current,
+        (nextSessionId) => {
+          sessionIdRef.current = nextSessionId;
+          setSessionId(nextSessionId);
+        },
+      ),
     [],
   );
 
   const meQuery = useQuery({ queryKey: queryKeys.me, queryFn: api.getMe });
 
-  const turnMutation = useMutation({
-    mutationFn: api.agentTurn,
-    onSuccess: (nextTurn) => {
-      setSessionId(nextTurn.sessionId);
-      setTurn(nextTurn);
-      setActiveIntent(null);
-      setMessage(null);
-    },
-    onError: (error) => {
-      setMessage(getErrorMessage(error));
-    },
-  });
+  function lockUnknownOutcome() {
+    confirmationPendingRef.current = false;
+    sessionActionsLockedRef.current = true;
+    setIsConfirmationPending(false);
+    setAreSessionActionsLocked(true);
+    setTurn(null);
+    setMessage(UNKNOWN_SESSION_OUTCOME_MESSAGE);
+    refreshMoneyQueries();
+  }
 
-  function sendTurn(input: AgentTurnInput) {
-    if (turnMutation.isPending) return;
-    turnMutation.mutate({ sessionId, input });
+  function sendTurn(nextMessage: string, kind: "new" | "resolution" = "new") {
+    if (sessionActionsLockedRef.current) return;
+    if (kind === "new" && confirmationPendingRef.current) return;
+
+    const request = runExclusiveSessionAction(sessionActionLockRef, async () => {
+      setIsSessionActionPending(true);
+      setMessage(null);
+      try {
+        const nextTurn = await sendSessionMessage(nextMessage);
+        if (kind === "resolution" && shouldLockAfterSessionResolution(nextTurn, "response")) {
+          lockUnknownOutcome();
+          return;
+        }
+
+        const nextConfirmationPending = nextTurn.status === "confirmation_required";
+        confirmationPendingRef.current = nextConfirmationPending;
+        setIsConfirmationPending(nextConfirmationPending);
+        setTurn(nextTurn);
+        setMessage(nextTurn.status === "error" ? nextTurn.message : null);
+        if (nextTurn.status === "sent") refreshMoneyQueries();
+      } catch (error) {
+        if (kind === "resolution" && shouldLockAfterSessionResolution(error, "thrown")) {
+          lockUnknownOutcome();
+        } else {
+          setMessage(getErrorMessage(error));
+        }
+      } finally {
+        setIsSessionActionPending(false);
+      }
+    });
+
+    void request;
   }
 
   function sendText() {
     const cleanText = text.trim();
     if (!cleanText) return;
     setText("");
-    sendTurn({ kind: "text", text: cleanText });
-  }
-
-  async function startRecording() {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setMessage("Este teléfono no pudo abrir el micrófono. Podés escribirme abajo.");
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const supportsWebm = MediaRecorder.isTypeSupported("audio/webm");
-      const recorder = new MediaRecorder(
-        stream,
-        supportsWebm ? { mimeType: "audio/webm" } : undefined,
-      );
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        const mimeType = supportsWebm ? "audio/webm" : "audio/m4a";
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        recorderRef.current = null;
-        setIsRecording(false);
-        void readBlobAsBase64(blob)
-          .then((audioBase64) => sendTurn({ kind: "audio", audioBase64, mimeType }))
-          .catch(() => setMessage("No pude leer esa grabación. Probá de nuevo o escribime."));
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      setIsRecording(true);
-      setMessage(null);
-    } catch {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      setMessage("No pude usar el micrófono. Revisá el permiso o escribime abajo.");
-    }
+    sendTurn(cleanText);
   }
 
   function handleMicrophone() {
-    if (isRecording) {
-      recorderRef.current?.stop();
-      return;
-    }
-    void startRecording();
+    setMessage("Por ahora el agente sólo acepta mensajes escritos. Escribime abajo.");
   }
 
-  async function rejectProposal() {
-    const turnId = turn?.turnId;
-    setActiveIntent(null);
-    setTurn(null);
-    if (!turnId) return;
-    try {
-      await api.rejectAgentTurn(turnId);
-    } catch (error) {
-      setMessage(getErrorMessage(error));
-    }
+  function rejectProposal() {
+    sendTurn("cancel", "resolution");
   }
 
   function refreshMoneyQueries() {
@@ -212,34 +171,20 @@ function AgentePage() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.bills });
   }
 
-  function closeReceipt() {
-    setActiveIntent(null);
-    setTurn(null);
-    refreshMoneyQueries();
-  }
-
-  /**
-   * El usuario sale sin saber si la plata se movió. Cerramos igual que un recibo,
-   * refrescando saldo y movimientos, para que lo primero que vea sea el estado real.
-   */
-  function closeAfterUnknownOutcome() {
-    setActiveIntent(null);
-    setTurn(null);
-    setMessage("Fijate en tu saldo y en tus movimientos si la operación se hizo.");
-    refreshMoneyQueries();
-  }
-
   if (meQuery.isPending) return <RoutePending label="Estamos preparando al agente" />;
   if (meQuery.isError) {
     return <RouteError error={meQuery.error} onRetry={() => void meQuery.refetch()} />;
   }
 
-  const isAgentListening = isRecording || turn?.agentState === "escuchando";
-  const agentStatus = isRecording
-    ? "Te estoy escuchando"
-    : turn
-      ? agentStateLabels[turn.agentState]
-      : "Tu contador de confianza";
+  const agentStatus = isSessionActionPending
+    ? "Estoy pensando"
+    : turn?.status === "confirmation_required"
+      ? "Esperando que revises"
+      : turn?.status === "error"
+        ? "No te entendí bien"
+        : turn
+          ? "Estoy listo para ayudarte"
+          : "Tu contador de confianza";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
@@ -255,21 +200,10 @@ function AgentePage() {
 
       <div className="relative mt-8 flex flex-col items-center">
         <div
-          className={`agent-stage relative flex h-64 w-64 items-center justify-center ${
-            isAgentListening ? "listening" : ""
-          }`}
+          className="agent-stage relative flex h-64 w-64 items-center justify-center"
           aria-hidden="true"
         >
           <AgentCharacter />
-          {isAgentListening ? (
-            <div className="sound-waves">
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-            </div>
-          ) : null}
         </div>
 
         <span className="mt-3 rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
@@ -277,57 +211,60 @@ function AgentePage() {
         </span>
       </div>
 
-      {isRecording ? (
-        <p
-          className="mt-5 rounded-2xl bg-warning/15 p-4 text-center text-lg font-bold"
-          role="status"
-        >
-          Grabando tu voz. Tocá el micrófono otra vez cuando termines.
-        </p>
-      ) : null}
-
       <div className="mt-6 w-full space-y-4" aria-live="polite">
-        {turn?.transcript ? (
-          <section className="surface-card border-2 border-primary p-5">
-            <p className="text-lg font-extrabold">Escuché:</p>
-            <p className="mt-2 text-xl">{turn.transcript}</p>
-          </section>
-        ) : null}
-
         {turn ? (
           <section className="surface-card p-5">
-            <p className="text-lg leading-relaxed">{turn.say.text}</p>
+            <p className="text-lg leading-relaxed">{turn.message}</p>
+            {turn.status === "confirmation_required" ? (
+              <dl className="mt-4 space-y-2 text-base">
+                <div className="flex justify-between gap-4">
+                  <dt className="font-bold">Monto</dt>
+                  <dd>
+                    {turn.preview.amount} {turn.preview.token}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="font-bold">Destino</dt>
+                  <dd className="break-all text-right">{turn.preview.recipient}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="font-bold">Red</dt>
+                  <dd>{turn.preview.network}</dd>
+                </div>
+              </dl>
+            ) : null}
+            {turn.status === "sent" ? (
+              <a
+                className="mt-4 inline-block break-all font-bold text-primary underline"
+                href={turn.transaction.explorerUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Ver transacción {turn.transaction.transactionHash}
+              </a>
+            ) : null}
           </section>
         ) : null}
 
-        {turn?.proposal ? (
+        {turn?.status === "confirmation_required" ? (
           <div className="grid grid-cols-2 gap-6">
             <Button
               variant="outline"
               className="press min-h-16 whitespace-normal text-lg font-extrabold"
-              onClick={() => void rejectProposal()}
+              onClick={rejectProposal}
+              disabled={isSessionActionPending || areSessionActionsLocked}
             >
-              No entendiste bien
+              Cancelar
             </Button>
             <Button
               className="press min-h-16 whitespace-normal text-lg font-extrabold"
-              onClick={() => setActiveIntent(turn.proposal)}
+              onClick={() => sendTurn("confirm", "resolution")}
+              disabled={isSessionActionPending || areSessionActionsLocked}
             >
-              Revisar antes de confirmar
+              Confirmar
             </Button>
           </div>
         ) : null}
-
-        {turn?.suggestions.map((suggestion) => (
-          <Button
-            key={suggestion}
-            variant="outline"
-            className="press min-h-14 w-full whitespace-normal text-lg font-bold"
-            onClick={() => sendTurn({ kind: "text", text: suggestion })}
-          >
-            {suggestion}
-          </Button>
-        ))}
 
         {message ? (
           <p
@@ -350,21 +287,18 @@ function AgentePage() {
           type="button"
           variant="ghost"
           className="press size-14 shrink-0 rounded-2xl text-primary"
-          aria-label={isRecording ? "Terminar de hablar" : "Empezar a hablar"}
+          aria-label="El agente todavía no acepta mensajes de voz"
           onClick={handleMicrophone}
-          disabled={turnMutation.isPending}
+          disabled={isSessionActionPending || isConfirmationPending || areSessionActionsLocked}
         >
-          {isRecording ? (
-            <Square className="size-6 fill-current" strokeWidth={2.4} />
-          ) : (
-            <Mic className="size-7" strokeWidth={2.4} />
-          )}
+          <Mic className="size-7" strokeWidth={2.4} />
         </Button>
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
           placeholder="Escribime acá"
           aria-label="Mensaje para el agente"
+          disabled={isSessionActionPending || isConfirmationPending || areSessionActionsLocked}
           className="min-w-0 flex-1 rounded-xl bg-transparent px-2 py-3 text-lg focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
         <Button
@@ -372,22 +306,16 @@ function AgentePage() {
           variant="ghost"
           className="press size-14 shrink-0 rounded-2xl text-primary"
           aria-label="Enviar mensaje"
-          disabled={turnMutation.isPending || !text.trim()}
+          disabled={
+            isSessionActionPending ||
+            isConfirmationPending ||
+            areSessionActionsLocked ||
+            !text.trim()
+          }
         >
           <Send className="size-7" strokeWidth={2.4} />
         </Button>
       </form>
-
-      {activeIntent ? (
-        <ConfirmarPlata
-          key={activeIntent.intentId}
-          intent={activeIntent}
-          onCancel={rejectProposal}
-          onExpired={() => void rejectProposal()}
-          onCloseReceipt={closeReceipt}
-          onUnknownOutcome={closeAfterUnknownOutcome}
-        />
-      ) : null}
     </main>
   );
 }

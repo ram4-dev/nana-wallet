@@ -2,8 +2,6 @@ import { http, HttpResponse } from "msw";
 
 import type {
   AgendaEvent,
-  AgentTurn,
-  AgentTurnRequest,
   ApiEnvelope,
   Bill,
   Contact,
@@ -15,6 +13,7 @@ import type {
   MovementsPage,
   PaymentIntent,
   PaymentResult,
+  SessionMessageResponse,
   TransferIntentInput,
   UpdateContactInput,
   WalletSummary,
@@ -249,6 +248,7 @@ type StoredIntent = {
 
 const intents = new Map<string, StoredIntent>();
 const confirmedRequests = new Map<string, PaymentResult>();
+const agentSessions = new Map<string, { pendingConfirmation: boolean }>();
 
 function formatArs(amount: string) {
   return `$ ${new Intl.NumberFormat("es-AR").format(Number(amount))}`;
@@ -401,47 +401,6 @@ function confirmIntent(request: Request, intentId: string, kind: StoredIntent["k
   return ok(result);
 }
 
-function makeAgentTurn(body: AgentTurnRequest): AgentTurn {
-  const text = body.input.kind === "text" ? body.input.text.trim() : "pagale 20 mil a Sofi";
-  const normalized = text.toLocaleLowerCase("es-AR");
-  let proposal: AgentTurn["proposal"] = null;
-
-  const bill = bills.find((item) => normalized.includes(item.provider.toLocaleLowerCase("es-AR")));
-  if (bill) {
-    const intent = makeBillIntent(bill);
-    proposal = { kind: "bill_payment", ...intent };
-  } else if (
-    body.input.kind === "audio" ||
-    normalized.includes("sofi") ||
-    normalized.includes("sofía") ||
-    normalized.includes("mandar") ||
-    normalized.includes("transfer")
-  ) {
-    const intent = makeTransferIntent({
-      contactId: "contact-sofia",
-      amount: "20000",
-      currency: "ARS",
-      fromAccountId: "pesos-1",
-    });
-    if (intent) proposal = { kind: "transfer", ...intent };
-  }
-
-  return {
-    sessionId: body.sessionId ?? crypto.randomUUID(),
-    turnId: crypto.randomUUID(),
-    agentState: proposal ? "esperando_confirmacion" : "listo",
-    say: {
-      text: proposal
-        ? "Preparé todo. Revisalo tranquilo antes de confirmar."
-        : "Decime a quién querés pagarle o mandarle plata.",
-      audioUrl: null,
-    },
-    transcript: body.input.kind === "audio" ? text : null,
-    proposal,
-    suggestions: proposal ? [] : ["Pagar Edesur", "Mandarle $20.000 a Sofi"],
-  };
-}
-
 export const handlers = [
   http.get(apiPath("/wallet/summary"), () => ok(walletSummary)),
 
@@ -580,15 +539,85 @@ export const handlers = [
     confirmIntent(request, String(params["intentId"]), "transfer"),
   ),
 
-  http.post(apiPath("/agent/turn"), async ({ request }) => {
-    const body = (await request.json()) as AgentTurnRequest;
-    if (body.input.kind === "text" && !body.input.text.trim()) {
-      return err("DATOS_INVALIDOS", "Escribime qué necesitás y lo vemos juntos.", 422, "text");
-    }
-    return ok(makeAgentTurn(body));
+  http.post(apiPath("/sessions"), () => {
+    const sessionId = crypto.randomUUID();
+    agentSessions.set(sessionId, { pendingConfirmation: false });
+    return HttpResponse.json({ sessionId, status: "active" as const });
   }),
 
-  http.post(apiPath("/agent/turn/:turnId/reject"), () => ok<EmptyResponse>({})),
+  http.post(apiPath("/sessions/:sessionId/messages"), async ({ params, request }) => {
+    const session = agentSessions.get(String(params["sessionId"]));
+    if (!session) {
+      return HttpResponse.json<SessionMessageResponse>(
+        { status: "error", message: "Session not found.", code: "session_not_found" },
+        { status: 404 },
+      );
+    }
+
+    const body = (await request.json()) as { message?: unknown };
+    if (typeof body.message !== "string" || !body.message.trim()) {
+      return HttpResponse.json<SessionMessageResponse>(
+        {
+          status: "error",
+          message: "Escribime qué necesitás y lo vemos juntos.",
+          code: "invalid_body",
+        },
+        { status: 400 },
+      );
+    }
+
+    const normalized = body.message.trim().toLocaleLowerCase("es-AR");
+    if (session.pendingConfirmation && ["cancel", "cancelar"].includes(normalized)) {
+      session.pendingConfirmation = false;
+      return HttpResponse.json<SessionMessageResponse>({
+        status: "cancelled",
+        message: "Transfer cancelled.",
+      });
+    }
+    if (
+      session.pendingConfirmation &&
+      ["confirm", "confirmar", "yes", "si", "sí"].includes(normalized)
+    ) {
+      session.pendingConfirmation = false;
+      return HttpResponse.json<SessionMessageResponse>({
+        status: "sent",
+        message: "Transfer sent.",
+        transaction: {
+          network: "base-sepolia",
+          transactionHash: `0x${crypto.randomUUID().replaceAll("-", "")}`,
+          explorerUrl: "https://sepolia.basescan.org/tx/0xmock",
+        },
+      });
+    }
+
+    const proposesTransfer = ["sofi", "sofía", "mandar", "transfer", "pagar", "regalo"].some(
+      (word) => normalized.includes(word),
+    );
+    if (proposesTransfer) {
+      session.pendingConfirmation = true;
+      return HttpResponse.json<SessionMessageResponse>({
+        status: "confirmation_required",
+        message: "Preparé la transferencia. Revisala antes de confirmar.",
+        preview: {
+          network: "base-sepolia",
+          token: "USDC",
+          tokenAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+          recipient: "0x1234567890abcdef1234567890abcdef12345678",
+          amount: "20",
+          amountBaseUnits: "20000000",
+          amountFormatted: "20 USDC",
+          estimatedFee: "0.0001",
+          estimatedFeeBaseUnits: "100000000000000",
+          estimatedFeeFormatted: "0.0001 ETH",
+        },
+      });
+    }
+
+    return HttpResponse.json<SessionMessageResponse>({
+      status: "answer",
+      message: "Decime a quién querés pagarle o mandarle plata.",
+    });
+  }),
 
   http.get(apiPath("/me"), () => ok(me)),
 ];
