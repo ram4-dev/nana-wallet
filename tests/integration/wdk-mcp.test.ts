@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   allowlistedEnvironment,
+  classifyHistory,
   EvidenceSafetyError,
   McpBoundaryError,
   REQUIRED_WDK_TOOLS,
@@ -134,6 +135,25 @@ describe('WDK MCP boundary', () => {
     await client.close();
   });
 
+  it('normalizes the get_history token slug before MCP dispatch', async () => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const client = new WdkMcpClient({ sessionFactory: () => session({
+      callTool: async (name, args) => {
+        calls.push({ name, args });
+        return { transfers: [] };
+      },
+    }) });
+    await client.open();
+
+    await client.call('get_history', { network: 'sepolia', token: ' USDT ' });
+
+    expect(calls).toEqual([{
+      name: 'get_history',
+      args: { network: 'sepolia', token: 'usdt' },
+    }]);
+    await client.close();
+  });
+
   it('returns uncertain broadcast evidence on a failed send without retrying', async () => {
     let calls = 0;
     const client = new WdkMcpClient({ sessionFactory: () => session({
@@ -228,6 +248,11 @@ describe('WDK MCP boundary', () => {
 });
 
 describe('raw wallet-read evidence', () => {
+  it('classifies the official WDK transfers shape', () => {
+    expect(classifyHistory({ transfers: [] })).toBe('empty');
+    expect(classifyHistory({ transfers: [{ transactionHash: '0x1' }] })).toBe('non-empty');
+  });
+
   it('preserves raw read shapes and distinguishes history variants', async () => {
     const responses: Record<string, unknown> = {
       get_address: { address: '0xrecipient' },

@@ -16,8 +16,8 @@ export const walletAddressResponseSchema = z.object({
 export type WalletAddressResponse = z.infer<typeof walletAddressResponseSchema>;
 
 export const walletBalanceQuerySchema = z.object({
-  network: z.string(),
-  token: z.string().optional(),
+  network: z.string().trim().min(1),
+  token: z.string().trim().min(1).optional(),
 });
 export type WalletBalanceQuery = z.infer<typeof walletBalanceQuerySchema>;
 
@@ -30,8 +30,8 @@ export const walletBalanceResponseSchema = z.object({
 export type WalletBalanceResponse = z.infer<typeof walletBalanceResponseSchema>;
 
 export const walletHistoryQuerySchema = z.object({
-  network: z.string(),
-  token: z.string().optional(),
+  network: z.string().trim().min(1),
+  token: z.string().trim().min(1).optional(),
 });
 export type WalletHistoryQuery = z.infer<typeof walletHistoryQuerySchema>;
 

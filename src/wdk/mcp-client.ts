@@ -172,7 +172,7 @@ export function classifyHistory(raw: unknown): 'unavailable' | 'stale' | 'empty'
     const candidate = raw as Record<string, unknown>;
     if (candidate.isError === true || candidate.unavailable === true) return 'unavailable';
     if (candidate.stale === true) return 'stale';
-    for (const key of ['history', 'transactions', 'items', 'results']) {
+    for (const key of ['history', 'transactions', 'transfers', 'items', 'results']) {
       if (Array.isArray(candidate[key])) return candidate[key].length === 0 ? 'empty' : 'non-empty';
     }
   }
@@ -265,7 +265,8 @@ export class WdkMcpClient {
   ): Promise<unknown> {
     const session = this.requireOpen('call');
     try {
-      const safeArgs = sanitizeForEvidence(args) as Record<string, unknown>;
+      const normalizedArgs = normalizeToolArguments(name, args);
+      const safeArgs = sanitizeForEvidence(normalizedArgs) as Record<string, unknown>;
       onDispatch?.();
       const raw = await within(session.callTool(name, safeArgs), this.callTimeoutMs, 'call');
       const sanitized = sanitizeForEvidence(raw);
@@ -328,6 +329,14 @@ export class WdkMcpClient {
       // A failed close cannot justify a restart or another wallet call.
     }
   }
+}
+
+function normalizeToolArguments(
+  name: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  if (name !== 'get_history' || typeof args.token !== 'string') return args;
+  return { ...args, token: args.token.trim().toLocaleLowerCase('en-US') };
 }
 
 function createSdkSession(configuration: StdioServerParameters): McpSession {

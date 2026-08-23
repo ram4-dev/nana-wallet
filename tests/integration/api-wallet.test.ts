@@ -32,4 +32,17 @@ describe('wallet read endpoints', () => {
     expect(body.transactions.length).toBeGreaterThan(0);
     await app.close();
   });
+
+  it.each([
+    '/v1/wallet/balance?network=',
+    '/v1/wallet/balance?network=sepolia&token=%20%20',
+    '/v1/wallet/history?network=%20%20',
+    '/v1/wallet/history?network=sepolia&token=',
+  ])('rejects empty wallet query fields: %s', async (url) => {
+    const app = buildServer();
+    const response = await app.inject({ method: 'GET', url });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ status: 'error', code: 'invalid_query' });
+    await app.close();
+  });
 });

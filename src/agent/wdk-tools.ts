@@ -23,7 +23,7 @@ export async function getWdkTools(): Promise<Record<string, Tool>> {
 
 async function ensureLiveClient(): Promise<WdkMcpClient> {
   if (!client) {
-    client = new WdkMcpClient();
+    client = createLiveWdkClient();
     try {
       await client.open();
       await client.discover();
@@ -34,6 +34,18 @@ async function ensureLiveClient(): Promise<WdkMcpClient> {
     }
   }
   return client;
+}
+
+export function createLiveWdkClient(
+  environment: NodeJS.ProcessEnv = process.env,
+): WdkMcpClient {
+  const indexerApiKey = environment.WDK_INDEXER_API_KEY;
+  return new WdkMcpClient({
+    environment,
+    explicitWdkEnvironment: indexerApiKey
+      ? { WDK_INDEXER_API_KEY: indexerApiKey }
+      : {},
+  });
 }
 
 async function callLive(name: string, input: Record<string, unknown>): Promise<unknown> {
