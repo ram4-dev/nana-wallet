@@ -1,14 +1,19 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { CalendarDays, CalendarHeart, Copy, ReceiptText, Users } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ConfirmarPlata } from "@/components/ConfirmarPlata";
 import { EmptyState, RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
-import { api, getErrorMessage, queryKeys } from "@/lib/api";
-import type { AgentTurn, Bill, ConfirmableIntent, Contact } from "@/lib/api-types";
+import { api, createSessionMessageSender, getErrorMessage, queryKeys } from "@/lib/api";
+import type { Bill, ConfirmableIntent, Contact, SessionMessageResponse } from "@/lib/api-types";
+import {
+  runExclusiveSessionAction,
+  shouldLockAfterSessionResolution,
+  UNKNOWN_SESSION_OUTCOME_MESSAGE,
+} from "@/lib/session-action-lock";
 
 const AGENDA_WINDOW_DAYS = 90;
 
@@ -65,8 +70,27 @@ function PerfilPage() {
   const [preparingId, setPreparingId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [activeIntent, setActiveIntent] = useState<ConfirmableIntent | null>(null);
-  const [agentTurn, setAgentTurn] = useState<AgentTurn | null>(null);
-  const [agentTurnId, setAgentTurnId] = useState<string | null>(null);
+  const [agentTurn, setAgentTurn] = useState<SessionMessageResponse | null>(null);
+  const [, setSessionId] = useState<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionActionLockRef = useRef(false);
+  const confirmationPendingRef = useRef(false);
+  const sessionActionsLockedRef = useRef(false);
+  const [isSessionActionPending, setIsSessionActionPending] = useState(false);
+  const [isAgentConfirmationPending, setIsAgentConfirmationPending] = useState(false);
+  const [areSessionActionsLocked, setAreSessionActionsLocked] = useState(false);
+  const [sessionActionId, setSessionActionId] = useState<string | null>(null);
+  const sendSessionMessage = useMemo(
+    () =>
+      createSessionMessageSender(
+        () => sessionIdRef.current,
+        (nextSessionId) => {
+          sessionIdRef.current = nextSessionId;
+          setSessionId(nextSessionId);
+        },
+      ),
+    [],
+  );
 
   const { from: agendaFrom, to: agendaTo } = getAgendaWindow();
 
@@ -141,7 +165,6 @@ function PerfilPage() {
     }
     setPreparingId(bill.id);
     setActionMessage(null);
-    setAgentTurnId(null);
     try {
       const intent = await api.createBillPaymentIntent(bill.id, { accountId: pesosAccount.id });
       setActiveIntent({ kind: "bill_payment", ...intent });
@@ -152,35 +175,62 @@ function PerfilPage() {
     }
   }
 
-  async function prepareSuggestedAction(label: string, eventId: string) {
-    setPreparingId(eventId);
-    setActionMessage(null);
-    try {
-      const nextTurn = await api.agentTurn({
-        sessionId: null,
-        input: { kind: "text", text: label },
-      });
-      setAgentTurn(nextTurn);
-      setAgentTurnId(nextTurn.turnId);
-      if (nextTurn.proposal && !nextTurn.transcript) setActiveIntent(nextTurn.proposal);
-    } catch (error) {
-      setActionMessage(getErrorMessage(error));
-    } finally {
-      setPreparingId(null);
-    }
+  function lockUnknownAgentOutcome() {
+    confirmationPendingRef.current = false;
+    sessionActionsLockedRef.current = true;
+    setIsAgentConfirmationPending(false);
+    setAreSessionActionsLocked(true);
+    setAgentTurn(null);
+    setActionMessage(UNKNOWN_SESSION_OUTCOME_MESSAGE);
+    refreshMoneyQueries();
   }
 
-  async function closeConfirmation() {
-    const turnId = agentTurnId;
+  function runAgentAction(message: string, kind: "new" | "resolution", actionId: string) {
+    if (sessionActionsLockedRef.current) return;
+    if (kind === "new" && confirmationPendingRef.current) return;
+
+    const request = runExclusiveSessionAction(sessionActionLockRef, async () => {
+      setIsSessionActionPending(true);
+      setSessionActionId(actionId);
+      setActionMessage(null);
+      try {
+        const nextTurn = await sendSessionMessage(message);
+        if (kind === "resolution" && shouldLockAfterSessionResolution(nextTurn, "response")) {
+          lockUnknownAgentOutcome();
+          return;
+        }
+
+        const nextConfirmationPending = nextTurn.status === "confirmation_required";
+        confirmationPendingRef.current = nextConfirmationPending;
+        setIsAgentConfirmationPending(nextConfirmationPending);
+        setAgentTurn(nextTurn);
+        if (nextTurn.status === "error") setActionMessage(nextTurn.message);
+        if (nextTurn.status === "sent") refreshMoneyQueries();
+      } catch (error) {
+        if (kind === "resolution" && shouldLockAfterSessionResolution(error, "thrown")) {
+          lockUnknownAgentOutcome();
+        } else {
+          setActionMessage(getErrorMessage(error));
+        }
+      } finally {
+        setIsSessionActionPending(false);
+        setSessionActionId(null);
+      }
+    });
+
+    void request;
+  }
+
+  function prepareSuggestedAction(label: string, eventId: string) {
+    runAgentAction(label, "new", eventId);
+  }
+
+  function sendAgentFollowup(message: "confirm" | "cancel") {
+    runAgentAction(message, "resolution", "agent-confirmation");
+  }
+
+  function closeConfirmation() {
     setActiveIntent(null);
-    setAgentTurn(null);
-    setAgentTurnId(null);
-    if (!turnId) return;
-    try {
-      await api.rejectAgentTurn(turnId);
-    } catch (error) {
-      setActionMessage(getErrorMessage(error));
-    }
   }
 
   function refreshMoneyQueries() {
@@ -191,8 +241,6 @@ function PerfilPage() {
 
   function closeReceipt() {
     setActiveIntent(null);
-    setAgentTurn(null);
-    setAgentTurnId(null);
     refreshMoneyQueries();
   }
 
@@ -202,8 +250,6 @@ function PerfilPage() {
    */
   function closeAfterUnknownOutcome() {
     setActiveIntent(null);
-    setAgentTurn(null);
-    setAgentTurnId(null);
     setActionMessage("Fijate en tu saldo y en tus movimientos si la operación se hizo.");
     refreshMoneyQueries();
   }
@@ -310,11 +356,15 @@ function PerfilPage() {
                     variant="outline"
                     className="press mt-4 min-h-14 w-full whitespace-normal text-lg font-extrabold"
                     onClick={() =>
-                      void prepareSuggestedAction(event.suggestedAction?.label ?? "", event.id)
+                      prepareSuggestedAction(event.suggestedAction?.label ?? "", event.id)
                     }
-                    disabled={preparingId === event.id}
+                    disabled={
+                      isSessionActionPending ||
+                      isAgentConfirmationPending ||
+                      areSessionActionsLocked
+                    }
                   >
-                    {preparingId === event.id ? "Preparando" : event.suggestedAction.label}
+                    {sessionActionId === event.id ? "Preparando" : event.suggestedAction.label}
                   </Button>
                 ) : null}
               </li>
@@ -323,16 +373,52 @@ function PerfilPage() {
         )}
       </section>
 
-      {agentTurn?.transcript && agentTurn.proposal && !activeIntent ? (
+      {agentTurn ? (
         <section className="surface-card mt-5 border-2 border-primary p-5" aria-live="polite">
-          <p className="text-lg font-extrabold">Escuché:</p>
-          <p className="mt-2 text-xl">{agentTurn.transcript}</p>
-          <Button
-            className="press mt-5 min-h-16 w-full whitespace-normal text-lg font-extrabold"
-            onClick={() => setActiveIntent(agentTurn.proposal)}
-          >
-            Revisar antes de confirmar
-          </Button>
+          <p className="text-lg leading-relaxed">{agentTurn.message}</p>
+          {agentTurn.status === "confirmation_required" ? (
+            <>
+              <dl className="mt-4 space-y-2 text-base">
+                <div className="flex justify-between gap-4">
+                  <dt className="font-bold">Monto</dt>
+                  <dd>
+                    {agentTurn.preview.amount} {agentTurn.preview.token}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="font-bold">Destino</dt>
+                  <dd className="break-all text-right">{agentTurn.preview.recipient}</dd>
+                </div>
+              </dl>
+              <div className="mt-5 grid grid-cols-2 gap-4">
+                <Button
+                  variant="outline"
+                  className="press min-h-14 whitespace-normal text-lg font-extrabold"
+                  onClick={() => sendAgentFollowup("cancel")}
+                  disabled={isSessionActionPending || areSessionActionsLocked}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="press min-h-14 whitespace-normal text-lg font-extrabold"
+                  onClick={() => sendAgentFollowup("confirm")}
+                  disabled={isSessionActionPending || areSessionActionsLocked}
+                >
+                  Confirmar
+                </Button>
+              </div>
+            </>
+          ) : null}
+          {agentTurn.status === "sent" ? (
+            <a
+              className="mt-4 inline-block break-all font-bold text-primary underline"
+              href={agentTurn.transaction.explorerUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Ver transacción {agentTurn.transaction.transactionHash}
+            </a>
+          ) : null}
         </section>
       ) : null}
 
@@ -394,7 +480,7 @@ function PerfilPage() {
           key={activeIntent.intentId}
           intent={activeIntent}
           onCancel={closeConfirmation}
-          onExpired={() => void closeConfirmation()}
+          onExpired={closeConfirmation}
           onCloseReceipt={closeReceipt}
           onUnknownOutcome={closeAfterUnknownOutcome}
         />
