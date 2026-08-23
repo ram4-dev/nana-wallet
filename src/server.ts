@@ -34,10 +34,14 @@ export function buildServer() {
   return app;
 }
 
+export function serverHost(environment: NodeJS.ProcessEnv = process.env): string {
+  return environment.HOST ?? '127.0.0.1';
+}
+
 async function main() {
   const app = buildServer();
   const port = Number(process.env.PORT ?? 3000);
-  await app.listen({ port, host: '0.0.0.0' });
+  await app.listen({ port, host: serverHost() });
 }
 
 const isDirectRun = /server\.(ts|js)$/.test(process.argv[1] ?? '');
