@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AgenteAvatar } from "@/components/agente/AgenteAvatar";
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { api, createSessionMessageSender, getErrorMessage, queryKeys } from "@/lib/api";
 import type { SessionMessageResponse } from "@/lib/api-types";
 import {
@@ -403,28 +404,28 @@ function AgentePage() {
       </div>
 
       <form
-        className="surface-card mt-8 flex w-full items-center gap-2 px-3 py-2"
+        className="mt-6 flex w-full items-center gap-1 rounded-full border border-input bg-card p-1 focus-within:ring-4 focus-within:ring-ring/20"
         onSubmit={(event) => {
           event.preventDefault();
           sendText();
         }}
       >
-        <input
+        <Input
           value={text}
           onChange={(event) => setText(event.target.value)}
           placeholder="Escribime acá"
           aria-label="Mensaje para el agente"
           disabled={interactionDisabled}
-          className="min-w-0 flex-1 rounded-xl bg-transparent px-2 py-3 text-lg focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-2"
+          className="h-10 min-w-0 flex-1 rounded-full border-0 bg-transparent px-4 py-2 text-base shadow-none focus-visible:ring-0 md:text-base"
         />
         <Button
           type="submit"
-          variant="ghost"
-          className="press size-14 shrink-0 rounded-2xl text-primary"
+          size="icon"
+          className="press size-10 shrink-0 rounded-full"
           aria-label="Enviar mensaje"
           disabled={interactionDisabled || !text.trim()}
         >
-          <Send className="size-7" strokeWidth={2.4} />
+          <Send className="size-5" strokeWidth={2.4} />
         </Button>
       </form>
     </main>

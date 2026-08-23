@@ -114,7 +114,7 @@
   }
 
   nav[aria-label="Navegación principal"] > div {
-    padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
   }
 }
 
