@@ -65,9 +65,19 @@ function MiPlataPage() {
     <main className="mx-auto max-w-md px-6 pt-12 pb-40">
       <h1 className="text-2xl font-extrabold">Mi plata</h1>
 
-      <section className="plastic mt-5 p-7">
-        <p className="text-base font-bold opacity-90">Total en pesos</p>
-        <p className="mt-1 text-4xl font-extrabold tracking-tight">{summary.total.display}</p>
+      <section className="plastic relative mt-5 overflow-hidden rounded-[2rem] px-7 py-6">
+        <span
+          className="absolute -top-14 -right-12 size-40 rounded-full border-[18px] border-primary-foreground/10"
+          aria-hidden="true"
+        />
+        <span
+          className="absolute -right-3 -bottom-14 size-28 rounded-full bg-primary-foreground/10 blur-xl"
+          aria-hidden="true"
+        />
+        <div className="relative">
+          <p className="text-base font-bold opacity-90">Total en pesos</p>
+          <p className="mt-1 text-4xl font-extrabold tracking-tight">{summary.total.display}</p>
+        </div>
       </section>
 
       <h2 className="mt-10 text-xl font-extrabold">Dónde está tu plata</h2>
