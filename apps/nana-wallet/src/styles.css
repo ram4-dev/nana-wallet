@@ -33,6 +33,12 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-surface-foreground: var(--warning-surface-foreground);
+  --color-destructive-surface: var(--destructive-surface);
+  --color-destructive-surface-foreground: var(--destructive-surface-foreground);
+  --color-success-surface: var(--success-surface);
+  --color-success-surface-foreground: var(--success-surface-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -61,6 +67,15 @@
   --success-foreground: oklch(1 0 0);
   --warning: oklch(0.55 0.13 75);
   --warning-foreground: oklch(1 0 0);
+
+  /* Superficies de estado: relleno solido, no alfa. El texto de cada una
+     pasa 7:1 sobre su propia superficie. */
+  --warning-surface: oklch(0.955 0.045 75);
+  --warning-surface-foreground: oklch(0.42 0.12 75);
+  --destructive-surface: oklch(0.955 0.045 22);
+  --destructive-surface-foreground: oklch(0.42 0.12 22);
+  --success-surface: oklch(0.955 0.045 155);
+  --success-surface-foreground: oklch(0.42 0.12 155);
   --border: oklch(0.66 0.035 233);
   --input: oklch(0.66 0.035 233);
   --ring: oklch(0.55 0.115 233);

@@ -141,7 +141,7 @@ export function ConfirmarPlata({
                     Se cortó la comunicación justo cuando mandábamos la orden. Puede que se haya
                     hecho y puede que no.
                   </p>
-                  <p className="rounded-2xl bg-warning/15 p-4 font-bold">
+                  <p className="rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 font-bold">
                     Si tocás "Confirmar de nuevo" no se va a duplicar. Es la misma operación, no una
                     nueva.
                   </p>
@@ -234,7 +234,10 @@ export function ConfirmarPlata({
                     </p>
                   ))}
                   {intent.confirmation.warnings.map((warning) => (
-                    <p key={warning} className="rounded-2xl bg-warning/15 p-4 text-lg font-bold">
+                    <p
+                      key={warning}
+                      className="rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 text-lg font-bold"
+                    >
                       {warning}
                     </p>
                   ))}
@@ -251,7 +254,7 @@ export function ConfirmarPlata({
 
               {errorMessage ? (
                 <p
-                  className="mt-5 rounded-2xl bg-destructive/10 p-4 text-lg font-bold text-destructive"
+                  className="mt-5 rounded-2xl bg-destructive-surface text-destructive-surface-foreground border border-border p-4 text-lg font-bold"
                   role="alert"
                 >
                   {errorMessage}

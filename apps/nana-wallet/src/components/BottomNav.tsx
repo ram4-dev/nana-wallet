@@ -6,7 +6,7 @@ export function BottomNav() {
 
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-card/95 backdrop-blur"
+      className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-background/95 backdrop-blur-md"
       aria-label="Navegación principal"
     >
       <div className="mx-auto flex max-w-md items-end justify-between gap-2 px-6 pt-3 pb-5">

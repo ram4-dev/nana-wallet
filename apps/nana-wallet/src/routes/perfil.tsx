@@ -282,7 +282,7 @@ function PerfilPage() {
         </ul>
       )}
 
-      <section className="mt-10 rounded-3xl border-2 border-primary/45 bg-accent/5 p-5">
+      <section className="mt-10 rounded-2xl border border-border bg-secondary p-5">
         <h2 className="flex items-center gap-2 text-xl font-extrabold">
           <CalendarHeart className="size-7 text-primary" strokeWidth={2.4} aria-hidden="true" /> Mi
           agenda
@@ -324,7 +324,7 @@ function PerfilPage() {
       </section>
 
       {agentTurn?.transcript && agentTurn.proposal && !activeIntent ? (
-        <section className="surface-card mt-5 border-2 border-primary p-5" aria-live="polite">
+        <section className="surface-card mt-5 border border-border p-5" aria-live="polite">
           <p className="text-lg font-extrabold">Escuché:</p>
           <p className="mt-2 text-xl">{agentTurn.transcript}</p>
           <Button
@@ -382,7 +382,7 @@ function PerfilPage() {
 
       {actionMessage ? (
         <p
-          className="mt-5 rounded-2xl bg-destructive/10 p-4 text-lg font-bold text-destructive"
+          className="mt-5 rounded-2xl bg-destructive-surface text-destructive-surface-foreground border border-border p-4 text-lg font-bold"
           role="alert"
         >
           {actionMessage}

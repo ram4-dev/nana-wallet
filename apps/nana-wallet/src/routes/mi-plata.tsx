@@ -102,8 +102,8 @@ function MiPlataPage() {
               <span
                 className={
                   movement.kind === "entrada"
-                    ? "rounded-xl bg-success/15 p-3 text-success"
-                    : "rounded-xl bg-destructive/15 p-3 text-destructive"
+                    ? "rounded-xl bg-success-surface text-success-surface-foreground border border-border p-3 text-success"
+                    : "rounded-xl bg-destructive-surface text-destructive-surface-foreground border border-border p-3 text-destructive"
                 }
                 aria-hidden="true"
               >

@@ -7,12 +7,12 @@ export function RoutePending({ label = "Estamos buscando tus datos" }: { label?:
   return (
     <main className="mx-auto min-h-screen max-w-md px-6 pt-12 pb-40" aria-label={label}>
       <Skeleton className="h-10 w-48" />
-      <Skeleton className="mt-6 h-32 w-full rounded-3xl" />
+      <Skeleton className="mt-6 h-32 w-full rounded-2xl" />
       <Skeleton className="mt-10 h-8 w-56" />
       <div className="mt-4 space-y-4">
-        <Skeleton className="h-24 w-full rounded-3xl" />
-        <Skeleton className="h-24 w-full rounded-3xl" />
-        <Skeleton className="h-24 w-full rounded-3xl" />
+        <Skeleton className="h-24 w-full rounded-2xl" />
+        <Skeleton className="h-24 w-full rounded-2xl" />
+        <Skeleton className="h-24 w-full rounded-2xl" />
       </div>
       <span className="sr-only">{label}</span>
     </main>

@@ -240,7 +240,7 @@ function AgentePage() {
 
       {isRecording ? (
         <p
-          className="mt-5 rounded-2xl bg-warning/15 p-4 text-center text-lg font-bold"
+          className="mt-5 rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 text-center text-lg font-bold"
           role="status"
         >
           Grabando tu voz. Tocá el micrófono otra vez cuando termines.
@@ -249,7 +249,7 @@ function AgentePage() {
 
       <div className="mt-6 w-full space-y-4" aria-live="polite">
         {turn?.transcript ? (
-          <section className="surface-card border-2 border-primary p-5">
+          <section className="surface-card border border-border p-5">
             <p className="text-lg font-extrabold">Escuché:</p>
             <p className="mt-2 text-xl">{turn.transcript}</p>
           </section>
@@ -292,7 +292,7 @@ function AgentePage() {
 
         {message ? (
           <p
-            className="rounded-2xl bg-destructive/10 p-4 text-lg font-bold text-destructive"
+            className="rounded-2xl bg-destructive-surface text-destructive-surface-foreground border border-border p-4 text-lg font-bold"
             role="alert"
           >
             {message}
