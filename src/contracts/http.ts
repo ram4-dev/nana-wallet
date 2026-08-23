@@ -62,11 +62,11 @@ export const sessionMessageRequestSchema = z.object({
 export type SessionMessageRequest = z.infer<typeof sessionMessageRequestSchema>;
 
 export const transferPreviewSchema = z.object({
-  network: z.string(),
-  token: z.string(),
-  recipient: z.string(),
-  amount: z.string(),
-  estimatedFee: z.string(),
+  network: z.string().trim().min(1),
+  token: z.string().trim().min(1),
+  recipient: z.string().trim().min(1),
+  amount: z.string().trim().min(1),
+  estimatedFee: z.string().trim().min(1),
 });
 export type TransferPreview = z.infer<typeof transferPreviewSchema>;
 

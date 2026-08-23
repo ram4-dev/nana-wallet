@@ -14,7 +14,7 @@ import {
   shouldLockAfterSessionResolution,
   UNKNOWN_SESSION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
-import { classifySessionSubmission } from "@/lib/session-resolution";
+import { classifySessionSubmission, getSessionControlState } from "@/lib/session-resolution";
 import { useVoicePlayback } from "@/lib/use-voice-playback";
 
 export const Route = createFileRoute("/")({
@@ -180,12 +180,7 @@ function AgentePage() {
   }
 
   async function startRecording() {
-    if (
-      isSessionActionPending ||
-      isConfirmationPending ||
-      areSessionActionsLocked ||
-      sessionActionLockRef.current
-    ) {
+    if (isSessionActionPending || areSessionActionsLocked || sessionActionLockRef.current) {
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -247,7 +242,7 @@ function AgentePage() {
         if (recorder.state !== "inactive") recorder.stop();
       }, MAX_RECORDING_MS);
       setIsRecording(true);
-      setTurn(null);
+      if (!confirmationPendingRef.current) setTurn(null);
       setLastTranscript(null);
       setMessage(null);
     } catch {
@@ -299,8 +294,12 @@ function AgentePage() {
           : turn
             ? "Estoy listo para ayudarte"
             : null;
-  const interactionDisabled =
-    isAgentWorking || isConfirmationPending || areSessionActionsLocked || isRecording;
+  const controls = getSessionControlState({
+    isAgentWorking,
+    isConfirmationPending,
+    areSessionActionsLocked,
+    isRecording,
+  });
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
@@ -318,9 +317,7 @@ function AgentePage() {
           aria-label={isRecording ? "Terminar de hablar con Nani" : "Hablar con Nani"}
           aria-pressed={isRecording}
           onClick={handleMicrophone}
-          disabled={
-            !isRecording && (isAgentWorking || isConfirmationPending || areSessionActionsLocked)
-          }
+          disabled={!isRecording && controls.microphoneDisabled}
         >
           <AgenteAvatar estado={agentState} size={256} />
           {isRecording ? (
@@ -376,7 +373,9 @@ function AgentePage() {
               <dl className="mt-4 space-y-3 text-base">
                 <div className="flex justify-between gap-4">
                   <dt className="font-bold">Monto</dt>
-                  <dd>{turn.preview.amountFormatted}</dd>
+                  <dd>
+                    {turn.preview.amount} {turn.preview.token}
+                  </dd>
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt className="font-bold">Destino</dt>
@@ -388,7 +387,7 @@ function AgentePage() {
                 </div>
                 <div className="flex justify-between gap-4">
                   <dt className="font-bold">Costo estimado</dt>
-                  <dd>{turn.preview.estimatedFeeFormatted}</dd>
+                  <dd>{turn.preview.estimatedFee}</dd>
                 </div>
               </dl>
             ) : null}
@@ -447,7 +446,7 @@ function AgentePage() {
           onChange={(event) => setText(event.target.value)}
           placeholder={isConfirmationPending ? "Confirmar o cancelar" : "Escribime acá"}
           aria-label="Mensaje para el agente"
-          disabled={interactionDisabled}
+          disabled={controls.textDisabled}
           className="h-10 min-w-0 flex-1 rounded-full border-0 bg-transparent px-4 py-2 text-base shadow-none focus-visible:ring-0 md:text-base"
         />
         <Button
@@ -455,7 +454,7 @@ function AgentePage() {
           size="icon"
           className="press size-10 shrink-0 rounded-full"
           aria-label="Enviar mensaje"
-          disabled={interactionDisabled || !text.trim()}
+          disabled={controls.textDisabled || !text.trim()}
         >
           <Send className="size-5" strokeWidth={2.4} />
         </Button>

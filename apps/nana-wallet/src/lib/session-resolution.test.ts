@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classifySessionSubmission } from "@/lib/session-resolution";
+import { classifySessionSubmission, getSessionControlState } from "@/lib/session-resolution";
 
 describe("session text resolution", () => {
   it("turns an explicit confirmation phrase into the canonical resolution", () => {
@@ -8,8 +8,13 @@ describe("session text resolution", () => {
       kind: "resolution",
       message: "confirmar la transferencia",
     });
+    expect(classifySessionSubmission("Confirmo la transferencia.", true)).toEqual({
+      kind: "resolution",
+      message: "confirmar la transferencia",
+    });
     expect(classifySessionSubmission("sí", true)).toEqual({ kind: "blocked" });
     expect(classifySessionSubmission("yes", true)).toEqual({ kind: "blocked" });
+    expect(classifySessionSubmission("confirmo", true)).toEqual({ kind: "blocked" });
   });
 
   it("turns an explicit cancellation phrase into the canonical resolution", () => {
@@ -29,5 +34,25 @@ describe("session text resolution", () => {
       kind: "new",
       message: "¿Cuánto saldo tengo?",
     });
+  });
+
+  it("keeps text and microphone controls available for an explicit pending resolution", () => {
+    expect(
+      getSessionControlState({
+        isAgentWorking: false,
+        isConfirmationPending: true,
+        areSessionActionsLocked: false,
+        isRecording: false,
+      }),
+    ).toEqual({ microphoneDisabled: false, textDisabled: false });
+
+    expect(
+      getSessionControlState({
+        isAgentWorking: false,
+        isConfirmationPending: true,
+        areSessionActionsLocked: true,
+        isRecording: false,
+      }),
+    ).toEqual({ microphoneDisabled: true, textDisabled: true });
   });
 });

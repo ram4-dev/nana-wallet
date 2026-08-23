@@ -221,6 +221,32 @@ describe('text transfer resolution over HTTP', () => {
     }
   });
 
+  it('rejects a live-shaped preview when the real estimated fee is empty', async () => {
+    fixture.previewOverride = {
+      network: 'sepolia',
+      token: 'USDT',
+      recipient: '0x1234000000000000000000000000000000abcd',
+      amount: '10',
+      estimatedFee: '',
+    };
+    const app = buildServer();
+    try {
+      const { sessionId } = (await app.inject({ method: 'POST', url: '/v1/sessions' })).json();
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/sessions/${sessionId}/messages`,
+        payload: { message: 'Send 10 USDT to 0x1234000000000000000000000000000000abcd' },
+      });
+
+      expect(response.statusCode).toBe(422);
+      expect(response.json()).toMatchObject({ status: 'error', code: 'invalid_tool_result' });
+      const session = await app.inject({ method: 'GET', url: `/v1/sessions/${sessionId}` });
+      expect(session.json().pendingTransfer).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('cancels a persisted preview without any WDK call and clears it', async () => {
     const app = buildServer();
     try {

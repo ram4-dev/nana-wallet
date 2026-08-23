@@ -14,7 +14,6 @@ import { hasExplicitTransferAddress } from './recipient-intent.js';
 import type {
   SessionMessageResponse,
   TransferPreview,
-  TransactionResult,
 } from '../contracts/http.js';
 import { transactionResultSchema, transferPreviewSchema } from '../contracts/http.js';
 
@@ -37,6 +36,7 @@ const CONFIRM_PHRASES = new Set([
   'confirmar',
   'confirmar transferencia',
   'confirmar la transferencia',
+  'confirmo la transferencia',
 ]);
 
 function normalizeResolutionText(text: string): string {
@@ -50,14 +50,19 @@ function normalizeResolutionText(text: string): string {
 }
 
 const sendTokenInputSchema = z.object({
-  network: z.string(),
-  token: z.string(),
-  to: z.string(),
-  amount: z.string(),
-  wallet: z.string(),
+  network: z.string().trim().min(1),
+  token: z.string().trim().min(1),
+  to: z.string().trim().min(1),
+  amount: z.string().trim().min(1),
+  wallet: z.string().trim().min(1),
   dryRun: z.boolean(),
 });
 type SendTokenInput = z.infer<typeof sendTokenInputSchema>;
+
+const guardedSendTokenErrorSchema = z.object({
+  error: z.enum(['confirmation_required', 'recipient_revalidation_required']),
+  message: z.string().trim().min(1),
+});
 
 type HandleMessageOptions = {
   model?: LanguageModel;
@@ -90,13 +95,14 @@ export function canonicalizeTransferPreview(
 ): TransferPreview | null {
   const parsed = transferPreviewSchema.safeParse(output);
   if (!parsed.success) return null;
-  return {
+  const canonical = transferPreviewSchema.safeParse({
     network: input.network,
     token: input.token,
     recipient: input.to,
     amount: input.amount,
     estimatedFee: parsed.data.estimatedFee,
-  };
+  });
+  return canonical.success ? canonical.data : null;
 }
 
 /**
@@ -292,12 +298,12 @@ export async function handleMessage(
     return { status: 'error', message, code: 'pending_confirmation' };
   }
 
-  if (rawMemoryTools) {
-    if (hasExplicitTransferAddress(userText)) {
-      // An explicit address is an existing supported transfer mode and must not
-      // inherit a prior named-recipient selection.
-      store.clearSelectedRecipient(sessionId);
-    }
+  const hasExplicitAddress = hasExplicitTransferAddress(userText);
+  if (hasExplicitAddress) {
+    // An explicit address is complete recipient identity and must neither query
+    // memory nor inherit a selection from an earlier named-recipient turn.
+    store.clearSelectedRecipient(sessionId);
+  } else if (rawMemoryTools) {
     const resolution = await resolveTransferRecipient(userText, session, rawMemoryTools as RecipientMemoryToolPort);
     if (resolution.status === 'clarification_required') {
       store.setRecipientClarification(sessionId, resolution.candidates.map((candidate) => ({
@@ -346,41 +352,42 @@ export async function handleMessage(
   const lastCall = sendTokenCalls[sendTokenCalls.length - 1];
 
   if (lastCall) {
-    const output = lastCall.output as
-      | { error: 'confirmation_required'; message: string }
-      | TransferPreview
-      | TransactionResult;
-
-    if ('error' in output && output.error === 'confirmation_required') {
-      return { status: 'error', message: output.message, code: 'confirmation_required' };
+    const output = lastCall.output as unknown;
+    const guardedError = guardedSendTokenErrorSchema.safeParse(output);
+    if (guardedError.success) {
+      return {
+        status: 'error',
+        message: guardedError.data.message,
+        code: guardedError.data.error,
+      };
     }
 
-    if ('estimatedFee' in output) {
-      const args = sendTokenInputSchema.parse(lastCall.input);
-      const preview = canonicalizeTransferPreview(args, output);
-      if (!preview) {
-        const message = 'The wallet returned an invalid transfer preview.';
-        store.appendMessage(sessionId, { role: 'assistant', content: message });
-        return { status: 'error', message, code: 'invalid_tool_result' };
-      }
+    const transaction = transactionResultSchema.safeParse(output);
+    if (transaction.success && transaction.data.transactionHash.trim()) {
+      store.clearPendingTransfer(sessionId);
+      store.setLastTransactionHash(sessionId, transaction.data.transactionHash);
+      return { status: 'sent', message: result.text, transaction: transaction.data };
+    }
+
+    const args = sendTokenInputSchema.safeParse(lastCall.input);
+    const preview = args.success ? canonicalizeTransferPreview(args.data, output) : null;
+    if (preview && args.success) {
       const selected = session.recipientMemory?.previewedRecipient;
       store.setPendingTransfer(sessionId, {
-        network: args.network,
-        token: args.token,
-        to: args.to,
-        amount: args.amount,
-        wallet: args.wallet,
+        network: args.data.network,
+        token: args.data.token,
+        to: args.data.to,
+        amount: args.data.amount,
+        wallet: args.data.wallet,
         preview,
         ...(selected ? { recipientId: selected.recipientId, recipientVersion: selected.version } : {}),
       });
       return { status: 'confirmation_required', message: result.text, preview };
     }
 
-    if ('transactionHash' in output) {
-      store.clearPendingTransfer(sessionId);
-      store.setLastTransactionHash(sessionId, output.transactionHash);
-      return { status: 'sent', message: result.text, transaction: output };
-    }
+    const message = 'The wallet returned an invalid transfer preview.';
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'error', message, code: 'invalid_tool_result' };
   }
 
   return { status: 'answer', message: result.text };
@@ -412,6 +419,22 @@ async function executeConfirmedTransfer(
     output = await tools.send_token.execute(input, toolCallOptions);
   } catch {
     return markBroadcastUncertain(sessionId);
+  }
+
+  const guardedError = guardedSendTokenErrorSchema.safeParse(output);
+  if (guardedError.success) {
+    if (guardedError.data.error === 'confirmation_required') {
+      store.releasePendingTransferClaim(sessionId);
+    } else {
+      store.clearSelectedRecipient(sessionId);
+      store.clearPendingTransfer(sessionId);
+    }
+    store.appendMessage(sessionId, { role: 'assistant', content: guardedError.data.message });
+    return {
+      status: 'error',
+      message: guardedError.data.message,
+      code: guardedError.data.error,
+    };
   }
 
   const transaction = transactionResultSchema.safeParse(output);
@@ -465,6 +488,15 @@ async function handleDeterministicTurn(
       dryRun: true,
     };
     const output = await tools.send_token.execute(input, toolCallOptions);
+    const guardedError = guardedSendTokenErrorSchema.safeParse(output);
+    if (guardedError.success) {
+      store.appendMessage(sessionId, { role: 'assistant', content: guardedError.data.message });
+      return {
+        status: 'error',
+        message: guardedError.data.message,
+        code: guardedError.data.error,
+      };
+    }
     const preview = canonicalizeTransferPreview(input, output);
     if (!preview) {
       const message = 'The wallet returned an invalid transfer preview.';

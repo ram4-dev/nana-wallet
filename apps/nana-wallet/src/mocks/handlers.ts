@@ -615,14 +615,9 @@ export const handlers = [
         preview: {
           network: "base-sepolia",
           token: "USDC",
-          tokenAddress: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
           recipient: "0x1234567890abcdef1234567890abcdef12345678",
           amount: "20",
-          amountBaseUnits: "20000000",
-          amountFormatted: "20 USDC",
-          estimatedFee: "0.0001",
-          estimatedFeeBaseUnits: "100000000000000",
-          estimatedFeeFormatted: "0.0001 ETH",
+          estimatedFee: "0.0001 ETH",
         },
       });
     }

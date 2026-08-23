@@ -169,14 +169,18 @@ export type AgentAudioTranscription = {
 export type TransferPreview = {
   network: string;
   token: string;
-  tokenAddress: string;
   recipient: string;
   amount: string;
-  amountBaseUnits: string;
-  amountFormatted: string;
   estimatedFee: string;
-  estimatedFeeBaseUnits: string;
-  estimatedFeeFormatted: string;
+};
+
+export type RecipientCandidate = {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  evidence?: string;
+  score?: number;
 };
 
 export type TransactionResult = {
@@ -187,6 +191,7 @@ export type TransactionResult = {
 
 export type SessionMessageResponse =
   | { status: "answer"; message: string }
+  | { status: "clarification_required"; message: string; candidates: RecipientCandidate[] }
   | { status: "confirmation_required"; message: string; preview: TransferPreview }
   | { status: "sent"; message: string; transaction: TransactionResult }
   | { status: "cancelled"; message: string }

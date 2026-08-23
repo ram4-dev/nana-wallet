@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { handleMessage } from '../../src/agent/wallet-agent.js';
-import { createSession, resetSessionStore, setPendingTransfer, stageMemoryWrite } from '../../src/sessions/in-memory-store.js';
+import { createSession, resetSessionStore, setPendingTransfer, setSelectedRecipient, stageMemoryWrite } from '../../src/sessions/in-memory-store.js';
 import type { PendingTransfer } from '../../src/contracts/http.js';
 
 const pendingFixture: PendingTransfer = {
@@ -129,6 +129,33 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     });
   });
 
+  it('bypasses recipient memory for an explicit address and reaches the preview', async () => {
+    const session = createSession();
+    const searchRecipients = vi.fn();
+    const searchUserMemory = vi.fn();
+    const memory = {
+      userId: '11111111-1111-4111-8111-111111111111',
+      service: { searchRecipients, searchUserMemory },
+    } as never;
+
+    const result = await handleMessage(
+      session.id,
+      'Send 10 USDT to 0x1234567890123456789012345678901234567890',
+      { recipientMemory: memory },
+    );
+
+    expect(result).toMatchObject({
+      status: 'confirmation_required',
+      preview: {
+        amount: '10',
+        recipient: '0x1234567890123456789012345678901234567890',
+        estimatedFee: '0.0003 ETH',
+      },
+    });
+    expect(searchRecipients).not.toHaveBeenCalled();
+    expect(searchUserMemory).not.toHaveBeenCalled();
+  });
+
   it('confirms the pending fixture transfer without an LLM or live broadcast', async () => {
     const session = createSession();
     await handleMessage(
@@ -145,6 +172,34 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     expect(result.transaction.explorerUrl).toContain('sepolia.etherscan.io');
   });
 
+  it('returns recipient revalidation failure without leaving the session uncertain', async () => {
+    const session = createSession();
+    const recipientId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const address = '0x1234567890123456789012345678901234567890';
+    setSelectedRecipient(session.id, { recipientId, version: 3 });
+    setPendingTransfer(session.id, {
+      ...pendingFixture,
+      to: address,
+      preview: { ...pendingFixture.preview, recipient: address },
+      recipientId,
+      recipientVersion: 3,
+    });
+    const memory = {
+      userId: '11111111-1111-4111-8111-111111111111',
+      service: { getRecipientForVersion: vi.fn().mockResolvedValue(undefined) },
+    } as never;
+
+    await expect(
+      handleMessage(session.id, 'confirmar la transferencia', { recipientMemory: memory }),
+    ).resolves.toMatchObject({
+      status: 'error',
+      code: 'recipient_revalidation_required',
+    });
+    expect(session.pendingTransfer).toBeUndefined();
+    expect(session.recipientMemory?.selectedRecipient).toBeUndefined();
+    expect(session.transferResolutionState).toBeUndefined();
+  });
+
   it('accepts an explicit transfer confirmation phrase', async () => {
     const session = createSession();
     await handleMessage(
@@ -155,6 +210,22 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     const result = await handleMessage(session.id, 'Confirmar la transferencia.');
 
     expect(result.status).toBe('sent');
+  });
+
+  it('accepts confirmo only as part of the explicit transfer phrase', async () => {
+    const session = createSession();
+    await handleMessage(
+      session.id,
+      'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
+    );
+
+    await expect(handleMessage(session.id, 'confirmo')).resolves.toMatchObject({
+      status: 'error',
+      code: 'pending_confirmation',
+    });
+    await expect(handleMessage(session.id, 'confirmo la transferencia')).resolves.toMatchObject({
+      status: 'sent',
+    });
   });
 
   it('does not send an ambiguous instruction to the agent while confirmation is pending', async () => {

@@ -102,7 +102,10 @@ describe('guarded send_token tool', () => {
     setSelectedRecipient(session.id, { recipientId, version: 3 });
     const getRecipientForVersion = vi.fn().mockResolvedValue({ id: recipientId, version: 3, address });
     const memory = { userId: '11111111-1111-4111-8111-111111111111', service: { getRecipientForVersion } } as never;
-    const tools = buildGuardedTools(createWdkToolsFixture(), session, memory);
+    const base = createWdkToolsFixture();
+    const sendToken = vi.fn(base.send_token.execute!);
+    base.send_token.execute = sendToken;
+    const tools = buildGuardedTools(base, session, memory);
 
     await expect(tools.send_token.execute!(
       { network: 'sepolia', token: 'USDT', to: address, amount: '10', wallet: 'agent-demo', dryRun: true },
@@ -112,10 +115,12 @@ describe('guarded send_token tool', () => {
 
     setPendingTransfer(session.id, { ...pendingFixture, to: address, preview: { ...pendingFixture.preview, recipient: address }, recipientId, recipientVersion: 3 });
     getRecipientForVersion.mockResolvedValue(undefined);
+    sendToken.mockClear();
     await expect(tools.send_token.execute!(
       { network: 'sepolia', token: 'USDT', to: address, amount: '10', wallet: 'agent-demo', dryRun: false },
       toolOptions,
     )).resolves.toMatchObject({ error: 'recipient_revalidation_required' });
+    expect(sendToken).not.toHaveBeenCalled();
     expect(session.pendingTransfer).toBeUndefined();
   });
 

@@ -11,7 +11,20 @@ const CONFIRMATION_PHRASES = new Set([
   "confirmar",
   "confirmar transferencia",
   "confirmar la transferencia",
+  "confirmo la transferencia",
 ]);
+
+export function getSessionControlState(input: {
+  isAgentWorking: boolean;
+  isConfirmationPending: boolean;
+  areSessionActionsLocked: boolean;
+  isRecording: boolean;
+}) {
+  return {
+    microphoneDisabled: input.isAgentWorking || input.areSessionActionsLocked,
+    textDisabled: input.isAgentWorking || input.areSessionActionsLocked || input.isRecording,
+  };
+}
 
 const CANCELLATION_PHRASES = new Set([
   "cancel",
