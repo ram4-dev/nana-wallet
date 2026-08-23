@@ -37,7 +37,7 @@ export function BottomNav() {
           aria-current={pathname === "/mi-plata" ? "page" : undefined}
         >
           <Wallet className="size-6" strokeWidth={2.4} />
-          <span className="text-sm font-extrabold">Mi plata</span>
+          <span className="text-sm font-extrabold">Billetera</span>
         </Link>
       </div>
     </nav>
