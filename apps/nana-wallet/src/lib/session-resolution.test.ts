@@ -12,7 +12,13 @@ describe("session text resolution", () => {
       kind: "resolution",
       message: "confirmar la transferencia",
     });
-    for (const phrase of ["confirmo", "sí, confirmo", "I confirm", "yes, confirm", "yes, I confirm"]) {
+    for (const phrase of [
+      "confirmo",
+      "sí, confirmo",
+      "I confirm",
+      "yes, confirm",
+      "yes, I confirm",
+    ]) {
       expect(classifySessionSubmission(phrase, true)).toEqual({
         kind: "resolution",
         message: "confirmar la transferencia",
