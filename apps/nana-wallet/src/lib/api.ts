@@ -1,7 +1,7 @@
 import type {
   AgendaEvent,
-  AgentTurn,
-  AgentTurnRequest,
+  AgentAudioTranscription,
+  AgentAudioTranscriptionInput,
   ApiEnvelope,
   Bill,
   BillPaymentIntentInput,
@@ -10,6 +10,7 @@ import type {
   Contact,
   CreateAgendaEventInput,
   CreateContactInput,
+  CreateSessionResponse,
   EmptyResponse,
   ErrCode,
   Me,
@@ -17,6 +18,7 @@ import type {
   PaymentIntent,
   PaymentResult,
   RevealedCbu,
+  SessionMessageResponse,
   TransferIntentInput,
   UpdateContactInput,
   WalletSummary,
@@ -136,6 +138,53 @@ async function request<T>(
   });
 }
 
+/** Session endpoints return raw JSON instead of the wallet API envelope. */
+async function rawSessionRequest<T>(
+  path: string,
+  options: RequestInit,
+  acceptErrorResponse = false,
+): Promise<T> {
+  const headers = new Headers(options.headers);
+  headers.set("Authorization", `Bearer ${getApiToken()}`);
+  headers.set("Content-Type", "application/json");
+
+  let response: Response;
+  try {
+    response = await fetch(makeUrl(path), { ...options, headers });
+  } catch {
+    throw new ApiError("SERVICIO_CAIDO", FALLBACK_ERROR_MESSAGE, { ambiguous: true });
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new ApiError("ERROR_INTERNO", FALLBACK_ERROR_MESSAGE, {
+      status: response.status,
+      ambiguous: response.status >= 500,
+    });
+  }
+
+  if (!response.ok) {
+    const errorBody = body as { status?: unknown; message?: unknown };
+    if (
+      acceptErrorResponse &&
+      response.status < 500 &&
+      errorBody.status === "error" &&
+      typeof errorBody.message === "string"
+    ) {
+      return body as T;
+    }
+    throw new ApiError(
+      response.status >= 500 ? "ERROR_INTERNO" : "DATOS_INVALIDOS",
+      typeof errorBody.message === "string" ? errorBody.message : FALLBACK_ERROR_MESSAGE,
+      { status: response.status, ambiguous: response.status >= 500 },
+    );
+  }
+
+  return body as T;
+}
+
 function jsonRequest(method: "POST" | "PATCH" | "DELETE", body?: unknown): RequestInit {
   return {
     method,
@@ -211,14 +260,62 @@ export const api = {
       idempotencyKey,
     ),
 
-  agentTurn: (input: AgentTurnRequest) =>
-    request<AgentTurn>("/v1/agent/turn", jsonRequest("POST", input)),
+  transcribeAgentAudio: (input: AgentAudioTranscriptionInput) =>
+    request<AgentAudioTranscription>("/v1/agent/transcribe", jsonRequest("POST", input)),
 
-  rejectAgentTurn: (turnId: string) =>
-    request<EmptyResponse>(`/v1/agent/turn/${turnId}/reject`, jsonRequest("POST", {})),
+  createSession: () =>
+    rawSessionRequest<CreateSessionResponse>("/v1/sessions", jsonRequest("POST", {})),
+
+  sendSessionMessage: (sessionId: string, message: string) =>
+    rawSessionRequest<SessionMessageResponse>(
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
+      jsonRequest("POST", { message }),
+      true,
+    ),
 
   getMe: () => request<Me>("/v1/me"),
 };
+
+/**
+ * Builds a sender whose durable session identity stays in React-owned memory.
+ * Only the in-flight creation promise lives here, preventing two initial sends
+ * from creating separate sessions before React has rendered the new id.
+ */
+export function createSessionMessageSender(
+  getSessionId: () => string | null,
+  setSessionId: (sessionId: string | null) => void,
+) {
+  let pendingSession: Promise<string> | null = null;
+
+  async function ensureSession() {
+    const currentSessionId = getSessionId();
+    if (currentSessionId) return currentSessionId;
+
+    pendingSession ??= api
+      .createSession()
+      .then(({ sessionId }) => {
+        setSessionId(sessionId);
+        return sessionId;
+      })
+      .finally(() => {
+        pendingSession = null;
+      });
+    return pendingSession;
+  }
+
+  return async (message: string): Promise<SessionMessageResponse> => {
+    let sessionId = await ensureSession();
+    let response = await api.sendSessionMessage(sessionId, message);
+
+    if (response.status === "error" && response.code === "session_not_found") {
+      if (getSessionId() === sessionId) setSessionId(null);
+      sessionId = await ensureSession();
+      response = await api.sendSessionMessage(sessionId, message);
+    }
+
+    return response;
+  };
+}
 
 export function confirmMoneyIntent(
   intent: ConfirmableIntent,

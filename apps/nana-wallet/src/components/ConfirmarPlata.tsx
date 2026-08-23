@@ -24,8 +24,6 @@ type ConfirmarPlataProps = {
   onExpired: () => void;
   /** Se llama cuando el usuario sale sin saber si la plata se movió. Debe refrescar saldo y movimientos. */
   onUnknownOutcome: () => void;
-  /** Texto reconocido por voz. Se muestra antes de que el usuario autorice la operación. */
-  transcript?: string | null;
 };
 
 function secondsUntil(expiresAt: string) {
@@ -44,7 +42,6 @@ export function ConfirmarPlata({
   onCloseReceipt,
   onExpired,
   onUnknownOutcome,
-  transcript,
 }: ConfirmarPlataProps) {
   const [secondsLeft, setSecondsLeft] = useState(() => secondsUntil(intent.expiresAt));
   const [idempotencyKey] = useState(createIdempotencyKey);
@@ -213,12 +210,6 @@ export function ConfirmarPlata({
 
               <AlertDialogDescription asChild>
                 <div className="surface-card mt-7 space-y-6 p-6 text-foreground">
-                  {transcript ? (
-                    <div className="rounded-2xl bg-secondary p-4">
-                      <p className="text-base font-bold text-muted-foreground">Nana entendió:</p>
-                      <p className="mt-1 text-xl font-extrabold">“{transcript}”</p>
-                    </div>
-                  ) : null}
                   <div>
                     <p className="text-lg font-bold text-muted-foreground">A quién</p>
                     <p className="mt-1 text-2xl font-extrabold">
