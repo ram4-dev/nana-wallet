@@ -1,0 +1,31 @@
+{
+  "name": "aleph-hackathon-wdk-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:wdk": "vitest run tests/integration/wdk-mcp.test.ts",
+    "test:wdk-manual": "vitest run tests/integration/wdk-transfer.manual.test.ts",
+    "test:e2e:wdk-mcp": "WDK_E2E=1 vitest run tests/e2e/wdk-mcp-connection.e2e.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@tetherto/wdk": "1.0.0-beta.14",
+    "@tetherto/wdk-cli": "1.0.0-beta.2",
+    "@tetherto/wdk-wallet-evm": "1.0.0-beta.11"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "typescript": "5.8.3",
+    "vitest": "3.1.2"
+  },
+  "allowScripts": {
+    "@tetherto/wdk-cli@1.0.0-beta.2": true
+  }
+}
