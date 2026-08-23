@@ -45,16 +45,16 @@ type AgenteAvatarProps = {
 export function AgenteAvatar({ estado, size = 256, definition = cloudee }: AgenteAvatarProps) {
   const animationKey = animationForState[estado];
   const frame = useAvatarPlayer(definition, animationKey);
-  const { expression, blink, bodyOffset, eyeOffset } = frame;
+  const { expression, blink, bodyOffset, eyeOffset, inclinacionAcento } = frame;
 
   const orientation = useMemo(
     () =>
       quaternionFromEuler(
         radians(expression.headX),
         radians(expression.headY),
-        radians(expression.headZ),
+        radians(expression.headZ + inclinacionAcento),
       ),
-    [expression.headX, expression.headY, expression.headZ],
+    [expression.headX, expression.headY, expression.headZ, inclinacionAcento],
   );
 
   const primary = definition.body.primary;

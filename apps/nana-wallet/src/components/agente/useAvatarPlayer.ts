@@ -44,6 +44,29 @@ const EYE_SEED = 17.29;
 const seedOf = (expression: FlatExpression) =>
   expression.headX * 0.71 + expression.headY * 1.13 + expression.headZ * 1.37;
 
+const INTERVALO_MINIMO_ACENTO_MS = 10_000;
+const INTERVALO_MAXIMO_ACENTO_MS = 20_000;
+const DURACION_ACENTO_MS = 1_100;
+const MARGEN_TRANSICION_ACENTO_MS = 80;
+const AMPLITUD_ACENTO_GRADOS = 3;
+
+const intervaloAcento = (secuencia: number, semilla: number) => {
+  const muestra = (hash(semilla + secuencia * 47.13 + 89.71) + 1) / 2;
+  return (
+    INTERVALO_MINIMO_ACENTO_MS + muestra * (INTERVALO_MAXIMO_ACENTO_MS - INTERVALO_MINIMO_ACENTO_MS)
+  );
+};
+
+const direccionAcento = (secuencia: number, semilla: number) =>
+  hash(semilla + secuencia * 31.37 + 53.19) >= 0 ? 1 : -1;
+
+/** Inclinación corta, con entrada y salida suaves para volver sin cortes. */
+const inclinacionAcento = (transcurridoMs: number, direccion: number) => {
+  const progreso = Math.min(1, Math.max(0, transcurridoMs / DURACION_ACENTO_MS));
+  const pulso = Math.sin(Math.PI * smoothstep(progreso));
+  return direccion * AMPLITUD_ACENTO_GRADOS * pulso;
+};
+
 const bodyOffsetOf = (expression: FlatExpression, elapsedMs: number) => {
   const seed = seedOf(expression);
   if (expression.bodyMotion === "slowDrift") {
@@ -118,6 +141,7 @@ export type AvatarFrame = {
   blink: number;
   bodyOffset: { x: number; y: number };
   eyeOffset: { x: number; y: number };
+  inclinacionAcento: number;
 };
 
 const prefersReducedMotion = () =>
@@ -146,6 +170,7 @@ export function useAvatarPlayer(definition: AvatarDefinition, animationKey: stri
       blink: 1,
       bodyOffset: { x: 0, y: 0 },
       eyeOffset: { x: 0, y: 0 },
+      inclinacionAcento: 0,
     };
   });
   const animationRef = useRef<AvatarAnimation | undefined>(undefined);
@@ -168,6 +193,7 @@ export function useAvatarPlayer(definition: AvatarDefinition, animationKey: stri
         blink: 1,
         bodyOffset: { x: 0, y: 0 },
         eyeOffset: { x: 0, y: 0 },
+        inclinacionAcento: 0,
       });
       return;
     }
@@ -182,6 +208,12 @@ export function useAvatarPlayer(definition: AvatarDefinition, animationKey: stri
     const blink = animation.blink;
     let nextBlinkAt = phaseStart + blink.initialDelayMs;
     let blinkStartedAt = 0;
+
+    const semillaAcento = seedOf(stepExpression(0));
+    let secuenciaAcento = 0;
+    let proximoAcentoEn = phaseStart + intervaloAcento(secuenciaAcento, semillaAcento);
+    let acentoIniciadoEn: number | null = null;
+    let sentidoAcento = 1;
 
     const randomBlinkGap = () =>
       blink.minIntervalMs + Math.random() * Math.max(0, blink.maxIntervalMs - blink.minIntervalMs);
@@ -239,11 +271,35 @@ export function useAvatarPlayer(definition: AvatarDefinition, animationKey: stri
         }
       }
 
+      let inclinacionActual = 0;
+      if (acentoIniciadoEn !== null) {
+        const transcurridoAcento = now - acentoIniciadoEn;
+        if (transcurridoAcento >= DURACION_ACENTO_MS) {
+          acentoIniciadoEn = null;
+        } else {
+          inclinacionActual = inclinacionAcento(transcurridoAcento, sentidoAcento);
+        }
+      } else if (now >= proximoAcentoEn && !inTransition) {
+        const pasoActivo = animation.steps[index]!;
+        const tiempoDisponible = finished
+          ? Number.POSITIVE_INFINITY
+          : pasoActivo.holdMs - (now - phaseStart);
+
+        // Si el paso está por cambiar, esperamos a que la transición termine.
+        if (tiempoDisponible >= DURACION_ACENTO_MS + MARGEN_TRANSICION_ACENTO_MS) {
+          acentoIniciadoEn = now;
+          sentidoAcento = direccionAcento(secuenciaAcento, semillaAcento);
+          secuenciaAcento += 1;
+          proximoAcentoEn = now + intervaloAcento(secuenciaAcento, semillaAcento);
+        }
+      }
+
       setFrame({
         expression,
         blink: blinkValue,
         bodyOffset: bodyOffsetOf(expression, now),
         eyeOffset: eyeOffsetOf(expression, now),
+        inclinacionAcento: inclinacionActual,
       });
       raf = requestAnimationFrame(tick);
     };
