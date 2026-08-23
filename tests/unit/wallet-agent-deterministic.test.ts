@@ -20,15 +20,27 @@ const pendingFixture: PendingTransfer = {
 
 describe('handleMessage deterministic paths (no LLM call)', () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
+  const previousToken = process.env.WDK_TOKEN;
+  const previousNetwork = process.env.WDK_NETWORK;
+  const previousWallet = process.env.WDK_WALLET_NAME;
 
   beforeEach(() => {
     resetSessionStore();
     process.env.AGENT_RUNTIME = 'deterministic';
+    process.env.WDK_TOKEN = 'USDT';
+    process.env.WDK_NETWORK = 'sepolia';
+    process.env.WDK_WALLET_NAME = 'agent-demo';
   });
 
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
+    if (previousToken === undefined) delete process.env.WDK_TOKEN;
+    else process.env.WDK_TOKEN = previousToken;
+    if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
+    else process.env.WDK_NETWORK = previousNetwork;
+    if (previousWallet === undefined) delete process.env.WDK_WALLET_NAME;
+    else process.env.WDK_WALLET_NAME = previousWallet;
   });
 
   it('errors when the session does not exist', async () => {
@@ -168,7 +180,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     expect(result.status).toBe('sent');
     if (result.status !== 'sent') return;
     expect(result.transaction.network).toBe('sepolia');
-    expect(result.transaction.transactionHash).toMatch(/^0xfixturetx/);
+    expect(result.transaction.transactionHash).toMatch(/^0x[0-9a-f]{64}$/u);
     expect(result.transaction.explorerUrl).toContain('sepolia.etherscan.io');
   });
 
@@ -212,19 +224,31 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     expect(result.status).toBe('sent');
   });
 
-  it('accepts confirmo only as part of the explicit transfer phrase', async () => {
+  it.each(['confirmo', 'sí, confirmo', 'I confirm', 'yes, confirm', 'yes, I confirm'])(
+    'accepts the explicit confirmation phrase %s',
+    async (phrase) => {
+      const session = createSession();
+      await handleMessage(
+        session.id,
+        'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
+      );
+
+      await expect(handleMessage(session.id, phrase)).resolves.toMatchObject({
+        status: 'sent',
+      });
+    },
+  );
+
+  it('does not treat a generic yes as a confirmation', async () => {
     const session = createSession();
     await handleMessage(
       session.id,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
 
-    await expect(handleMessage(session.id, 'confirmo')).resolves.toMatchObject({
+    await expect(handleMessage(session.id, 'yes')).resolves.toMatchObject({
       status: 'error',
       code: 'pending_confirmation',
-    });
-    await expect(handleMessage(session.id, 'confirmo la transferencia')).resolves.toMatchObject({
-      status: 'sent',
     });
   });
 

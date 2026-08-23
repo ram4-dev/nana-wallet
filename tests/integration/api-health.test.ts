@@ -11,6 +11,7 @@ describe('GET /health', () => {
     expect(body.status).toBe('ok');
     expect(body.mcp).toBe('connected');
     expect(body.wallet).toBe('unlocked');
+    expect(body.mode).toBe('fixture');
     expect(body.network).toBe('sepolia');
 
     await app.close();

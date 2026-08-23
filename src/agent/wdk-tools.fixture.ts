@@ -83,15 +83,16 @@ export function createWdkToolsFixture(): Record<string, Tool> {
       execute: async ({ network, token, to, amount, dryRun }) => {
         if (dryRun) {
           return {
+            preview: true,
             network,
             token,
-            recipient: to,
+            to,
             amount,
             estimatedFee: FIXTURE_FEE,
           };
         }
         fixtureTxCounter += 1;
-        const transactionHash = `0xfixturetx${String(fixtureTxCounter).padStart(54, '0')}`;
+        const transactionHash = `0x${String(fixtureTxCounter).padStart(64, '0')}`;
         return {
           network,
           transactionHash,

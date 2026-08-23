@@ -143,12 +143,39 @@ describe('WDK MCP boundary', () => {
       }
     }) });
     await client.open();
-    const evidence = await client.sendToken({ to: '0xrecipient', amount: '1', network: 'sepolia', token: 'usdt', dryRun: false });
+    const evidence = await client.sendToken({ to: '0xrecipient', amount: '1', network: 'sepolia', token: 'usdt-test', dryRun: false });
     expect(calls).toBe(1);
+    expect(evidence.asset).toBe('usdt-test');
     expect(evidence.broadcast).toMatchObject({ attempted: true, count: 1, verification: 'uncertain', hash: null });
     expect(evidence.failure).toMatchObject({ stage: 'call' });
     expect(evidence.failure?.error).not.toContain('do-not-leak');
     expect(evidence.raw).toBeNull();
+    await client.close();
+  });
+
+  it.each([
+    'usdt-test',
+    '0xc4DCC311c028e341fd8602D8eB89c5de94625927',
+  ])('preserves token %s when dispatching send_token to MCP', async (token) => {
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const client = new WdkMcpClient({ sessionFactory: () => session({
+      callTool: async (name, args) => {
+        calls.push({ name, args });
+        return { estimatedFee: '0.0001 ETH' };
+      },
+    }) });
+    await client.open();
+
+    const evidence = await client.sendToken({
+      to: '0xrecipient', amount: '1', network: 'sepolia', token, dryRun: true,
+    });
+
+    expect(calls).toEqual([{
+      name: 'send_token',
+      args: expect.objectContaining({ token }),
+    }]);
+    expect(evidence.asset).toBe(token);
+    expect(evidence.input.token).toBe(token);
     await client.close();
   });
 
@@ -168,7 +195,8 @@ describe('WDK MCP boundary', () => {
     let calls = 0;
     const client = new WdkMcpClient({ sessionFactory: () => session({ callTool: async () => { calls += 1; return { ok: true }; } }) });
     await client.open();
-    await expect(client.sendToken({ to: '0xrecipient', amount: '1', network: 'sepolia', token: 'eth' as never, dryRun: true })).rejects.toMatchObject({ stage: 'validation' });
+    await expect(client.sendToken({ to: '0xrecipient', amount: '1', network: 'sepolia', token: '   ', dryRun: true })).rejects.toMatchObject({ stage: 'validation' });
+    await expect(client.sendToken({ to: '0xrecipient', amount: '1', network: 'sepolia', token: 'ETH', dryRun: true })).rejects.toMatchObject({ stage: 'validation' });
     await expect(client.sendToken({ to: '0xrecipient', amount: '1', network: 'ethereum' as never, token: 'usdt', dryRun: false })).rejects.toMatchObject({ stage: 'validation' });
     expect(calls).toBe(0);
     await client.close();

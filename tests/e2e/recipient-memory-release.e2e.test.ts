@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { tool } from 'ai';
+import { MockLanguageModelV3 } from 'ai/test';
 import { z } from 'zod';
 import { resolveTransferRecipient, type RecipientMemoryToolPort } from '../../src/agent/recipient-resolution.js';
-import { buildGuardedTools } from '../../src/agent/wallet-agent.js';
+import { buildGuardedTools, handleMessage } from '../../src/agent/wallet-agent.js';
 import { createRecipientMemoryTools } from '../../src/memory/tools.js';
 import { RecipientMemoryService, type RecipientMemoryRepositoryPort } from '../../src/memory/service.js';
 import { appendMessage, confirmMemoryWrite, createSession, getSession, resetSessionStore, setPendingTransfer } from '../../src/sessions/in-memory-store.js';
@@ -13,6 +14,28 @@ const GRANDSON_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ELECTRICIAN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const GRANDSON_ADDRESS = '0x1234567890123456789012345678901234567890';
 const ELECTRICIAN_ADDRESS = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
+
+const modelUsage = {
+  inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+  outputTokens: { total: 1, text: 1, reasoning: 0 },
+};
+
+function modelStep(
+  content: Array<
+    | { type: 'tool-call'; toolCallId: string; toolName: string; input: string }
+    | { type: 'text'; text: string }
+  >,
+) {
+  return {
+    content,
+    finishReason: {
+      unified: content.some((part) => part.type === 'tool-call') ? 'tool-calls' as const : 'stop' as const,
+      raw: undefined,
+    },
+    usage: modelUsage,
+    warnings: [],
+  };
+}
 
 const toolOptions = {
   toolCallId: 'recipient-memory-release',
@@ -65,7 +88,7 @@ function memoryService(overrides: Partial<RecipientMemoryService> = {}): Recipie
 
 function recordingWdk() {
   const sendToken = vi.fn(async (input: { network: string; token: string; to: string; amount: string; dryRun: boolean }) => input.dryRun
-    ? { network: input.network, token: input.token, recipient: input.to, amount: input.amount, estimatedFee: '0.0003 ETH' }
+    ? { preview: true, network: input.network, token: input.token, to: input.to, amount: input.amount, estimatedFee: '0.0003 ETH' }
     : { network: input.network, transactionHash: '0xfixture', explorerUrl: 'https://sepolia.etherscan.io/tx/0xfixture' });
   return {
     sendToken,
@@ -80,6 +103,87 @@ function recordingWdk() {
 }
 
 describe('recipient-memory release flow', () => {
+  it('resolves my grandson through handleMessage and previews only the selected address', async () => {
+    resetSessionStore();
+    const previousToken = process.env.WDK_TOKEN;
+    const previousNetwork = process.env.WDK_NETWORK;
+    const previousWallet = process.env.WDK_WALLET_NAME;
+    const previousToolsSource = process.env.WDK_TOOLS_SOURCE;
+    process.env.WDK_TOKEN = 'usdt-test';
+    process.env.WDK_NETWORK = 'sepolia';
+    process.env.WDK_WALLET_NAME = 'agent-demo';
+    process.env.WDK_TOOLS_SOURCE = 'fixture';
+
+    try {
+      const session = createSession();
+      const service = memoryService();
+      const model = new MockLanguageModelV3({
+        doGenerate: [
+          modelStep([{
+            type: 'tool-call',
+            toolCallId: 'selected-address',
+            toolName: 'get_selected_recipient_address',
+            input: '{}',
+          }]),
+          modelStep([{
+            type: 'tool-call',
+            toolCallId: 'preview-transfer',
+            toolName: 'send_token',
+            input: JSON.stringify({
+              network: 'sepolia',
+              token: 'usdt-test',
+              to: GRANDSON_ADDRESS,
+              amount: '0.01',
+              wallet: 'agent-demo',
+              dryRun: true,
+            }),
+          }]),
+          modelStep([{ type: 'text', text: 'Previsualización lista para Lucas. ¿Confirmás?' }]),
+        ],
+      });
+
+      const result = await handleMessage(session.id, 'Enviá 0.01 USDT a mi nieto', {
+        model,
+        recipientMemory: { userId: USER_A, service },
+      });
+
+      expect(result).toMatchObject({
+        status: 'confirmation_required',
+        message: 'Previsualización lista para Lucas. ¿Confirmás?',
+        preview: {
+          network: 'sepolia',
+          token: 'usdt-test',
+          recipient: GRANDSON_ADDRESS,
+          amount: '0.01',
+        },
+      });
+      expect(result.message).not.toContain(GRANDSON_ADDRESS);
+      expect(getSession(session.id)?.recipientMemory?.selectedRecipient).toEqual({
+        recipientId: GRANDSON_ID,
+        version: 1,
+      });
+      expect(getSession(session.id)?.pendingTransfer).toMatchObject({
+        to: GRANDSON_ADDRESS,
+        recipientId: GRANDSON_ID,
+        recipientVersion: 1,
+      });
+      expect(getSession(session.id)?.lastTransactionHash).toBeUndefined();
+      expect(JSON.stringify(model.doGenerateCalls[0])).not.toContain(GRANDSON_ADDRESS);
+      expect(JSON.stringify(model.doGenerateCalls[0])).toContain('get_selected_recipient_address');
+      expect(JSON.stringify(model.doGenerateCalls[0])).not.toContain('"get_recipient_address"');
+    } finally {
+      if (previousToken === undefined) delete process.env.WDK_TOKEN;
+      else process.env.WDK_TOKEN = previousToken;
+      if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
+      else process.env.WDK_NETWORK = previousNetwork;
+      if (previousWallet === undefined) delete process.env.WDK_WALLET_NAME;
+      else process.env.WDK_WALLET_NAME = previousWallet;
+      if (previousToolsSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
+      else process.env.WDK_TOOLS_SOURCE = previousToolsSource;
+      resetSessionStore();
+    }
+  });
+
   it('RED: preserves conflicting relationship clarification from service through tools and resolver despite the real 0.138724 score gap', async () => {
     resetSessionStore();
     const searchRecipients = vi.fn();
@@ -203,12 +307,17 @@ describe('recipient-memory release flow', () => {
       status: 'resolved', recipientId: GRANDSON_ID, version: 1, address: GRANDSON_ADDRESS,
     });
     const wdk = recordingWdk();
-    const guarded = buildGuardedTools(wdk.tools, session, { userId: USER_A, service });
+    const guarded = buildGuardedTools(
+      wdk.tools,
+      session,
+      { userId: USER_A, service },
+      { network: 'sepolia', token: 'USDT', wallet: 'agent-demo' },
+    );
     const preview = await guarded.send_token.execute!(
       { network: 'sepolia', token: 'USDT', to: GRANDSON_ADDRESS, amount: '1', wallet: 'agent-demo', dryRun: true },
       toolOptions,
     );
-    expect(preview).toMatchObject({ recipient: GRANDSON_ADDRESS });
+    expect(preview).toMatchObject({ to: GRANDSON_ADDRESS, preview: true });
     expect(wdk.sendToken).toHaveBeenLastCalledWith(expect.objectContaining({ to: GRANDSON_ADDRESS, dryRun: true }), expect.anything());
 
     setPendingTransfer(session.id, {

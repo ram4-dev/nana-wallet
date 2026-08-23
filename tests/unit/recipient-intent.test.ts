@@ -10,6 +10,9 @@ describe('recipient transfer intent', () => {
   it('RED: retains relationship references for memory retrieval', () => {
     expect(detectRecipientReference('Mandale plata a mi nieto')).toEqual({ kind: 'relationship', query: 'mi nieto' });
     expect(detectRecipientReference('Send money to my grandson')).toEqual({ kind: 'relationship', query: 'my grandson' });
+    expect(detectRecipientReference('Enviá 0.01 USDT a mi nieto.')).toEqual({ kind: 'relationship', query: 'mi nieto' });
+    expect(detectRecipientReference('mandá 10 USDT a mi nieto')).toEqual({ kind: 'relationship', query: 'mi nieto' });
+    expect(detectRecipientReference('send 10 USDT to my grandson')).toEqual({ kind: 'relationship', query: 'my grandson' });
   });
 
   it('RED: recognizes contextual pronouns without inventing a name or address', () => {

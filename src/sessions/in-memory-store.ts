@@ -20,6 +20,8 @@ export type PendingMemoryWrite = {
 
 export type RecipientMemorySession = {
   selectedRecipient?: RecipientSelection;
+  /** Fail closed when a named recipient was selected but became stale. */
+  recipientSelectionRequired?: boolean;
   /** Internal proof that the selection was revalidated for the current preview. */
   previewedRecipient?: RecipientSelection;
   pendingWrite?: PendingMemoryWrite;
@@ -104,6 +106,7 @@ export function setSelectedRecipient(id: string, selection: RecipientSelection):
   if (!session) return;
   session.recipientMemory ??= { usedConfirmationIds: [], expiredConfirmationIds: [] };
   session.recipientMemory.selectedRecipient = selection;
+  session.recipientMemory.recipientSelectionRequired = true;
   session.recipientMemory.previewedRecipient = undefined;
   session.recipientMemory.clarification = undefined;
 }
@@ -112,8 +115,19 @@ export function clearSelectedRecipient(id: string): void {
   const session = sessions.get(id);
   if (!session?.recipientMemory) return;
   session.recipientMemory.selectedRecipient = undefined;
+  session.recipientMemory.recipientSelectionRequired = undefined;
   session.recipientMemory.previewedRecipient = undefined;
   session.recipientMemory.clarification = undefined;
+}
+
+export function invalidateSelectedRecipient(id: string): void {
+  const session = sessions.get(id);
+  if (!session) return;
+  session.recipientMemory ??= { usedConfirmationIds: [], expiredConfirmationIds: [] };
+  session.recipientMemory.selectedRecipient = undefined;
+  session.recipientMemory.previewedRecipient = undefined;
+  session.recipientMemory.clarification = undefined;
+  session.recipientMemory.recipientSelectionRequired = true;
 }
 
 export function setRecipientClarification(

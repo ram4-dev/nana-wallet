@@ -5,6 +5,7 @@ import { decodeMcpText, WdkMcpClient } from '../wdk/mcp-client.js';
 
 let client: WdkMcpClient | undefined;
 let fixtureTools: Record<string, Tool> | undefined;
+type LiveWdkClient = Pick<WdkMcpClient, 'sendToken'>;
 
 function isFixtureMode(): boolean {
   return process.env.WDK_TOOLS_SOURCE !== 'live';
@@ -49,14 +50,16 @@ const walletSchema = z.object({ network: z.string(), wallet: z.string().optional
 const tokenSchema = walletSchema.extend({ token: z.string().optional() });
 const sendSchema = z.object({
   network: z.literal('sepolia'),
-  token: z.string(),
+  token: z.string().trim().min(1),
   to: z.string().min(1),
   amount: z.string().min(1),
   wallet: z.string(),
   dryRun: z.boolean(),
 });
 
-function createLiveTools(): Record<string, Tool> {
+export function createLiveTools(
+  clientProvider: () => Promise<LiveWdkClient> = ensureLiveClient,
+): Record<string, Tool> {
   return {
     get_networks: tool({ description: 'List configured networks.', inputSchema: z.object({ testnet: z.boolean().optional() }), execute: (input) => callLive('get_networks', input) }),
     list_tokens: tool({ description: 'List registered tokens.', inputSchema: z.object({ network: z.string().optional() }), execute: (input) => callLive('list_tokens', input) }),
@@ -69,9 +72,9 @@ function createLiveTools(): Record<string, Tool> {
       inputSchema: sendSchema,
       execute: async (input) => {
         try {
-          const evidence = await (await ensureLiveClient()).sendToken({
+          const evidence = await (await clientProvider()).sendToken({
             network: input.network,
-            token: input.token.toLowerCase(),
+            token: input.token,
             to: input.to,
             amount: input.amount,
             wallet: input.wallet,

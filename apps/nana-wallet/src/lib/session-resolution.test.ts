@@ -12,13 +12,31 @@ describe("session text resolution", () => {
       kind: "resolution",
       message: "confirmar la transferencia",
     });
+    for (const phrase of ["confirmo", "sí, confirmo", "I confirm", "yes, confirm", "yes, I confirm"]) {
+      expect(classifySessionSubmission(phrase, true)).toEqual({
+        kind: "resolution",
+        message: "confirmar la transferencia",
+      });
+    }
     expect(classifySessionSubmission("sí", true)).toEqual({ kind: "blocked" });
     expect(classifySessionSubmission("yes", true)).toEqual({ kind: "blocked" });
-    expect(classifySessionSubmission("confirmo", true)).toEqual({ kind: "blocked" });
+  });
+
+  it("uses the same pending-resolution path for a voice transcript", () => {
+    const voiceTranscript = "I confirm";
+
+    expect(classifySessionSubmission(voiceTranscript, true)).toEqual({
+      kind: "resolution",
+      message: "confirmar la transferencia",
+    });
   });
 
   it("turns an explicit cancellation phrase into the canonical resolution", () => {
     expect(classifySessionSubmission("Cancelar la transferencia", true)).toEqual({
+      kind: "resolution",
+      message: "cancelar la transferencia",
+    });
+    expect(classifySessionSubmission("cancel the transfer", true)).toEqual({
       kind: "resolution",
       message: "cancelar la transferencia",
     });

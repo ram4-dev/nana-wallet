@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildGuardedTools } from '../../src/agent/wallet-agent.js';
 import { createWdkToolsFixture } from '../../src/agent/wdk-tools.fixture.js';
 import { createSession, resetSessionStore, setPendingTransfer, setSelectedRecipient } from '../../src/sessions/in-memory-store.js';
@@ -25,7 +25,80 @@ const pendingFixture: PendingTransfer = {
   },
 };
 
-describe('guarded send_token tool', () => {
+describe('guarded wallet tools', () => {
+  const previousToken = process.env.WDK_TOKEN;
+
+  beforeEach(() => {
+    process.env.WDK_TOKEN = 'USDT';
+  });
+
+  afterEach(() => {
+    if (previousToken === undefined) delete process.env.WDK_TOKEN;
+    else process.env.WDK_TOKEN = previousToken;
+  });
+
+  it.each(['usdt', 'USDT', 'USD₮', 'tether'])(
+    'normalizes generic %s to the configured token for balance and send_token',
+    async (genericToken) => {
+      resetSessionStore();
+      const session = createSession();
+      const base = createWdkToolsFixture();
+      const getBalance = vi.fn(base.get_balance.execute!);
+      const sendToken = vi.fn(base.send_token.execute!);
+      base.get_balance.execute = getBalance;
+      base.send_token.execute = sendToken;
+      const tools = buildGuardedTools(base, session, undefined, {
+        wallet: 'agent-demo', network: 'sepolia', token: 'usdt-test',
+      });
+
+      await tools.get_balance.execute!({ network: 'sepolia', token: genericToken }, toolOptions);
+      await tools.send_token.execute!(
+        { network: 'sepolia', token: genericToken, to: '0x1234...abcd', amount: '10', wallet: 'agent-demo', dryRun: true },
+        toolOptions,
+      );
+
+      expect(getBalance).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 'usdt-test' }),
+        toolOptions,
+      );
+      expect(sendToken).toHaveBeenCalledWith(
+        expect.objectContaining({ token: 'usdt-test' }),
+        toolOptions,
+      );
+    },
+  );
+
+  it.each(['usdt-test', 'my-usdt', '0xc4DCC311c028e341fd8602D8eB89c5de94625927'])(
+    'preserves explicit alias or contract %s',
+    async (explicitToken) => {
+      resetSessionStore();
+      const session = createSession();
+      const base = createWdkToolsFixture();
+      const getBalance = vi.fn(base.get_balance.execute!);
+      const sendToken = vi.fn(base.send_token.execute!);
+      base.get_balance.execute = getBalance;
+      base.send_token.execute = sendToken;
+      const tools = buildGuardedTools(base, session, undefined, {
+        wallet: 'agent-demo', network: 'sepolia', token: 'usdt-test',
+      });
+
+      await tools.get_balance.execute!({ network: 'sepolia', token: explicitToken }, toolOptions);
+      await tools.send_token.execute!(
+        { network: 'sepolia', token: explicitToken, to: '0x1234...abcd', amount: '10', wallet: 'agent-demo', dryRun: true },
+        toolOptions,
+      );
+
+      expect(getBalance).toHaveBeenCalledWith(
+        expect.objectContaining({ token: explicitToken }),
+        toolOptions,
+      );
+      expect(sendToken).toHaveBeenCalledWith(
+        expect.objectContaining({ token: explicitToken }),
+        toolOptions,
+      );
+    },
+  );
+
   it('always allows a dryRun:true preview call', async () => {
     resetSessionStore();
     const session = createSession();
@@ -37,6 +110,31 @@ describe('guarded send_token tool', () => {
     )) as { estimatedFee: string };
 
     expect(result.estimatedFee).toBeDefined();
+  });
+
+  it('matches a generic confirmed send against the configured-token preview', async () => {
+    resetSessionStore();
+    const session = createSession();
+    setPendingTransfer(session.id, {
+      ...pendingFixture,
+      token: 'usdt-test',
+      preview: { ...pendingFixture.preview, token: 'usdt-test' },
+    });
+    const base = createWdkToolsFixture();
+    const sendToken = vi.fn(base.send_token.execute!);
+    base.send_token.execute = sendToken;
+    const tools = buildGuardedTools(base, session, undefined, {
+      wallet: 'agent-demo', network: 'sepolia', token: 'usdt-test',
+    });
+
+    await expect(tools.send_token.execute!(
+      { network: 'sepolia', token: 'USDT', to: '0x1234...abcd', amount: '10', wallet: 'agent-demo', dryRun: false },
+      toolOptions,
+    )).resolves.toMatchObject({ transactionHash: expect.any(String) });
+    expect(sendToken).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'usdt-test', dryRun: false }),
+      toolOptions,
+    );
   });
 
   it('refuses a dryRun:false call with no pending transfer', async () => {
@@ -140,6 +238,10 @@ describe('guarded send_token tool', () => {
 
     await expect(tools.send_token.execute!(
       { network: 'sepolia', token: 'USDT', to: 'not-an-evm-address', amount: '10', wallet: 'agent-demo', dryRun: true },
+      toolOptions,
+    )).resolves.toMatchObject({ error: 'recipient_revalidation_required' });
+    await expect(tools.send_token.execute!(
+      { network: 'sepolia', token: 'USDT', to: '0x1234567890123456789012345678901234567890', amount: '10', wallet: 'agent-demo', dryRun: true },
       toolOptions,
     )).resolves.toMatchObject({ error: 'recipient_revalidation_required' });
     expect(sendToken).not.toHaveBeenCalled();

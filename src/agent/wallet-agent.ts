@@ -1,8 +1,17 @@
 import { ToolLoopAgent, tool, type Tool, type LanguageModel } from 'ai';
 import { z } from 'zod';
 import { model as defaultModel } from './model.js';
-import { WALLET_AGENT_INSTRUCTIONS } from './instructions.js';
+import {
+  buildWalletAgentInstructions,
+  getWalletAgentConfig,
+  type WalletAgentConfig,
+} from './instructions.js';
 import { callWdkTool, getWdkTools } from './wdk-tools.js';
+import { decodeMcpText } from '../wdk/mcp-client.js';
+import {
+  defaultTransactionReceiptWaiter,
+  type TransactionReceiptWaiter,
+} from '../wdk/transaction-receipt.js';
 import { isDeterministicAgentRuntime, parseDeterministicIntent } from './deterministic-intent.js';
 import * as store from '../sessions/in-memory-store.js';
 import type { DemoSession } from '../sessions/in-memory-store.js';
@@ -25,6 +34,10 @@ const toolCallOptions = {
 
 const CANCEL_PHRASES = new Set([
   'cancel',
+  'cancel transfer',
+  'cancel the transfer',
+  'cancel it',
+  'no, cancel',
   'cancelar',
   'cancelo',
   'cancelar transferencia',
@@ -33,7 +46,19 @@ const CANCEL_PHRASES = new Set([
 ]);
 const CONFIRM_PHRASES = new Set([
   'confirm',
+  'i confirm',
+  'yes confirm',
+  'yes, confirm',
+  'yes i confirm',
+  'yes, i confirm',
+  'confirm transfer',
+  'confirm the transfer',
   'confirmar',
+  'confirmo',
+  'sí confirmo',
+  'sí, confirmo',
+  'si confirmo',
+  'si, confirmo',
   'confirmar transferencia',
   'confirmar la transferencia',
   'confirmo la transferencia',
@@ -59,18 +84,46 @@ const sendTokenInputSchema = z.object({
 });
 type SendTokenInput = z.infer<typeof sendTokenInputSchema>;
 
+const balanceInputSchema = z.object({
+  network: z.string().trim().min(1),
+  token: z.string().trim().min(1).optional(),
+  wallet: z.string().trim().min(1).optional(),
+  index: z.number().int().nonnegative().optional(),
+});
+type BalanceInput = z.infer<typeof balanceInputSchema>;
+
+const GENERIC_USDT_NAMES = new Set(['usdt', 'usd₮', 'tether']);
+
+export function normalizeWalletToken(token: string, configuredToken: string): string {
+  const normalized = token.trim().normalize('NFKC').toLocaleLowerCase('en-US');
+  return GENERIC_USDT_NAMES.has(normalized) ? configuredToken : token;
+}
+
+function normalizeSendTokenInput(input: SendTokenInput, configuredToken: string): SendTokenInput {
+  const token = normalizeWalletToken(input.token, configuredToken);
+  return token === input.token ? input : { ...input, token };
+}
+
 const guardedSendTokenErrorSchema = z.object({
   error: z.enum(['confirmation_required', 'recipient_revalidation_required']),
   message: z.string().trim().min(1),
 });
 
-type HandleMessageOptions = {
+const transactionReceiptOutcomeSchema = z.object({
+  status: z.enum(['confirmed', 'reverted']),
+  network: z.literal('sepolia'),
+  transactionHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/u),
+});
+
+export type HandleMessageOptions = {
   model?: LanguageModel;
   recipientMemory?: RecipientMemoryRuntime;
+  transactionReceiptWaiter?: TransactionReceiptWaiter;
+  abortSignal?: AbortSignal;
 };
 
 const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
-const memoryAddressSchema = z.object({ recipientId: z.string().uuid(), expectedVersion: z.number().int().positive() });
+const selectedRecipientAddressSchema = z.object({}).strict();
 const memoryWriteSchema = z.object({ confirmationId: z.string().uuid() });
 const memoryDraftSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('recipient'), name: z.string().trim().min(1), description: z.string().trim().min(1), address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.') }),
@@ -93,16 +146,116 @@ export function canonicalizeTransferPreview(
   input: SendTokenInput,
   output: unknown,
 ): TransferPreview | null {
-  const parsed = transferPreviewSchema.safeParse(output);
-  if (!parsed.success) return null;
+  const candidate = decodePreviewCandidate(output);
+  if (!candidate || candidate.preview !== true) return null;
+  let estimatedFee: string | undefined;
+  // WDK's formatted fee is display-ready; raw estimatedFee is a compatibility fallback.
+  for (const value of [candidate.estimatedFeeFormatted, candidate.estimatedFee]) {
+    const parsed = z.string().trim().min(1).safeParse(value);
+    if (parsed.success) {
+      estimatedFee = parsed.data;
+      break;
+    }
+  }
+  if (!estimatedFee) return null;
   const canonical = transferPreviewSchema.safeParse({
     network: input.network,
     token: input.token,
     recipient: input.to,
     amount: input.amount,
-    estimatedFee: parsed.data.estimatedFee,
+    estimatedFee,
   });
   return canonical.success ? canonical.data : null;
+}
+
+function decodePreviewCandidate(output: unknown, depth = 0): Record<string, unknown> | null {
+  if (depth > 4) return null;
+  if (typeof output === 'string') {
+    try {
+      return decodePreviewCandidate(JSON.parse(output) as unknown, depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
+
+  const candidate = output as Record<string, unknown>;
+  if (isBroadcastResult(candidate)) return null;
+
+  const decoded = decodeMcpText(candidate);
+  if (decoded !== candidate) return decodePreviewCandidate(decoded, depth + 1);
+
+  if ('estimatedFee' in candidate || 'estimatedFeeFormatted' in candidate) return candidate;
+  for (const key of ['output', 'result', 'data'] as const) {
+    if (key in candidate) {
+      const nested = decodePreviewCandidate(candidate[key], depth + 1);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function isBroadcastResult(candidate: Record<string, unknown>): boolean {
+  if (candidate.preview === false || 'success' in candidate || 'broadcast' in candidate) return true;
+  if (['success', 'sent', 'confirmed', 'broadcast', 'broadcasted'].includes(
+    typeof candidate.status === 'string' ? candidate.status.toLocaleLowerCase('en-US') : '',
+  )) return true;
+  return ['transactionHash', 'txHash', 'hash'].some((key) => key in candidate);
+}
+
+function normalizeBroadcastResult(output: unknown, network: string): z.infer<typeof transactionResultSchema> | null {
+  const candidate = decodeBroadcastCandidate(output);
+  const status = typeof candidate?.status === 'string' ? candidate.status.toLocaleLowerCase('en-US') : '';
+  if (
+    !candidate ||
+    candidate.success === false ||
+    'failure' in candidate ||
+    'error' in candidate ||
+    candidate.isError === true ||
+    ['failed', 'error', 'reverted'].includes(status)
+  ) {
+    return null;
+  }
+  const hashEntries = ['transactionHash', 'txHash', 'hash']
+    .map((key) => ({ key, value: candidate[key] }))
+    .filter(({ value }) => typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/u.test(value));
+  const hashEntry = hashEntries[0];
+  // The official WDK CLI uses success:true + txHash. The transactionHash-only
+  // shape is retained solely for the legacy fixture contract.
+  if (!hashEntry || (hashEntry.key !== 'transactionHash' && candidate.success !== true)) return null;
+  const hash = hashEntry.value as string;
+  const explorerUrl = `https://sepolia.etherscan.io/tx/${hash}`;
+  const result = transactionResultSchema.safeParse({
+    network,
+    transactionHash: hash,
+    explorerUrl,
+  });
+  return result.success ? result.data : null;
+}
+
+function decodeBroadcastCandidate(output: unknown, depth = 0): Record<string, unknown> | null {
+  if (depth > 4) return null;
+  if (typeof output === 'string') {
+    try {
+      return decodeBroadcastCandidate(JSON.parse(output) as unknown, depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
+  const candidate = output as Record<string, unknown>;
+  const decoded = decodeMcpText(candidate);
+  if (decoded !== candidate) return decodeBroadcastCandidate(decoded, depth + 1);
+  if (['transactionHash', 'txHash', 'hash', 'success', 'failure', 'error'].some((key) => key in candidate)) {
+    return candidate;
+  }
+  for (const key of ['output', 'result', 'data'] as const) {
+    if (key in candidate) {
+      const nested = decodeBroadcastCandidate(candidate[key], depth + 1);
+      if (nested) return nested;
+    }
+  }
+  return null;
 }
 
 /**
@@ -115,20 +268,46 @@ export function buildGuardedTools(
   baseTools: Record<string, Tool>,
   session: DemoSession,
   recipientMemory?: RecipientMemoryRuntime,
+  config: WalletAgentConfig = getWalletAgentConfig(),
 ): Record<string, Tool> {
   const baseSendToken = baseTools.send_token;
   if (!baseSendToken?.execute) {
     throw new Error('send_token tool is not available from the WDK tool source.');
   }
 
+  const baseGetBalance = baseTools.get_balance;
+  const normalizedGetBalance = baseGetBalance?.execute
+    ? tool({
+      description: baseGetBalance.description,
+      inputSchema: balanceInputSchema,
+      execute: (input: BalanceInput, options) => baseGetBalance.execute!(
+        input.token
+          ? { ...input, token: normalizeWalletToken(input.token, config.token) }
+          : input,
+        options,
+      ),
+    })
+    : undefined;
+
   const guardedSendToken = tool({
     description: baseSendToken.description,
     inputSchema: sendTokenInputSchema,
     execute: async (input: SendTokenInput, options) => {
+      const normalizedInput = normalizeSendTokenInput(input, config.token);
       const selected = session.recipientMemory?.selectedRecipient;
       const previewed = session.recipientMemory?.previewedRecipient;
       const pending = session.pendingTransfer;
-      const mustRevalidate = input.dryRun ? selected : (pending?.recipientId ? {
+      if (
+        normalizedInput.dryRun &&
+        session.recipientMemory?.recipientSelectionRequired === true &&
+        !selected
+      ) {
+        return {
+          error: 'recipient_revalidation_required',
+          message: 'Recipient changed or is no longer valid; resolve the recipient again.',
+        };
+      }
+      const mustRevalidate = normalizedInput.dryRun ? selected : (pending?.recipientId ? {
         recipientId: pending.recipientId,
         version: pending.recipientVersion!,
       } : undefined);
@@ -143,29 +322,39 @@ export function buildGuardedTools(
           mustRevalidate.recipientId,
           mustRevalidate.version,
         );
-        if (!current || !isValidEvmAddress(current.address) || current.address !== input.to) {
-          store.clearSelectedRecipient(session.id);
+        if (
+          !current ||
+          current.id !== mustRevalidate.recipientId ||
+          current.version !== mustRevalidate.version ||
+          !isValidEvmAddress(current.address) ||
+          current.address !== normalizedInput.to
+        ) {
+          store.invalidateSelectedRecipient(session.id);
           store.clearPendingTransfer(session.id);
           return { error: 'recipient_revalidation_required', message: 'Recipient changed or is no longer valid; resolve the recipient again.' };
         }
-        if (input.dryRun && selected) {
+        if (normalizedInput.dryRun && selected) {
           session.recipientMemory!.previewedRecipient = selected;
         }
-      } else if (input.dryRun && previewed) {
+      } else if (normalizedInput.dryRun && previewed) {
         session.recipientMemory!.previewedRecipient = undefined;
       }
-      if (!input.dryRun && !pendingMatches(session, input)) {
+      if (!normalizedInput.dryRun && !pendingMatches(session, normalizedInput)) {
         return {
           error: 'confirmation_required',
           message:
             'Refusing to broadcast: no matching confirmed preview for this transfer in the current session.',
         };
       }
-      return baseSendToken.execute!(input, options);
+      return baseSendToken.execute!(normalizedInput, options);
     },
   });
 
-  return { ...baseTools, send_token: guardedSendToken };
+  return {
+    ...baseTools,
+    ...(normalizedGetBalance ? { get_balance: normalizedGetBalance } : {}),
+    send_token: guardedSendToken,
+  };
 }
 
 function createMemoryAgentTools(raw: ReturnType<typeof createRecipientMemoryTools>): Record<string, Tool> {
@@ -180,10 +369,10 @@ function createMemoryAgentTools(raw: ReturnType<typeof createRecipientMemoryTool
       inputSchema: memorySearchSchema,
       execute: (input) => raw.search_user_memory(input),
     }),
-    get_recipient_address: tool({
-      description: 'Get an exact recipient address only after search_recipients resolved the selected ID and version in this session.',
-      inputSchema: memoryAddressSchema,
-      execute: (input) => raw.get_recipient_address(input),
+    get_selected_recipient_address: tool({
+      description: 'Get the exact address for the recipient already selected and version-bound in this session. Takes no IDs or version arguments.',
+      inputSchema: selectedRecipientAddressSchema,
+      execute: (input) => raw.get_selected_recipient_address(input),
     }),
     stage_user_memory: tool({
       description: 'Stage a recipient or relationship for explicit user confirmation. Display the returned draft exactly, including any address.',
@@ -282,7 +471,13 @@ export async function handleMessage(
     try {
       const baseTools = await getWdkTools();
       const tools = buildGuardedTools(baseTools, session, recipientMemory);
-      return executeConfirmedTransfer(sessionId, claim.transfer, tools);
+      return executeConfirmedTransfer(
+        sessionId,
+        claim.transfer,
+        tools,
+        options.transactionReceiptWaiter,
+        options.abortSignal,
+      );
     } catch (error) {
       store.releasePendingTransferClaim(sessionId);
       const message = mapAgentError(error);
@@ -305,6 +500,9 @@ export async function handleMessage(
     store.clearSelectedRecipient(sessionId);
   } else if (rawMemoryTools) {
     const resolution = await resolveTransferRecipient(userText, session, rawMemoryTools as RecipientMemoryToolPort);
+    if (resolution.status === 'resolved') {
+      store.setSelectedRecipient(sessionId, resolution.recipient);
+    }
     if (resolution.status === 'clarification_required') {
       store.setRecipientClarification(sessionId, resolution.candidates.map((candidate) => ({
         recipientId: candidate.id,
@@ -326,14 +524,20 @@ export async function handleMessage(
   }
 
   const baseTools = await getWdkTools();
-  const tools = buildGuardedTools({ ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) }, session, recipientMemory);
+  const agentConfig = getWalletAgentConfig();
+  const tools = buildGuardedTools(
+    { ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) },
+    session,
+    recipientMemory,
+    agentConfig,
+  );
 
   if (isDeterministicAgentRuntime() && !options.model) {
-    return handleDeterministicTurn(sessionId, userText, session, tools);
+    return handleDeterministicTurn(sessionId, userText, session, tools, agentConfig);
   }
   const agent = new ToolLoopAgent({
     model: options.model ?? defaultModel,
-    instructions: WALLET_AGENT_INSTRUCTIONS,
+    instructions: buildWalletAgentInstructions(agentConfig),
     tools,
   });
 
@@ -362,23 +566,26 @@ export async function handleMessage(
       };
     }
 
-    const transaction = transactionResultSchema.safeParse(output);
-    if (transaction.success && transaction.data.transactionHash.trim()) {
+    const parsedArgs = sendTokenInputSchema.safeParse(lastCall.input);
+    const args = parsedArgs.success
+      ? normalizeSendTokenInput(parsedArgs.data, agentConfig.token)
+      : null;
+    const transaction = normalizeBroadcastResult(output, args?.network ?? agentConfig.network);
+    if (transaction) {
       store.clearPendingTransfer(sessionId);
-      store.setLastTransactionHash(sessionId, transaction.data.transactionHash);
-      return { status: 'sent', message: result.text, transaction: transaction.data };
+      store.setLastTransactionHash(sessionId, transaction.transactionHash);
+      return { status: 'sent', message: result.text, transaction };
     }
 
-    const args = sendTokenInputSchema.safeParse(lastCall.input);
-    const preview = args.success ? canonicalizeTransferPreview(args.data, output) : null;
-    if (preview && args.success) {
+    const preview = args ? canonicalizeTransferPreview(args, output) : null;
+    if (preview && args) {
       const selected = session.recipientMemory?.previewedRecipient;
       store.setPendingTransfer(sessionId, {
-        network: args.data.network,
-        token: args.data.token,
-        to: args.data.to,
-        amount: args.data.amount,
-        wallet: args.data.wallet,
+        network: args.network,
+        token: args.token,
+        to: args.to,
+        amount: args.amount,
+        wallet: args.wallet,
         preview,
         ...(selected ? { recipientId: selected.recipientId, recipientVersion: selected.version } : {}),
       });
@@ -397,6 +604,8 @@ async function executeConfirmedTransfer(
   sessionId: string,
   pending: NonNullable<DemoSession['pendingTransfer']>,
   tools: Record<string, Tool>,
+  transactionReceiptWaiter: TransactionReceiptWaiter = defaultTransactionReceiptWaiter,
+  abortSignal?: AbortSignal,
 ): Promise<SessionMessageResponse> {
   if (!pending.preview || !tools.send_token?.execute) {
     store.releasePendingTransferClaim(sessionId);
@@ -437,16 +646,63 @@ async function executeConfirmedTransfer(
     };
   }
 
-  const transaction = transactionResultSchema.safeParse(output);
-  if (transaction.success && transaction.data.transactionHash.trim()) {
+  const transaction = normalizeBroadcastResult(output, pending.network);
+  if (transaction) {
+    store.setLastTransactionHash(sessionId, transaction.transactionHash);
+    let rawReceipt: unknown;
+    try {
+      rawReceipt = await transactionReceiptWaiter(transaction, { signal: abortSignal });
+    } catch {
+      return markTransactionReceiptInvalid(
+        sessionId,
+        transaction.transactionHash,
+        'The Sepolia receipt could not be verified.',
+      );
+    }
+    const parsedReceipt = transactionReceiptOutcomeSchema.safeParse(rawReceipt);
+    if (!parsedReceipt.success) {
+      return markTransactionReceiptInvalid(
+        sessionId,
+        transaction.transactionHash,
+        'The Sepolia receipt is invalid.',
+      );
+    }
+    const receipt = parsedReceipt.data;
+    if (
+      receipt.network !== transaction.network.toLocaleLowerCase('en-US') ||
+      receipt.transactionHash.toLocaleLowerCase('en-US') !== transaction.transactionHash.toLocaleLowerCase('en-US')
+    ) {
+      return markTransactionReceiptInvalid(
+        sessionId,
+        transaction.transactionHash,
+        'The Sepolia receipt does not match the transfer.',
+      );
+    }
     store.clearPendingTransfer(sessionId);
-    store.setLastTransactionHash(sessionId, transaction.data.transactionHash);
-    const message = `Transfer sent. Hash: ${transaction.data.transactionHash}`;
+    if (receipt.status === 'reverted') {
+      const message = `The transfer reverted on Sepolia. Hash: ${transaction.transactionHash}`;
+      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      return { status: 'error', message, code: 'transfer_reverted' };
+    }
+    const message = 'Transfer confirmed.';
     store.appendMessage(sessionId, { role: 'assistant', content: message });
-    return { status: 'sent', message, transaction: transaction.data };
+    return { status: 'sent', message, transaction };
   }
 
   return markBroadcastUncertain(sessionId);
+}
+
+function markTransactionReceiptInvalid(
+  sessionId: string,
+  transactionHash: string,
+  reason: string,
+): SessionMessageResponse {
+  // A hash proves the wallet already broadcast. Clearing the pending intent
+  // releases the in-memory lock without ever making that transfer confirmable again.
+  store.clearPendingTransfer(sessionId);
+  const message = `${reason} Hash: ${transactionHash}`;
+  store.appendMessage(sessionId, { role: 'assistant', content: message });
+  return { status: 'error', message, code: 'transaction_receipt_invalid' };
 }
 
 function markBroadcastUncertain(sessionId: string): SessionMessageResponse {
@@ -462,10 +718,9 @@ async function handleDeterministicTurn(
   userText: string,
   session: DemoSession,
   tools: Record<string, Tool>,
+  config: WalletAgentConfig,
 ): Promise<SessionMessageResponse> {
-  const network = process.env.WDK_NETWORK ?? 'sepolia';
-  const token = process.env.WDK_TOKEN ?? 'USDT';
-  const wallet = process.env.WDK_WALLET_NAME ?? 'agent-demo';
+  const { network, token, wallet } = config;
   const intent = parseDeterministicIntent(userText, token);
 
   if (intent?.type === 'balance') {
@@ -479,14 +734,14 @@ async function handleDeterministicTurn(
   }
 
   if (intent?.type === 'send' && tools.send_token?.execute) {
-    const input: SendTokenInput = {
+    const input = normalizeSendTokenInput({
       network,
       token: intent.token,
       to: intent.to,
       amount: intent.amount,
       wallet,
       dryRun: true,
-    };
+    }, token);
     const output = await tools.send_token.execute(input, toolCallOptions);
     const guardedError = guardedSendTokenErrorSchema.safeParse(output);
     if (guardedError.success) {
@@ -504,14 +759,14 @@ async function handleDeterministicTurn(
       return { status: 'error', message, code: 'invalid_tool_result' };
     }
     store.setPendingTransfer(sessionId, {
-      network,
-      token: intent.token,
-      to: intent.to,
-      amount: intent.amount,
-      wallet,
+      network: input.network,
+      token: input.token,
+      to: input.to,
+      amount: input.amount,
+      wallet: input.wallet,
       preview,
     });
-    const message = `Prepared a ${intent.amount} ${intent.token} transfer to ${intent.to} on ${network}. Estimated fee: ${preview.estimatedFee}. Confirm to continue.`;
+    const message = `Prepared a ${input.amount} ${input.token} transfer to ${input.to} on ${input.network}. Estimated fee: ${preview.estimatedFee}. Confirm to continue.`;
     store.appendMessage(sessionId, { role: 'assistant', content: message });
     return { status: 'confirmation_required', message, preview };
   }

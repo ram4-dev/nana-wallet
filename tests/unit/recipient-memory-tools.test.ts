@@ -52,8 +52,28 @@ describe('recipient memory tool contracts', () => {
     const tools = createRecipientMemoryTools({ userId: USER_ID, session, service: staleService });
 
     await expect(tools.get_recipient_address({ recipientId: RECIPIENT_ID, expectedVersion: 3 })).resolves.toEqual({ status: 'selection_required' });
+    await expect(tools.get_selected_recipient_address({})).resolves.toEqual({ status: 'selection_required' });
     await tools.search_recipients({ query: 'Lucas' });
-    await expect(tools.get_recipient_address({ recipientId: RECIPIENT_ID, expectedVersion: 3 })).resolves.toEqual({ status: 'stale_selection' });
+    await expect(tools.get_selected_recipient_address({})).resolves.toEqual({ status: 'stale_selection' });
+    expect(getSession(session.id)?.recipientMemory?.selectedRecipient).toBeUndefined();
+  });
+
+  it('blocks a selected recipient when the stored version no longer matches', async () => {
+    const session = createSession();
+    const tools = createRecipientMemoryTools({
+      userId: USER_ID,
+      session,
+      service: service({
+        getRecipientForVersion: vi.fn().mockResolvedValue({
+          id: RECIPIENT_ID,
+          version: 4,
+          address: ADDRESS,
+        }),
+      }),
+    });
+
+    await tools.search_recipients({ query: 'Lucas' });
+    await expect(tools.get_selected_recipient_address({})).resolves.toEqual({ status: 'stale_selection' });
     expect(getSession(session.id)?.recipientMemory?.selectedRecipient).toBeUndefined();
   });
 

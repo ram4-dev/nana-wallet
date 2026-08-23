@@ -11,6 +11,7 @@ below are illustrative.
 ```json
 {
   "status": "ok",
+  "mode": "fixture",
   "mcp": "connected",
   "wallet": "unlocked",
   "network": "sepolia"

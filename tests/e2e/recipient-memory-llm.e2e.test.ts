@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { WALLET_AGENT_INSTRUCTIONS } from '../../src/agent/instructions.js';
+import { buildWalletAgentInstructions, getWalletAgentConfig } from '../../src/agent/instructions.js';
 import { createDatabaseClient } from '../../src/db/client.js';
 import { EmbeddingService } from '../../src/memory/embedding.js';
 import { RecipientMemoryRepository } from '../../src/memory/repository.js';
@@ -83,7 +83,7 @@ function decisionsByScenario(batch: z.infer<typeof plannerBatchSchema>): Map<str
   return decisions;
 }
 
-const plannerContract = `${WALLET_AGENT_INSTRUCTIONS}
+const plannerContract = `${buildWalletAgentInstructions(getWalletAgentConfig())}
 
 You are being tested only at the recipient-retrieval decision stage. Do not use
 filesystem, shell, WDK, address, balance, or transfer tools. Choose exactly one

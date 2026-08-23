@@ -165,6 +165,10 @@ Además del frontend, este repositorio incluye un backend HTTP para el track WDK
 
 Ver detalles en `docs/wdk-agent-development-plan.md`, `docs/api.md` y `docs/demo-runbook.md`.
 
+Para ejecutar la integración completa contra la wallet local de Sepolia, seguí
+el [runbook local live](docs/local-live-runbook.md). Ese es el único flujo que
+puede emitir una transacción; la demo por defecto permanece en fixture.
+
 ### Setup backend
 
 ```bash

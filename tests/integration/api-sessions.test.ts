@@ -118,7 +118,15 @@ describe('session endpoints', () => {
 
   it('runs a fixture preview and confirm over HTTP without an LLM', async () => {
     const previousRuntime = process.env.AGENT_RUNTIME;
+    const previousToken = process.env.WDK_TOKEN;
+    const previousNetwork = process.env.WDK_NETWORK;
+    const previousWallet = process.env.WDK_WALLET_NAME;
+    const previousToolsSource = process.env.WDK_TOOLS_SOURCE;
     process.env.AGENT_RUNTIME = 'deterministic';
+    process.env.WDK_TOKEN = 'USDT';
+    process.env.WDK_NETWORK = 'sepolia';
+    process.env.WDK_WALLET_NAME = 'agent-demo';
+    process.env.WDK_TOOLS_SOURCE = 'fixture';
     const app = buildServer();
     try {
       const { sessionId } = (await app.inject({ method: 'POST', url: '/v1/sessions' })).json();
@@ -149,11 +157,19 @@ describe('session endpoints', () => {
 
       expect(confirm.statusCode).toBe(200);
       expect(confirm.json().status).toBe('sent');
-      expect(confirm.json().transaction.transactionHash).toMatch(/^0xfixturetx/);
+      expect(confirm.json().transaction.transactionHash).toMatch(/^0x[0-9a-f]{64}$/u);
     } finally {
       await app.close();
       if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
       else process.env.AGENT_RUNTIME = previousRuntime;
+      if (previousToken === undefined) delete process.env.WDK_TOKEN;
+      else process.env.WDK_TOKEN = previousToken;
+      if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
+      else process.env.WDK_NETWORK = previousNetwork;
+      if (previousWallet === undefined) delete process.env.WDK_WALLET_NAME;
+      else process.env.WDK_WALLET_NAME = previousWallet;
+      if (previousToolsSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
+      else process.env.WDK_TOOLS_SOURCE = previousToolsSource;
     }
   });
 });

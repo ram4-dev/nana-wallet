@@ -374,11 +374,11 @@ function PerfilPage() {
       </section>
 
       {agentTurn ? (
-        <section className="surface-card mt-5 border-2 border-brand-ink p-5" aria-live="polite">
-          <p className="text-lg leading-relaxed">{agentTurn.message}</p>
+        <section className="surface-card mt-4 border-2 border-brand-ink p-4" aria-live="polite">
+          <p className="text-base leading-snug">{agentTurn.message}</p>
           {agentTurn.status === "confirmation_required" ? (
             <>
-              <dl className="mt-4 space-y-2 text-base">
+              <dl className="mt-3 space-y-1.5 text-sm sm:text-base">
                 <div className="flex justify-between gap-4">
                   <dt className="font-bold">Monto</dt>
                   <dd>
@@ -390,34 +390,17 @@ function PerfilPage() {
                   <dd className="break-all text-right">{agentTurn.preview.recipient}</dd>
                 </div>
               </dl>
-              <div className="mt-5 grid grid-cols-2 gap-4">
+              <div className="mt-3 grid w-full grid-cols-1">
                 <Button
                   variant="outline"
-                  className="press min-h-14 whitespace-normal text-lg font-extrabold"
+                  className="press min-h-12 whitespace-normal text-base font-extrabold"
                   onClick={() => sendAgentFollowup("cancel")}
                   disabled={isSessionActionPending || areSessionActionsLocked}
                 >
                   Cancelar
                 </Button>
-                <Button
-                  className="press min-h-14 whitespace-normal text-lg font-extrabold"
-                  onClick={() => sendAgentFollowup("confirm")}
-                  disabled={isSessionActionPending || areSessionActionsLocked}
-                >
-                  Confirmar
-                </Button>
               </div>
             </>
-          ) : null}
-          {agentTurn.status === "sent" ? (
-            <a
-              className="mt-4 inline-block break-all font-bold text-brand-ink underline"
-              href={agentTurn.transaction.explorerUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Ver transacción {agentTurn.transaction.transactionHash}
-            </a>
           ) : null}
         </section>
       ) : null}

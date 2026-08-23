@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const healthResponseSchema = z.object({
   status: z.literal('ok'),
+  mode: z.enum(['fixture', 'live']),
   mcp: z.enum(['connected', 'disconnected', 'unknown']),
   wallet: z.enum(['unlocked', 'locked', 'unknown']),
   network: z.string(),

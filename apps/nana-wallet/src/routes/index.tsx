@@ -302,16 +302,16 @@ function AgentePage() {
   });
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
-      <h1 className="text-center text-3xl leading-tight font-extrabold">
+    <main className="mx-auto flex h-dvh max-w-md flex-col items-center overflow-hidden px-4 !pt-[max(0.75rem,env(safe-area-inset-top))] !pb-[calc(7.25rem+env(safe-area-inset-bottom))] sm:px-6">
+      <h1 className="shrink-0 text-center text-2xl leading-tight font-extrabold sm:text-3xl">
         <span className="block">Hola, soy Nani.</span>
-        <span className="mt-2 block">Hablame.</span>
+        <span className="mt-1 block">Hablame.</span>
       </h1>
 
-      <div className="relative mt-8 flex flex-col items-center">
+      <div className="relative mt-2 flex shrink-0 flex-col items-center sm:mt-3">
         <button
           type="button"
-          className={`agent-stage press relative flex h-64 w-64 items-center justify-center rounded-full focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 disabled:cursor-wait disabled:opacity-80 ${
+          className={`agent-stage press relative flex size-[clamp(7.5rem,25dvh,12rem)] items-center justify-center rounded-full focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 disabled:cursor-wait disabled:opacity-80 ${
             isRecording ? "listening" : ""
           }`}
           aria-label={isRecording ? "Terminar de hablar con Nani" : "Hablar con Nani"}
@@ -319,7 +319,7 @@ function AgentePage() {
           onClick={handleMicrophone}
           disabled={!isRecording && controls.microphoneDisabled}
         >
-          <AgenteAvatar estado={agentState} size={256} />
+          <AgenteAvatar estado={agentState} size={192} />
           {isRecording ? (
             <div className="sound-waves">
               <i />
@@ -331,9 +331,9 @@ function AgentePage() {
           ) : null}
         </button>
 
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2">
           {agentStatus ? (
-            <span className="rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
+            <span className="rounded-full bg-secondary px-4 py-2 text-sm font-bold text-secondary-foreground sm:text-base">
               {agentStatus}
             </span>
           ) : null}
@@ -352,81 +352,61 @@ function AgentePage() {
 
       {isRecording ? (
         <p
-          className="mt-5 rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 text-center text-lg font-bold"
+          className="mt-3 shrink-0 rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border px-4 py-3 text-center text-base font-bold"
           role="status"
         >
-          Hablá con Nani y tocala cuando termines. Si no, se envía sola después de 20 segundos.
+          Hablá y tocá a Nani al terminar. Se envía sola a los 20 segundos.
         </p>
       ) : null}
 
-      <div className="mt-6 w-full space-y-4" aria-live="polite">
+      <div
+        className="mt-3 min-h-0 w-full flex-1 space-y-3 overflow-y-auto overscroll-contain pb-2 [scrollbar-gutter:stable]"
+        aria-live="polite"
+      >
         {turn ? (
-          <section className="surface-card p-5">
+          <section className="surface-card p-4">
             {lastTranscript ? (
-              <div className="mb-4 rounded-2xl bg-secondary p-4">
-                <p className="text-base font-bold text-muted-foreground">Nani entendió:</p>
-                <p className="mt-1 text-xl font-extrabold">“{lastTranscript}”</p>
+              <div className="mb-3 rounded-2xl bg-secondary px-4 py-3">
+                <p className="text-sm font-bold text-muted-foreground">Nani entendió:</p>
+                <p className="mt-0.5 text-base font-extrabold">“{lastTranscript}”</p>
               </div>
             ) : null}
-            <p className="text-lg leading-relaxed">{turn.message}</p>
+            <p className="text-base leading-snug">{turn.message}</p>
             {turn.status === "confirmation_required" ? (
-              <dl className="mt-4 space-y-3 text-base">
-                <div className="flex justify-between gap-4">
-                  <dt className="font-bold">Monto</dt>
-                  <dd>
-                    {turn.preview.amount} {turn.preview.token}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="font-bold">Destino</dt>
-                  <dd className="break-all text-right">{turn.preview.recipient}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="font-bold">Red</dt>
-                  <dd>{turn.preview.network}</dd>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <dt className="font-bold">Costo estimado</dt>
-                  <dd>{turn.preview.estimatedFee}</dd>
-                </div>
+              <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm sm:text-base">
+                <dt className="font-bold">Monto</dt>
+                <dd className="text-right">
+                  {turn.preview.amount} {turn.preview.token}
+                </dd>
+                <dt className="font-bold">Destino</dt>
+                <dd className="truncate text-right" title={turn.preview.recipient}>
+                  {turn.preview.recipient}
+                </dd>
+                <dt className="font-bold">Red</dt>
+                <dd className="text-right">{turn.preview.network}</dd>
+                <dt className="font-bold">Costo</dt>
+                <dd className="text-right">{turn.preview.estimatedFee}</dd>
               </dl>
-            ) : null}
-            {turn.status === "sent" ? (
-              <a
-                className="mt-4 inline-block break-all font-bold text-brand-ink underline"
-                href={turn.transaction.explorerUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Ver transacción {turn.transaction.transactionHash}
-              </a>
             ) : null}
           </section>
         ) : null}
 
         {turn?.status === "confirmation_required" ? (
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid w-full grid-cols-1">
             <Button
               variant="outline"
-              className="press min-h-16 whitespace-normal text-lg font-extrabold"
+              className="press min-h-12 whitespace-normal text-base font-extrabold"
               onClick={rejectProposal}
               disabled={isSessionActionPending || areSessionActionsLocked}
             >
               Cancelar
-            </Button>
-            <Button
-              className="press min-h-16 whitespace-normal text-lg font-extrabold"
-              onClick={() => sendTurn("confirmar la transferencia", "resolution")}
-              disabled={isSessionActionPending || areSessionActionsLocked}
-            >
-              Confirmar
             </Button>
           </div>
         ) : null}
 
         {message ? (
           <p
-            className="rounded-2xl bg-destructive-surface text-destructive-surface-foreground border border-border p-4 text-lg font-bold"
+            className="rounded-2xl bg-destructive-surface text-destructive-surface-foreground border border-border px-4 py-3 text-base font-bold"
             role="alert"
           >
             {message}
@@ -435,7 +415,7 @@ function AgentePage() {
       </div>
 
       <form
-        className="mt-10 flex w-full items-center gap-1 rounded-full border border-input bg-card p-1 focus-within:ring-4 focus-within:ring-ring/20"
+        className="mt-2 flex w-full shrink-0 items-center gap-1 rounded-full border border-input bg-card p-1 focus-within:ring-4 focus-within:ring-ring/20"
         onSubmit={(event) => {
           event.preventDefault();
           sendText();

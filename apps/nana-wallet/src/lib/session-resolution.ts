@@ -8,7 +8,19 @@ export type SessionSubmission =
 
 const CONFIRMATION_PHRASES = new Set([
   "confirm",
+  "i confirm",
+  "yes confirm",
+  "yes, confirm",
+  "yes i confirm",
+  "yes, i confirm",
+  "confirm transfer",
+  "confirm the transfer",
   "confirmar",
+  "confirmo",
+  "sí confirmo",
+  "sí, confirmo",
+  "si confirmo",
+  "si, confirmo",
   "confirmar transferencia",
   "confirmar la transferencia",
   "confirmo la transferencia",
@@ -28,6 +40,10 @@ export function getSessionControlState(input: {
 
 const CANCELLATION_PHRASES = new Set([
   "cancel",
+  "cancel transfer",
+  "cancel the transfer",
+  "cancel it",
+  "no, cancel",
   "cancelar",
   "cancelo",
   "cancelar transferencia",

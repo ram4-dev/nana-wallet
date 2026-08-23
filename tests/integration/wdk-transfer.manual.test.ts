@@ -9,15 +9,12 @@ function operatorCandidate(): TransferInput {
   const to = process.env.WDK_TEST_RECIPIENT;
   const amount = process.env.WDK_TEST_AMOUNT;
   if (!to || !amount) throw new Error('A human operator must provide the dedicated Sepolia recipient and small USD₮ amount.');
-  const configuredToken = process.env.WDK_TEST_TOKEN ?? 'usdt';
-  if (configuredToken !== 'usdt') {
-    throw new Error('The Track 1 manual harness accepts only the registered Sepolia USD₮ token: usdt. ETH is gas only.');
-  }
+  const configuredToken = process.env.WDK_TEST_TOKEN ?? process.env.WDK_TOKEN ?? 'usdt';
   return {
     to,
     amount,
     network: 'sepolia',
-    token: 'usdt',
+    token: configuredToken,
     wallet: process.env.WDK_TEST_WALLET,
     dryRun: true
   };
@@ -30,7 +27,7 @@ describe('manual Sepolia USD₮ evidence', () => {
     await client.open();
     try {
       const preview = await client.sendToken(candidate);
-      expect(preview.asset).toBe('USD₮');
+      expect(preview.asset).toBe(candidate.token);
       expect(preview.input).toEqual(candidate);
       expect(preview.broadcast).toMatchObject({ attempted: false, count: 0, hash: null });
     } finally {
@@ -70,11 +67,11 @@ describe('manual Sepolia USD₮ evidence', () => {
     expect(evidence.broadcast).toMatchObject({ attempted: true, count: 1, hash: '0xabc' });
   });
 
-  it('rejects native ETH and MCP tool errors from USD₮ evidence', () => {
+  it('rejects native ETH and MCP tool errors from ERC-20 evidence', () => {
     expect(() => createTransferEvidence(
-      { to: '0xrecipient', amount: '1', network: 'sepolia', token: 'eth' as never, dryRun: true },
+      { to: '0xrecipient', amount: '1', network: 'sepolia', token: 'ETH', dryRun: true },
       { estimatedFee: '0.0001 ETH' }
-    )).toThrow('USD₮ evidence requires a Sepolia token transfer.');
+    )).toThrow('ERC-20 evidence requires a named Sepolia token or contract.');
     expect(() => createTransferEvidence(
       { to: '0xrecipient', amount: '1', network: 'sepolia', token: 'usdt', dryRun: false },
       { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: 'insufficient funds' }) }] }

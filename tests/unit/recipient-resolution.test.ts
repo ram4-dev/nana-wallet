@@ -45,6 +45,19 @@ describe('recipient resolution before a transfer preview', () => {
     expect(memory.search_recipients).toHaveBeenCalledWith({ query: 'Lucas' });
   });
 
+  it('resolves a relationship after an amount and token', async () => {
+    resetSessionStore();
+    const memory = tools({
+      search_user_memory: vi.fn().mockResolvedValue({ status: 'ok', facts: [{ fact: 'Lucas es mi nieto', evidence: 'Lucas es mi nieto' }] }),
+    });
+
+    await expect(resolveTransferRecipient('Enviá 0.01 USDT a mi nieto.', createSession(), memory)).resolves.toMatchObject({
+      status: 'resolved',
+      recipient: { recipientId: candidate.id, version: 3 },
+    });
+    expect(memory.search_user_memory).toHaveBeenCalledWith({ query: 'mi nieto' });
+  });
+
   it('RED: keeps an unresolved pronoun and dependency failure ahead of address lookup or preview', async () => {
     resetSessionStore();
     await expect(resolveTransferRecipient('Send him money', createSession(), tools())).resolves.toEqual({ status: 'clarification_required', candidates: [] });

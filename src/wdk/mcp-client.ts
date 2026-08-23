@@ -89,7 +89,7 @@ export type TransferInput = {
   to: string;
   amount: string;
   network: 'sepolia';
-  token: 'usdt';
+  token: string;
   baseUnits?: boolean;
   index?: number;
   wallet?: string;
@@ -99,7 +99,7 @@ export type TransferInput = {
 export type TransferEvidence = {
   schemaVersion: 'wdk-evidence/v1';
   network: 'sepolia';
-  asset: 'USD₮';
+  asset: string;
   input: TransferInput;
   raw: unknown;
   broadcast: {
@@ -180,8 +180,8 @@ export function classifyHistory(raw: unknown): 'unavailable' | 'stale' | 'empty'
 }
 
 export function createTransferEvidence(input: TransferInput, raw: unknown): TransferEvidence {
-  if (input.network !== 'sepolia' || input.token !== 'usdt') {
-    throw new McpBoundaryError('validation', 'USD₮ evidence requires a Sepolia token transfer.');
+  if (input.network !== 'sepolia' || !isErc20TokenReference(input.token)) {
+    throw new McpBoundaryError('validation', 'ERC-20 evidence requires a named Sepolia token or contract.');
   }
   if (isMcpToolError(raw)) {
     throw new McpBoundaryError('call', mcpErrorMessage(raw));
@@ -190,7 +190,7 @@ export function createTransferEvidence(input: TransferInput, raw: unknown): Tran
   return {
     schemaVersion: 'wdk-evidence/v1',
     network: 'sepolia',
-    asset: 'USD₮',
+    asset: input.token,
     input: sanitizeForEvidence(input) as TransferInput,
     raw: sanitizeForEvidence(raw),
     broadcast: {
@@ -290,7 +290,7 @@ export class WdkMcpClient {
       return {
         schemaVersion: 'wdk-evidence/v1',
         network: 'sepolia',
-        asset: 'USD₮',
+        asset: candidate.token,
         input: sanitizeForEvidence(candidate) as TransferInput,
         raw: error instanceof McpBoundaryError ? error.raw : null,
         broadcast: {
@@ -361,8 +361,8 @@ function assertRequiredTools(tools: RawTool[]): void {
 
 function validateTransferCandidate(input: TransferInput): TransferInput {
   const candidate = input as { network?: unknown; token?: unknown; to?: unknown; amount?: unknown; dryRun?: unknown };
-  if (candidate.network !== 'sepolia' || typeof candidate.token !== 'string' || candidate.token.toLowerCase() !== 'usdt') {
-    throw new McpBoundaryError('validation', 'USD₮ evidence requires the Sepolia usdt token.');
+  if (candidate.network !== 'sepolia' || !isErc20TokenReference(candidate.token)) {
+    throw new McpBoundaryError('validation', 'ERC-20 evidence requires a named Sepolia token or contract.');
   }
   if (typeof candidate.to !== 'string' || candidate.to.trim().length === 0) {
     throw new McpBoundaryError('validation', 'A recipient is required for USD₮ evidence.');
@@ -373,7 +373,12 @@ function validateTransferCandidate(input: TransferInput): TransferInput {
   if (typeof candidate.dryRun !== 'boolean') {
     throw new McpBoundaryError('validation', 'dryRun must be explicit for USD₮ evidence.');
   }
-  return { ...input, token: 'usdt', to: candidate.to, amount: candidate.amount, dryRun: candidate.dryRun };
+  return { ...input, token: candidate.token, to: candidate.to, amount: candidate.amount, dryRun: candidate.dryRun };
+}
+
+function isErc20TokenReference(token: unknown): token is string {
+  if (typeof token !== 'string' || token.trim().length === 0) return false;
+  return !['eth', 'ether', 'ethereum', 'native', 'native-eth'].includes(token.trim().toLocaleLowerCase('en-US'));
 }
 
 function asBoundaryError(stage: EvidenceStage, error: unknown): McpBoundaryError {

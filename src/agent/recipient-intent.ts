@@ -9,6 +9,7 @@ const PRONOUN = /^(?:him|her|them|él|el|ella|ellos|ellas|le)$/i;
 const RELATIONSHIP = /\b(?:my|mi|mis|your|tu|tus)\s+(?:grandson|granddaughter|grandchild|nieto|nieta|hijo|hija|hijos|padre|madre|sibling|hermano|hermana)\b/i;
 const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 const ADDRESS_IN_TEXT = /\b0x[a-fA-F0-9]{40}\b/;
+const AMOUNT_AND_TOKEN_BEFORE_PREPOSITION = /^\s*\d+(?:[.,]\d+)?(?:\s+[A-Za-z][\w-]*)?\s+(?:to|a)\s+/i;
 
 function cleanReference(value: string): string {
   return value
@@ -26,7 +27,8 @@ function cleanReference(value: string): string {
 export function detectRecipientReference(text: string): RecipientReference {
   const matched = text.trim().match(TRANSFER_PREFIX);
   if (!matched) return { kind: 'none' };
-  const reference = cleanReference(text.trim().slice(matched[0].length));
+  const remainder = text.trim().slice(matched[0].length);
+  const reference = cleanReference(remainder.replace(AMOUNT_AND_TOKEN_BEFORE_PREPOSITION, ''));
   if (!reference || ADDRESS.test(reference)) return { kind: 'none' };
   if (PRONOUN.test(reference)) return { kind: 'pronoun' };
   if (RELATIONSHIP.test(reference)) return { kind: 'relationship', query: reference };

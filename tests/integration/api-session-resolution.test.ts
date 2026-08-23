@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fixture = vi.hoisted(() => ({
+  legacyHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  officialHash: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
   sendTokenCalls: [] as Array<{
     network: string;
     token: string;
@@ -9,8 +11,8 @@ const fixture = vi.hoisted(() => ({
     wallet: string;
     dryRun: boolean;
   }>,
-  broadcastBehavior: 'success' as 'success' | 'delayed_success' | 'throw' | 'missing_hash',
-  previewOverride: null as null | Record<string, string>,
+  broadcastBehavior: 'success' as 'success' | 'delayed_success' | 'throw' | 'missing_hash' | 'tx_hash' | 'failed_hash' | 'malformed_hash' | 'network_mismatch',
+  previewOverride: null as null | Record<string, unknown>,
 }));
 
 vi.mock('../../src/agent/wdk-tools.js', () => ({
@@ -22,22 +24,31 @@ vi.mock('../../src/agent/wdk-tools.js', () => ({
         fixture.sendTokenCalls.push({ ...input });
         if (input.dryRun) {
           return fixture.previewOverride ?? {
+            preview: true,
             network: input.network,
             token: input.token,
-            recipient: input.to,
+            to: input.to,
             amount: input.amount,
             estimatedFee: '0.0003 ETH',
           };
         }
         if (fixture.broadcastBehavior === 'throw') throw new Error('mock transport closed');
         if (fixture.broadcastBehavior === 'missing_hash') return { network: input.network };
+        if (fixture.broadcastBehavior === 'failed_hash') return { success: false, txHash: fixture.officialHash };
+        if (fixture.broadcastBehavior === 'malformed_hash') return { success: true, txHash: '0xnot-a-hash' };
         if (fixture.broadcastBehavior === 'delayed_success') {
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
+        if (fixture.broadcastBehavior === 'tx_hash') {
+          return { success: true, network: input.network, txHash: fixture.officialHash };
+        }
+        if (fixture.broadcastBehavior === 'network_mismatch') {
+          return { success: true, network: 'mainnet', txHash: fixture.officialHash, explorerUrl: 'https://evil.example/tx/fake' };
+        }
         return {
           network: input.network,
-          transactionHash: '0xfixture-confirmed',
-          explorerUrl: 'https://sepolia.etherscan.io/tx/0xfixture-confirmed',
+          transactionHash: fixture.legacyHash,
+          explorerUrl: 'https://evil.example/tx/fake',
         };
       },
     },
@@ -49,6 +60,10 @@ import { resetSessionStore, setPendingTransfer } from '../../src/sessions/in-mem
 
 describe('text transfer resolution over HTTP', () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
+  const previousToken = process.env.WDK_TOKEN;
+  const previousNetwork = process.env.WDK_NETWORK;
+  const previousWallet = process.env.WDK_WALLET_NAME;
+  const previousToolsSource = process.env.WDK_TOOLS_SOURCE;
 
   beforeEach(() => {
     resetSessionStore();
@@ -56,11 +71,23 @@ describe('text transfer resolution over HTTP', () => {
     fixture.broadcastBehavior = 'success';
     fixture.previewOverride = null;
     process.env.AGENT_RUNTIME = 'deterministic';
+    process.env.WDK_TOKEN = 'USDT';
+    process.env.WDK_NETWORK = 'sepolia';
+    process.env.WDK_WALLET_NAME = 'agent-demo';
+    process.env.WDK_TOOLS_SOURCE = 'fixture';
   });
 
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
+    if (previousToken === undefined) delete process.env.WDK_TOKEN;
+    else process.env.WDK_TOKEN = previousToken;
+    if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
+    else process.env.WDK_NETWORK = previousNetwork;
+    if (previousWallet === undefined) delete process.env.WDK_WALLET_NAME;
+    else process.env.WDK_WALLET_NAME = previousWallet;
+    if (previousToolsSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
+    else process.env.WDK_TOOLS_SOURCE = previousToolsSource;
   });
 
   it('uses the same session for preview and explicit text confirmation, then broadcasts once', async () => {
@@ -83,7 +110,7 @@ describe('text transfer resolution over HTTP', () => {
       });
       expect(confirmation.json()).toMatchObject({
         status: 'sent',
-        transaction: { transactionHash: '0xfixture-confirmed' },
+        transaction: { transactionHash: fixture.legacyHash },
       });
 
       expect(fixture.sendTokenCalls).toEqual([
@@ -108,7 +135,7 @@ describe('text transfer resolution over HTTP', () => {
       const session = await app.inject({ method: 'GET', url: `/v1/sessions/${sessionId}` });
       expect(session.json()).toMatchObject({
         id: sessionId,
-        lastTransactionHash: '0xfixture-confirmed',
+        lastTransactionHash: fixture.legacyHash,
       });
       expect(session.json().pendingTransfer).toBeUndefined();
     } finally {
@@ -151,7 +178,43 @@ describe('text transfer resolution over HTTP', () => {
     }
   });
 
-  it.each(['throw', 'missing_hash'] as const)(
+  it('accepts the official WDK CLI txHash broadcast result', async () => {
+    fixture.broadcastBehavior = 'tx_hash';
+    const app = buildServer();
+    try {
+      const { sessionId } = (await app.inject({ method: 'POST', url: '/v1/sessions' })).json();
+      const messageUrl = `/v1/sessions/${sessionId}/messages`;
+      await app.inject({ method: 'POST', url: messageUrl, payload: { message: 'Send 10 USDT to 0x1234000000000000000000000000000000abcd' } });
+      const confirmation = await app.inject({ method: 'POST', url: messageUrl, payload: { message: 'confirmar la transferencia' } });
+
+      expect(confirmation.json()).toMatchObject({
+        status: 'sent',
+        transaction: {
+          network: 'sepolia',
+          transactionHash: fixture.officialHash,
+          explorerUrl: `https://sepolia.etherscan.io/tx/${fixture.officialHash}`,
+        },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('anchors a discordant WDK network and explorer URL to the confirmed Sepolia input', async () => {
+    fixture.broadcastBehavior = 'network_mismatch';
+    const app = buildServer();
+    try {
+      const { sessionId } = (await app.inject({ method: 'POST', url: '/v1/sessions' })).json();
+      const messageUrl = `/v1/sessions/${sessionId}/messages`;
+      await app.inject({ method: 'POST', url: messageUrl, payload: { message: 'Send 10 USDT to 0x1234000000000000000000000000000000abcd' } });
+      const confirmation = await app.inject({ method: 'POST', url: messageUrl, payload: { message: 'confirmar la transferencia' } });
+      expect(confirmation.json()).toMatchObject({ status: 'sent', transaction: { network: 'sepolia', transactionHash: fixture.officialHash, explorerUrl: `https://sepolia.etherscan.io/tx/${fixture.officialHash}` } });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it.each(['throw', 'missing_hash', 'failed_hash', 'malformed_hash'] as const)(
     'locks the pending transfer as uncertain after a %s broadcast result',
     async (broadcastBehavior) => {
       fixture.broadcastBehavior = broadcastBehavior;
@@ -192,9 +255,10 @@ describe('text transfer resolution over HTTP', () => {
 
   it('shows and persists preview identity from the requested arguments, not mismatched tool fields', async () => {
     fixture.previewOverride = {
+      preview: true,
       network: 'wrong-network',
       token: 'WRONG',
-      recipient: '0xwrong',
+      to: '0xwrong',
       amount: '999',
       estimatedFee: '0.0003 ETH',
     };
@@ -222,10 +286,11 @@ describe('text transfer resolution over HTTP', () => {
   });
 
   it('rejects a live-shaped preview when the real estimated fee is empty', async () => {
-    fixture.previewOverride = {
-      network: 'sepolia',
-      token: 'USDT',
-      recipient: '0x1234000000000000000000000000000000abcd',
+      fixture.previewOverride = {
+        preview: true,
+        network: 'sepolia',
+        token: 'USDT',
+        to: '0x1234000000000000000000000000000000abcd',
       amount: '10',
       estimatedFee: '',
     };

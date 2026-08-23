@@ -4,6 +4,7 @@ import type { HealthResponse } from '../contracts/http.js';
 
 const NETWORK = process.env.WDK_NETWORK ?? 'sepolia';
 const WALLET = process.env.WDK_WALLET_NAME ?? 'agent-demo';
+const MODE = process.env.WDK_TOOLS_SOURCE === 'live' ? 'live' : 'fixture';
 
 export async function registerHealthRoutes(app: FastifyInstance): Promise<void> {
   app.get('/health', async (): Promise<HealthResponse> => {
@@ -26,6 +27,6 @@ export async function registerHealthRoutes(app: FastifyInstance): Promise<void> 
       }
     }
 
-    return { status: 'ok', mcp, wallet, network: NETWORK };
+    return { status: 'ok', mode: MODE, mcp, wallet, network: NETWORK };
   });
 }

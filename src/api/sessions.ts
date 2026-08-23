@@ -84,7 +84,19 @@ export async function registerSessionRoutes(app: FastifyInstance): Promise<void>
         return reply.send({ status: 'error', message: parsed.error.message, code: 'invalid_body' });
       }
 
-      const result = await handleMessage(session.id, parsed.data.message);
+      const abortController = new AbortController();
+      const abortOnDisconnect = () => abortController.abort();
+      request.raw.once('aborted', abortOnDisconnect);
+      reply.raw.once('close', abortOnDisconnect);
+      let result: Awaited<ReturnType<typeof handleMessage>>;
+      try {
+        result = await handleMessage(session.id, parsed.data.message, {
+          abortSignal: abortController.signal,
+        });
+      } finally {
+        request.raw.removeListener('aborted', abortOnDisconnect);
+        reply.raw.removeListener('close', abortOnDisconnect);
+      }
       if (result.status === 'error') {
         reply.code(422);
       }

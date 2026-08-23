@@ -235,6 +235,11 @@
   animation: accountant-listen 1.15s ease-in-out infinite;
 }
 
+.agent-stage .nani-avatar-frame {
+  width: 100% !important;
+  height: 100% !important;
+}
+
 @keyframes wave {
   to {
     height: 27px;

@@ -4,10 +4,11 @@ import { redactAddressLikeText } from './embedding.js';
 import { isValidEvmAddress } from './address.js';
 import type { RecipientMemoryWriteDraft, RecipientMemoryService } from './service.js';
 import type { DemoSession } from '../sessions/in-memory-store.js';
-import { clearSelectedRecipient, consumeMemoryWrite, currentUserTurnCount, setRecipientClarification, setSelectedRecipient, stageMemoryWrite } from '../sessions/in-memory-store.js';
+import { clearSelectedRecipient, consumeMemoryWrite, currentUserTurnCount, invalidateSelectedRecipient, setRecipientClarification, setSelectedRecipient, stageMemoryWrite } from '../sessions/in-memory-store.js';
 
 const searchSchema = z.object({ query: z.string().trim().min(1) });
 const selectedAddressSchema = z.object({ recipientId: z.string().uuid(), expectedVersion: z.number().int().positive() });
+const selectedAddressLookupSchema = z.object({}).strict();
 const writeSchema = z.object({ confirmationId: z.string().uuid() });
 const draftSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('recipient'), name: z.string().trim().min(1), description: z.string().trim().min(1), address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.') }),
@@ -39,6 +40,31 @@ function redactFact<T extends { fact: string; evidence: string }>(fact: T): T {
 export function createRecipientMemoryTools(options: RecipientMemoryToolsOptions) {
   const ttl = options.confirmationTtlMs ?? 5 * 60_000;
   const now = options.now ?? Date.now;
+
+  async function resolveSelectedRecipientAddress() {
+    const selected = options.session.recipientMemory?.selectedRecipient;
+    if (!selected) return { status: 'selection_required' as const };
+    const recipient = await options.service.getRecipientForVersion(
+      options.userId,
+      selected.recipientId,
+      selected.version,
+    );
+    if (
+      !recipient ||
+      recipient.id !== selected.recipientId ||
+      recipient.version !== selected.version ||
+      !isValidEvmAddress(recipient.address)
+    ) {
+      invalidateSelectedRecipient(options.session.id);
+      return { status: 'stale_selection' as const };
+    }
+    return {
+      status: 'resolved' as const,
+      recipientId: recipient.id,
+      version: recipient.version,
+      address: recipient.address,
+    };
+  }
 
   return {
     async search_recipients(input: unknown) {
@@ -78,12 +104,14 @@ export function createRecipientMemoryTools(options: RecipientMemoryToolsOptions)
       if (!parsed.success || !selected || selected.recipientId !== parsed.data.recipientId || selected.version !== parsed.data.expectedVersion) {
         return { status: 'selection_required' as const };
       }
-      const recipient = await options.service.getRecipientForVersion(options.userId, selected.recipientId, selected.version);
-      if (!recipient || !isValidEvmAddress(recipient.address)) {
-        clearSelectedRecipient(options.session.id);
-        return { status: 'stale_selection' as const };
+      return resolveSelectedRecipientAddress();
+    },
+
+    async get_selected_recipient_address(input: unknown) {
+      if (!selectedAddressLookupSchema.safeParse(input).success) {
+        return { status: 'selection_required' as const };
       }
-      return { status: 'resolved' as const, recipientId: recipient.id, version: recipient.version, address: recipient.address };
+      return resolveSelectedRecipientAddress();
     },
 
     async stage_user_memory(input: unknown): Promise<WriteConfirmation> {

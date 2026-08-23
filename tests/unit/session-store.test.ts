@@ -74,4 +74,5 @@ describe('in-memory session store', () => {
     setLastTransactionHash(session.id, '0xabc');
     expect(getSession(session.id)?.lastTransactionHash).toBe('0xabc');
   });
+
 });
