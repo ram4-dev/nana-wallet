@@ -404,7 +404,7 @@ function AgentePage() {
       </div>
 
       <form
-        className="mt-6 flex w-full items-center gap-1 rounded-full border border-input bg-card p-1 focus-within:ring-4 focus-within:ring-ring/20"
+        className="mt-10 flex w-full items-center gap-1 rounded-full border border-input bg-card p-1 focus-within:ring-4 focus-within:ring-ring/20"
         onSubmit={(event) => {
           event.preventDefault();
           sendText();
