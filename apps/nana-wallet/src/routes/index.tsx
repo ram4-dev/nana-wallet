@@ -289,9 +289,6 @@ function AgentePage() {
       <h1 className="text-center text-3xl leading-tight font-extrabold">
         Hola, {meQuery.data.greetingName}
       </h1>
-      <p className="mt-2 text-center text-lg text-muted-foreground">
-        Pedime lo que necesites. Yo te ayudo.
-      </p>
 
       <div className="relative mt-8 flex flex-col items-center">
         <button
