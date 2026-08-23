@@ -168,6 +168,67 @@
   animation: breathe 4.5s ease-in-out infinite;
 }
 
+.nani-avatar-frame {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid color-mix(in oklch, var(--primary) 34%, white);
+  border-radius: 999px;
+  background:
+    radial-gradient(
+      circle at 50% 45%,
+      color-mix(in oklch, white 88%, transparent) 0 42%,
+      transparent 70%
+    ),
+    linear-gradient(155deg, color-mix(in oklch, var(--secondary) 72%, white), white);
+}
+
+.nani-avatar-frame::after {
+  position: absolute;
+  z-index: -1;
+  right: 12%;
+  bottom: 8%;
+  left: 12%;
+  height: 20%;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--primary) 18%, transparent);
+  filter: blur(18px);
+  content: "";
+}
+
+.nani-avatar-image {
+  position: absolute;
+  max-width: none;
+  object-fit: contain;
+  object-position: center bottom;
+  pointer-events: none;
+  user-select: none;
+  filter: drop-shadow(0 10px 10px color-mix(in oklch, var(--primary) 14%, transparent));
+  transform-origin: center bottom;
+}
+
+.nani-avatar-image--lista {
+  right: -4%;
+  bottom: -9%;
+  width: 108%;
+  height: 108%;
+}
+
+.nani-avatar-image--escuchando {
+  right: -3%;
+  bottom: -5%;
+  width: 106%;
+  height: 106%;
+}
+
+.nani-avatar-image--pensando {
+  right: -5%;
+  bottom: -7%;
+  width: 110%;
+  height: 110%;
+}
+
 .agent-stage.listening .breathe {
   animation: accountant-listen 1.15s ease-in-out infinite;
 }
@@ -180,11 +241,17 @@
 
 .sound-waves {
   position: absolute;
+  z-index: 2;
   bottom: 20px;
   display: flex;
   align-items: center;
   height: 28px;
   gap: 5px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in oklch, var(--primary) 24%, white);
+  border-radius: 999px;
+  background: color-mix(in oklch, white 88%, transparent);
+  backdrop-filter: blur(8px);
 }
 
 .sound-waves i {

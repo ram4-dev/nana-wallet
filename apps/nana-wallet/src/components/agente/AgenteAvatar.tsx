@@ -1,121 +1,51 @@
-import { useMemo } from "react";
+import naniEscuchando from "@/assets/nani/nani-escuchando.png";
+import naniLista from "@/assets/nani/nani-lista.png";
+import naniPensando from "@/assets/nani/nani-pensando.png";
 
-import type { AvatarDefinition } from "./avatarTypes";
-import {
-  eyePath,
-  projectNode,
-  quaternionFromEuler,
-  sphereSilhouetteRadius,
-} from "./avatarGeometry";
-import cloudeeDefinition from "./cloudee.avatar.json";
-import { useAvatarPlayer } from "./useAvatarPlayer";
-
-const cloudee = cloudeeDefinition as unknown as AvatarDefinition;
-
-/** Estados del agente que devuelve la API, mapeados a animaciones del avatar. */
+/** Estados del agente que devuelve la API, mapeados a reacciones de Nani. */
 export type AgenteEstado =
   "escuchando" | "pensando" | "esperando_confirmacion" | "listo" | "no_entendi";
 
-const animationForState: Record<AgenteEstado, string> = {
-  escuchando: "listening",
-  pensando: "thinking",
-  esperando_confirmacion: "curious",
-  listo: "idle",
-  no_entendi: "confused",
+const avatarForState: Record<AgenteEstado, { src: string; pose: string }> = {
+  escuchando: { src: naniEscuchando, pose: "escuchando" },
+  pensando: { src: naniPensando, pose: "pensando" },
+  esperando_confirmacion: { src: naniLista, pose: "lista" },
+  listo: { src: naniLista, pose: "lista" },
+  no_entendi: { src: naniPensando, pose: "pensando" },
 };
 
-/** Lo que el lector de pantalla anuncia. El avatar en sí es decorativo. */
+/** Lo que el lector de pantalla anuncia. La imagen interna es decorativa. */
 const labelForState: Record<AgenteEstado, string> = {
-  escuchando: "El agente te está escuchando",
-  pensando: "El agente está pensando",
-  esperando_confirmacion: "El agente espera que revises",
-  listo: "El agente está listo para ayudarte",
-  no_entendi: "El agente no te entendió bien",
+  escuchando: "Nani te está escuchando",
+  pensando: "Nani está pensando",
+  esperando_confirmacion: "Nani espera que revises",
+  listo: "Nani está lista para ayudarte",
+  no_entendi: "Nani no te entendió bien",
 };
-
-const radians = (degrees: number) => (degrees * Math.PI) / 180;
 
 type AgenteAvatarProps = {
   estado: AgenteEstado;
-  /** Lado del cuadro en píxeles. El dibujo se escala solo. */
+  /** Lado del cuadro en píxeles. La imagen se escala sola. */
   size?: number;
-  definition?: AvatarDefinition;
 };
 
-export function AgenteAvatar({ estado, size = 256, definition = cloudee }: AgenteAvatarProps) {
-  const animationKey = animationForState[estado];
-  const frame = useAvatarPlayer(definition, animationKey);
-  const { expression, blink, bodyOffset, eyeOffset, inclinacionAcento } = frame;
-
-  const orientation = useMemo(
-    () =>
-      quaternionFromEuler(
-        radians(expression.headX),
-        radians(expression.headY),
-        radians(expression.headZ + inclinacionAcento),
-      ),
-    [expression.headX, expression.headY, expression.headZ, inclinacionAcento],
-  );
-
-  const primary = definition.body.primary;
-  const bodyRadiusX = sphereSilhouetteRadius(primary.width / 2, expression.perspective);
-  const bodyRadiusY = sphereSilhouetteRadius(primary.height / 2, expression.perspective);
-
-  const nodes = definition.body.nodes.map((node) =>
-    projectNode(node, orientation, expression.perspective),
-  );
-  const behindNodes = nodes.filter((node) => node.behind);
-  const frontNodes = nodes.filter((node) => !node.behind);
-
-  const leftEye = eyePath(expression, orientation, primary, -1, blink, eyeOffset);
-  const rightEye = eyePath(expression, orientation, primary, 1, blink, eyeOffset);
-
-  // El viewBox se calcula desde el cuerpo, así que un avatar más grande
-  // o más chico entra igual sin tocar nada.
-  const extent = Math.max(bodyRadiusX, bodyRadiusY) * 1.9;
-
-  const bodyColor = definition.colors.body;
-  const eyeColor = definition.colors.eyes;
+export function AgenteAvatar({ estado, size = 256 }: AgenteAvatarProps) {
+  const avatar = avatarForState[estado];
 
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={`${-extent} ${-extent} ${extent * 2} ${extent * 2}`}
+    <span
+      className="nani-avatar-frame"
+      data-avatar-state={estado}
       role="img"
       aria-label={labelForState[estado]}
-      style={{ overflow: "visible" }}
+      style={{ width: size, height: size }}
     >
-      <g transform={`translate(${bodyOffset.x} ${bodyOffset.y})`}>
-        {behindNodes.map((node, index) => (
-          <ellipse
-            key={`atras-${index}`}
-            cx={node.cx}
-            cy={node.cy}
-            rx={node.rx}
-            ry={node.ry}
-            transform={`rotate(${node.rotation} ${node.cx} ${node.cy})`}
-            fill={bodyColor}
-          />
-        ))}
-
-        <ellipse cx={0} cy={0} rx={bodyRadiusX} ry={bodyRadiusY} fill={bodyColor} />
-
-        {frontNodes.map((node, index) => (
-          <ellipse
-            key={`adelante-${index}`}
-            cx={node.cx}
-            cy={node.cy}
-            rx={node.rx}
-            ry={node.ry}
-            transform={`rotate(${node.rotation} ${node.cx} ${node.cy})`}
-            fill={bodyColor}
-          />
-        ))}
-
-        {leftEye ? <path d={leftEye} fill={eyeColor} /> : null}
-        {rightEye ? <path d={rightEye} fill={eyeColor} /> : null}
-      </g>
-    </svg>
+      <img
+        src={avatar.src}
+        alt=""
+        className={`nani-avatar-image nani-avatar-image--${avatar.pose} breathe`}
+        draggable={false}
+      />
+    </span>
   );
 }

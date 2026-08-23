@@ -294,7 +294,7 @@ function AgentePage() {
           className={`agent-stage press relative flex h-64 w-64 items-center justify-center rounded-full focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 disabled:cursor-wait disabled:opacity-80 ${
             isRecording ? "listening" : ""
           }`}
-          aria-label={isRecording ? "Terminar de hablar con Nana" : "Hablar con Nana"}
+          aria-label={isRecording ? "Terminar de hablar con Nani" : "Hablar con Nani"}
           aria-pressed={isRecording}
           onClick={handleMicrophone}
           disabled={
@@ -325,7 +325,7 @@ function AgentePage() {
           className="mt-5 rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 text-center text-lg font-bold"
           role="status"
         >
-          Hablá con Nana y tocala cuando termines. Si no, se envía sola después de 20 segundos.
+          Hablá con Nani y tocala cuando termines. Si no, se envía sola después de 20 segundos.
         </p>
       ) : null}
 
@@ -334,7 +334,7 @@ function AgentePage() {
           <section className="surface-card p-5">
             {lastTranscript ? (
               <div className="mb-4 rounded-2xl bg-secondary p-4">
-                <p className="text-base font-bold text-muted-foreground">Nana entendió:</p>
+                <p className="text-base font-bold text-muted-foreground">Nani entendió:</p>
                 <p className="mt-1 text-xl font-extrabold">“{lastTranscript}”</p>
               </div>
             ) : null}
