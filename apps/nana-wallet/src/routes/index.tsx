@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Calculator, Mic, Send } from "lucide-react";
+import { Calculator, Mic, Send, Volume2, VolumeX } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
@@ -12,6 +12,8 @@ import {
   shouldLockAfterSessionResolution,
   UNKNOWN_SESSION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
+import { useVoicePlayback } from "@/lib/use-voice-playback";
+import { useVoiceRecorder } from "@/lib/use-voice-recorder";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -92,6 +94,15 @@ function AgentePage() {
   const [isSessionActionPending, setIsSessionActionPending] = useState(false);
   const [isConfirmationPending, setIsConfirmationPending] = useState(false);
   const [areSessionActionsLocked, setAreSessionActionsLocked] = useState(false);
+  const { isMuted, toggleMuted, speak: speakReply } = useVoicePlayback();
+  const {
+    isRecording,
+    isTranscribing,
+    toggle: toggleRecording,
+  } = useVoiceRecorder(
+    (transcribedText) => sendTurn(transcribedText),
+    (voiceError) => setMessage(voiceError),
+  );
   const sendSessionMessage = useMemo(
     () =>
       createSessionMessageSender(
@@ -136,6 +147,7 @@ function AgentePage() {
         setTurn(nextTurn);
         setMessage(nextTurn.status === "error" ? nextTurn.message : null);
         if (nextTurn.status === "sent") refreshMoneyQueries();
+        void speakReply(nextTurn.message);
       } catch (error) {
         if (kind === "resolution" && shouldLockAfterSessionResolution(error, "thrown")) {
           lockUnknownOutcome();
@@ -157,10 +169,6 @@ function AgentePage() {
     sendTurn(cleanText);
   }
 
-  function handleMicrophone() {
-    setMessage("Por ahora el agente sólo acepta mensajes escritos. Escribime abajo.");
-  }
-
   function rejectProposal() {
     sendTurn("cancel", "resolution");
   }
@@ -176,15 +184,19 @@ function AgentePage() {
     return <RouteError error={meQuery.error} onRetry={() => void meQuery.refetch()} />;
   }
 
-  const agentStatus = isSessionActionPending
-    ? "Estoy pensando"
-    : turn?.status === "confirmation_required"
-      ? "Esperando que revises"
-      : turn?.status === "error"
-        ? "No te entendí bien"
-        : turn
-          ? "Estoy listo para ayudarte"
-          : "Tu contador de confianza";
+  const agentStatus = isRecording
+    ? "Te estoy escuchando"
+    : isTranscribing
+      ? "Entendiendo lo que dijiste"
+      : isSessionActionPending
+        ? "Estoy pensando"
+        : turn?.status === "confirmation_required"
+          ? "Esperando que revises"
+          : turn?.status === "error"
+            ? "No te entendí bien"
+            : turn
+              ? "Estoy listo para ayudarte"
+              : "Tu contador de confianza";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center px-6 pt-12 pb-40">
@@ -206,9 +218,21 @@ function AgentePage() {
           <AgentCharacter />
         </div>
 
-        <span className="mt-3 rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
-          {agentStatus}
-        </span>
+        <div className="mt-3 flex items-center gap-2">
+          <span className="rounded-full bg-secondary px-5 py-3 text-base font-bold text-secondary-foreground">
+            {agentStatus}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            className="press size-11 shrink-0 rounded-full text-muted-foreground"
+            aria-label={isMuted ? "Activar la voz del agente" : "Silenciar la voz del agente"}
+            aria-pressed={isMuted}
+            onClick={toggleMuted}
+          >
+            {isMuted ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
+          </Button>
+        </div>
       </div>
 
       <div className="mt-6 w-full space-y-4" aria-live="polite">
@@ -286,10 +310,18 @@ function AgentePage() {
         <Button
           type="button"
           variant="ghost"
-          className="press size-14 shrink-0 rounded-2xl text-primary"
-          aria-label="El agente todavía no acepta mensajes de voz"
-          onClick={handleMicrophone}
-          disabled={isSessionActionPending || isConfirmationPending || areSessionActionsLocked}
+          className={`press size-14 shrink-0 rounded-2xl ${isRecording ? "animate-pulse bg-destructive/15 text-destructive" : "text-primary"}`}
+          aria-label={
+            isRecording ? "Tocá para enviar lo que dijiste" : "Tocá para hablarle al agente"
+          }
+          aria-pressed={isRecording}
+          onClick={toggleRecording}
+          disabled={
+            isSessionActionPending ||
+            isConfirmationPending ||
+            areSessionActionsLocked ||
+            isTranscribing
+          }
         >
           <Mic className="size-7" strokeWidth={2.4} />
         </Button>

@@ -125,3 +125,13 @@ export const errorResponseSchema = z.object({
   code: z.string(),
 });
 export type ErrorResponse = z.infer<typeof errorResponseSchema>;
+
+export const voiceTranscribeResponseSchema = z.object({
+  text: z.string(),
+});
+export type VoiceTranscribeResponse = z.infer<typeof voiceTranscribeResponseSchema>;
+
+export const voiceSpeakRequestSchema = z.object({
+  text: z.string().min(1),
+});
+export type VoiceSpeakRequest = z.infer<typeof voiceSpeakRequestSchema>;
