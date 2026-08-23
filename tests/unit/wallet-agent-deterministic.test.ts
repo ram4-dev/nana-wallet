@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { handleMessage } from '../../src/agent/wallet-agent.js';
 import { createSession, resetSessionStore, setPendingTransfer, stageMemoryWrite } from '../../src/sessions/in-memory-store.js';
 import type { PendingTransfer } from '../../src/contracts/http.js';
@@ -19,8 +19,16 @@ const pendingFixture: PendingTransfer = {
 };
 
 describe('handleMessage deterministic paths (no LLM call)', () => {
+  const previousRuntime = process.env.AGENT_RUNTIME;
+
   beforeEach(() => {
     resetSessionStore();
+    process.env.AGENT_RUNTIME = 'deterministic';
+  });
+
+  afterEach(() => {
+    if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
+    else process.env.AGENT_RUNTIME = previousRuntime;
   });
 
   it('errors when the session does not exist', async () => {
@@ -37,6 +45,15 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     setPendingTransfer(session.id, pendingFixture);
 
     const result = await handleMessage(session.id, 'cancel');
+
+    expect(result).toEqual({ status: 'cancelled', message: 'Transfer cancelled.' });
+  });
+
+  it('accepts an explicit transfer cancellation phrase', async () => {
+    const session = createSession();
+    setPendingTransfer(session.id, pendingFixture);
+
+    const result = await handleMessage(session.id, 'Cancelar la transferencia.');
 
     expect(result).toEqual({ status: 'cancelled', message: 'Transfer cancelled.' });
   });
@@ -92,5 +109,75 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
 
     expect(result).toMatchObject({ status: 'clarification_required' });
     expect(session.pendingTransfer).toBeUndefined();
+  });
+
+  it('previews a fixture transfer from text without calling an LLM', async () => {
+    const session = createSession();
+    const result = await handleMessage(
+      session.id,
+      'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
+    );
+
+    expect(result.status).toBe('confirmation_required');
+    if (result.status !== 'confirmation_required') return;
+    expect(result.preview).toMatchObject({
+      network: 'sepolia',
+      token: 'USDT',
+      recipient: '0x1234000000000000000000000000000000abcd',
+      amount: '10',
+      estimatedFee: '0.0003 ETH',
+    });
+  });
+
+  it('confirms the pending fixture transfer without an LLM or live broadcast', async () => {
+    const session = createSession();
+    await handleMessage(
+      session.id,
+      'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
+    );
+
+    const result = await handleMessage(session.id, 'confirm');
+
+    expect(result.status).toBe('sent');
+    if (result.status !== 'sent') return;
+    expect(result.transaction.network).toBe('sepolia');
+    expect(result.transaction.transactionHash).toMatch(/^0xfixturetx/);
+    expect(result.transaction.explorerUrl).toContain('sepolia.etherscan.io');
+  });
+
+  it('accepts an explicit transfer confirmation phrase', async () => {
+    const session = createSession();
+    await handleMessage(
+      session.id,
+      'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
+    );
+
+    const result = await handleMessage(session.id, 'Confirmar la transferencia.');
+
+    expect(result.status).toBe('sent');
+  });
+
+  it('does not send an ambiguous instruction to the agent while confirmation is pending', async () => {
+    const session = createSession();
+    setPendingTransfer(session.id, pendingFixture);
+
+    const result = await handleMessage(session.id, 'sí');
+
+    expect(result).toEqual({
+      status: 'error',
+      message:
+        'A transfer is waiting for your decision. Confirm or cancel it before sending another instruction.',
+      code: 'pending_confirmation',
+    });
+  });
+
+  it('answers a balance question from WDK fixtures', async () => {
+    const session = createSession();
+    const result = await handleMessage(session.id, 'How much USDT do I have?');
+
+    expect(result).toEqual({
+      status: 'answer',
+      message: 'You have 42.5 USDT.',
+    });
   });
 });

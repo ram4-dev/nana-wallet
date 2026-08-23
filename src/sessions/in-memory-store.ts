@@ -33,6 +33,7 @@ export type DemoSession = {
   messages: ModelMessage[];
   pendingTransfer?: PendingTransfer;
   recipientMemory?: RecipientMemorySession;
+  transferResolutionState?: 'broadcasting' | 'uncertain';
   lastTransactionHash?: string;
   createdAt: string;
 };
@@ -63,12 +64,39 @@ export function setPendingTransfer(id: string, transfer: PendingTransfer): void 
   const session = sessions.get(id);
   if (!session) return;
   session.pendingTransfer = transfer;
+  session.transferResolutionState = undefined;
 }
 
 export function clearPendingTransfer(id: string): void {
   const session = sessions.get(id);
   if (!session) return;
   session.pendingTransfer = undefined;
+  session.transferResolutionState = undefined;
+}
+
+export type PendingTransferClaim =
+  | { status: 'claimed'; transfer: PendingTransfer }
+  | { status: 'missing' | 'broadcasting' | 'uncertain' };
+
+/** Synchronous compare-and-set: no await can occur between checking and claiming. */
+export function claimPendingTransfer(id: string): PendingTransferClaim {
+  const session = sessions.get(id);
+  if (!session?.pendingTransfer) return { status: 'missing' };
+  if (session.transferResolutionState) return { status: session.transferResolutionState };
+  session.transferResolutionState = 'broadcasting';
+  return { status: 'claimed', transfer: session.pendingTransfer };
+}
+
+export function releasePendingTransferClaim(id: string): void {
+  const session = sessions.get(id);
+  if (session?.transferResolutionState === 'broadcasting') {
+    session.transferResolutionState = undefined;
+  }
+}
+
+export function markPendingTransferUncertain(id: string): void {
+  const session = sessions.get(id);
+  if (session?.pendingTransfer) session.transferResolutionState = 'uncertain';
 }
 
 export function setSelectedRecipient(id: string, selection: RecipientSelection): void {

@@ -2,7 +2,8 @@ import { ToolLoopAgent, tool, type Tool, type LanguageModel } from 'ai';
 import { z } from 'zod';
 import { model as defaultModel } from './model.js';
 import { WALLET_AGENT_INSTRUCTIONS } from './instructions.js';
-import { getWdkTools } from './wdk-tools.js';
+import { callWdkTool, getWdkTools } from './wdk-tools.js';
+import { isDeterministicAgentRuntime, parseDeterministicIntent } from './deterministic-intent.js';
 import * as store from '../sessions/in-memory-store.js';
 import type { DemoSession } from '../sessions/in-memory-store.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
@@ -15,9 +16,38 @@ import type {
   TransferPreview,
   TransactionResult,
 } from '../contracts/http.js';
+import { transactionResultSchema, transferPreviewSchema } from '../contracts/http.js';
 
-const CANCEL_WORDS = new Set(['cancel', 'cancelar']);
-const CONFIRM_WORDS = new Set(['confirm', 'confirmar', 'yes', 'si', 'sí']);
+const toolCallOptions = {
+  toolCallId: 'session-send-token',
+  messages: [],
+  abortSignal: new AbortController().signal,
+} as never;
+
+const CANCEL_PHRASES = new Set([
+  'cancel',
+  'cancelar',
+  'cancelo',
+  'cancelar transferencia',
+  'cancelar la transferencia',
+  'cancelo la transferencia',
+]);
+const CONFIRM_PHRASES = new Set([
+  'confirm',
+  'confirmar',
+  'confirmar transferencia',
+  'confirmar la transferencia',
+]);
+
+function normalizeResolutionText(text: string): string {
+  return text
+    .trim()
+    .toLocaleLowerCase('es-AR')
+    .normalize('NFC')
+    .replace(/[.!]+$/u, '')
+    .trim()
+    .replace(/\s+/gu, ' ');
+}
 
 const sendTokenInputSchema = z.object({
   network: z.string(),
@@ -49,8 +79,24 @@ function pendingMatches(session: DemoSession, input: SendTokenInput): boolean {
     p.network === input.network &&
     p.token === input.token &&
     p.to === input.to &&
-    p.amount === input.amount
+    p.amount === input.amount &&
+    p.wallet === input.wallet
   );
+}
+
+export function canonicalizeTransferPreview(
+  input: SendTokenInput,
+  output: unknown,
+): TransferPreview | null {
+  const parsed = transferPreviewSchema.safeParse(output);
+  if (!parsed.success) return null;
+  return {
+    network: input.network,
+    token: input.token,
+    recipient: input.to,
+    amount: input.amount,
+    estimatedFee: parsed.data.estimatedFee,
+  };
 }
 
 /**
@@ -165,21 +211,34 @@ export async function handleMessage(
     return { status: 'error', message: 'Session not found.', code: 'session_not_found' };
   }
 
-  const normalized = userText.trim().toLowerCase();
+  const normalized = normalizeResolutionText(userText);
   store.appendMessage(sessionId, { role: 'user', content: userText });
   const recipientMemory = options.recipientMemory ?? getConfiguredRecipientMemoryRuntime();
   const rawMemoryTools = recipientMemory
     ? createRecipientMemoryTools({ userId: recipientMemory.userId, session, service: recipientMemory.service })
     : undefined;
 
-  if (session.pendingTransfer && CANCEL_WORDS.has(normalized)) {
+  if (session.transferResolutionState === 'uncertain') {
+    const message =
+      'The broadcast result is uncertain. Check the wallet history before taking another action.';
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'error', message, code: 'broadcast_uncertain' };
+  }
+
+  if (session.transferResolutionState === 'broadcasting') {
+    const message = 'The confirmed transfer is already being broadcast.';
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'error', message, code: 'broadcast_in_progress' };
+  }
+
+  if (session.pendingTransfer && CANCEL_PHRASES.has(normalized)) {
     store.clearPendingTransfer(sessionId);
     const message = 'Transfer cancelled.';
     store.appendMessage(sessionId, { role: 'assistant', content: message });
     return { status: 'cancelled', message };
   }
 
-  if (!session.pendingTransfer && rawMemoryTools && session.recipientMemory?.pendingWrite && CONFIRM_WORDS.has(normalized)) {
+  if (!session.pendingTransfer && rawMemoryTools && session.recipientMemory?.pendingWrite && CONFIRM_PHRASES.has(normalized)) {
     const confirmationId = session.recipientMemory.pendingWrite.confirmationId;
     const confirmation = store.confirmMemoryWrite(sessionId, recipientMemory!.userId, confirmationId, Date.now());
     if (confirmation.status !== 'confirmed') {
@@ -195,10 +254,42 @@ export async function handleMessage(
     return { status: 'answer', message };
   }
 
-  if (!session.pendingTransfer && CONFIRM_WORDS.has(normalized)) {
+  if (!session.pendingTransfer && CONFIRM_PHRASES.has(normalized)) {
     const message = 'There is no pending transfer to confirm.';
     store.appendMessage(sessionId, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'no_pending_preview' };
+  }
+
+  if (session.pendingTransfer && CONFIRM_PHRASES.has(normalized)) {
+    const claim = store.claimPendingTransfer(sessionId);
+    if (claim.status !== 'claimed') {
+      const message =
+        claim.status === 'uncertain'
+          ? 'The broadcast result is uncertain. Check the wallet history before taking another action.'
+          : 'The confirmed transfer is already being broadcast.';
+      return {
+        status: 'error',
+        message,
+        code: claim.status === 'uncertain' ? 'broadcast_uncertain' : 'broadcast_in_progress',
+      };
+    }
+    try {
+      const baseTools = await getWdkTools();
+      const tools = buildGuardedTools(baseTools, session, recipientMemory);
+      return executeConfirmedTransfer(sessionId, claim.transfer, tools);
+    } catch (error) {
+      store.releasePendingTransferClaim(sessionId);
+      const message = mapAgentError(error);
+      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      return { status: 'error', message, code: 'agent_error' };
+    }
+  }
+
+  if (session.pendingTransfer) {
+    const message =
+      'A transfer is waiting for your decision. Confirm or cancel it before sending another instruction.';
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'error', message, code: 'pending_confirmation' };
   }
 
   if (rawMemoryTools) {
@@ -230,6 +321,10 @@ export async function handleMessage(
 
   const baseTools = await getWdkTools();
   const tools = buildGuardedTools({ ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) }, session, recipientMemory);
+
+  if (isDeterministicAgentRuntime() && !options.model) {
+    return handleDeterministicTurn(sessionId, userText, session, tools);
+  }
   const agent = new ToolLoopAgent({
     model: options.model ?? defaultModel,
     instructions: WALLET_AGENT_INSTRUCTIONS,
@@ -261,7 +356,13 @@ export async function handleMessage(
     }
 
     if ('estimatedFee' in output) {
-      const args = lastCall.input as SendTokenInput;
+      const args = sendTokenInputSchema.parse(lastCall.input);
+      const preview = canonicalizeTransferPreview(args, output);
+      if (!preview) {
+        const message = 'The wallet returned an invalid transfer preview.';
+        store.appendMessage(sessionId, { role: 'assistant', content: message });
+        return { status: 'error', message, code: 'invalid_tool_result' };
+      }
       const selected = session.recipientMemory?.previewedRecipient;
       store.setPendingTransfer(sessionId, {
         network: args.network,
@@ -269,10 +370,10 @@ export async function handleMessage(
         to: args.to,
         amount: args.amount,
         wallet: args.wallet,
-        preview: output,
+        preview,
         ...(selected ? { recipientId: selected.recipientId, recipientVersion: selected.version } : {}),
       });
-      return { status: 'confirmation_required', message: result.text, preview: output };
+      return { status: 'confirmation_required', message: result.text, preview };
     }
 
     if ('transactionHash' in output) {
@@ -283,4 +384,107 @@ export async function handleMessage(
   }
 
   return { status: 'answer', message: result.text };
+}
+
+async function executeConfirmedTransfer(
+  sessionId: string,
+  pending: NonNullable<DemoSession['pendingTransfer']>,
+  tools: Record<string, Tool>,
+): Promise<SessionMessageResponse> {
+  if (!pending.preview || !tools.send_token?.execute) {
+    store.releasePendingTransferClaim(sessionId);
+    const message = 'There is no pending transfer to confirm.';
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'error', message, code: 'no_pending_preview' };
+  }
+
+  const input = {
+    network: pending.network,
+    token: pending.token,
+    to: pending.to,
+    amount: pending.amount,
+    wallet: pending.wallet,
+    dryRun: false,
+  };
+
+  let output: unknown;
+  try {
+    output = await tools.send_token.execute(input, toolCallOptions);
+  } catch {
+    return markBroadcastUncertain(sessionId);
+  }
+
+  const transaction = transactionResultSchema.safeParse(output);
+  if (transaction.success && transaction.data.transactionHash.trim()) {
+    store.clearPendingTransfer(sessionId);
+    store.setLastTransactionHash(sessionId, transaction.data.transactionHash);
+    const message = `Transfer sent. Hash: ${transaction.data.transactionHash}`;
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'sent', message, transaction: transaction.data };
+  }
+
+  return markBroadcastUncertain(sessionId);
+}
+
+function markBroadcastUncertain(sessionId: string): SessionMessageResponse {
+  store.markPendingTransferUncertain(sessionId);
+  const message =
+    'The broadcast result is uncertain. Check the wallet history before taking another action.';
+  store.appendMessage(sessionId, { role: 'assistant', content: message });
+  return { status: 'error', message, code: 'broadcast_uncertain' };
+}
+
+async function handleDeterministicTurn(
+  sessionId: string,
+  userText: string,
+  session: DemoSession,
+  tools: Record<string, Tool>,
+): Promise<SessionMessageResponse> {
+  const network = process.env.WDK_NETWORK ?? 'sepolia';
+  const token = process.env.WDK_TOKEN ?? 'USDT';
+  const wallet = process.env.WDK_WALLET_NAME ?? 'agent-demo';
+  const intent = parseDeterministicIntent(userText, token);
+
+  if (intent?.type === 'balance') {
+    const balance = (await callWdkTool('get_balance', { network, token, wallet })) as {
+      balance?: string;
+      token?: string;
+    };
+    const message = `You have ${balance.balance ?? 'an unknown amount'} ${balance.token ?? token}.`;
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'answer', message };
+  }
+
+  if (intent?.type === 'send' && tools.send_token?.execute) {
+    const input: SendTokenInput = {
+      network,
+      token: intent.token,
+      to: intent.to,
+      amount: intent.amount,
+      wallet,
+      dryRun: true,
+    };
+    const output = await tools.send_token.execute(input, toolCallOptions);
+    const preview = canonicalizeTransferPreview(input, output);
+    if (!preview) {
+      const message = 'The wallet returned an invalid transfer preview.';
+      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      return { status: 'error', message, code: 'invalid_tool_result' };
+    }
+    store.setPendingTransfer(sessionId, {
+      network,
+      token: intent.token,
+      to: intent.to,
+      amount: intent.amount,
+      wallet,
+      preview,
+    });
+    const message = `Prepared a ${intent.amount} ${intent.token} transfer to ${intent.to} on ${network}. Estimated fee: ${preview.estimatedFee}. Confirm to continue.`;
+    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    return { status: 'confirmation_required', message, preview };
+  }
+
+  const message = 'Tell me who to pay or how much USDT you want to send on Sepolia.';
+  store.appendMessage(sessionId, { role: 'assistant', content: message });
+  return { status: 'answer', message };
 }

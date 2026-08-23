@@ -1,4 +1,4 @@
-import { http, HttpResponse } from "msw";
+import { http, HttpResponse, passthrough } from "msw";
 
 import type {
   AgendaEvent,
@@ -18,6 +18,8 @@ import type {
   UpdateContactInput,
   WalletSummary,
 } from "@/lib/api-types";
+import { shouldUseLiveAgentBackend } from "@/lib/live-agent";
+import { classifySessionSubmission } from "@/lib/session-resolution";
 
 const apiPath = (path: string) => `*/v1${path}`;
 
@@ -540,12 +542,14 @@ export const handlers = [
   ),
 
   http.post(apiPath("/sessions"), () => {
+    if (shouldUseLiveAgentBackend()) return passthrough();
     const sessionId = crypto.randomUUID();
     agentSessions.set(sessionId, { pendingConfirmation: false });
     return HttpResponse.json({ sessionId, status: "active" as const });
   }),
 
   http.post(apiPath("/sessions/:sessionId/messages"), async ({ params, request }) => {
+    if (shouldUseLiveAgentBackend()) return passthrough();
     const session = agentSessions.get(String(params["sessionId"]));
     if (!session) {
       return HttpResponse.json<SessionMessageResponse>(
@@ -567,27 +571,34 @@ export const handlers = [
     }
 
     const normalized = body.message.trim().toLocaleLowerCase("es-AR");
-    if (session.pendingConfirmation && ["cancel", "cancelar"].includes(normalized)) {
-      session.pendingConfirmation = false;
-      return HttpResponse.json<SessionMessageResponse>({
-        status: "cancelled",
-        message: "Transfer cancelled.",
-      });
-    }
-    if (
-      session.pendingConfirmation &&
-      ["confirm", "confirmar", "yes", "si", "sí"].includes(normalized)
-    ) {
-      session.pendingConfirmation = false;
-      return HttpResponse.json<SessionMessageResponse>({
-        status: "sent",
-        message: "Transfer sent.",
-        transaction: {
-          network: "base-sepolia",
-          transactionHash: `0x${crypto.randomUUID().replaceAll("-", "")}`,
-          explorerUrl: "https://sepolia.basescan.org/tx/0xmock",
+    if (session.pendingConfirmation) {
+      const submission = classifySessionSubmission(body.message, true);
+      if (submission.kind === "resolution") {
+        session.pendingConfirmation = false;
+        if (submission.message === "cancelar la transferencia") {
+          return HttpResponse.json<SessionMessageResponse>({
+            status: "cancelled",
+            message: "Transfer cancelled.",
+          });
+        }
+        return HttpResponse.json<SessionMessageResponse>({
+          status: "sent",
+          message: "Transfer sent.",
+          transaction: {
+            network: "base-sepolia",
+            transactionHash: `0x${crypto.randomUUID().replaceAll("-", "")}`,
+            explorerUrl: "https://sepolia.basescan.org/tx/0xmock",
+          },
+        });
+      }
+      return HttpResponse.json<SessionMessageResponse>(
+        {
+          status: "error",
+          message: "Confirmá o cancelá la transferencia pendiente antes de seguir.",
+          code: "pending_confirmation",
         },
-      });
+        { status: 422 },
+      );
     }
 
     const proposesTransfer = ["sofi", "sofía", "mandar", "transfer", "pagar", "regalo"].some(
