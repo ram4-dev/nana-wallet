@@ -2,7 +2,37 @@
 
 Wallet agéntica argentina diseñada para personas mayores y personas con discapacidad. Nana reduce la complejidad de una billetera tradicional: el usuario puede pedir una acción con lenguaje cotidiano, revisar claramente qué va a ocurrir y confirmar antes de mover dinero.
 
-> **Estado:** frontend funcional para web, Android e iOS. La demo local usa endpoints simulados con MSW; la conexión con el backend WDK y las transacciones reales todavía está en integración.
+> **Estado:** entrega del Aleph Hackathon 2026 para el Track 1 — Build with the WDK CLI. El repositorio contiene un frontend funcional y un backend HTTP WDK con modo fixture seguro por defecto y un modo live explícito para una wallet de prueba en Sepolia.
+
+## Aleph Hackathon 2026 — WDK Track
+
+Track oficial: [WDK Track](https://hacki.crecimiento.build/h/aleph-hackathon-2026/tracks/wdk-track).
+
+Nana es una wallet agéntica para personas mayores y personas con discapacidad. El usuario puede pedir una transferencia en lenguaje cotidiano, revisar red, token, destinatario, importe y fee, y confirmar explícitamente antes de que el agente intente ejecutarla. El backend conecta el agente con las herramientas de `wdk-mcp`; el modo fixture permite reproducir el flujo sin fondos ni claves, mientras que `WDK_TOOLS_SOURCE=live` habilita la integración con una wallet WDK local de prueba.
+
+### WDK usado
+
+Los paquetes WDK declarados en [`package.json`](package.json) son:
+
+- `@tetherto/wdk@1.0.0-beta.14` — runtime WDK.
+- `@tetherto/wdk-cli@1.0.0-beta.2` — CLI y proceso MCP (`wdk-mcp`).
+- `@tetherto/wdk-wallet-evm@1.0.0-beta.11` — wallet EVM.
+
+Puntos principales de integración:
+
+- [`src/wdk/mcp-client.ts`](https://github.com/rober8b/aleph-hackathon/blob/96c8f8e40bdee8180ca974954e32bf6f4e9697a1/src/wdk/mcp-client.ts#L117-L119) — resuelve el proceso MCP WDK incluido.
+- [`src/agent/wdk-tools.ts`](https://github.com/rober8b/aleph-hackathon/blob/96c8f8e40bdee8180ca974954e32bf6f4e9697a1/src/agent/wdk-tools.ts#L60-L92) — expone las herramientas WDK al agente, incluido `send_token`.
+- [`src/agent/wallet-agent.ts`](https://github.com/rober8b/aleph-hackathon/blob/96c8f8e40bdee8180ca974954e32bf6f4e9697a1/src/agent/wallet-agent.ts#L292-L350) — aplica preview `dryRun`, confirmación separada y guardas antes de una ejecución live.
+
+### Demo
+
+- **BLOCKER DE ENTREGA — video de demo:** TODO — agregar aquí la URL pública del video antes de enviar la candidatura. No se inventa un enlace mientras no exista uno real.
+- **Red de referencia:** Ethereum Sepolia.
+- **Token de demo:** alias WDK `usdt-test` (USD₮ de prueba).
+- **Contrato del token:** `0xc4DCC311c028e341fd8602D8eB89c5de94625927`.
+- **Modo seguro reproducible:** `WDK_TOOLS_SOURCE=fixture` (valor predeterminado; no requiere wallet, unlock ni broadcast).
+
+La demo live requiere una wallet dedicada, desbloqueada por la persona que ejecuta la prueba y con fondos limitados. Este README no contiene seeds, claves privadas ni credenciales.
 
 ## Experiencia
 
@@ -22,7 +52,7 @@ El flujo de pago siempre muestra destinatario, importe, cuenta de origen y adver
 - Capacitor 8 para Android e iOS
 - MSW para la API simulada local
 - Vitest y Testing Library
-- Backend WDK planificado con Node.js, Fastify y Tether WDK/MCP
+- Backend WDK con Node.js, Fastify y Tether WDK/MCP
 
 ## Estructura
 
@@ -136,7 +166,7 @@ Ejecutalos desde `apps/nana-wallet`:
 
 El frontend consume un contrato `/v1` tipado para agente, contactos, agenda, facturas, saldo, movimientos e intenciones de pago. Durante el desarrollo esas rutas son respondidas por MSW.
 
-La integración prevista usa el backend WDK para consultar la wallet, preparar una transferencia con `dryRun`, solicitar confirmación y recién entonces transmitirla. El plan técnico está en [docs/wdk-agent-development-plan.md](docs/wdk-agent-development-plan.md).
+El backend WDK consulta la wallet, prepara una transferencia con `dryRun`, solicita una confirmación separada y recién entonces puede intentar transmitirla en modo live. El plan técnico está en [docs/wdk-agent-development-plan.md](docs/wdk-agent-development-plan.md).
 
 La confirmación conversacional es parte de la experiencia de la demo, no una frontera de autorización suficiente para producción. Una versión productiva debe mantener las claves fuera del agente y aplicar almacenamiento seguro, autenticación local, límites y políticas de riesgo.
 
@@ -157,11 +187,11 @@ npm run mobile:sync
 - Los flujos locales funcionan con datos simulados.
 - No se incluyen fondos reales ni claves privadas.
 - El repositorio todavía no produce un APK o IPA automáticamente; esos binarios se compilan con Android Studio o Xcode.
-- La conexión completa entre el contrato del frontend y el backend WDK sigue pendiente.
+- Por defecto, el frontend usa MSW para sus endpoints locales. El [runbook live](docs/local-live-runbook.md) conecta el chat de Nana con el backend WDK para la prueba de integración en Sepolia.
 
 ## Backend WDK Transaction Agent
 
-Además del frontend, este repositorio incluye un backend HTTP para el track WDK, que interpreta instrucciones en lenguaje natural y opera con `wdk-mcp` a través de un `ToolLoopAgent`.
+Además del frontend, este repositorio incluye un backend HTTP para el Track 1 WDK, que interpreta instrucciones en lenguaje natural y opera con `wdk-mcp` a través de un `ToolLoopAgent`.
 
 Ver detalles en `docs/wdk-agent-development-plan.md`, `docs/api.md` y `docs/demo-runbook.md`.
 
@@ -169,15 +199,40 @@ Para ejecutar la integración completa contra la wallet local de Sepolia, seguí
 el [runbook local live](docs/local-live-runbook.md). Ese es el único flujo que
 puede emitir una transacción; la demo por defecto permanece en fixture.
 
-### Setup backend
+### Setup backend desde un clone limpio
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/rober8b/aleph-hackathon.git
 cd aleph-hackathon
 cp .env.example .env
 npm ci
-docker compose up -d db
 ```
+
+El flujo mínimo de evaluación usa el fixture y no necesita Docker, wallet ni credenciales. Para que también use el parser determinista y no intente contactar un proveedor de modelo:
+
+```bash
+AGENT_RUNTIME=deterministic WDK_TOOLS_SOURCE=fixture npm run dev
+```
+
+En otra terminal, ejecutá las verificaciones del clone limpio:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+Con `AGENT_RUNTIME=deterministic WDK_TOOLS_SOURCE=fixture`, las respuestas son locales y deterministas: no se solicitan credenciales, no se requiere wallet y no hay broadcast.
+
+Para habilitar la integración live local desde ese mismo clone, seguí el [runbook live](docs/local-live-runbook.md). Si la wallet `agent-dev` todavía no existe, creala una sola vez; después agregá el token de prueba y desbloqueá la wallet durante 30 minutos:
+
+```bash
+npx wdk wallet create --name agent-dev
+npx wdk token add '{"network":"sepolia","token":"usdt-test","symbol":"USD₮","decimals":6,"isNative":false,"address":"0xc4DCC311c028e341fd8602D8eB89c5de94625927"}'
+npx wdk wallet unlock --name agent-dev --ttl 30
+```
+
+No ejecutes `wallet create` si `agent-dev` ya existe. Fondeá esa wallet con montos mínimos de Sepolia ETH para gas y del token de prueba; nunca copies una seed o secreto al repositorio. Configurá en `.env` `WDK_TOOLS_SOURCE=live`, `WDK_WALLET_NAME=agent-dev`, `WDK_NETWORK=sepolia`, `WDK_TOKEN=usdt-test`, `WDK_MAX_TRANSFER_AMOUNT=0.05` y `WDK_ALLOWED_RECIPIENTS=<direcciones EVM aprobadas separadas por coma>`. El límite y la allowlist son obligatorios y fail-closed: reemplazá el ejemplo por el destinatario real aprobado de Sepolia antes de iniciar el backend. `WDK_INDEXER_API_KEY` es opcional para transferencias, pero necesario para consultar historial indexado. Configurá la URL del backend en el frontend según el runbook. Una ejecución live puede emitir una transacción real de testnet. Los tests `npm run test:e2e:wdk-mcp` son de lectura/metadatos y no llaman `send_token`.
 
 For the RAG demo, set the following values in `.env` (the supplied UUID and
 seed are demo data and contain no credential):
@@ -275,6 +330,11 @@ contain it.
 `compose.yaml` starts only PostgreSQL/pgvector and persists its data in the
 named `recipient_memory_postgres` volume. A hosted pgvector-compatible
 PostgreSQL changes only the URLs above.
+
+El fixture local conserva `WDK_TOKEN=USDT` para las respuestas deterministas.
+Para reproducir la configuración live del track, definí explícitamente
+`WDK_NETWORK=sepolia` y `WDK_TOKEN=usdt-test`; ese alias corresponde al token de
+prueba cuyo contrato está documentado en la sección de demo.
 
 ## Approval and WDK
 
