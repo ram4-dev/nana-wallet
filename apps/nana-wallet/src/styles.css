@@ -33,14 +33,6 @@
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
   --color-warning-foreground: var(--warning-foreground);
-  --color-agent-skin: var(--agent-skin);
-  --color-agent-skin-shadow: var(--agent-skin-shadow);
-  --color-agent-hair: var(--agent-hair);
-  --color-agent-hair-shadow: var(--agent-hair-shadow);
-  --color-agent-glasses: var(--agent-glasses);
-  --color-agent-blush: var(--agent-blush);
-  --color-agent-mouth: var(--agent-mouth);
-  --color-agent-dress: var(--agent-dress);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -69,14 +61,6 @@
   --success-foreground: oklch(1 0 0);
   --warning: oklch(0.55 0.13 75);
   --warning-foreground: oklch(1 0 0);
-  --agent-skin: oklch(0.89 0.085 55);
-  --agent-skin-shadow: oklch(0.77 0.11 47);
-  --agent-hair: oklch(0.95 0.012 260);
-  --agent-hair-shadow: oklch(0.78 0.025 260);
-  --agent-glasses: oklch(0.24 0.035 275);
-  --agent-blush: oklch(0.72 0.15 25);
-  --agent-mouth: oklch(0.46 0.17 24);
-  --agent-dress: oklch(0.57 0.24 278);
   --border: oklch(0.66 0.015 270);
   --input: oklch(0.66 0.015 270);
   --ring: oklch(0.48 0.18 258);
@@ -110,10 +94,6 @@
   --shadow-press:
     0 1px 0 1px color-mix(in oklab, white 40%, transparent) inset,
     0 6px 14px -6px color-mix(in oklab, black 30%, transparent) inset;
-  --shadow-agent:
-    0 2px 0 1px color-mix(in oklab, white 48%, transparent) inset,
-    0 -8px 14px -9px color-mix(in oklab, var(--agent-skin-shadow) 64%, transparent) inset,
-    0 18px 30px -14px color-mix(in oklab, var(--primary) 30%, transparent);
 }
 
 @layer base {
@@ -206,11 +186,6 @@
 
 @utility breathe {
   animation: breathe 4.5s ease-in-out infinite;
-}
-
-@utility agent-rubber {
-  box-shadow: var(--shadow-agent);
-  border: 1px solid color-mix(in oklab, white 55%, transparent);
 }
 
 .agent-stage.listening .breathe {
