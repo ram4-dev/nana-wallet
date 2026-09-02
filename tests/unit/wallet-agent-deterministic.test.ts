@@ -48,6 +48,14 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     expect(result.status).toBe('answer');
   });
 
+  it('answers unsupported Spanish turns in Spanish', async () => {
+    const result = await handleMessage(createSession(), 'Hola Nani', { language: 'es' });
+    expect(result).toEqual({
+      status: 'answer',
+      message: 'Decime a quién querés pagar o cuánto USDT querés enviar en Sepolia.',
+    });
+  });
+
   it('cancels a pending transfer without calling the agent', async () => {
     const session = createSession();
     setPendingTransfer(session.id, pendingFixture);

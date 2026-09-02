@@ -106,11 +106,20 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
       dispatch({ type: "ROOM_CONNECTED" });
       dispatch({ type: "BINDING_ACCEPTED" });
       await client.setMicrophoneEnabled(true);
-    } catch {
+    } catch (error) {
+      console.error("Live voice start failed", error);
       await client.disconnect().catch(() => undefined);
+      const detail = error instanceof Error ? error.message : "";
       const reason: VoiceFailure = {
         code: "voice_unavailable",
-        message: "La voz no está disponible. Podés seguir escribiéndome.",
+        message:
+          detail === "microphone_permission_denied"
+            ? "Necesito permiso para usar el micrófono. Habilitalo en el navegador y probá de nuevo."
+            : detail === "microphone_not_found"
+              ? "No encontré un micrófono disponible. Revisá el dispositivo y probá de nuevo."
+              : detail === "microphone_in_use"
+                ? "Otra aplicación está usando el micrófono. Cerrala y probá de nuevo."
+                : "La voz no está disponible. Podés seguir escribiéndome.",
       };
       dispatch({ type: "FAILED", reason });
       notifyTypedFallback(reason);

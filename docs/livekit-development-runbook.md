@@ -60,6 +60,11 @@ LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=development-key
 LIVEKIT_API_SECRET=development-secret
 ELEVENLABS_API_KEY=development-provider-key
+LIVEKIT_TTS_PROVIDER=elevenlabs
+# Development fallback when the ElevenLabs account cannot use API voices:
+# LIVEKIT_TTS_PROVIDER=inference
+# LIVEKIT_TTS_MODEL=cartesia/sonic-3
+# LIVEKIT_TTS_VOICE=5c5ad5e7-1020-476b-8b91-fdcbe9cc313c
 LIVEKIT_RECORDING_ENABLED=false
 AGENT_OBSERVABILITY_RECORDING=false
 VOICE_TRACE_ENABLED=false
@@ -76,14 +81,17 @@ In the wallet `.env.local`, configure only public development values:
 ```dotenv
 VITE_API_URL=http://localhost:3000
 VITE_AGENT_BACKEND=1
-VITE_LIVEKIT_URL=wss://your-project.livekit.cloud
-VITE_LIVEKIT_TOKEN=short-lived-development-token
-VITE_LIVEKIT_AGENT_IDENTITY=nani-agent
+VITE_LIVEKIT_TOKEN_SERVER_ID=your-development-token-server-id
+VITE_LIVEKIT_AGENT_NAME=nani-agent
+VITE_LIVEKIT_PARTICIPANT_IDENTITY=11111111-1111-4111-8111-111111111111
 ```
 
-The browser token must be scoped to the demo user and development room. It is
-media access only; the signed Fastify binding is the worker's application
-identity check.
+The browser asks LiveKit Cloud's development token server for a short-lived
+room token at session start. The token server ID is public development
+configuration; API keys, API secrets, and binding private keys must not be
+placed in `VITE_*` values. The returned media credential is scoped to the room
+and agent requested by the browser, while the signed Fastify binding remains
+the worker's application identity check.
 
 ## Start independently
 
@@ -106,9 +114,10 @@ npm run dev -- --host 0.0.0.0 --port 8083
 ```
 
 Open `http://localhost:8083`, tap Nani, and complete a nonfinancial Spanish
-or English turn. The browser binds before it publishes the microphone. The
-screen receives canonical financial revisions from Fastify, not financial
-payloads from room data.
+or English turn. The browser publishes the microphone before it binds the
+conversation so the agent input stream receives the first track. The screen
+receives canonical financial revisions from Fastify, not financial payloads
+from room data.
 
 ## Safe verification commands
 

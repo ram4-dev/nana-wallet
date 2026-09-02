@@ -896,12 +896,16 @@ async function handleDeterministicTurn(
       wallet: input.wallet,
       preview,
     });
-    const message = `Prepared a ${input.amount} ${input.token} transfer to ${input.to} on ${input.network}. Estimated fee: ${preview.estimatedFee}. Confirm to continue.`;
+    const message = language === 'es'
+      ? `Preparé una transferencia de ${input.amount} ${input.token} a ${input.to} en ${input.network}. Comisión estimada: ${preview.estimatedFee}. Confirmá para continuar.`
+      : `Prepared a ${input.amount} ${input.token} transfer to ${input.to} on ${input.network}. Estimated fee: ${preview.estimatedFee}. Confirm to continue.`;
     appendMessage(session, { role: 'assistant', content: message });
     return { status: 'confirmation_required', message, preview };
   }
 
-  const message = 'Tell me who to pay or how much USDT you want to send on Sepolia.';
+  const message = language === 'es'
+    ? 'Decime a quién querés pagar o cuánto USDT querés enviar en Sepolia.'
+    : 'Tell me who to pay or how much USDT you want to send on Sepolia.';
   appendMessage(session, { role: 'assistant', content: message });
   return { status: 'answer', message };
 }

@@ -1,4 +1,11 @@
-import { Room, RoomEvent, Track, type RemoteParticipant } from "livekit-client";
+import {
+  MediaDeviceFailure,
+  Room,
+  RoomEvent,
+  TokenSource,
+  Track,
+  type RemoteParticipant,
+} from "livekit-client";
 
 import { api } from "@/lib/api";
 
@@ -12,18 +19,21 @@ export type LiveKitWebClientOptions = {
   onConnectionLost?: () => void;
   onReconnected?: () => void;
   room?: Room;
-  url?: string;
-  token?: string;
-  agentIdentity?: string;
+  tokenServerId?: string;
+  agentName?: string;
+  participantIdentity?: string;
 };
 
 function readConfig(options: LiveKitWebClientOptions) {
-  const url = options.url ?? import.meta.env["VITE_LIVEKIT_URL"];
-  const token = options.token ?? import.meta.env["VITE_LIVEKIT_TOKEN"];
-  const agentIdentity =
-    options.agentIdentity ?? import.meta.env["VITE_LIVEKIT_AGENT_IDENTITY"] ?? "nani-agent";
-  if (!url || !token) throw new Error("Live voice is not configured for this browser.");
-  return { url, token, agentIdentity };
+  const tokenServerId =
+    options.tokenServerId ?? import.meta.env["VITE_LIVEKIT_TOKEN_SERVER_ID"];
+  const agentName =
+    options.agentName ?? import.meta.env["VITE_LIVEKIT_AGENT_NAME"] ?? "nani-agent";
+  const participantIdentity =
+    options.participantIdentity ?? import.meta.env["VITE_LIVEKIT_PARTICIPANT_IDENTITY"];
+  if (!tokenServerId || !participantIdentity)
+    throw new Error("Live voice is not configured for this browser.");
+  return { tokenServerId, agentName, participantIdentity };
 }
 
 function parseAgentState(participant: RemoteParticipant, onAgentState?: (state: string) => void) {
@@ -37,6 +47,7 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
   let boundConversationId: string | undefined;
   let manuallyDisconnected = false;
   let reconnecting = false;
+  let agentIdentity: string | undefined;
   const attachedAudio = new Set<HTMLMediaElement>();
 
   const handleTrackSubscribed = (track: { kind: Track.Kind; attach: () => HTMLMediaElement }) => {
@@ -63,6 +74,12 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
   async function connect() {
     const config = readConfig(options);
     const binding = await api.createLiveVoiceBinding(options.getConversationId?.() ?? undefined);
+    const tokenSource = TokenSource.developmentTokenServer(config.tokenServerId);
+    const credentials = await tokenSource.fetch({
+      roomName: `nani-${binding.conversationId}`,
+      participantIdentity: config.participantIdentity,
+      agentName: config.agentName,
+    });
     room = options.room ?? new Room({ adaptiveStream: true, dynacast: true });
     manuallyDisconnected = false;
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
@@ -103,11 +120,17 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
         parseAgentState(participant as RemoteParticipant, options.onAgentState);
     });
     try {
-      await room.connect(config.url, config.token, { autoSubscribe: true });
-      const agent = await waitForAgent(room, config.agentIdentity);
+      await room.connect(credentials.serverUrl, credentials.participantToken, {
+        autoSubscribe: true,
+      });
+      // Publish before binding so the agent input stream sees the track when it starts.
+      const microphone = await room.localParticipant.setMicrophoneEnabled(true);
+      if (!microphone) throw new Error("Microphone track was not published.");
+      const agent = await waitForAgent(room);
+      agentIdentity = agent.identity;
       parseAgentState(agent, options.onAgentState);
       const response = await room.localParticipant.performRpc({
-        destinationIdentity: config.agentIdentity,
+        destinationIdentity: agent.identity,
         method: "bind_conversation",
         payload: JSON.stringify({ bindingToken: binding.bindingToken }),
         responseTimeout: 10_000,
@@ -133,8 +156,16 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
     } catch (error) {
       manuallyDisconnected = true;
       reconnecting = false;
+      agentIdentity = undefined;
       await room.disconnect();
       room = undefined;
+      const mediaFailure = MediaDeviceFailure.getFailure(error);
+      if (mediaFailure === MediaDeviceFailure.PermissionDenied)
+        throw new Error("microphone_permission_denied", { cause: error });
+      if (mediaFailure === MediaDeviceFailure.NotFound)
+        throw new Error("microphone_not_found", { cause: error });
+      if (mediaFailure === MediaDeviceFailure.DeviceInUse)
+        throw new Error("microphone_in_use", { cause: error });
       throw error;
     }
   }
@@ -147,9 +178,9 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
     },
     interruptAgentSpeech: async () => {
       if (!room || !bound) return;
-      const config = readConfig(options);
+      if (!agentIdentity) throw new Error("Live voice agent is not connected.");
       await room.localParticipant.performRpc({
-        destinationIdentity: config.agentIdentity,
+        destinationIdentity: agentIdentity,
         method: "interrupt_agent",
         payload: "{}",
         responseTimeout: 5_000,
@@ -162,6 +193,7 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
       manuallyDisconnected = true;
       bound = false;
       boundConversationId = undefined;
+      agentIdentity = undefined;
       stopAgentAudio();
       await room?.disconnect();
       room = undefined;
@@ -169,8 +201,10 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
   };
 }
 
-async function waitForAgent(room: Room, identity: string): Promise<RemoteParticipant> {
-  const current = room.remoteParticipants.get(identity);
+async function waitForAgent(room: Room): Promise<RemoteParticipant> {
+  const current = [...room.remoteParticipants.values()].find(
+    (participant) => participant.isAgent,
+  );
   if (current) return current;
   return new Promise<RemoteParticipant>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
@@ -178,7 +212,7 @@ async function waitForAgent(room: Room, identity: string): Promise<RemotePartici
       reject(new Error("Nani did not join the LiveKit room."));
     }, 10_000);
     const onConnected = (participant: RemoteParticipant) => {
-      if (participant.identity !== identity) return;
+      if (!participant.isAgent) return;
       window.clearTimeout(timeout);
       room.off(RoomEvent.ParticipantConnected, onConnected);
       resolve(participant);

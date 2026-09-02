@@ -20,6 +20,25 @@ export type AgentSessionDependencies = {
   onEvent?: (event: ConversationEvent) => Promise<void> | void;
 };
 
+function createTTS(voiceProvider: ReturnType<typeof readVoiceProviderConfig>) {
+  if (process.env.LIVEKIT_TTS_PROVIDER === "inference") {
+    return new inference.TTS({
+      model: process.env.LIVEKIT_TTS_MODEL ?? "cartesia/sonic-3",
+      voice:
+        process.env.LIVEKIT_TTS_VOICE ??
+        "5c5ad5e7-1020-476b-8b91-fdcbe9cc313c",
+      language: "es",
+    });
+  }
+  return new ElevenLabsTTS({
+    apiKey: process.env.ELEVENLABS_API_KEY,
+    voiceId: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",
+    model: process.env.ELEVENLABS_MODEL ?? "eleven_multilingual_v2",
+    languageCode: "es",
+    enableLogging: voiceProvider.elevenLabsEnableLogging,
+  });
+}
+
 export function createAgentSession(dependencies: AgentSessionDependencies) {
   const voiceProvider = readVoiceProviderConfig();
   const llm = new WalletConversationLLM(
@@ -28,7 +47,7 @@ export function createAgentSession(dependencies: AgentSessionDependencies) {
     dependencies.onEvent,
   );
   const agent = new Agent({
-    instructions: buildWalletAgentInstructions(getWalletAgentConfig()),
+    instructions: buildWalletAgentInstructions(getWalletAgentConfig(), "es"),
     llm,
   });
   const session = new AgentSession({
@@ -37,13 +56,7 @@ export function createAgentSession(dependencies: AgentSessionDependencies) {
       modelOptions: { mip_opt_out: true },
     }),
     llm,
-    tts: new ElevenLabsTTS({
-      apiKey: process.env.ELEVENLABS_API_KEY,
-      voiceId: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",
-      model: process.env.ELEVENLABS_MODEL ?? "eleven_multilingual_v2",
-      languageCode: "es",
-      enableLogging: voiceProvider.elevenLabsEnableLogging,
-    }),
+    tts: createTTS(voiceProvider),
     turnHandling: {
       turnDetection: new inference.TurnDetector({ version: "v1" }),
       preemptiveGeneration: { enabled: false },

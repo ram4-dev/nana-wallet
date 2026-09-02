@@ -3,6 +3,10 @@ import { importPKCS8, importSPKI, jwtVerify, SignJWT } from 'jose';
 
 type SigningKey = Parameters<SignJWT['sign']>[0];
 
+function normalizePem(value: string): string {
+  return value.replace(/\\n/gu, '\n');
+}
+
 export type LiveVoiceBindingClaims = {
   sub: string;
   conversationId: string;
@@ -22,11 +26,11 @@ export class LiveBindingError extends Error {
 }
 
 async function signingKey(privateKey: string | SigningKey): Promise<SigningKey> {
-  return typeof privateKey === 'string' ? importPKCS8(privateKey, 'EdDSA') : privateKey;
+  return typeof privateKey === 'string' ? importPKCS8(normalizePem(privateKey), 'EdDSA') : privateKey;
 }
 
 async function verificationKey(publicKey: string) {
-  return importSPKI(publicKey, 'EdDSA');
+  return importSPKI(normalizePem(publicKey), 'EdDSA');
 }
 
 export async function issueLiveVoiceBinding(input: {
