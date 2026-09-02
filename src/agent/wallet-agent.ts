@@ -6,10 +6,21 @@ import {
   getWalletAgentConfig,
   type WalletAgentConfig,
 } from './instructions.js';
+import { toAiSdkTools } from './ai-sdk-adapter.js';
+import {
+  balanceInputSchema,
+  canonicalizeTransferPreview,
+  createWalletAgentDefinition,
+  memoryDraftSchema,
+  memorySearchSchema,
+  memoryWriteSchema,
+  normalizeBroadcastResult,
+  normalizeWalletToken as normalizeCanonicalWalletToken,
+  sendTokenInputSchema,
+  type SendTokenInput,
+} from './definition.js';
 import { getWdkTools } from './wdk-tools.js';
-import { createWalletAgentTools } from '../wallet/agent-tools.js';
 import type { WalletProvider } from '../wallet/provider.js';
-import { decodeMcpText } from '../wdk/mcp-client.js';
 import {
   defaultTransactionReceiptWaiter,
   type TransactionReceiptWaiter,
@@ -35,13 +46,10 @@ import { isValidEvmAddress } from '../memory/address.js';
 import { getConfiguredRecipientMemoryRuntime, type RecipientMemoryRuntime } from '../memory/runtime.js';
 import { resolveTransferRecipient, type RecipientMemoryToolPort } from './recipient-resolution.js';
 import { hasExplicitTransferAddress } from './recipient-intent.js';
-import type {
-  ConversationTurnResult,
-  PendingTransfer,
-  TransferPreview,
-} from '../contracts/http.js';
-import { transactionResultSchema, transferPreviewSchema } from '../contracts/http.js';
+import type { ConversationTurnResult, PendingTransfer } from '../contracts/http.js';
 import type { ConversationLanguage } from '../conversations/language.js';
+
+export { canonicalizeTransferPreview } from './definition.js';
 
 const toolCallOptions = {
   toolCallId: 'session-send-token',
@@ -91,29 +99,12 @@ function normalizeResolutionText(text: string): string {
     .replace(/\s+/gu, ' ');
 }
 
-const sendTokenInputSchema = z.object({
-  network: z.string().trim().min(1),
-  token: z.string().trim().min(1),
-  to: z.string().trim().min(1),
-  amount: z.string().trim().min(1),
-  wallet: z.string().trim().min(1),
-  dryRun: z.boolean(),
-});
-type SendTokenInput = z.infer<typeof sendTokenInputSchema>;
-
-const balanceInputSchema = z.object({
-  network: z.string().trim().min(1),
-  token: z.string().trim().min(1).optional(),
-  wallet: z.string().trim().min(1).optional(),
-  index: z.number().int().nonnegative().optional(),
-});
 type BalanceInput = z.infer<typeof balanceInputSchema>;
 
 const GENERIC_USDT_NAMES = new Set(['usdt', 'usd₮', 'tether']);
 
 export function normalizeWalletToken(token: string, configuredToken: string): string {
-  const normalized = token.trim().normalize('NFKC').toLocaleLowerCase('en-US');
-  return GENERIC_USDT_NAMES.has(normalized) ? configuredToken : token;
+  return normalizeCanonicalWalletToken(token, configuredToken);
 }
 
 function normalizeSendTokenInput(input: SendTokenInput, configuredToken: string): SendTokenInput {
@@ -244,13 +235,7 @@ export type HandleMessageOptions = {
   language?: ConversationLanguage;
 };
 
-const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
 const selectedRecipientAddressSchema = z.object({}).strict();
-const memoryWriteSchema = z.object({ confirmationId: z.string().uuid() });
-const memoryDraftSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('recipient'), name: z.string().trim().min(1), description: z.string().trim().min(1), address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.') }),
-  z.object({ kind: z.literal('fact'), fact: z.string().trim().min(1), factKind: z.string().trim().min(1).optional() }),
-]);
 
 function pendingMatches(session: ConversationSession, input: SendTokenInput): boolean {
   const p = session.pendingTransfer;
@@ -262,122 +247,6 @@ function pendingMatches(session: ConversationSession, input: SendTokenInput): bo
     p.amount === input.amount &&
     p.wallet === input.wallet
   );
-}
-
-export function canonicalizeTransferPreview(
-  input: SendTokenInput,
-  output: unknown,
-): TransferPreview | null {
-  const candidate = decodePreviewCandidate(output);
-  if (!candidate || candidate.preview !== true) return null;
-  let estimatedFee: string | undefined;
-  // WDK's formatted fee is display-ready; raw estimatedFee is a compatibility fallback.
-  for (const value of [candidate.estimatedFeeFormatted, candidate.estimatedFee]) {
-    const parsed = z.string().trim().min(1).safeParse(value);
-    if (parsed.success) {
-      estimatedFee = parsed.data;
-      break;
-    }
-  }
-  if (!estimatedFee) return null;
-  const canonical = transferPreviewSchema.safeParse({
-    network: input.network,
-    token: input.token,
-    recipient: input.to,
-    amount: input.amount,
-    estimatedFee,
-  });
-  return canonical.success ? canonical.data : null;
-}
-
-function decodePreviewCandidate(output: unknown, depth = 0): Record<string, unknown> | null {
-  if (depth > 4) return null;
-  if (typeof output === 'string') {
-    try {
-      return decodePreviewCandidate(JSON.parse(output) as unknown, depth + 1);
-    } catch {
-      return null;
-    }
-  }
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
-
-  const candidate = output as Record<string, unknown>;
-  if (isBroadcastResult(candidate)) return null;
-
-  const decoded = decodeMcpText(candidate);
-  if (decoded !== candidate) return decodePreviewCandidate(decoded, depth + 1);
-
-  if ('estimatedFee' in candidate || 'estimatedFeeFormatted' in candidate) return candidate;
-  for (const key of ['output', 'result', 'data'] as const) {
-    if (key in candidate) {
-      const nested = decodePreviewCandidate(candidate[key], depth + 1);
-      if (nested) return nested;
-    }
-  }
-  return null;
-}
-
-function isBroadcastResult(candidate: Record<string, unknown>): boolean {
-  if (candidate.preview === false || 'success' in candidate || 'broadcast' in candidate) return true;
-  if (['success', 'sent', 'confirmed', 'broadcast', 'broadcasted'].includes(
-    typeof candidate.status === 'string' ? candidate.status.toLocaleLowerCase('en-US') : '',
-  )) return true;
-  return ['transactionHash', 'txHash', 'hash'].some((key) => key in candidate);
-}
-
-function normalizeBroadcastResult(output: unknown, network: string): z.infer<typeof transactionResultSchema> | null {
-  const candidate = decodeBroadcastCandidate(output);
-  const status = typeof candidate?.status === 'string' ? candidate.status.toLocaleLowerCase('en-US') : '';
-  if (
-    !candidate ||
-    candidate.success === false ||
-    'failure' in candidate ||
-    'error' in candidate ||
-    candidate.isError === true ||
-    ['failed', 'error', 'reverted'].includes(status)
-  ) {
-    return null;
-  }
-  const hashEntries = ['transactionHash', 'txHash', 'hash']
-    .map((key) => ({ key, value: candidate[key] }))
-    .filter(({ value }) => typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/u.test(value));
-  const hashEntry = hashEntries[0];
-  // The official WDK CLI uses success:true + txHash. The transactionHash-only
-  // shape is retained solely for the legacy fixture contract.
-  if (!hashEntry || (hashEntry.key !== 'transactionHash' && candidate.success !== true)) return null;
-  const hash = hashEntry.value as string;
-  const explorerUrl = `https://sepolia.etherscan.io/tx/${hash}`;
-  const result = transactionResultSchema.safeParse({
-    network,
-    transactionHash: hash,
-    explorerUrl,
-  });
-  return result.success ? result.data : null;
-}
-
-function decodeBroadcastCandidate(output: unknown, depth = 0): Record<string, unknown> | null {
-  if (depth > 4) return null;
-  if (typeof output === 'string') {
-    try {
-      return decodeBroadcastCandidate(JSON.parse(output) as unknown, depth + 1);
-    } catch {
-      return null;
-    }
-  }
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
-  const candidate = output as Record<string, unknown>;
-  const decoded = decodeMcpText(candidate);
-  if (decoded !== candidate) return decodeBroadcastCandidate(decoded, depth + 1);
-  if (['transactionHash', 'txHash', 'hash', 'success', 'failure', 'error'].some((key) => key in candidate)) {
-    return candidate;
-  }
-  for (const key of ['output', 'result', 'data'] as const) {
-    if (key in candidate) {
-      const nested = decodeBroadcastCandidate(candidate[key], depth + 1);
-      if (nested) return nested;
-    }
-  }
-  return null;
 }
 
 /**
@@ -644,17 +513,24 @@ export async function handleMessage(
     }
   }
 
-  const baseTools = options.walletProvider
-    ? createWalletAgentTools({
-      wallet: options.walletProvider,
+  const agentConfig = getWalletAgentConfig();
+  const definition = options.walletProvider
+    ? createWalletAgentDefinition()
+    : undefined;
+  const baseTools = definition && options.walletProvider
+    ? toAiSdkTools(definition, {
+      conversationId: session.id,
+      userId: recipientMemory?.userId ?? '',
+      language: options.language ?? 'en',
+      config: agentConfig,
       session,
+      wallet: options.walletProvider,
       ...(recipientMemory ? { recipientMemory } : {}),
-      config: getWalletAgentConfig(),
+      ...(options.abortSignal ? { signal: options.abortSignal } : {}),
     })
     : await getWdkTools();
-  const agentConfig = getWalletAgentConfig();
   const tools = buildGuardedTools(
-    { ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) },
+    definition ? baseTools : { ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) },
     session,
     recipientMemory,
     agentConfig,
@@ -665,7 +541,18 @@ export async function handleMessage(
   }
   const agent = new ToolLoopAgent({
     model: options.model ?? defaultModel,
-    instructions: buildWalletAgentInstructions(agentConfig, options.language ?? 'en'),
+    instructions: definition
+      ? definition.instructions({
+        conversationId: session.id,
+        userId: recipientMemory?.userId ?? '',
+        language: options.language ?? 'en',
+        config: agentConfig,
+        session,
+        wallet: options.walletProvider!,
+        ...(recipientMemory ? { recipientMemory } : {}),
+        ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+      })
+      : buildWalletAgentInstructions(agentConfig, options.language ?? 'en'),
     tools,
   });
 
