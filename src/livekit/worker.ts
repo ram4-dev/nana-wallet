@@ -13,6 +13,8 @@ import {
   readWorkerProcessConfig,
   type LiveKitWorkerConfig,
 } from "../config/process.js";
+import { getWalletAgentConfig } from "../agent/instructions.js";
+import type { NativeLiveKitAgentInput } from "./create-native-agent.js";
 import { FinancialTaskRegistry } from "../conversations/financial-task-registry.js";
 import { createAgentSession } from "./create-agent-session.js";
 import {
@@ -78,9 +80,15 @@ async function runJob(
   const gate = createRoomConversationGate({
     conversation: roomConversation,
     startSession: async (binding) => {
+      const native =
+        config.agentRuntime === "native-livekit"
+          ? await createNativeAgentInput(binding, dependencies)
+          : undefined;
       const created = createAgentSession({
         conversationService: dependencies.conversationService,
         binding,
+        runtime: config.agentRuntime,
+        ...(native ? { native } : {}),
       });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (
@@ -156,6 +164,46 @@ async function runJob(
     await roomConversation.release();
   });
   await sessionClosed;
+}
+
+async function createNativeAgentInput(
+  binding: { conversationId: string; userId: string },
+  dependencies: WorkerDependencies,
+): Promise<NativeLiveKitAgentInput> {
+  const snapshot = await dependencies.conversations.get(
+    binding.userId,
+    binding.conversationId,
+  );
+  if (!snapshot) {
+    throw new Error("Bound conversation disappeared before native LiveKit startup.");
+  }
+  return {
+    binding,
+    snapshot,
+    context: {
+      conversationId: snapshot.id,
+      userId: snapshot.userId,
+      language: snapshot.language,
+      config: getWalletAgentConfig(),
+      session: {
+        id: snapshot.id,
+        messages: [...snapshot.messages],
+        ...(snapshot.pendingTransfer
+          ? { pendingTransfer: snapshot.pendingTransfer }
+          : {}),
+        ...(snapshot.recipientMemory
+          ? { recipientMemory: snapshot.recipientMemory }
+          : {}),
+        ...(snapshot.transferResolutionState
+          ? { transferResolutionState: snapshot.transferResolutionState }
+          : {}),
+        ...(snapshot.lastTransactionHash
+          ? { lastTransactionHash: snapshot.lastTransactionHash }
+          : {}),
+      },
+      wallet: dependencies.wallet,
+    },
+  };
 }
 
 const agent = defineAgent({

@@ -49,13 +49,29 @@ export type WorkerProcessConfig = LiveKitWorkerConfig & {
   elevenLabsApiKey: string;
 };
 
+export type LiveKitAgentRuntime = "service-adapter" | "native-livekit";
+
 export type LiveKitWorkerConfig = {
   url: string;
   apiKey: string;
   apiSecret: string;
   publicKey?: string;
   shutdownTimeoutMs: number;
+  agentRuntime: LiveKitAgentRuntime;
 };
+
+export function readLiveKitAgentRuntime(
+  environment: NodeJS.ProcessEnv = process.env,
+): LiveKitAgentRuntime {
+  const configured = environment.LIVEKIT_AGENT_RUNTIME;
+  if (configured === undefined) return "service-adapter";
+  if (configured === "service-adapter" || configured === "native-livekit") {
+    return configured;
+  }
+  throw new Error(
+    "LIVEKIT_AGENT_RUNTIME must be either service-adapter or native-livekit.",
+  );
+}
 
 export function readLiveKitWorkerConfig(
   environment: NodeJS.ProcessEnv = process.env,
@@ -75,7 +91,18 @@ export function readLiveKitWorkerConfig(
     "LIVEKIT_SHUTDOWN_TIMEOUT_MS",
     10_000,
   );
-  return { url, apiKey, apiSecret, publicKey, shutdownTimeoutMs };
+  const agentRuntime = readLiveKitAgentRuntime(environment);
+  if (agentRuntime === "native-livekit") {
+    required(environment, "OPENCODE_GO_API_KEY");
+  }
+  return {
+    url,
+    apiKey,
+    apiSecret,
+    publicKey,
+    shutdownTimeoutMs,
+    agentRuntime,
+  };
 }
 
 export function readApiProcessConfig(
