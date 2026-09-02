@@ -6,7 +6,9 @@ import {
   getWalletAgentConfig,
   type WalletAgentConfig,
 } from './instructions.js';
-import { callWdkTool, getWdkTools } from './wdk-tools.js';
+import { getWdkTools } from './wdk-tools.js';
+import { createWalletAgentTools } from '../wallet/agent-tools.js';
+import type { WalletProvider } from '../wallet/provider.js';
 import { decodeMcpText } from '../wdk/mcp-client.js';
 import {
   defaultTransactionReceiptWaiter,
@@ -39,6 +41,7 @@ import type {
   TransferPreview,
 } from '../contracts/http.js';
 import { transactionResultSchema, transferPreviewSchema } from '../contracts/http.js';
+import type { ConversationLanguage } from '../conversations/language.js';
 
 const toolCallOptions = {
   toolCallId: 'session-send-token',
@@ -234,9 +237,11 @@ const transactionReceiptOutcomeSchema = z.object({
 export type HandleMessageOptions = {
   model?: LanguageModel;
   recipientMemory?: RecipientMemoryRuntime;
+  walletProvider?: WalletProvider;
   transactionReceiptWaiter?: TransactionReceiptWaiter;
   abortSignal?: AbortSignal;
   claimedTransfer?: PendingTransfer;
+  language?: ConversationLanguage;
 };
 
 const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
@@ -639,7 +644,14 @@ export async function handleMessage(
     }
   }
 
-  const baseTools = await getWdkTools();
+  const baseTools = options.walletProvider
+    ? createWalletAgentTools({
+      wallet: options.walletProvider,
+      session,
+      ...(recipientMemory ? { recipientMemory } : {}),
+      config: getWalletAgentConfig(),
+    })
+    : await getWdkTools();
   const agentConfig = getWalletAgentConfig();
   const tools = buildGuardedTools(
     { ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) },
@@ -649,11 +661,11 @@ export async function handleMessage(
   );
 
   if (isDeterministicAgentRuntime() && !options.model) {
-    return handleDeterministicTurn(userText, session, tools, agentConfig);
+    return handleDeterministicTurn(userText, session, tools, agentConfig, options.language ?? 'en');
   }
   const agent = new ToolLoopAgent({
     model: options.model ?? defaultModel,
-    instructions: buildWalletAgentInstructions(agentConfig),
+    instructions: buildWalletAgentInstructions(agentConfig, options.language ?? 'en'),
     tools,
   });
 
@@ -834,16 +846,19 @@ async function handleDeterministicTurn(
   session: ConversationSession,
   tools: Record<string, Tool>,
   config: WalletAgentConfig,
+  language: ConversationLanguage = 'en',
 ): Promise<ConversationTurnResult> {
   const { network, token, wallet } = config;
   const intent = parseDeterministicIntent(userText, token);
 
   if (intent?.type === 'balance') {
-    const balance = (await callWdkTool('get_balance', { network, token, wallet })) as {
+    const balance = (await tools.get_balance?.execute!({ network, token, wallet }, toolCallOptions)) as {
       balance?: string;
       token?: string;
     };
-    const message = `You have ${balance.balance ?? 'an unknown amount'} ${balance.token ?? token}.`;
+    const message = language === 'es'
+      ? `Tenés ${balance.balance ?? 'un monto desconocido'} ${balance.token ?? token}.`
+      : `You have ${balance.balance ?? 'an unknown amount'} ${balance.token ?? token}.`;
     appendMessage(session, { role: 'assistant', content: message });
     return { status: 'answer', message };
   }

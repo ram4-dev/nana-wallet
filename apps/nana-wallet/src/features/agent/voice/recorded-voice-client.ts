@@ -5,7 +5,10 @@ export function createRecordedVoiceClient(dependencies: {
   stop: () => Promise<void>;
 }): VoiceClient {
   return {
-    connect: dependencies.start,
+    connect: async () => {
+      await dependencies.start();
+      return {};
+    },
     setMicrophoneEnabled: async (enabled) => {
       if (enabled) await dependencies.start();
       else await dependencies.stop();

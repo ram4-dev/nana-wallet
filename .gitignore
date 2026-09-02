@@ -10,3 +10,7 @@ dist/
 
 # Riptide artifacts (cloud-synced)
 .humanlayer/tasks/
+
+# Supabase CLI runtime metadata
+supabase/.branches/
+supabase/.temp/

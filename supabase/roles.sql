@@ -1,3 +1,4 @@
+-- Runtime repositories use this restricted role with transaction-local RLS context.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'recipient_app') THEN

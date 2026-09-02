@@ -22,7 +22,10 @@ describe("live voice reducer", () => {
     );
     expect(reduceLiveVoice(listening, { type: "RECOVERY_EXPIRED" })).toEqual({
       phase: "failed",
-      reason: "Live voice disconnected.",
+      reason: {
+        code: "recovery_expired",
+        message: "La voz se desconectó. Podés seguir escribiéndome.",
+      },
     });
   });
 
@@ -37,5 +40,20 @@ describe("live voice reducer", () => {
     expect(
       reduceLiveVoice({ phase: "paused", previousMic: "enabled" }, { type: "END_CONVERSATION" }),
     ).toEqual({ phase: "idle" });
+  });
+
+  it("rejects stale lifecycle callbacks and emits side-effect commands", () => {
+    const idle = { phase: "idle" } as const;
+    expect(reduceLiveVoice(idle, { type: "ROOM_CONNECTED" })).toEqual(idle);
+    expect(
+      reduceLiveVoice(idle, {
+        type: "AGENT_STATE",
+        state: "failed",
+      }),
+    ).toEqual(idle);
+
+    const listening = { phase: "listening" } as const;
+    const muted = reduceLiveVoice(listening, { type: "AVATAR_PRESSED" });
+    expect(muted).toEqual({ phase: "muted" });
   });
 });

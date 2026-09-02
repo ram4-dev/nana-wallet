@@ -1,5 +1,7 @@
 import type { ModelMessage } from 'ai';
-import type { PendingTransfer } from '../contracts/http.js';
+import type { PendingTransfer, SafeConversationError, TransactionResult } from '../contracts/http.js';
+
+export type ConversationLanguage = 'es' | 'en';
 
 export type RecipientSelection = {
   recipientId: string;
@@ -37,18 +39,30 @@ export type Conversation = {
 
 export type ConversationState = {
   revision: number;
-  language: 'es' | 'en';
+  language: ConversationLanguage;
   generation: number;
   recipientMemory?: RecipientMemorySession;
+  pendingInterpretation?: import('./interpretation.js').PendingInterpretation;
+  progress?: WalletProgress;
   pendingTransfer?: PendingTransfer;
   transferResolutionState?: 'broadcasting' | 'uncertain';
   lastTransactionHash?: string;
+  transaction?: TransactionResult;
+  error?: SafeConversationError;
+};
+
+export type WalletProgress = {
+  phase: 'working' | 'awaiting_confirmation' | 'broadcasting' | 'verifying' | 'completed' | 'failed' | 'uncertain';
+  label?: string;
+  transactionHash?: string;
 };
 
 export type ConversationSnapshot = Conversation & ConversationState & {
   messages: ModelMessage[];
+  summary?: import('./context-renewal.js').ConversationSummary;
+  summaryThroughSequence?: number;
 };
 
 export type PendingTransferClaim =
-  | { status: 'claimed'; transfer: PendingTransfer }
+  | { status: 'claimed'; transfer: PendingTransfer & { previewId: string } }
   | { status: 'missing' | 'broadcasting' | 'uncertain' };

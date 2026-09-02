@@ -11,6 +11,7 @@ import type {
   CreateAgendaEventInput,
   CreateContactInput,
   CreateConversationResponse,
+  EndLiveConversationResponse,
   EmptyResponse,
   ErrCode,
   Me,
@@ -20,6 +21,7 @@ import type {
   RevealedCbu,
   ConversationTurnResult,
   ConversationState,
+  LiveVoiceBindingResponse,
   TransferIntentInput,
   UpdateContactInput,
   WalletSummary,
@@ -270,6 +272,12 @@ export const api = {
       jsonRequest("POST", {}),
     ),
 
+  createLiveVoiceBinding: (conversationId?: string) =>
+    rawConversationRequest<LiveVoiceBindingResponse>(
+      "/v1/live-bindings",
+      jsonRequest("POST", conversationId ? { conversationId } : {}),
+    ),
+
   sendConversationTurn: (conversationId: string, message: string) =>
     rawConversationRequest<ConversationTurnResult>(
       `/v1/conversations/${encodeURIComponent(conversationId)}/turns`,
@@ -309,6 +317,19 @@ export const api = {
     rawConversationRequest<{ accepted: boolean; revision: number; state: ConversationState }>(
       `/v1/conversations/${encodeURIComponent(conversationId)}/decisions`,
       jsonRequest("POST", { previewId, decision }),
+    ),
+
+  endLiveConversation: (
+    conversationId: string,
+    expectedRevision: number,
+    acknowledgeUnresolvedFinancialWork = false,
+  ) =>
+    rawConversationRequest<EndLiveConversationResponse>(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/end-live`,
+      jsonRequest("POST", {
+        expectedRevision,
+        acknowledgeUnresolvedFinancialWork,
+      }),
     ),
 
   getMe: () => request<Me>("/v1/me"),

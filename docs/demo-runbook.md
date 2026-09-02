@@ -9,15 +9,15 @@ optional and never needs to broadcast to prove recipient retrieval.
 ```bash
 cp .env.example .env
 npm ci
-docker compose up -d db
+npx supabase start
+npx supabase db reset
 ```
 
 Set these values in `.env`:
 
 ```dotenv
 RECIPIENT_MEMORY_ENABLED=true
-DATABASE_URL=postgresql://recipient_app@127.0.0.1:5432/wdk_agent
-DATABASE_ADMIN_URL=postgresql://postgres@127.0.0.1:5432/wdk_agent
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 DEMO_USER_ID=11111111-1111-4111-8111-111111111111
 RECIPIENT_MEMORY_SEED_FILE=examples/recipient-memory.seed.json
 WDK_TOOLS_SOURCE=fixture
@@ -26,7 +26,7 @@ WDK_TOOLS_SOURCE=fixture
 Then prepare the database, local model, and API:
 
 ```bash
-npm run db:migrate
+npx supabase db reset
 npm run memory:prefetch
 npm run db:seed
 npm run dev
@@ -55,8 +55,8 @@ and the fact `Lucas is my grandson`. It is not a real address book.
 ## Session setup
 
 ```bash
-SESSION_ID=$(curl -s -X POST http://localhost:3000/v1/sessions | jq -r .sessionId)
-echo "$SESSION_ID"
+CONVERSATION_ID=$(curl -s -X POST http://localhost:3000/v1/conversations | jq -r .conversationId)
+echo "$CONVERSATION_ID"
 ```
 
 Inspecting a session is safe for the screen recording: it can show selected ID,
@@ -64,7 +64,7 @@ version, descriptions, and write expiry, but must never show a staged address
 or confirmation ID.
 
 ```bash
-curl -s "http://localhost:3000/v1/sessions/$SESSION_ID" | jq
+curl -s "http://localhost:3000/v1/conversations/$CONVERSATION_ID/state" | jq
 ```
 
 ## Demo sequence
@@ -74,13 +74,13 @@ curl -s "http://localhost:3000/v1/sessions/$SESSION_ID" | jq
 Send either prompt:
 
 ```bash
-curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID/messages" \
+curl -s -X POST "http://localhost:3000/v1/conversations/$CONVERSATION_ID/turns" \
   -H 'Content-Type: application/json' \
   -d '{"message":"Mandale plata a Lucas"}' | jq
 ```
 
 ```bash
-curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID/messages" \
+curl -s -X POST "http://localhost:3000/v1/conversations/$CONVERSATION_ID/turns" \
   -H 'Content-Type: application/json' \
   -d '{"message":"Send money to my grandson"}' | jq
 ```
@@ -96,7 +96,7 @@ Verify that the preview names the network, USD₮, amount, recipient, and fee.
 Only then send the separate confirmation:
 
 ```bash
-curl -s -X POST "http://localhost:3000/v1/sessions/$SESSION_ID/messages" \
+curl -s -X POST "http://localhost:3000/v1/conversations/$CONVERSATION_ID/turns" \
   -H 'Content-Type: application/json' \
   -d '{"message":"confirm"}' | jq
 ```
@@ -141,8 +141,8 @@ npm run build
 npm run test:e2e:wdk-mcp
 ```
 
-Run `npm run db:migrate` once more after the test pass. It must report that the
-schema is already current. The WDK MCP test is read-only: it discovers tools
+Run `npx supabase db reset` once more after the test pass when a clean replay is
+needed. The WDK MCP test is read-only: it discovers tools
 and reads Sepolia/USD₮ metadata but never sends tokens.
 
 ## Failure expectations

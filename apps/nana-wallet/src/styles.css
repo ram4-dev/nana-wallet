@@ -235,6 +235,27 @@
   animation: accountant-listen 1.15s ease-in-out infinite;
 }
 
+.agent-stage--speaking .nani-avatar-frame {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 6px color-mix(in oklch, var(--primary) 16%, transparent);
+}
+
+.agent-stage--muted .nani-avatar-frame,
+.agent-stage--paused .nani-avatar-frame {
+  filter: saturate(0.72);
+  opacity: 0.86;
+}
+
+.agent-stage--reconnecting .nani-avatar-frame {
+  border-style: dashed;
+  border-color: var(--brand-ink);
+}
+
+.agent-stage--failed .nani-avatar-frame {
+  border-color: var(--destructive);
+  box-shadow: 0 0 0 6px color-mix(in oklch, var(--destructive) 12%, transparent);
+}
+
 .agent-stage .nani-avatar-frame {
   width: 100% !important;
   height: 100% !important;
@@ -303,5 +324,11 @@
   .press:active {
     transition: none;
     transform: none;
+  }
+
+  .agent-stage--speaking .nani-avatar-frame,
+  .agent-stage--reconnecting .nani-avatar-frame,
+  .agent-stage--failed .nani-avatar-frame {
+    box-shadow: none;
   }
 }

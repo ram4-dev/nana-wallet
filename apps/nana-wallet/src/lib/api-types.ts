@@ -157,6 +157,17 @@ export type CreateConversationResponse = {
   mode: "typed";
 };
 
+export type LiveVoiceBindingResponse = {
+  conversationId: string;
+  bindingToken: string;
+};
+
+export type EndLiveConversationResponse = {
+  mode: "typed";
+  revision: number;
+  state: ConversationState;
+};
+
 export type AgentAudioTranscriptionInput = {
   audioBase64: string;
   mimeType: string;
@@ -202,10 +213,14 @@ export type ConversationState = {
   id: string;
   mode: "typed" | "live";
   revision: number;
-  messages: Array<{ role: "user" | "assistant"; content: string }>;
-  pendingTransfer?: TransferPreview & { to: string; wallet: string };
+  messages?: Array<{ role: "user" | "assistant"; content: string }>;
+  pendingTransfer?: TransferPreview & { previewId: string };
   lastTransactionHash?: string;
-  activity?: "idle" | "working" | "awaiting_confirmation" | "verifying" | "uncertain";
+  activity?:
+    "idle" | "working" | "awaiting_confirmation" | "verifying" | "uncertain" | "request_waiting";
+  progress?: { phase: string; label?: string };
+  transaction?: TransactionResult;
+  error?: { code: string; message: string };
 };
 
 export type Me = {

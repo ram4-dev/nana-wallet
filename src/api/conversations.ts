@@ -5,7 +5,8 @@ import type { WalletConversationService } from '../conversations/service.js';
 import { issueLiveVoiceBinding } from '../auth/live-binding.js';
 import { z } from 'zod';
 import type { ConversationSnapshot } from '../conversations/types.js';
-import { conversationDecisionRequestSchema, endLiveConversationRequestSchema, conversationTurnRequestSchema, type ConversationMessage, type ConversationStateResponse, type CreateConversationResponse } from '../contracts/http.js';
+import { projectConversationState } from '../conversations/state-projection.js';
+import { conversationDecisionRequestSchema, endLiveConversationRequestSchema, conversationTurnRequestSchema, type ConversationStateResponse, type CreateConversationResponse } from '../contracts/http.js';
 
 const CONFIRMATIONS = new Set(['confirm', 'i confirm', 'yes confirm', 'yes, confirm', 'confirmar', 'confirmo', 'sí confirmo', 'sí, confirmo', 'si confirmo', 'si, confirmo', 'confirmar transferencia', 'confirmar la transferencia', 'confirmo la transferencia']);
 
@@ -20,39 +21,8 @@ export type ConversationRouteDependencies = {
   bindingPrivateKey?: string;
 };
 
-function toText(content: ConversationSnapshot['messages'][number]['content']): string {
-  return typeof content === 'string' ? content : content.map((part) => 'text' in part ? part.text : '').join('');
-}
-
 function toState(snapshot: ConversationSnapshot): ConversationStateResponse {
-  const activity = snapshot.transferResolutionState === 'uncertain'
-    ? 'uncertain'
-    : snapshot.transferResolutionState === 'broadcasting'
-      ? 'verifying'
-      : snapshot.pendingTransfer
-        ? 'awaiting_confirmation'
-        : 'idle';
-  return {
-    id: snapshot.id,
-    mode: snapshot.mode,
-    revision: snapshot.revision,
-    messages: snapshot.messages
-      .filter((message): message is typeof message & { role: 'user' | 'assistant' } => message.role === 'user' || message.role === 'assistant')
-      .map((message): ConversationMessage => ({ role: message.role, content: toText(message.content) })),
-    pendingTransfer: snapshot.pendingTransfer,
-    recipientMemory: snapshot.recipientMemory
-      ? {
-          selectedRecipient: snapshot.recipientMemory.selectedRecipient,
-          clarification: snapshot.recipientMemory.clarification,
-          pendingWrite: snapshot.recipientMemory.pendingWrite
-            ? { expiresAt: new Date(snapshot.recipientMemory.pendingWrite.expiresAt).toISOString() }
-            : undefined,
-        }
-      : undefined,
-    lastTransactionHash: snapshot.lastTransactionHash,
-    activity,
-    createdAt: snapshot.createdAt,
-  };
+  return projectConversationState(snapshot) as ConversationStateResponse;
 }
 
 export async function registerConversationRoutes(app: FastifyInstance, dependencies: ConversationRouteDependencies): Promise<void> {
@@ -118,16 +88,22 @@ export async function registerConversationRoutes(app: FastifyInstance, dependenc
     if (!snapshot.pendingTransfer || snapshot.pendingTransfer.previewId !== parsed.data.previewId) {
       return reply.code(409).send({ accepted: false, revision: snapshot.revision, state: toState(snapshot), code: 'stale_preview' });
     }
-    if (parsed.data.decision === 'cancel') {
-      await dependencies.conversations.clearPendingTransfer(userId, request.params.conversationId);
-    } else if (dependencies.service) {
-      await dependencies.service.handleTurn({ conversationId: request.params.conversationId, userId, text: 'confirmar la transferencia' });
-    } else {
-      const claim = await dependencies.conversations.claimPendingTransfer(userId, request.params.conversationId);
-      if (claim.status !== 'claimed') return reply.code(409).send({ accepted: false, revision: snapshot.revision, state: toState(snapshot), code: claim.status === 'uncertain' ? 'broadcast_uncertain' : 'broadcast_in_progress' });
+    if (!dependencies.service) return reply.code(503).send({ accepted: false, revision: snapshot.revision, state: toState(snapshot), code: 'wallet_unavailable' });
+    let result;
+    for await (const event of dependencies.service.resolveDecision({
+      conversationId: request.params.conversationId,
+      userId,
+      previewId: parsed.data.previewId,
+      decision: parsed.data.decision,
+      waitForFinancialTask: true,
+    })) {
+      if (event.type === 'turn-completed') result = event.result;
     }
     const updated = await dependencies.conversations.inspect(userId, request.params.conversationId);
-    return { accepted: true, revision: updated?.revision ?? snapshot.revision, state: toState(updated ?? snapshot) };
+    if (!result) return reply.code(500).send({ accepted: false, revision: updated?.revision ?? snapshot.revision, state: toState(updated ?? snapshot), code: 'internal_error' });
+    const accepted = result.status !== 'error' || !['stale_preview', 'broadcast_in_progress', 'broadcast_uncertain'].includes(result.code);
+    if (!accepted) reply.code(409);
+    return { accepted, revision: updated?.revision ?? snapshot.revision, state: toState(updated ?? snapshot), ...(result.status === 'error' ? { code: result.code } : {}) };
   });
 
   app.post('/v1/conversations/:conversationId/turns', async (request: FastifyRequest<{ Params: { conversationId: string }; Body: unknown }>, reply) => {

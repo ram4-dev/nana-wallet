@@ -50,3 +50,6 @@ export function readRecipientMemoryConfig(environment: NodeJS.ProcessEnv = proce
     seedFile: parsed.RECIPIENT_MEMORY_SEED_FILE,
   };
 }
+
+export { readApiProcessConfig, readApiConfig, readWorkerConfig, readWorkerProcessConfig } from './process.js';
+export { readVoiceProviderConfig, readVoiceTraceConfig } from './privacy.js';
