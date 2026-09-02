@@ -17,8 +17,32 @@ export const READ_ONLY_TOOL_NAMES = [
   "get_history",
 ] as const;
 
+export const NATIVE_PREVIEW_TOOL_NAMES = [
+  ...READ_ONLY_TOOL_NAMES,
+  "search_recipients",
+  "search_user_memory",
+  "get_selected_recipient_address",
+  "stage_user_memory",
+  "write_user_memory",
+  "send_token",
+] as const;
+
+const CANCELLABLE_NATIVE_TOOL_NAMES = new Set<string>([
+  ...READ_ONLY_TOOL_NAMES,
+  "search_recipients",
+  "search_user_memory",
+  "get_selected_recipient_address",
+  "send_token",
+]);
+
 type LiveKitToolOptions = {
   allowedTools?: readonly string[];
+  onToolCompleted?: (input: {
+    name: string;
+    input: Record<string, unknown>;
+    output: unknown;
+    context: WalletAgentContext;
+  }) => Promise<unknown>;
 };
 
 export function createLiveKitModel(): OpenAILLM {
@@ -65,23 +89,46 @@ export function toLiveKitTools(
   }
   return definitions
     .filter((tool) => !allowed || allowed.has(tool.name))
-    .map((tool) => toLiveKitTool(tool, context));
+    .map((tool) => toLiveKitTool(tool, context, options));
 }
 
 function toLiveKitTool(
   definition: AgentToolDefinition<unknown, unknown>,
   context: WalletAgentContext,
+  options: LiveKitToolOptions,
 ) {
   return llm.tool({
     name: definition.name,
     description: definition.description,
     parameters: definition.inputSchema as z.ZodType<Record<string, unknown>>,
-    flags: llm.ToolFlag.CANCELLABLE,
-    execute: async (input, options) =>
-      definition.execute(input, {
+    flags: CANCELLABLE_NATIVE_TOOL_NAMES.has(definition.name)
+      ? llm.ToolFlag.CANCELLABLE
+      : llm.ToolFlag.NONE,
+    execute: async (input, execution) => {
+      if (
+        definition.name === "send_token" &&
+        input.dryRun !== true
+      ) {
+        return {
+          error: "confirmation_required",
+          message: "A transfer preview must be confirmed before it can be broadcast.",
+        };
+      }
+      const output = await definition.execute(input, {
         ...context,
-        signal: options.abortSignal,
-      }),
+        ...(CANCELLABLE_NATIVE_TOOL_NAMES.has(definition.name)
+          ? { signal: execution.abortSignal }
+          : {}),
+      });
+      return options.onToolCompleted
+        ? options.onToolCompleted({
+          name: definition.name,
+          input,
+          output,
+          context,
+        })
+        : output;
+    },
   });
 }
 

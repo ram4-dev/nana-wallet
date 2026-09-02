@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { buildWalletAgentInstructions, type WalletAgentConfig } from './instructions.js';
 import type { ConversationLanguage } from '../conversations/language.js';
-import type { ConversationSession } from '../conversations/session-state.js';
+import { invalidateSelectedRecipient, type ConversationSession } from '../conversations/session-state.js';
 import type { RecipientMemoryRuntime } from '../memory/runtime.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
 import { isValidEvmAddress } from '../memory/address.js';
@@ -57,10 +57,22 @@ const listTokensInputSchema = z.object({ network: z.string().trim().min(1).optio
 const emptyInputSchema = z.object({}).strict();
 export const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
 export const memoryWriteSchema = z.object({ confirmationId: z.string().uuid() });
-export const memoryDraftSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('recipient'), name: z.string().trim().min(1), description: z.string().trim().min(1), address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.') }),
-  z.object({ kind: z.literal('fact'), fact: z.string().trim().min(1), factKind: z.string().trim().min(1).optional() }),
-]);
+export const memoryDraftSchema = z.object({
+  kind: z.enum(['recipient', 'fact']),
+  name: z.string().trim().min(1).optional(),
+  description: z.string().trim().min(1).optional(),
+  address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.').optional(),
+  fact: z.string().trim().min(1).optional(),
+  factKind: z.string().trim().min(1).optional(),
+}).superRefine((value, issue) => {
+  if (value.kind === 'recipient') {
+    if (!value.name) issue.addIssue({ code: 'custom', path: ['name'], message: 'Recipient name is required.' });
+    if (!value.description) issue.addIssue({ code: 'custom', path: ['description'], message: 'Recipient description is required.' });
+    if (!value.address) issue.addIssue({ code: 'custom', path: ['address'], message: 'Recipient address is required.' });
+    return;
+  }
+  if (!value.fact) issue.addIssue({ code: 'custom', path: ['fact'], message: 'Memory fact is required.' });
+});
 
 const GENERIC_USDT_NAMES = new Set(['usdt', 'usd₮', 'tether']);
 const DECIMAL_AMOUNT = /^\d+(?:\.\d+)?$/u;
@@ -226,6 +238,10 @@ async function sendToken(input: SendTokenInput, context: WalletAgentContext): Pr
   const normalized = { ...input, token: normalizeWalletToken(input.token, context.config.token) };
   const policyError = validateWalletTransferPolicy(normalized, context.config);
   if (policyError) return policyError;
+  if (normalized.dryRun) {
+    const recipientError = await validatePreviewRecipient(normalized, context);
+    if (recipientError) return recipientError;
+  }
   const request: TransferRequest = {
     network: normalized.network,
     token: normalized.token,
@@ -237,6 +253,52 @@ async function sendToken(input: SendTokenInput, context: WalletAgentContext): Pr
   const outcome = await context.wallet.broadcastTransfer(request);
   if (outcome.kind === 'submitted') return outcome.transaction;
   return { error: outcome.kind === 'uncertain' ? 'broadcast_uncertain' : 'wallet_unavailable', message: outcome.reason };
+}
+
+async function validatePreviewRecipient(
+  input: SendTokenInput,
+  context: WalletAgentContext,
+): Promise<{ error: 'recipient_revalidation_required'; message: string } | undefined> {
+  const selected = context.session.recipientMemory?.selectedRecipient;
+  if (context.session.recipientMemory?.recipientSelectionRequired && !selected) {
+    return {
+      error: 'recipient_revalidation_required',
+      message: 'Recipient changed or is no longer valid; resolve the recipient again.',
+    };
+  }
+  if (!selected) {
+    if (context.session.recipientMemory?.previewedRecipient) {
+      context.session.recipientMemory.previewedRecipient = undefined;
+    }
+    return undefined;
+  }
+  if (!context.recipientMemory) {
+    invalidateSelectedRecipient(context.session);
+    return {
+      error: 'recipient_revalidation_required',
+      message: 'Recipient memory is unavailable; resolve the recipient again before previewing.',
+    };
+  }
+  const current = await context.recipientMemory.service.getRecipientForVersion(
+    context.recipientMemory.userId,
+    selected.recipientId,
+    selected.version,
+  );
+  if (
+    !current ||
+    current.id !== selected.recipientId ||
+    current.version !== selected.version ||
+    !isValidEvmAddress(current.address) ||
+    current.address !== input.to
+  ) {
+    invalidateSelectedRecipient(context.session);
+    return {
+      error: 'recipient_revalidation_required',
+      message: 'Recipient changed or is no longer valid; resolve the recipient again.',
+    };
+  }
+  context.session.recipientMemory!.previewedRecipient = selected;
+  return undefined;
 }
 
 function positiveDecimal(value: string): boolean {

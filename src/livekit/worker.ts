@@ -26,6 +26,7 @@ import {
   createWorkerDependencies,
   type WorkerDependencies,
 } from "../runtime/dependencies.js";
+import { getConfiguredRecipientMemoryRuntime } from "../memory/runtime.js";
 
 export { readLiveKitWorkerConfig } from "../config/process.js";
 export type { LiveKitWorkerConfig } from "../config/process.js";
@@ -123,6 +124,22 @@ async function runJob(
         room: ctx.room,
         record: false,
       });
+      if (config.agentRuntime === "native-livekit") {
+        created.session.on(AgentSessionEventTypes.ConversationItemAdded, (event) => {
+          if (
+            event.item.type !== "message" ||
+            (event.item.role !== "user" && event.item.role !== "assistant")
+          ) return;
+          const text = event.item.textContent;
+          if (!text) return;
+          void dependencies.conversationService.appendNativeMessage({
+            conversationId: binding.conversationId,
+            userId: binding.userId,
+            role: event.item.role,
+            text,
+          });
+        });
+      }
       agentParticipant.registerRpcMethod("interrupt_agent", async () => {
         await created.session?.interrupt({ force: true });
         return JSON.stringify({ ok: true });
@@ -170,6 +187,7 @@ async function createNativeAgentInput(
   binding: { conversationId: string; userId: string },
   dependencies: WorkerDependencies,
 ): Promise<NativeLiveKitAgentInput> {
+  const recipientMemory = getConfiguredRecipientMemoryRuntime();
   const snapshot = await dependencies.conversations.get(
     binding.userId,
     binding.conversationId,
@@ -202,7 +220,11 @@ async function createNativeAgentInput(
           : {}),
       },
       wallet: dependencies.wallet,
+      ...(recipientMemory
+        ? { recipientMemory }
+        : {}),
     },
+    conversationService: dependencies.conversationService,
   };
 }
 
