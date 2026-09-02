@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { resolveTransferRecipient } from '../../src/agent/recipient-resolution.js';
-import { createSession, resetSessionStore, setSelectedRecipient } from '../../src/sessions/in-memory-store.js';
+import { createSession, resetSessionStore, setSelectedRecipientById as setSelectedRecipient } from '../../src/conversations/test-fixtures.js';
 
 const candidate = {
   id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

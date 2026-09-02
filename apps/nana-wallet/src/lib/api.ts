@@ -10,7 +10,8 @@ import type {
   Contact,
   CreateAgendaEventInput,
   CreateContactInput,
-  CreateSessionResponse,
+  CreateConversationResponse,
+  EndLiveConversationResponse,
   EmptyResponse,
   ErrCode,
   Me,
@@ -18,7 +19,9 @@ import type {
   PaymentIntent,
   PaymentResult,
   RevealedCbu,
-  SessionMessageResponse,
+  ConversationTurnResult,
+  ConversationState,
+  LiveVoiceBindingResponse,
   TransferIntentInput,
   UpdateContactInput,
   WalletSummary,
@@ -138,8 +141,8 @@ async function request<T>(
   });
 }
 
-/** Session endpoints return raw JSON instead of the wallet API envelope. */
-async function rawSessionRequest<T>(
+/** Conversation endpoints return raw JSON instead of the wallet API envelope. */
+async function rawConversationRequest<T>(
   path: string,
   options: RequestInit,
   acceptErrorResponse = false,
@@ -263,14 +266,70 @@ export const api = {
   transcribeAgentAudio: (input: AgentAudioTranscriptionInput) =>
     request<AgentAudioTranscription>("/v1/agent/transcribe", jsonRequest("POST", input)),
 
-  createSession: () =>
-    rawSessionRequest<CreateSessionResponse>("/v1/sessions", jsonRequest("POST", {})),
+  createConversation: () =>
+    rawConversationRequest<CreateConversationResponse>(
+      "/v1/conversations",
+      jsonRequest("POST", {}),
+    ),
 
-  sendSessionMessage: (sessionId: string, message: string) =>
-    rawSessionRequest<SessionMessageResponse>(
-      `/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
+  createLiveVoiceBinding: (conversationId?: string) =>
+    rawConversationRequest<LiveVoiceBindingResponse>(
+      "/v1/live-bindings",
+      jsonRequest("POST", conversationId ? { conversationId } : {}),
+    ),
+
+  sendConversationTurn: (conversationId: string, message: string) =>
+    rawConversationRequest<ConversationTurnResult>(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/turns`,
       jsonRequest("POST", { message }),
       true,
+    ),
+
+  getConversationState: async (
+    conversationId: string,
+    etag?: string,
+  ): Promise<ConversationState | null> => {
+    const headers = new Headers();
+    headers.set("Authorization", `Bearer ${getApiToken()}`);
+    headers.set("Content-Type", "application/json");
+    if (etag) headers.set("If-None-Match", etag);
+
+    let response: Response;
+    try {
+      response = await fetch(
+        makeUrl(`/v1/conversations/${encodeURIComponent(conversationId)}/state`),
+        { method: "GET", headers },
+      );
+    } catch {
+      throw new ApiError("SERVICIO_CAIDO", FALLBACK_ERROR_MESSAGE, { ambiguous: true });
+    }
+    if (response.status === 304) return null;
+    if (!response.ok) {
+      throw new ApiError("DATOS_INVALIDOS", FALLBACK_ERROR_MESSAGE, {
+        status: response.status,
+        ambiguous: response.status >= 500,
+      });
+    }
+    return (await response.json()) as ConversationState;
+  },
+
+  decideConversation: (conversationId: string, previewId: string, decision: "confirm" | "cancel") =>
+    rawConversationRequest<{ accepted: boolean; revision: number; state: ConversationState }>(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/decisions`,
+      jsonRequest("POST", { previewId, decision }),
+    ),
+
+  endLiveConversation: (
+    conversationId: string,
+    expectedRevision: number,
+    acknowledgeUnresolvedFinancialWork = false,
+  ) =>
+    rawConversationRequest<EndLiveConversationResponse>(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/end-live`,
+      jsonRequest("POST", {
+        expectedRevision,
+        acknowledgeUnresolvedFinancialWork,
+      }),
     ),
 
   getMe: () => request<Me>("/v1/me"),
@@ -305,40 +364,40 @@ async function speak(text: string): Promise<Blob> {
 }
 
 /**
- * Builds a sender whose durable session identity stays in React-owned memory.
+ * Builds a sender whose durable conversation identity stays in React-owned memory.
  * Only the in-flight creation promise lives here, preventing two initial sends
- * from creating separate sessions before React has rendered the new id.
+ * from creating separate conversations before React has rendered the new id.
  */
-export function createSessionMessageSender(
-  getSessionId: () => string | null,
-  setSessionId: (sessionId: string | null) => void,
+export function createConversationTurnSender(
+  getConversationId: () => string | null,
+  setConversationId: (conversationId: string | null) => void,
 ) {
-  let pendingSession: Promise<string> | null = null;
+  let pendingConversation: Promise<string> | null = null;
 
-  async function ensureSession() {
-    const currentSessionId = getSessionId();
-    if (currentSessionId) return currentSessionId;
+  async function ensureConversation() {
+    const currentConversationId = getConversationId();
+    if (currentConversationId) return currentConversationId;
 
-    pendingSession ??= api
-      .createSession()
-      .then(({ sessionId }) => {
-        setSessionId(sessionId);
-        return sessionId;
+    pendingConversation ??= api
+      .createConversation()
+      .then(({ conversationId }) => {
+        setConversationId(conversationId);
+        return conversationId;
       })
       .finally(() => {
-        pendingSession = null;
+        pendingConversation = null;
       });
-    return pendingSession;
+    return pendingConversation;
   }
 
-  return async (message: string): Promise<SessionMessageResponse> => {
-    let sessionId = await ensureSession();
-    let response = await api.sendSessionMessage(sessionId, message);
+  return async (message: string): Promise<ConversationTurnResult> => {
+    let conversationId = await ensureConversation();
+    let response = await api.sendConversationTurn(conversationId, message);
 
-    if (response.status === "error" && response.code === "session_not_found") {
-      if (getSessionId() === sessionId) setSessionId(null);
-      sessionId = await ensureSession();
-      response = await api.sendSessionMessage(sessionId, message);
+    if (response.status === "error" && response.code === "conversation_not_found") {
+      if (getConversationId() === conversationId) setConversationId(null);
+      conversationId = await ensureConversation();
+      response = await api.sendConversationTurn(conversationId, message);
     }
 
     return response;

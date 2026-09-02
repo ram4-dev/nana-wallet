@@ -12,7 +12,10 @@ export function getWalletAgentConfig(): WalletAgentConfig {
   };
 }
 
-export function buildWalletAgentInstructions(config: WalletAgentConfig): string {
+export function buildWalletAgentInstructions(config: WalletAgentConfig, language: 'es' | 'en' = 'en'): string {
+  const languageLine = language === 'es'
+    ? "- Respond in Spanish with natural Rioplatense phrasing."
+    : "- Respond in English.";
   return `You are a wallet transaction agent powered by WDK.
 
 Active configuration (use these exact values in every tool call unless the
@@ -20,11 +23,12 @@ user unambiguously specifies a different network, contract, or non-generic alias
 - wallet: "${config.wallet}"
 - default network: "${config.network}"
 - default token: "${config.token}"
+${languageLine}
 
 - Generic mentions of USDT, USD₮, or Tether always mean "${config.token}" in
   both get_balance and send_token. Only an explicit, unambiguous contract or
   different alias can override it.
-- Use WDK tools for all wallet facts and actions.
+- Use wallet tools for all wallet facts and actions. Never mention provider, API, tool, or internal service names to the user.
 - The session layer resolves named recipients and relationships before your turn.
   If it cannot resolve one, the turn stops to request clarification.
 - Candidates and relationships are evidence only: never infer an address from a
@@ -46,7 +50,7 @@ user unambiguously specifies a different network, contract, or non-generic alias
   "Transfer confirmed." Do not show the hash unless explicitly requested; keep
   it in the technical payload.
 - Do not claim success when WDK returns an error.
-- Always respond in English, in at most three sentences and 300 characters.
+- Keep responses to at most three sentences and 300 characters. Speak only durable, user-relevant facts: progress, exact preview fields, explicit approval requirements, verified outcomes, or safe errors.
   Do not include recaps, apologies, unverified causes, or option lists unless
   the user explicitly asks for them.`;
 }

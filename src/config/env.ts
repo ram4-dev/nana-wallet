@@ -10,7 +10,6 @@ const optionalNonEmpty = z.preprocess(
 const environmentSchema = z.object({
   RECIPIENT_MEMORY_ENABLED: z.enum(['true', 'false']).optional().default('false'),
   DATABASE_URL: optionalNonEmpty,
-  DATABASE_ADMIN_URL: optionalNonEmpty,
   DEMO_USER_ID: optionalNonEmpty,
   RECIPIENT_MEMORY_MODEL_CACHE: z.string().min(1).optional().default('.cache/recipient-memory-model'),
   RECIPIENT_MEMORY_SCORE_THRESHOLD: z.coerce.number().min(0).max(1).optional().default(0.78),
@@ -21,7 +20,6 @@ const environmentSchema = z.object({
 export type RecipientMemoryConfig = {
   enabled: boolean;
   databaseUrl?: string;
-  databaseAdminUrl?: string;
   demoUserId?: string;
   modelCacheDirectory: string;
   scoreThreshold: number;
@@ -45,7 +43,6 @@ export function readRecipientMemoryConfig(environment: NodeJS.ProcessEnv = proce
   return {
     enabled,
     databaseUrl: parsed.DATABASE_URL,
-    databaseAdminUrl: parsed.DATABASE_ADMIN_URL,
     demoUserId: parsed.DEMO_USER_ID,
     modelCacheDirectory: parsed.RECIPIENT_MEMORY_MODEL_CACHE,
     scoreThreshold: parsed.RECIPIENT_MEMORY_SCORE_THRESHOLD,
@@ -53,3 +50,6 @@ export function readRecipientMemoryConfig(environment: NodeJS.ProcessEnv = proce
     seedFile: parsed.RECIPIENT_MEMORY_SEED_FILE,
   };
 }
+
+export { readApiProcessConfig, readApiConfig, readWorkerConfig, readWorkerProcessConfig } from './process.js';
+export { readVoiceProviderConfig, readVoiceTraceConfig } from './privacy.js';

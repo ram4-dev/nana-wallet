@@ -1,156 +1,140 @@
-# Nana + WDK local live runbook
+# Nana local live runbook
 
-This is the canonical way to run the complete Nana experience locally: the
-frontend on port 8083, the WDK API on port 3001, local Postgres/RAG, voice,
-and a real **Sepolia-only** wallet. It deliberately does not deploy a wallet
-or a secret to a remote platform.
+This is the safe local procedure for the complete fixture or WDK-backed Nana
+experience. Supabase owns durable conversations and recipient memory. Fastify
+and the LiveKit worker run independently; the worker is required only for web
+live voice. Packaged Capacitor builds retain recorded capture and playback.
 
 ## Guardrails
 
-- Use a dedicated, limited-funds Sepolia wallet. Never point this setup at
-  mainnet.
-- Keep `.env` local and ignored. It contains provider credentials; do not copy
-  values into `VITE_*` variables or commit them.
-- A transfer can only broadcast after a live preview and an explicit text or
-  voice confirmation in the same backend session.
-- Both preview and broadcast are blocked unless the exact configured wallet,
-  network, and token are used, the amount is within the decimal spending cap,
-  and the recipient is a valid, non-burn address on the case-insensitive
-  allowlist.
-- The address book is local Postgres data. The sample seed is demo-only and
-  must not be used as a real recipient list.
+- Use a dedicated, limited-funds Sepolia wallet. Never configure mainnet.
+- Keep `.env` and `.env.local` ignored. Provider secrets never enter `VITE_*` values.
+- Fixture mode is the default and cannot be treated as blockchain evidence.
+- Every transfer requires a canonical preview and an explicit allowlisted confirmation.
+- Voice, touch, reconnect, and typed fallback share one durable transfer claim.
+- A claimed broadcast continues after speech interruption or room closure; an uncertain result blocks rebroadcast.
+- No application or LiveKit recording is created. Egress and observability recording remain disabled.
 
-## Prerequisites
+## Prerequisites and setup
 
-- Node.js 22.22+ and npm.
-- Docker Desktop.
-- A configured WDK wallet profile and registered Sepolia token. For this demo:
-  `agent-dev` and `usdt-test` point to the funded test wallet/token.
-- API credentials for the LLM, NaN transcription, ElevenLabs speech, and WDK
-  indexer. Keep them in your local secret vault or `.env`; this document names
-  variables but never includes their values.
-
-Check the WDK profile without exposing its seed:
-
-```bash
-npx wdk wallet list
-npx wdk token list --network sepolia
-```
-
-## One-time setup
-
-From the repository root:
+- Node.js 22.18 or newer, npm, Docker Desktop, and Supabase CLI 2.80.0.
+- For live WDK mode, a configured Sepolia wallet and WDK indexer access.
+- For web live voice, a LiveKit Cloud development project and Ed25519 binding pair.
 
 ```bash
 npm ci
 cd apps/nana-wallet && npm ci && cd ../..
 cp .env.example .env
 cp apps/nana-wallet/.env.example apps/nana-wallet/.env.local
-docker compose up -d db
+npx supabase start
+npx supabase db reset
 ```
 
-Configure the backend `.env` with real values for the credential variables
-already listed in `.env.example`, then set these non-secret values:
+Use the local Supabase connection from `.env.example`:
 
 ```dotenv
-PORT=3001
-WDK_TOOLS_SOURCE=live
-WDK_WALLET_NAME=agent-dev
-WDK_NETWORK=sepolia
-WDK_TOKEN=usdt-test
-# Required in live mode. Replace the example with approved Sepolia recipients.
-WDK_MAX_TRANSFER_AMOUNT=0.05
-WDK_ALLOWED_RECIPIENTS=0x1111111111111111111111111111111111111111
-AGENT_RUNTIME=llm
-CORS_ORIGINS=http://localhost:8083,http://127.0.0.1:8083
-
-RECIPIENT_MEMORY_ENABLED=true
-DATABASE_URL=postgresql://recipient_app@127.0.0.1:5432/wdk_agent
-DATABASE_ADMIN_URL=postgresql://postgres@127.0.0.1:5432/wdk_agent
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 DEMO_USER_ID=11111111-1111-4111-8111-111111111111
-RECIPIENT_MEMORY_MODEL_CACHE=.cache/recipient-memory-model
 ```
 
-Set the frontend file to use the API instead of MSW:
+Do not add `DATABASE_ADMIN_URL` to the application. Administrative migration
+work is performed by Supabase CLI; runtime repository access uses the
+restricted `recipient_app` role and transaction-local tenant identity.
+
+## Fixture mode
+
+Fixture mode avoids WDK, Cloud, model, and speech credentials:
 
 ```dotenv
-VITE_API_URL=http://localhost:3001
-VITE_AGENT_BACKEND=1
+WDK_TOOLS_SOURCE=fixture
+AGENT_RUNTIME=deterministic
+LIVE_VOICE_ENABLED=false
+VOICE_TRACE_ENABLED=false
 ```
 
-Initialize the durable local dependencies once. Do not run `db:seed` when the
-database already contains real recipients.
+Run the API and wallet independently:
 
 ```bash
-npm run db:migrate
-npm run memory:prefetch
-```
-
-## Start a live session
-
-Use three terminals from the repository root.
-
-```bash
-# Terminal 1: unlock only for the test window; it starts the local WDK daemon.
-npx wdk wallet unlock --name agent-dev --ttl 30
-```
-
-```bash
-# Terminal 2: API + WDK + RAG
+# Terminal 1
 npm run dev
 ```
 
 ```bash
-# Terminal 3: Nana
-cd apps/nana-wallet
-npm run dev -- --host 0.0.0.0 --port 8083
+# Terminal 2
+cd apps/nana-wallet && npm run dev -- --host 0.0.0.0 --port 8083
 ```
 
-Open <http://localhost:8083>.
-
-## Required live preflight
-
-Before using Nana, the API must report `"mode":"live"`. Anything else is a
-fixture run and must not be treated as transaction evidence.
+For browser live voice, add the development LiveKit and binding values from
+`docs/livekit-development-runbook.md`, then start a third terminal:
 
 ```bash
-curl -fsS http://localhost:3001/health | jq
-curl -fsS 'http://localhost:3001/v1/wallet/balance?network=sepolia&token=usdt-test' | jq
+npm run livekit:dev
 ```
 
-Expected health fields:
+Complete a typed balance turn, a voice balance turn, and a fixture transfer
+preview. Refresh the page and verify the same conversation state and preview
+are returned by `GET /v1/conversations/:id/state`.
 
-```json
-{ "status": "ok", "mode": "live", "mcp": "connected", "wallet": "unlocked", "network": "sepolia" }
+## WDK live mode
+
+Configure only Sepolia and explicit policy values:
+
+```dotenv
+WDK_TOOLS_SOURCE=live
+AGENT_RUNTIME=llm
+WDK_WALLET_NAME=agent-dev
+WDK_NETWORK=sepolia
+WDK_TOKEN=usdt
+WDK_MAX_TRANSFER_AMOUNT=0.05
+WDK_ALLOWED_RECIPIENTS=0x1111111111111111111111111111111111111111
 ```
 
-The balance response must show the expected Sepolia test token and a real
-balance. If `mode` is `fixture`, stop, set `WDK_TOOLS_SOURCE=live`, and restart
-the API. Do not confirm a preview from that process. If either live transfer
-policy variable is missing, empty, malformed, or contains an invalid address,
-the API rejects the transfer before calling WDK. The amount comparison is an
-exact decimal comparison; exponent notation is not accepted.
+Keep API, WDK, worker, and wallet processes in separate terminals. Unlock only
+for the test window and lock afterward:
 
-## Conversational E2E
+```bash
+npx wdk wallet unlock --name agent-dev --ttl 30
+npm run dev
+npm run livekit:dev
+cd apps/nana-wallet && npm run dev -- --host 0.0.0.0 --port 8083
+```
 
-1. In Nana, send `Send 0.01 USDT to Lucas.` or `Send 0.01 USDT to my grandson.`
-2. Check the displayed Sepolia network, recipient, amount, token, and fee.
-3. Confirm by text or voice with an explicit phrase: `I confirm`, `yes, confirm`,
-   `confirmo`, or `sí, confirmo`.
-4. The API waits for the Sepolia receipt, then returns `Transfer confirmed.`
+Before any transfer, verify the process is live rather than fixture mode:
 
-`yes`/`sí` on their own, a cancellation, or an ambiguous response never
-broadcasts. Do not refresh or restart the API between preview and confirmation:
-sessions are intentionally in-memory for this local demo.
+```bash
+curl -fsS http://localhost:3000/health | jq
+curl -fsS 'http://localhost:3000/v1/wallet/balance?network=sepolia&token=usdt' | jq
+```
 
-## Stop and lock
+Stop if health reports `mode: fixture`, a wallet is locked, the network is not
+`sepolia`, or policy validation is missing. A live transfer may broadcast only
+through the separately approved manual harness with `WDK_LIVE=1`; adding
+`WDK_ALLOW_BROADCAST=1` and `WDK_BROADCAST_APPROVED=1` is required for the
+actual broadcast path. The normal test suite never enables those gates.
 
-Stop the two development servers with `Ctrl-C`, then lock the test wallet:
+## Decision and recovery checks
+
+1. Request a small transfer and inspect network, token, destination, amount, and fee.
+2. Confirm with an explicit phrase or the visible Confirm control.
+3. Confirm that the progress card moves through broadcasting and verification.
+4. Interrupt speech during verification; interruption must not resend or cancel the transaction.
+5. End voice with unresolved work only after acknowledging that financial work continues.
+6. Reconnect or switch to typed mode and inspect the same durable state.
+7. Confirm `yes` or `sí` alone never approves a transfer.
+
+If a worker is terminated, it stops accepting room jobs, drains registered
+financial tasks for the configured timeout, closes providers, and closes the
+database last. A task that cannot finish remains fail-closed. Inspect history
+and receipt evidence before any operator reconciliation; never retry an
+ambiguous send automatically.
+
+## Stop and clean up
 
 ```bash
 npx wdk wallet lock --name agent-dev
+npx supabase stop
 ```
 
-The Postgres volume remains so confirmed local recipient memory is preserved.
-Use `docker compose down` to stop only the container; do not remove the volume
-unless you deliberately want to erase that local memory.
+Keep the Supabase volume when local recipient memory is needed. Use
+`npx supabase db reset` only when intentionally erasing local data. Remove
+temporary LiveKit rooms from the Cloud console and verify Egress remains off.

@@ -6,25 +6,42 @@ import {
   getWalletAgentConfig,
   type WalletAgentConfig,
 } from './instructions.js';
-import { callWdkTool, getWdkTools } from './wdk-tools.js';
+import { getWdkTools } from './wdk-tools.js';
+import { createWalletAgentTools } from '../wallet/agent-tools.js';
+import type { WalletProvider } from '../wallet/provider.js';
 import { decodeMcpText } from '../wdk/mcp-client.js';
 import {
   defaultTransactionReceiptWaiter,
   type TransactionReceiptWaiter,
 } from '../wdk/transaction-receipt.js';
 import { isDeterministicAgentRuntime, parseDeterministicIntent } from './deterministic-intent.js';
-import * as store from '../sessions/in-memory-store.js';
-import type { DemoSession } from '../sessions/in-memory-store.js';
+import {
+  appendMessage,
+  claimPendingTransfer,
+  clearPendingTransfer,
+  clearSelectedRecipient,
+  confirmMemoryWrite,
+  invalidateSelectedRecipient,
+  markPendingTransferUncertain,
+  releasePendingTransferClaim,
+  setLastTransactionHash,
+  setPendingTransfer,
+  setRecipientClarification,
+  setSelectedRecipient,
+  type ConversationSession,
+} from '../conversations/session-state.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
 import { isValidEvmAddress } from '../memory/address.js';
 import { getConfiguredRecipientMemoryRuntime, type RecipientMemoryRuntime } from '../memory/runtime.js';
 import { resolveTransferRecipient, type RecipientMemoryToolPort } from './recipient-resolution.js';
 import { hasExplicitTransferAddress } from './recipient-intent.js';
 import type {
-  SessionMessageResponse,
+  ConversationTurnResult,
+  PendingTransfer,
   TransferPreview,
 } from '../contracts/http.js';
 import { transactionResultSchema, transferPreviewSchema } from '../contracts/http.js';
+import type { ConversationLanguage } from '../conversations/language.js';
 
 const toolCallOptions = {
   toolCallId: 'session-send-token',
@@ -220,8 +237,11 @@ const transactionReceiptOutcomeSchema = z.object({
 export type HandleMessageOptions = {
   model?: LanguageModel;
   recipientMemory?: RecipientMemoryRuntime;
+  walletProvider?: WalletProvider;
   transactionReceiptWaiter?: TransactionReceiptWaiter;
   abortSignal?: AbortSignal;
+  claimedTransfer?: PendingTransfer;
+  language?: ConversationLanguage;
 };
 
 const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
@@ -232,7 +252,7 @@ const memoryDraftSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('fact'), fact: z.string().trim().min(1), factKind: z.string().trim().min(1).optional() }),
 ]);
 
-function pendingMatches(session: DemoSession, input: SendTokenInput): boolean {
+function pendingMatches(session: ConversationSession, input: SendTokenInput): boolean {
   const p = session.pendingTransfer;
   return (
     !!p &&
@@ -368,7 +388,7 @@ function decodeBroadcastCandidate(output: unknown, depth = 0): Record<string, un
  */
 export function buildGuardedTools(
   baseTools: Record<string, Tool>,
-  session: DemoSession,
+  session: ConversationSession,
   recipientMemory?: RecipientMemoryRuntime,
   config: WalletAgentConfig = getWalletAgentConfig(),
 ): Record<string, Tool> {
@@ -417,8 +437,8 @@ export function buildGuardedTools(
       } : undefined);
       if (mustRevalidate) {
         if (!recipientMemory) {
-          store.clearSelectedRecipient(session.id);
-          store.clearPendingTransfer(session.id);
+          clearSelectedRecipient(session);
+          clearPendingTransfer(session);
           return { error: 'recipient_revalidation_required', message: 'Recipient memory is unavailable; resolve the recipient again before previewing or sending.' };
         }
         const current = await recipientMemory.service.getRecipientForVersion(
@@ -433,8 +453,8 @@ export function buildGuardedTools(
           !isValidEvmAddress(current.address) ||
           current.address !== normalizedInput.to
         ) {
-          store.invalidateSelectedRecipient(session.id);
-          store.clearPendingTransfer(session.id);
+          invalidateSelectedRecipient(session);
+          clearPendingTransfer(session);
           return { error: 'recipient_revalidation_required', message: 'Recipient changed or is no longer valid; resolve the recipient again.' };
         }
         if (normalizedInput.dryRun && selected) {
@@ -501,17 +521,12 @@ function mapAgentError(err: unknown): string {
 }
 
 export async function handleMessage(
-  sessionId: string,
+  session: ConversationSession,
   userText: string,
   options: HandleMessageOptions = {},
-): Promise<SessionMessageResponse> {
-  const session = store.getSession(sessionId);
-  if (!session) {
-    return { status: 'error', message: 'Session not found.', code: 'session_not_found' };
-  }
-
+): Promise<ConversationTurnResult> {
   const normalized = normalizeResolutionText(userText);
-  store.appendMessage(sessionId, { role: 'user', content: userText });
+  appendMessage(session, { role: 'user', content: userText });
   const recipientMemory = options.recipientMemory ?? getConfiguredRecipientMemoryRuntime();
   const rawMemoryTools = recipientMemory
     ? createRecipientMemoryTools({ userId: recipientMemory.userId, session, service: recipientMemory.service })
@@ -520,47 +535,49 @@ export async function handleMessage(
   if (session.transferResolutionState === 'uncertain') {
     const message =
       'The broadcast result is uncertain. Check the wallet history before taking another action.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'broadcast_uncertain' };
   }
 
   if (session.transferResolutionState === 'broadcasting') {
     const message = 'The confirmed transfer is already being broadcast.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'broadcast_in_progress' };
   }
 
   if (session.pendingTransfer && CANCEL_PHRASES.has(normalized)) {
-    store.clearPendingTransfer(sessionId);
+    clearPendingTransfer(session);
     const message = 'Transfer cancelled.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'cancelled', message };
   }
 
   if (!session.pendingTransfer && rawMemoryTools && session.recipientMemory?.pendingWrite && CONFIRM_PHRASES.has(normalized)) {
     const confirmationId = session.recipientMemory.pendingWrite.confirmationId;
-    const confirmation = store.confirmMemoryWrite(sessionId, recipientMemory!.userId, confirmationId, Date.now());
+    const confirmation = confirmMemoryWrite(session, recipientMemory!.userId, confirmationId, Date.now());
     if (confirmation.status !== 'confirmed') {
       const message = 'That memory confirmation is no longer valid; please stage it again.';
-      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      appendMessage(session, { role: 'assistant', content: message });
       return { status: 'answer', message };
     }
     const outcome = await rawMemoryTools.write_user_memory({ confirmationId });
     const message = outcome.status === 'written'
       ? 'Recipient memory saved.'
       : 'That memory confirmation is no longer valid; please stage it again.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'answer', message };
   }
 
   if (!session.pendingTransfer && CONFIRM_PHRASES.has(normalized)) {
     const message = 'There is no pending transfer to confirm.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'no_pending_preview' };
   }
 
   if (session.pendingTransfer && CONFIRM_PHRASES.has(normalized)) {
-    const claim = store.claimPendingTransfer(sessionId);
+    const claim = options.claimedTransfer
+      ? { status: 'claimed' as const, transfer: options.claimedTransfer }
+      : claimPendingTransfer(session);
     if (claim.status !== 'claimed') {
       const message =
         claim.status === 'uncertain'
@@ -576,16 +593,16 @@ export async function handleMessage(
       const baseTools = await getWdkTools();
       const tools = buildGuardedTools(baseTools, session, recipientMemory);
       return executeConfirmedTransfer(
-        sessionId,
+        session,
         claim.transfer,
         tools,
         options.transactionReceiptWaiter,
         options.abortSignal,
       );
     } catch (error) {
-      store.releasePendingTransferClaim(sessionId);
+      releasePendingTransferClaim(session);
       const message = mapAgentError(error);
-      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      appendMessage(session, { role: 'assistant', content: message });
       return { status: 'error', message, code: 'agent_error' };
     }
   }
@@ -593,7 +610,7 @@ export async function handleMessage(
   if (session.pendingTransfer) {
     const message =
       'A transfer is waiting for your decision. Confirm or cancel it before sending another instruction.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'pending_confirmation' };
   }
 
@@ -601,33 +618,40 @@ export async function handleMessage(
   if (hasExplicitAddress) {
     // An explicit address is complete recipient identity and must neither query
     // memory nor inherit a selection from an earlier named-recipient turn.
-    store.clearSelectedRecipient(sessionId);
+    clearSelectedRecipient(session);
   } else if (rawMemoryTools) {
     const resolution = await resolveTransferRecipient(userText, session, rawMemoryTools as RecipientMemoryToolPort);
     if (resolution.status === 'resolved') {
-      store.setSelectedRecipient(sessionId, resolution.recipient);
+      setSelectedRecipient(session, resolution.recipient);
     }
     if (resolution.status === 'clarification_required') {
-      store.setRecipientClarification(sessionId, resolution.candidates.map((candidate) => ({
+      setRecipientClarification(session, resolution.candidates.map((candidate) => ({
         recipientId: candidate.id,
         version: candidate.version,
         name: candidate.name,
         description: candidate.description,
       })));
       const message = clarificationMessage(resolution.candidates);
-      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      appendMessage(session, { role: 'assistant', content: message });
       return { status: 'clarification_required', message, candidates: resolution.candidates };
     }
     if (resolution.status === 'no_match' || resolution.status === 'unavailable') {
       const message = resolution.status === 'unavailable'
         ? 'Recipient memory is unavailable, so I cannot prepare a transfer.'
         : 'I could not find a safe recipient match, so I cannot prepare a transfer.';
-      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      appendMessage(session, { role: 'assistant', content: message });
       return { status: 'answer', message };
     }
   }
 
-  const baseTools = await getWdkTools();
+  const baseTools = options.walletProvider
+    ? createWalletAgentTools({
+      wallet: options.walletProvider,
+      session,
+      ...(recipientMemory ? { recipientMemory } : {}),
+      config: getWalletAgentConfig(),
+    })
+    : await getWdkTools();
   const agentConfig = getWalletAgentConfig();
   const tools = buildGuardedTools(
     { ...baseTools, ...(rawMemoryTools ? createMemoryAgentTools(rawMemoryTools) : {}) },
@@ -637,11 +661,11 @@ export async function handleMessage(
   );
 
   if (isDeterministicAgentRuntime() && !options.model) {
-    return handleDeterministicTurn(sessionId, userText, session, tools, agentConfig);
+    return handleDeterministicTurn(userText, session, tools, agentConfig, options.language ?? 'en');
   }
   const agent = new ToolLoopAgent({
     model: options.model ?? defaultModel,
-    instructions: buildWalletAgentInstructions(agentConfig),
+    instructions: buildWalletAgentInstructions(agentConfig, options.language ?? 'en'),
     tools,
   });
 
@@ -650,11 +674,11 @@ export async function handleMessage(
     result = await agent.generate({ messages: session.messages });
   } catch (err) {
     const message = mapAgentError(err);
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'agent_error' };
   }
 
-  store.appendMessage(sessionId, { role: 'assistant', content: result.text });
+  appendMessage(session, { role: 'assistant', content: result.text });
 
   const sendTokenCalls = result.toolResults.filter((r) => r.toolName === 'send_token');
   const lastCall = sendTokenCalls[sendTokenCalls.length - 1];
@@ -676,15 +700,15 @@ export async function handleMessage(
       : null;
     const transaction = normalizeBroadcastResult(output, args?.network ?? agentConfig.network);
     if (transaction) {
-      store.clearPendingTransfer(sessionId);
-      store.setLastTransactionHash(sessionId, transaction.transactionHash);
+      clearPendingTransfer(session);
+      setLastTransactionHash(session, transaction.transactionHash);
       return { status: 'sent', message: result.text, transaction };
     }
 
     const preview = args ? canonicalizeTransferPreview(args, output) : null;
     if (preview && args) {
       const selected = session.recipientMemory?.previewedRecipient;
-      store.setPendingTransfer(sessionId, {
+      setPendingTransfer(session, {
         network: args.network,
         token: args.token,
         to: args.to,
@@ -697,7 +721,7 @@ export async function handleMessage(
     }
 
     const message = 'The wallet returned an invalid transfer preview.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'invalid_tool_result' };
   }
 
@@ -705,16 +729,16 @@ export async function handleMessage(
 }
 
 async function executeConfirmedTransfer(
-  sessionId: string,
-  pending: NonNullable<DemoSession['pendingTransfer']>,
+  session: ConversationSession,
+  pending: NonNullable<ConversationSession['pendingTransfer']>,
   tools: Record<string, Tool>,
   transactionReceiptWaiter: TransactionReceiptWaiter = defaultTransactionReceiptWaiter,
   abortSignal?: AbortSignal,
-): Promise<SessionMessageResponse> {
+): Promise<ConversationTurnResult> {
   if (!pending.preview || !tools.send_token?.execute) {
-    store.releasePendingTransferClaim(sessionId);
+    releasePendingTransferClaim(session);
     const message = 'There is no pending transfer to confirm.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'no_pending_preview' };
   }
 
@@ -731,18 +755,18 @@ async function executeConfirmedTransfer(
   try {
     output = await tools.send_token.execute(input, toolCallOptions);
   } catch {
-    return markBroadcastUncertain(sessionId);
+    return markBroadcastUncertain(session);
   }
 
   const guardedError = guardedSendTokenErrorSchema.safeParse(output);
   if (guardedError.success) {
     if (guardedError.data.error === 'confirmation_required') {
-      store.releasePendingTransferClaim(sessionId);
+      releasePendingTransferClaim(session);
     } else {
-      store.clearSelectedRecipient(sessionId);
-      store.clearPendingTransfer(sessionId);
+      clearSelectedRecipient(session);
+      clearPendingTransfer(session);
     }
-    store.appendMessage(sessionId, { role: 'assistant', content: guardedError.data.message });
+    appendMessage(session, { role: 'assistant', content: guardedError.data.message });
     return {
       status: 'error',
       message: guardedError.data.message,
@@ -752,13 +776,13 @@ async function executeConfirmedTransfer(
 
   const transaction = normalizeBroadcastResult(output, pending.network);
   if (transaction) {
-    store.setLastTransactionHash(sessionId, transaction.transactionHash);
+    setLastTransactionHash(session, transaction.transactionHash);
     let rawReceipt: unknown;
     try {
       rawReceipt = await transactionReceiptWaiter(transaction, { signal: abortSignal });
     } catch {
       return markTransactionReceiptInvalid(
-        sessionId,
+        session,
         transaction.transactionHash,
         'The Sepolia receipt could not be verified.',
       );
@@ -766,7 +790,7 @@ async function executeConfirmedTransfer(
     const parsedReceipt = transactionReceiptOutcomeSchema.safeParse(rawReceipt);
     if (!parsedReceipt.success) {
       return markTransactionReceiptInvalid(
-        sessionId,
+        session,
         transaction.transactionHash,
         'The Sepolia receipt is invalid.',
       );
@@ -777,63 +801,65 @@ async function executeConfirmedTransfer(
       receipt.transactionHash.toLocaleLowerCase('en-US') !== transaction.transactionHash.toLocaleLowerCase('en-US')
     ) {
       return markTransactionReceiptInvalid(
-        sessionId,
+        session,
         transaction.transactionHash,
         'The Sepolia receipt does not match the transfer.',
       );
     }
-    store.clearPendingTransfer(sessionId);
+    clearPendingTransfer(session);
     if (receipt.status === 'reverted') {
       const message = `The transfer reverted on Sepolia. Hash: ${transaction.transactionHash}`;
-      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      appendMessage(session, { role: 'assistant', content: message });
       return { status: 'error', message, code: 'transfer_reverted' };
     }
     const message = 'Transfer confirmed.';
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'sent', message, transaction };
   }
 
-  return markBroadcastUncertain(sessionId);
+  return markBroadcastUncertain(session);
 }
 
 function markTransactionReceiptInvalid(
-  sessionId: string,
+  session: ConversationSession,
   transactionHash: string,
   reason: string,
-): SessionMessageResponse {
+): ConversationTurnResult {
   // A hash proves the wallet already broadcast. Clearing the pending intent
   // releases the in-memory lock without ever making that transfer confirmable again.
-  store.clearPendingTransfer(sessionId);
+  clearPendingTransfer(session);
   const message = `${reason} Hash: ${transactionHash}`;
-  store.appendMessage(sessionId, { role: 'assistant', content: message });
+  appendMessage(session, { role: 'assistant', content: message });
   return { status: 'error', message, code: 'transaction_receipt_invalid' };
 }
 
-function markBroadcastUncertain(sessionId: string): SessionMessageResponse {
-  store.markPendingTransferUncertain(sessionId);
+function markBroadcastUncertain(session: ConversationSession): ConversationTurnResult {
+  markPendingTransferUncertain(session);
   const message =
     'The broadcast result is uncertain. Check the wallet history before taking another action.';
-  store.appendMessage(sessionId, { role: 'assistant', content: message });
+  appendMessage(session, { role: 'assistant', content: message });
   return { status: 'error', message, code: 'broadcast_uncertain' };
 }
 
 async function handleDeterministicTurn(
-  sessionId: string,
   userText: string,
-  session: DemoSession,
+  session: ConversationSession,
   tools: Record<string, Tool>,
   config: WalletAgentConfig,
-): Promise<SessionMessageResponse> {
+  language: ConversationLanguage = 'en',
+): Promise<ConversationTurnResult> {
   const { network, token, wallet } = config;
   const intent = parseDeterministicIntent(userText, token);
 
   if (intent?.type === 'balance') {
-    const balance = (await callWdkTool('get_balance', { network, token, wallet })) as {
+    const balance = (await tools.get_balance?.execute!({ network, token, wallet }, toolCallOptions)) as {
       balance?: string;
       token?: string;
     };
-    const message = `You have ${balance.balance ?? 'an unknown amount'} ${balance.token ?? token}.`;
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    const message = language === 'es'
+      ? `Tenés ${balance.balance ?? 'un monto desconocido'} ${balance.token ?? token}.`
+      : `You have ${balance.balance ?? 'an unknown amount'} ${balance.token ?? token}.`;
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'answer', message };
   }
 
@@ -849,7 +875,7 @@ async function handleDeterministicTurn(
     const output = await tools.send_token.execute(input, toolCallOptions);
     const guardedError = guardedSendTokenErrorSchema.safeParse(output);
     if (guardedError.success) {
-      store.appendMessage(sessionId, { role: 'assistant', content: guardedError.data.message });
+      appendMessage(session, { role: 'assistant', content: guardedError.data.message });
       return {
         status: 'error',
         message: guardedError.data.message,
@@ -859,10 +885,10 @@ async function handleDeterministicTurn(
     const preview = canonicalizeTransferPreview(input, output);
     if (!preview) {
       const message = 'The wallet returned an invalid transfer preview.';
-      store.appendMessage(sessionId, { role: 'assistant', content: message });
+      appendMessage(session, { role: 'assistant', content: message });
       return { status: 'error', message, code: 'invalid_tool_result' };
     }
-    store.setPendingTransfer(sessionId, {
+    setPendingTransfer(session, {
       network: input.network,
       token: input.token,
       to: input.to,
@@ -870,12 +896,16 @@ async function handleDeterministicTurn(
       wallet: input.wallet,
       preview,
     });
-    const message = `Prepared a ${input.amount} ${input.token} transfer to ${input.to} on ${input.network}. Estimated fee: ${preview.estimatedFee}. Confirm to continue.`;
-    store.appendMessage(sessionId, { role: 'assistant', content: message });
+    const message = language === 'es'
+      ? `Preparé una transferencia de ${input.amount} ${input.token} a ${input.to} en ${input.network}. Comisión estimada: ${preview.estimatedFee}. Confirmá para continuar.`
+      : `Prepared a ${input.amount} ${input.token} transfer to ${input.to} on ${input.network}. Estimated fee: ${preview.estimatedFee}. Confirm to continue.`;
+    appendMessage(session, { role: 'assistant', content: message });
     return { status: 'confirmation_required', message, preview };
   }
 
-  const message = 'Tell me who to pay or how much USDT you want to send on Sepolia.';
-  store.appendMessage(sessionId, { role: 'assistant', content: message });
+  const message = language === 'es'
+    ? 'Decime a quién querés pagar o cuánto USDT querés enviar en Sepolia.'
+    : 'Tell me who to pay or how much USDT you want to send on Sepolia.';
+  appendMessage(session, { role: 'assistant', content: message });
   return { status: 'answer', message };
 }

@@ -1,0 +1,17 @@
+project_id = "nana-wallet-local"
+
+[db]
+# Keep local development on the documented Supabase ports and PostgreSQL major.
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[api]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = false

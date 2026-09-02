@@ -1,8 +1,49 @@
-# WDK blockchain evidence boundary
+# Nani architecture and evidence boundaries
+
+## Independent processes
+
+Fastify (`dist/server.js`) and the LiveKit worker (`dist/livekit/worker.js`)
+are separate processes. Fastify owns HTTP, the server-resolved identity,
+short-lived Ed25519 bindings, canonical projections, and touch decisions. The
+worker owns room jobs, media lifecycle, and the voice adapter. Both use the
+same Supabase PostgreSQL schema and tenant-scoped `recipient_app` role.
+
+The worker is started only after `LIVEKIT_URL`, API credentials, the binding
+public key, database identity, and ElevenLabs credentials validate. It stops
+accepting jobs, drains registered financial tasks for the configured bounded
+interval, closes wallet and memory providers, and closes PostgreSQL last. A
+task that exceeds the drain deadline remains durable and fail-closed; it is
+reconciled rather than broadcast again.
+
+```mermaid
+flowchart LR
+  Browser[nana-wallet web] --> API[Fastify API]
+  Browser <-->|WebRTC and revision invalidation| Room[LiveKit Cloud room]
+  Room <--> Worker[LiveKit worker]
+  API <--> DB[(Supabase PostgreSQL)]
+  Worker <--> DB
+  Worker --> Wallet[Fixture or WDK provider]
+```
+
+## Media and privacy boundary
+
+The application creates no recordings, persists no microphone or synthesized
+audio, and configures `record: false` for AgentSession. LiveKit Egress and
+automatic Egress remain disabled. Deepgram runs through the LiveKit Inference
+ZDR path with `mip_opt_out=true`. ElevenLabs request logging is disabled only
+when `ELEVENLABS_ZERO_RETENTION_VERIFIED=true`; otherwise provider defaults
+apply and the runbook documents that limitation.
+
+Voice metrics contain only aggregate phases, counts, and latency summaries.
+Detailed traces require `VOICE_TRACE_ENABLED=true`, are redacted before
+storage, and expire after at most seven days. Production additionally requires
+an explicit privacy approval, destination, access role, and deletion
+mechanism. Raw audio, provider payloads, secrets, addresses, names, tokens,
+amounts, and balances are never trace fields.
 
 ## Recipient address memory boundary
 
-Recipient references are durable application data in PostgreSQL 16 + pgvector,
+Recipient references are durable application data in Supabase PostgreSQL 17 + pgvector,
 not model context. `recipients` stores a versioned exact address payload with a
 384D embedding of normalized name + description only; `user_memories` stores
 confirmed relationship facts with a 384D fact embedding. The pinned local

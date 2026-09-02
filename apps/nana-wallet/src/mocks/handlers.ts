@@ -13,7 +13,7 @@ import type {
   MovementsPage,
   PaymentIntent,
   PaymentResult,
-  SessionMessageResponse,
+  ConversationTurnResult,
   TransferIntentInput,
   UpdateContactInput,
   WalletSummary,
@@ -250,7 +250,7 @@ type StoredIntent = {
 
 const intents = new Map<string, StoredIntent>();
 const confirmedRequests = new Map<string, PaymentResult>();
-const agentSessions = new Map<string, { pendingConfirmation: boolean }>();
+const agentConversations = new Map<string, { pendingConfirmation: boolean }>();
 
 function formatArs(amount: string) {
   return `$ ${new Intl.NumberFormat("es-AR").format(Number(amount))}`;
@@ -544,26 +544,26 @@ export const handlers = [
   // /v1/agent/transcribe is intentionally unmocked: it's a real Whisper call proxied
   // through the backend, and MSW's onUnhandledRequest: "bypass" lets it reach it in dev.
 
-  http.post(apiPath("/sessions"), () => {
+  http.post(apiPath("/conversations"), () => {
     if (shouldUseLiveAgentBackend()) return passthrough();
-    const sessionId = crypto.randomUUID();
-    agentSessions.set(sessionId, { pendingConfirmation: false });
-    return HttpResponse.json({ sessionId, status: "active" as const });
+    const conversationId = crypto.randomUUID();
+    agentConversations.set(conversationId, { pendingConfirmation: false });
+    return HttpResponse.json({ conversationId, mode: "typed" as const });
   }),
 
-  http.post(apiPath("/sessions/:sessionId/messages"), async ({ params, request }) => {
+  http.post(apiPath("/conversations/:conversationId/turns"), async ({ params, request }) => {
     if (shouldUseLiveAgentBackend()) return passthrough();
-    const session = agentSessions.get(String(params["sessionId"]));
-    if (!session) {
-      return HttpResponse.json<SessionMessageResponse>(
-        { status: "error", message: "Session not found.", code: "session_not_found" },
+    const conversation = agentConversations.get(String(params["conversationId"]));
+    if (!conversation) {
+      return HttpResponse.json<ConversationTurnResult>(
+        { status: "error", message: "Conversation not found.", code: "conversation_not_found" },
         { status: 404 },
       );
     }
 
     const body = (await request.json()) as { message?: unknown };
     if (typeof body.message !== "string" || !body.message.trim()) {
-      return HttpResponse.json<SessionMessageResponse>(
+      return HttpResponse.json<ConversationTurnResult>(
         {
           status: "error",
           message: "Escribime qué necesitás y lo vemos juntos.",
@@ -574,17 +574,17 @@ export const handlers = [
     }
 
     const normalized = body.message.trim().toLocaleLowerCase("es-AR");
-    if (session.pendingConfirmation) {
+    if (conversation.pendingConfirmation) {
       const submission = classifySessionSubmission(body.message, true);
       if (submission.kind === "resolution") {
-        session.pendingConfirmation = false;
+        conversation.pendingConfirmation = false;
         if (submission.message === "cancelar la transferencia") {
-          return HttpResponse.json<SessionMessageResponse>({
+          return HttpResponse.json<ConversationTurnResult>({
             status: "cancelled",
             message: "Transfer cancelled.",
           });
         }
-        return HttpResponse.json<SessionMessageResponse>({
+        return HttpResponse.json<ConversationTurnResult>({
           status: "sent",
           message: "Transfer sent.",
           transaction: {
@@ -594,7 +594,7 @@ export const handlers = [
           },
         });
       }
-      return HttpResponse.json<SessionMessageResponse>(
+      return HttpResponse.json<ConversationTurnResult>(
         {
           status: "error",
           message: "Confirmá o cancelá la transferencia pendiente antes de seguir.",
@@ -608,8 +608,8 @@ export const handlers = [
       (word) => normalized.includes(word),
     );
     if (proposesTransfer) {
-      session.pendingConfirmation = true;
-      return HttpResponse.json<SessionMessageResponse>({
+      conversation.pendingConfirmation = true;
+      return HttpResponse.json<ConversationTurnResult>({
         status: "confirmation_required",
         message: "Preparé la transferencia. Revisala antes de confirmar.",
         preview: {
@@ -622,7 +622,7 @@ export const handlers = [
       });
     }
 
-    return HttpResponse.json<SessionMessageResponse>({
+    return HttpResponse.json<ConversationTurnResult>({
       status: "answer",
       message: "Decime a quién querés pagarle o mandarle plata.",
     });

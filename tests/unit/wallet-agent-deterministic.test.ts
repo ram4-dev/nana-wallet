@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { handleMessage } from '../../src/agent/wallet-agent.js';
-import { createSession, resetSessionStore, setPendingTransfer, setSelectedRecipient, stageMemoryWrite } from '../../src/sessions/in-memory-store.js';
+import { createSession, resetSessionStore, setPendingTransferById as setPendingTransfer, setSelectedRecipientById as setSelectedRecipient, stageMemoryWriteById as stageMemoryWrite } from '../../src/conversations/test-fixtures.js';
 import type { PendingTransfer } from '../../src/contracts/http.js';
 
 const pendingFixture: PendingTransfer = {
@@ -44,11 +44,15 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   });
 
   it('errors when the session does not exist', async () => {
-    const result = await handleMessage('missing-session', 'hello');
+    const result = await handleMessage(createSession(), 'hello');
+    expect(result.status).toBe('answer');
+  });
+
+  it('answers unsupported Spanish turns in Spanish', async () => {
+    const result = await handleMessage(createSession(), 'Hola Nani', { language: 'es' });
     expect(result).toEqual({
-      status: 'error',
-      message: 'Session not found.',
-      code: 'session_not_found',
+      status: 'answer',
+      message: 'Decime a quién querés pagar o cuánto USDT querés enviar en Sepolia.',
     });
   });
 
@@ -56,7 +60,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     const session = createSession();
     setPendingTransfer(session.id, pendingFixture);
 
-    const result = await handleMessage(session.id, 'cancel');
+    const result = await handleMessage(session, 'cancel');
 
     expect(result).toEqual({ status: 'cancelled', message: 'Transfer cancelled.' });
   });
@@ -65,7 +69,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     const session = createSession();
     setPendingTransfer(session.id, pendingFixture);
 
-    const result = await handleMessage(session.id, 'Cancelar la transferencia.');
+    const result = await handleMessage(session, 'Cancelar la transferencia.');
 
     expect(result).toEqual({ status: 'cancelled', message: 'Transfer cancelled.' });
   });
@@ -73,7 +77,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   it('errors when confirming with no pending transfer, without calling the agent', async () => {
     const session = createSession();
 
-    const result = await handleMessage(session.id, 'confirm');
+    const result = await handleMessage(session, 'confirm');
 
     expect(result).toEqual({
       status: 'error',
@@ -96,7 +100,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     });
     const memory = { userId, service: { writeConfirmed } } as never;
 
-    await expect(handleMessage(session.id, 'confirm', { recipientMemory: memory })).resolves.toEqual({
+    await expect(handleMessage(session, 'confirm', { recipientMemory: memory })).resolves.toEqual({
       status: 'answer', message: 'Recipient memory saved.',
     });
     expect(writeConfirmed).toHaveBeenCalledWith(userId, { kind: 'fact', fact: 'Lucas es mi nieto' });
@@ -117,7 +121,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
       },
     } as never;
 
-    const result = await handleMessage(session.id, 'Mandale plata a Lucas', { recipientMemory: memory });
+    const result = await handleMessage(session, 'Mandale plata a Lucas', { recipientMemory: memory });
 
     expect(result).toMatchObject({ status: 'clarification_required' });
     expect(session.pendingTransfer).toBeUndefined();
@@ -126,7 +130,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   it('previews a fixture transfer from text without calling an LLM', async () => {
     const session = createSession();
     const result = await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
 
@@ -151,7 +155,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     } as never;
 
     const result = await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234567890123456789012345678901234567890',
       { recipientMemory: memory },
     );
@@ -171,11 +175,11 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   it('confirms the pending fixture transfer without an LLM or live broadcast', async () => {
     const session = createSession();
     await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
 
-    const result = await handleMessage(session.id, 'confirm');
+    const result = await handleMessage(session, 'confirm');
 
     expect(result.status).toBe('sent');
     if (result.status !== 'sent') return;
@@ -202,7 +206,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     } as never;
 
     await expect(
-      handleMessage(session.id, 'confirmar la transferencia', { recipientMemory: memory }),
+      handleMessage(session, 'confirmar la transferencia', { recipientMemory: memory }),
     ).resolves.toMatchObject({
       status: 'error',
       code: 'recipient_revalidation_required',
@@ -215,11 +219,11 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   it('accepts an explicit transfer confirmation phrase', async () => {
     const session = createSession();
     await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
 
-    const result = await handleMessage(session.id, 'Confirmar la transferencia.');
+    const result = await handleMessage(session, 'Confirmar la transferencia.');
 
     expect(result.status).toBe('sent');
   });
@@ -229,11 +233,11 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     async (phrase) => {
       const session = createSession();
       await handleMessage(
-        session.id,
+        session,
         'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
       );
 
-      await expect(handleMessage(session.id, phrase)).resolves.toMatchObject({
+      await expect(handleMessage(session, phrase)).resolves.toMatchObject({
         status: 'sent',
       });
     },
@@ -242,11 +246,11 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   it('does not treat a generic yes as a confirmation', async () => {
     const session = createSession();
     await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
 
-    await expect(handleMessage(session.id, 'yes')).resolves.toMatchObject({
+    await expect(handleMessage(session, 'yes')).resolves.toMatchObject({
       status: 'error',
       code: 'pending_confirmation',
     });
@@ -256,7 +260,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     const session = createSession();
     setPendingTransfer(session.id, pendingFixture);
 
-    const result = await handleMessage(session.id, 'sí');
+    const result = await handleMessage(session, 'sí');
 
     expect(result).toEqual({
       status: 'error',
@@ -268,7 +272,7 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
 
   it('answers a balance question from WDK fixtures', async () => {
     const session = createSession();
-    const result = await handleMessage(session.id, 'How much USDT do I have?');
+    const result = await handleMessage(session, 'How much USDT do I have?');
 
     expect(result).toEqual({
       status: 'answer',

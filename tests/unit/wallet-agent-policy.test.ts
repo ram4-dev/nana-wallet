@@ -5,8 +5,8 @@ import { createWdkToolsFixture } from '../../src/agent/wdk-tools.fixture.js';
 import {
   createSession,
   resetSessionStore,
-  setPendingTransfer,
-} from '../../src/sessions/in-memory-store.js';
+  setPendingTransferById as setPendingTransfer,
+} from '../../src/conversations/test-fixtures.js';
 
 const ALLOWED_ADDRESS = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
 const OTHER_ADDRESS = '0x1234567890123456789012345678901234567890';

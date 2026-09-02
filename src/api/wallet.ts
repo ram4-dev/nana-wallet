@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { callWdkTool } from '../agent/wdk-tools.js';
+import type { WalletProvider } from '../wallet/provider.js';
 import {
   walletBalanceQuerySchema,
   walletBalanceResponseSchema,
@@ -161,12 +161,12 @@ function stringField(value: unknown, label: string): string {
   return value;
 }
 
-export async function registerWalletRoutes(app: FastifyInstance): Promise<void> {
+export async function registerWalletRoutes(app: FastifyInstance, dependencies: { wallet: WalletProvider }): Promise<void> {
   app.get('/v1/wallet/address', async (): Promise<WalletAddressResponse> => {
-    return callWdkTool('get_address', {
+    return dependencies.wallet.getAddress({
       network: NETWORK,
       wallet: WALLET,
-    }) as Promise<WalletAddressResponse>;
+    });
   });
 
   app.get(
@@ -187,11 +187,11 @@ export async function registerWalletRoutes(app: FastifyInstance): Promise<void> 
         ...parsed.data,
         wallet: WALLET,
       };
-      const address = await callWdkTool('get_address', {
+      const address = await dependencies.wallet.getAddress({
         network: parsed.data.network,
         wallet: WALLET,
       });
-      const balance = await callWdkTool('get_balance', toolInput);
+      const balance = await dependencies.wallet.getBalance(toolInput);
       return normalizeWalletBalance(address, balance, parsed.data.token);
     },
   );
@@ -210,7 +210,7 @@ export async function registerWalletRoutes(app: FastifyInstance): Promise<void> 
         reply.code(400);
         return reply.send({ status: 'error', message: parsed.error.message, code: 'invalid_query' });
       }
-      const history = await callWdkTool('get_history', {
+      const history = await dependencies.wallet.getHistory({
         ...parsed.data,
         wallet: WALLET,
       });

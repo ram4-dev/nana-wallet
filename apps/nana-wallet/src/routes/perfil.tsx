@@ -7,12 +7,12 @@ import { toast } from "sonner";
 import { ConfirmarPlata } from "@/components/ConfirmarPlata";
 import { EmptyState, RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
-import { api, createSessionMessageSender, getErrorMessage, queryKeys } from "@/lib/api";
-import type { Bill, ConfirmableIntent, Contact, SessionMessageResponse } from "@/lib/api-types";
+import { api, createConversationTurnSender, getErrorMessage, queryKeys } from "@/lib/api";
+import type { Bill, ConfirmableIntent, Contact, ConversationTurnResult } from "@/lib/api-types";
 import {
-  runExclusiveSessionAction,
-  shouldLockAfterSessionResolution,
-  UNKNOWN_SESSION_OUTCOME_MESSAGE,
+  runExclusiveConversationAction,
+  shouldLockAfterConversationResolution,
+  UNKNOWN_CONVERSATION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
 
 const AGENDA_WINDOW_DAYS = 90;
@@ -70,9 +70,9 @@ function PerfilPage() {
   const [preparingId, setPreparingId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [activeIntent, setActiveIntent] = useState<ConfirmableIntent | null>(null);
-  const [agentTurn, setAgentTurn] = useState<SessionMessageResponse | null>(null);
-  const [, setSessionId] = useState<string | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
+  const [agentTurn, setAgentTurn] = useState<ConversationTurnResult | null>(null);
+  const [, setConversationId] = useState<string | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
   const sessionActionLockRef = useRef(false);
   const confirmationPendingRef = useRef(false);
   const sessionActionsLockedRef = useRef(false);
@@ -80,13 +80,13 @@ function PerfilPage() {
   const [isAgentConfirmationPending, setIsAgentConfirmationPending] = useState(false);
   const [areSessionActionsLocked, setAreSessionActionsLocked] = useState(false);
   const [sessionActionId, setSessionActionId] = useState<string | null>(null);
-  const sendSessionMessage = useMemo(
+  const sendConversationTurn = useMemo(
     () =>
-      createSessionMessageSender(
-        () => sessionIdRef.current,
-        (nextSessionId) => {
-          sessionIdRef.current = nextSessionId;
-          setSessionId(nextSessionId);
+      createConversationTurnSender(
+        () => conversationIdRef.current,
+        (nextConversationId) => {
+          conversationIdRef.current = nextConversationId;
+          setConversationId(nextConversationId);
         },
       ),
     [],
@@ -181,7 +181,7 @@ function PerfilPage() {
     setIsAgentConfirmationPending(false);
     setAreSessionActionsLocked(true);
     setAgentTurn(null);
-    setActionMessage(UNKNOWN_SESSION_OUTCOME_MESSAGE);
+    setActionMessage(UNKNOWN_CONVERSATION_OUTCOME_MESSAGE);
     refreshMoneyQueries();
   }
 
@@ -189,13 +189,13 @@ function PerfilPage() {
     if (sessionActionsLockedRef.current) return;
     if (kind === "new" && confirmationPendingRef.current) return;
 
-    const request = runExclusiveSessionAction(sessionActionLockRef, async () => {
+    const request = runExclusiveConversationAction(sessionActionLockRef, async () => {
       setIsSessionActionPending(true);
       setSessionActionId(actionId);
       setActionMessage(null);
       try {
-        const nextTurn = await sendSessionMessage(message);
-        if (kind === "resolution" && shouldLockAfterSessionResolution(nextTurn, "response")) {
+        const nextTurn = await sendConversationTurn(message);
+        if (kind === "resolution" && shouldLockAfterConversationResolution(nextTurn, "response")) {
           lockUnknownAgentOutcome();
           return;
         }
@@ -207,7 +207,7 @@ function PerfilPage() {
         if (nextTurn.status === "error") setActionMessage(nextTurn.message);
         if (nextTurn.status === "sent") refreshMoneyQueries();
       } catch (error) {
-        if (kind === "resolution" && shouldLockAfterSessionResolution(error, "thrown")) {
+        if (kind === "resolution" && shouldLockAfterConversationResolution(error, "thrown")) {
           lockUnknownAgentOutcome();
         } else {
           setActionMessage(getErrorMessage(error));
