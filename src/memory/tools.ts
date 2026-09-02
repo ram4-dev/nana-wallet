@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { redactAddressLikeText } from './embedding.js';
 import { isValidEvmAddress } from './address.js';
 import type { RecipientMemoryWriteDraft, RecipientMemoryService } from './service.js';
-import type { DemoSession } from '../sessions/in-memory-store.js';
-import { clearSelectedRecipient, consumeMemoryWrite, currentUserTurnCount, invalidateSelectedRecipient, setRecipientClarification, setSelectedRecipient, stageMemoryWrite } from '../sessions/in-memory-store.js';
+import type { ConversationSession } from '../conversations/session-state.js';
+import { clearSelectedRecipient, consumeMemoryWrite, currentUserTurnCount, invalidateSelectedRecipient, setRecipientClarification, setSelectedRecipient, stageMemoryWrite } from '../conversations/session-state.js';
 
 const searchSchema = z.object({ query: z.string().trim().min(1) });
 const selectedAddressSchema = z.object({ recipientId: z.string().uuid(), expectedVersion: z.number().int().positive() });
@@ -17,7 +17,7 @@ const draftSchema = z.discriminatedUnion('kind', [
 
 type RecipientMemoryToolsOptions = {
   userId: string;
-  session: DemoSession;
+  session: ConversationSession;
   service: RecipientMemoryService;
   confirmationTtlMs?: number;
   now?: () => number;
@@ -55,7 +55,7 @@ export function createRecipientMemoryTools(options: RecipientMemoryToolsOptions)
       recipient.version !== selected.version ||
       !isValidEvmAddress(recipient.address)
     ) {
-      invalidateSelectedRecipient(options.session.id);
+      invalidateSelectedRecipient(options.session);
       return { status: 'stale_selection' as const };
     }
     return {
@@ -70,13 +70,13 @@ export function createRecipientMemoryTools(options: RecipientMemoryToolsOptions)
     async search_recipients(input: unknown) {
       const parsed = searchSchema.safeParse(input);
       if (!parsed.success) return { status: 'no_match' as const, candidates: [] };
-      clearSelectedRecipient(options.session.id);
+      clearSelectedRecipient(options.session);
       const result = await options.service.searchRecipients(options.userId, parsed.data.query);
       if (result.status === 'resolved') {
-        setSelectedRecipient(options.session.id, { recipientId: result.recipient.id, version: result.recipient.version });
+        setSelectedRecipient(options.session, { recipientId: result.recipient.id, version: result.recipient.version });
       }
       if (result.status === 'clarification_required') {
-        setRecipientClarification(options.session.id, result.candidates.map((candidate) => ({
+        setRecipientClarification(options.session, result.candidates.map((candidate) => ({
           recipientId: candidate.id,
           version: candidate.version,
           name: candidate.name,
@@ -122,7 +122,7 @@ export function createRecipientMemoryTools(options: RecipientMemoryToolsOptions)
         : { kind: 'fact', fact: parsed.data.fact, factKind: parsed.data.factKind };
       const confirmationId = randomUUID();
       const expiresAt = now() + ttl;
-      stageMemoryWrite(options.session.id, {
+      stageMemoryWrite(options.session, {
         confirmationId,
         userId: options.userId,
         draft,
@@ -135,7 +135,7 @@ export function createRecipientMemoryTools(options: RecipientMemoryToolsOptions)
     async write_user_memory(input: unknown) {
       const parsed = writeSchema.safeParse(input);
       if (!parsed.success) return { status: 'confirmation_required' as const };
-      const pending = consumeMemoryWrite(options.session.id, options.userId, parsed.data.confirmationId, now());
+      const pending = consumeMemoryWrite(options.session, options.userId, parsed.data.confirmationId, now());
       if (pending.status !== 'ready') return pending;
       try {
         const result = await options.service.writeConfirmed(options.userId, pending.draft);

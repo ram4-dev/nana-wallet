@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildGuardedTools } from '../../src/agent/wallet-agent.js';
 import { createWdkToolsFixture } from '../../src/agent/wdk-tools.fixture.js';
-import { createSession, resetSessionStore, setPendingTransfer, setSelectedRecipient } from '../../src/sessions/in-memory-store.js';
+import { createSession, resetSessionStore, setPendingTransferById as setPendingTransfer, setSelectedRecipientById as setSelectedRecipient } from '../../src/conversations/test-fixtures.js';
 import type { PendingTransfer } from '../../src/contracts/http.js';
 
 const toolOptions = {

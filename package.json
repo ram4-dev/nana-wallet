@@ -10,6 +10,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "livekit:dev": "tsx src/livekit/worker.ts",
+    "livekit:start": "node dist/livekit/worker.js",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -33,12 +35,14 @@
     "ai": "7.0.77",
     "dotenv": "17.4.2",
     "fastify": "5.12.1",
+    "jose": "^6.1.0",
     "pg": "8.23.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "22.15.3",
     "@types/pg": "8.23.1",
+    "supabase": "2.80.0",
     "tsx": "4.23.12",
     "typescript": "6.0.3",
     "vitest": "4.1.11"

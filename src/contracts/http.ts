@@ -51,16 +51,16 @@ export const walletHistoryResponseSchema = z.object({
 });
 export type WalletHistoryResponse = z.infer<typeof walletHistoryResponseSchema>;
 
-export const createSessionResponseSchema = z.object({
-  sessionId: z.string(),
-  status: z.literal('active'),
+export const createConversationResponseSchema = z.object({
+  conversationId: z.string().uuid(),
+  mode: z.literal('typed'),
 });
-export type CreateSessionResponse = z.infer<typeof createSessionResponseSchema>;
+export type CreateConversationResponse = z.infer<typeof createConversationResponseSchema>;
 
-export const sessionMessageRequestSchema = z.object({
+export const conversationTurnRequestSchema = z.object({
   message: z.string().min(1),
 });
-export type SessionMessageRequest = z.infer<typeof sessionMessageRequestSchema>;
+export type ConversationTurnRequest = z.infer<typeof conversationTurnRequestSchema>;
 
 export const transferPreviewSchema = z.object({
   network: z.string().trim().min(1),
@@ -78,7 +78,7 @@ export const transactionResultSchema = z.object({
 });
 export type TransactionResult = z.infer<typeof transactionResultSchema>;
 
-export const sessionMessageResponseSchema = z.discriminatedUnion('status', [
+export const conversationTurnResultSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('answer'), message: z.string() }),
   z.object({
     status: z.literal('clarification_required'),
@@ -105,7 +105,7 @@ export const sessionMessageResponseSchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('cancelled'), message: z.string() }),
   z.object({ status: z.literal('error'), message: z.string(), code: z.string() }),
 ]);
-export type SessionMessageResponse = z.infer<typeof sessionMessageResponseSchema>;
+export type ConversationTurnResult = z.infer<typeof conversationTurnResultSchema>;
 
 export const conversationMessageSchema = z.object({
   role: z.enum(['user', 'assistant']),
@@ -122,6 +122,7 @@ export const pendingTransferSchema = z.object({
   preview: transferPreviewSchema,
   recipientId: z.string().uuid().optional(),
   recipientVersion: z.number().int().positive().optional(),
+  previewId: z.string().uuid().optional(),
 });
 export type PendingTransfer = z.infer<typeof pendingTransferSchema>;
 
@@ -140,15 +141,30 @@ export const recipientMemoryInspectionSchema = z.object({
 });
 export type RecipientMemoryInspection = z.infer<typeof recipientMemoryInspectionSchema>;
 
-export const sessionInspectResponseSchema = z.object({
+export const conversationStateResponseSchema = z.object({
   id: z.string(),
+  mode: z.enum(['typed', 'live']),
+  revision: z.number().int().nonnegative(),
   messages: z.array(conversationMessageSchema),
   pendingTransfer: pendingTransferSchema.optional(),
   recipientMemory: recipientMemoryInspectionSchema.optional(),
   lastTransactionHash: z.string().optional(),
+  activity: z.enum(['idle', 'working', 'awaiting_confirmation', 'verifying', 'uncertain']).optional(),
+  progress: z.record(z.string(), z.unknown()).optional(),
   createdAt: z.string(),
 });
-export type SessionInspectResponse = z.infer<typeof sessionInspectResponseSchema>;
+export type ConversationStateResponse = z.infer<typeof conversationStateResponseSchema>;
+
+export const endLiveConversationRequestSchema = z.object({
+  expectedRevision: z.number().int().nonnegative(),
+  acknowledgeUnresolvedFinancialWork: z.boolean().optional(),
+});
+
+export const conversationDecisionRequestSchema = z.object({
+  previewId: z.string().uuid(),
+  decision: z.enum(['confirm', 'cancel']),
+});
+export type ConversationDecisionRequest = z.infer<typeof conversationDecisionRequestSchema>;
 
 export const errorResponseSchema = z.object({
   status: z.literal('error'),

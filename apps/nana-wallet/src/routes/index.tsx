@@ -7,12 +7,12 @@ import { AgenteAvatar } from "@/components/agente/AgenteAvatar";
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { api, createSessionMessageSender, getErrorMessage, queryKeys } from "@/lib/api";
-import type { SessionMessageResponse } from "@/lib/api-types";
+import { api, createConversationTurnSender, getErrorMessage, queryKeys } from "@/lib/api";
+import type { ConversationTurnResult } from "@/lib/api-types";
 import {
-  runExclusiveSessionAction,
-  shouldLockAfterSessionResolution,
-  UNKNOWN_SESSION_OUTCOME_MESSAGE,
+  runExclusiveConversationAction,
+  shouldLockAfterConversationResolution,
+  UNKNOWN_CONVERSATION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
 import { classifySessionSubmission, getSessionControlState } from "@/lib/session-resolution";
 import { useVoicePlayback } from "@/lib/use-voice-playback";
@@ -57,12 +57,12 @@ function readBlobAsBase64(blob: Blob) {
 function AgentePage() {
   const queryClient = useQueryClient();
   const [text, setText] = useState("");
-  const [, setSessionId] = useState<string | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
+  const [, setConversationId] = useState<string | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
   const sessionActionLockRef = useRef(false);
   const confirmationPendingRef = useRef(false);
   const sessionActionsLockedRef = useRef(false);
-  const [turn, setTurn] = useState<SessionMessageResponse | null>(null);
+  const [turn, setTurn] = useState<ConversationTurnResult | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [lastTranscript, setLastTranscript] = useState<string | null>(null);
   const [isSessionActionPending, setIsSessionActionPending] = useState(false);
@@ -75,13 +75,13 @@ function AgentePage() {
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<number | null>(null);
   const { isMuted, toggleMuted, speak: speakReply } = useVoicePlayback();
-  const sendSessionMessage = useMemo(
+  const sendConversationTurn = useMemo(
     () =>
-      createSessionMessageSender(
-        () => sessionIdRef.current,
-        (nextSessionId) => {
-          sessionIdRef.current = nextSessionId;
-          setSessionId(nextSessionId);
+      createConversationTurnSender(
+        () => conversationIdRef.current,
+        (nextConversationId) => {
+          conversationIdRef.current = nextConversationId;
+          setConversationId(nextConversationId);
         },
       ),
     [],
@@ -116,7 +116,7 @@ function AgentePage() {
     setIsConfirmationPending(false);
     setAreSessionActionsLocked(true);
     setTurn(null);
-    setMessage(UNKNOWN_SESSION_OUTCOME_MESSAGE);
+    setMessage(UNKNOWN_CONVERSATION_OUTCOME_MESSAGE);
     refreshMoneyQueries();
   }
 
@@ -124,12 +124,12 @@ function AgentePage() {
     if (sessionActionsLockedRef.current) return;
     if (kind === "new" && confirmationPendingRef.current) return;
 
-    const request = runExclusiveSessionAction(sessionActionLockRef, async () => {
+    const request = runExclusiveConversationAction(sessionActionLockRef, async () => {
       setIsSessionActionPending(true);
       setMessage(null);
       try {
-        const nextTurn = await sendSessionMessage(nextMessage);
-        if (kind === "resolution" && shouldLockAfterSessionResolution(nextTurn, "response")) {
+        const nextTurn = await sendConversationTurn(nextMessage);
+        if (kind === "resolution" && shouldLockAfterConversationResolution(nextTurn, "response")) {
           lockUnknownOutcome();
           return;
         }
@@ -142,7 +142,7 @@ function AgentePage() {
         if (nextTurn.status === "sent") refreshMoneyQueries();
         void speakReply(nextTurn.message);
       } catch (error) {
-        if (kind === "resolution" && shouldLockAfterSessionResolution(error, "thrown")) {
+        if (kind === "resolution" && shouldLockAfterConversationResolution(error, "thrown")) {
           lockUnknownOutcome();
         } else {
           setMessage(getErrorMessage(error));

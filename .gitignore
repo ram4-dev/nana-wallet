@@ -7,3 +7,6 @@ dist/
 .env
 .cache/
 *.log
+
+# Riptide artifacts (cloud-synced)
+.humanlayer/tasks/

@@ -14,8 +14,7 @@ export class DatabaseClient {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      // The compose database uses postgres for bootstrap; this makes normal app queries
-      // execute under the restricted role as well as applying the RLS tenant setting.
+      // Supabase migrations bootstrap roles; application queries remain restricted.
       await client.query('SET LOCAL ROLE recipient_app');
       await client.query("SELECT set_config('app.user_id', $1, true)", [userId]);
       const result = await operation(client);
@@ -40,8 +39,8 @@ export function createDatabaseClient(connectionString: string): DatabaseClient {
 
 export function createConfiguredDatabaseClient(): DatabaseClient {
   const config = readRecipientMemoryConfig();
-  if (!config.enabled || !config.databaseUrl) {
-    throw new Error('Recipient memory is disabled or DATABASE_URL is not configured.');
+  if (!config.databaseUrl) {
+    throw new Error('DATABASE_URL is not configured.');
   }
   return createDatabaseClient(config.databaseUrl);
 }

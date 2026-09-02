@@ -3,7 +3,11 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { registerHealthRoutes } from './api/health.js';
 import { registerWalletRoutes } from './api/wallet.js';
-import { registerSessionRoutes } from './api/sessions.js';
+import { registerConversationRoutes } from './api/conversations.js';
+import { createConfiguredDatabaseClient } from './db/client.js';
+import { PostgresConversationRepository } from './conversations/postgres-repository.js';
+import { createWalletConversationService } from './conversations/service.js';
+import { readRecipientMemoryConfig } from './config/env.js';
 import { registerVoiceRoutes } from './api/voice.js';
 
 export const DEFAULT_CORS_ORIGINS = ['http://localhost:8083', 'http://127.0.0.1:8083'];
@@ -28,7 +32,19 @@ export function buildServer() {
 
   app.register(registerHealthRoutes);
   app.register(registerWalletRoutes);
-  app.register(registerSessionRoutes);
+  const config = readRecipientMemoryConfig();
+  if (config.databaseUrl && config.demoUserId) {
+    const database = createConfiguredDatabaseClient();
+    const conversations = new PostgresConversationRepository(database);
+    const service = createWalletConversationService({ conversations });
+    app.addHook('onClose', async () => database.close());
+    app.register(registerConversationRoutes, {
+      conversations,
+      service,
+      resolveUserId: async () => config.demoUserId!,
+      ...(process.env.LIVE_VOICE_BINDING_PRIVATE_KEY ? { bindingPrivateKey: process.env.LIVE_VOICE_BINDING_PRIVATE_KEY } : {}),
+    });
+  }
   app.register(registerVoiceRoutes);
 
   return app;

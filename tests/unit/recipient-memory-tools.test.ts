@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRecipientMemoryTools } from '../../src/memory/tools.js';
-import { appendMessage, confirmMemoryWrite, createSession, getSession, resetSessionStore } from '../../src/sessions/in-memory-store.js';
+import { appendMessageById as appendMessage, confirmMemoryWrite, createSession, getSession, resetSessionStore } from '../../src/conversations/test-fixtures.js';
 import type { RecipientMemoryService } from '../../src/memory/service.js';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';

@@ -6,7 +6,7 @@ import { resolveTransferRecipient, type RecipientMemoryToolPort } from '../../sr
 import { buildGuardedTools, handleMessage } from '../../src/agent/wallet-agent.js';
 import { createRecipientMemoryTools } from '../../src/memory/tools.js';
 import { RecipientMemoryService, type RecipientMemoryRepositoryPort } from '../../src/memory/service.js';
-import { appendMessage, confirmMemoryWrite, createSession, getSession, resetSessionStore, setPendingTransfer } from '../../src/sessions/in-memory-store.js';
+import { appendMessageById as appendMessage, confirmMemoryWrite, createSession, getSession, resetSessionStore, setPendingTransferById as setPendingTransfer } from '../../src/conversations/test-fixtures.js';
 
 const USER_A = '11111111-1111-4111-8111-111111111111';
 const USER_B = '22222222-2222-4222-8222-222222222222';
@@ -142,7 +142,7 @@ describe('recipient-memory release flow', () => {
         ],
       });
 
-      const result = await handleMessage(session.id, 'Enviá 0.01 USDT a mi nieto', {
+      const result = await handleMessage(session, 'Enviá 0.01 USDT a mi nieto', {
         model,
         recipientMemory: { userId: USER_A, service },
       });

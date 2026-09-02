@@ -8,7 +8,7 @@ import { EmbeddingService } from '../../src/memory/embedding.js';
 import { RecipientMemoryRepository } from '../../src/memory/repository.js';
 import { RecipientMemoryService } from '../../src/memory/service.js';
 import { createRecipientMemoryTools } from '../../src/memory/tools.js';
-import { createSession, getSession, resetSessionStore } from '../../src/sessions/in-memory-store.js';
+import { createSession, getSession, resetSessionStore } from '../../src/conversations/test-fixtures.js';
 
 const LIVE = process.env.RECIPIENT_MEMORY_LLM_E2E === '1';
 const USER_ID = '7f143d9a-4939-44cd-b49e-d64f2ad9c397';

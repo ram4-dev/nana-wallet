@@ -152,9 +152,9 @@ export type TransferIntentInput = {
 
 export type BillPaymentIntentInput = { accountId: string };
 
-export type CreateSessionResponse = {
-  sessionId: string;
-  status: "active";
+export type CreateConversationResponse = {
+  conversationId: string;
+  mode: "typed";
 };
 
 export type AgentAudioTranscriptionInput = {
@@ -172,6 +172,7 @@ export type TransferPreview = {
   recipient: string;
   amount: string;
   estimatedFee: string;
+  previewId?: string;
 };
 
 export type RecipientCandidate = {
@@ -189,13 +190,23 @@ export type TransactionResult = {
   explorerUrl: string;
 };
 
-export type SessionMessageResponse =
+export type ConversationTurnResult =
   | { status: "answer"; message: string }
   | { status: "clarification_required"; message: string; candidates: RecipientCandidate[] }
   | { status: "confirmation_required"; message: string; preview: TransferPreview }
   | { status: "sent"; message: string; transaction: TransactionResult }
   | { status: "cancelled"; message: string }
   | { status: "error"; message: string; code: string };
+
+export type ConversationState = {
+  id: string;
+  mode: "typed" | "live";
+  revision: number;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+  pendingTransfer?: TransferPreview & { to: string; wallet: string };
+  lastTransactionHash?: string;
+  activity?: "idle" | "working" | "awaiting_confirmation" | "verifying" | "uncertain";
+};
 
 export type Me = {
   displayName: string;

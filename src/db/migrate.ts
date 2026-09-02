@@ -36,8 +36,8 @@ export async function runMigrations(connectionString: string, migrationDirectory
 
 async function main(): Promise<void> {
   const config = readRecipientMemoryConfig();
-  const connectionString = config.databaseAdminUrl ?? config.databaseUrl;
-  if (!connectionString) throw new Error('DATABASE_ADMIN_URL or DATABASE_URL is required to run migrations.');
+  const connectionString = config.databaseUrl;
+  if (!connectionString) throw new Error('DATABASE_URL is required to run migrations.');
   const applied = await runMigrations(connectionString);
   console.log(applied.length === 0 ? 'Database schema is already current.' : `Applied migrations: ${applied.join(', ')}`);
 }

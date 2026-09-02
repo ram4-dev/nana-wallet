@@ -18,7 +18,7 @@ vi.mock('../../src/agent/wdk-tools.js', async (importOriginal) => {
 });
 
 import { handleMessage } from '../../src/agent/wallet-agent.js';
-import { createSession, getSession, resetSessionStore } from '../../src/sessions/in-memory-store.js';
+import { createSession, getSession, resetSessionStore } from '../../src/conversations/test-fixtures.js';
 import { REQUIRED_WDK_TOOLS, WdkMcpClient, type McpSession } from '../../src/wdk/mcp-client.js';
 
 describe('configured token transfer flow', () => {
@@ -71,7 +71,7 @@ describe('configured token transfer flow', () => {
   it('uses one canonical token from generic request through preview and broadcast', async () => {
     const session = createSession();
     const preview = await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
 
@@ -84,7 +84,7 @@ describe('configured token transfer flow', () => {
     ]);
     expect(getSession(session.id)?.pendingTransfer).toMatchObject({ token: 'usdt-test' });
 
-    const sent = await handleMessage(session.id, 'confirmar la transferencia');
+    const sent = await handleMessage(session, 'confirmar la transferencia');
 
     expect(sent).toMatchObject({
       status: 'sent',
@@ -100,7 +100,7 @@ describe('configured token transfer flow', () => {
   it('persists the hash while waiting and rejects concurrent confirmation without rebroadcasting', async () => {
     const session = createSession();
     await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
     let releaseReceipt!: () => void;
@@ -124,12 +124,12 @@ describe('configured token transfer flow', () => {
       };
     });
 
-    const firstConfirmation = handleMessage(session.id, 'confirmar la transferencia', {
+    const firstConfirmation = handleMessage(session, 'confirmar la transferencia', {
       transactionReceiptWaiter,
     });
     await vi.waitFor(() => expect(transactionReceiptWaiter).toHaveBeenCalledOnce());
 
-    await expect(handleMessage(session.id, 'confirmar la transferencia', {
+    await expect(handleMessage(session, 'confirmar la transferencia', {
       transactionReceiptWaiter,
     })).resolves.toMatchObject({ status: 'error', code: 'broadcast_in_progress' });
     expect(composed.mcpCalls.filter((call) => call.name === 'send_token' && call.args.dryRun === false))
@@ -147,7 +147,7 @@ describe('configured token transfer flow', () => {
   it('reports a mined revert as terminal and never retries send_token', async () => {
     const session = createSession();
     await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
     const transactionReceiptWaiter = vi.fn(async (transaction: { transactionHash: string }) => ({
@@ -156,7 +156,7 @@ describe('configured token transfer flow', () => {
       transactionHash: transaction.transactionHash,
     }));
 
-    await expect(handleMessage(session.id, 'confirmar la transferencia', {
+    await expect(handleMessage(session, 'confirmar la transferencia', {
       transactionReceiptWaiter,
     })).resolves.toMatchObject({ status: 'error', code: 'transfer_reverted' });
 
@@ -171,7 +171,7 @@ describe('configured token transfer flow', () => {
   it('rejects an invalid waiter status, clears the lock and cannot rebroadcast', async () => {
     const session = createSession();
     await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
     const transactionReceiptWaiter = vi.fn(async (transaction: { transactionHash: string }) => ({
@@ -180,7 +180,7 @@ describe('configured token transfer flow', () => {
       transactionHash: transaction.transactionHash,
     })) as never;
 
-    await expect(handleMessage(session.id, 'confirmar la transferencia', {
+    await expect(handleMessage(session, 'confirmar la transferencia', {
       transactionReceiptWaiter,
     })).resolves.toMatchObject({ status: 'error', code: 'transaction_receipt_invalid' });
 
@@ -190,7 +190,7 @@ describe('configured token transfer flow', () => {
     expect(getSession(session.id)?.pendingTransfer).toBeUndefined();
     expect(getSession(session.id)?.transferResolutionState).toBeUndefined();
 
-    await expect(handleMessage(session.id, 'confirmar la transferencia'))
+    await expect(handleMessage(session, 'confirmar la transferencia'))
       .resolves.toMatchObject({ status: 'error', code: 'no_pending_preview' });
     expect(composed.mcpCalls.filter((call) => call.name === 'send_token' && call.args.dryRun === false))
       .toHaveLength(1);
@@ -199,14 +199,14 @@ describe('configured token transfer flow', () => {
   it('clears the lock after a terminal waiter error without rebroadcasting', async () => {
     const session = createSession();
     await handleMessage(
-      session.id,
+      session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
     const transactionReceiptWaiter = vi.fn(async () => {
       throw new Error('terminal receipt validation error');
     });
 
-    await expect(handleMessage(session.id, 'confirmar la transferencia', {
+    await expect(handleMessage(session, 'confirmar la transferencia', {
       transactionReceiptWaiter,
     })).resolves.toMatchObject({ status: 'error', code: 'transaction_receipt_invalid' });
 
@@ -214,7 +214,7 @@ describe('configured token transfer flow', () => {
       .toBe('0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc');
     expect(getSession(session.id)?.pendingTransfer).toBeUndefined();
     expect(getSession(session.id)?.transferResolutionState).toBeUndefined();
-    await expect(handleMessage(session.id, 'confirmar la transferencia'))
+    await expect(handleMessage(session, 'confirmar la transferencia'))
       .resolves.toMatchObject({ status: 'error', code: 'no_pending_preview' });
     expect(composed.mcpCalls.filter((call) => call.name === 'send_token' && call.args.dryRun === false))
       .toHaveLength(1);

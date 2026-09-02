@@ -2,14 +2,14 @@ import { describe, expect, it, beforeEach } from 'vitest';
 import {
   createSession,
   getSession,
-  appendMessage,
-  setPendingTransfer,
-  clearPendingTransfer,
+  appendMessageById as appendMessage,
+  setPendingTransferById as setPendingTransfer,
+  clearPendingTransferById as clearPendingTransfer,
   claimPendingTransfer,
   markPendingTransferUncertain,
-  setLastTransactionHash,
+  setLastTransactionHash as setLastTransactionHashForConversation,
   resetSessionStore,
-} from '../../src/sessions/in-memory-store.js';
+} from '../../src/conversations/test-fixtures.js';
 import type { PendingTransfer } from '../../src/contracts/http.js';
 
 const samplePending: PendingTransfer = {
@@ -71,7 +71,7 @@ describe('in-memory session store', () => {
 
   it('records the last transaction hash', () => {
     const session = createSession();
-    setLastTransactionHash(session.id, '0xabc');
+    setLastTransactionHashForConversation(session, '0xabc');
     expect(getSession(session.id)?.lastTransactionHash).toBe('0xabc');
   });
 

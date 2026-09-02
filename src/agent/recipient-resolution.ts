@@ -1,4 +1,5 @@
-import type { DemoSession, RecipientSelection } from '../sessions/in-memory-store.js';
+import type { ConversationSession } from '../conversations/session-state.js';
+import type { RecipientSelection } from '../conversations/types.js';
 import { detectRecipientReference } from './recipient-intent.js';
 import { factSupportsRelationshipReference } from '../memory/relationship.js';
 
@@ -56,7 +57,7 @@ function namesFromFacts(reference: string, facts: Fact[]): string[] {
  */
 export async function resolveTransferRecipient(
   text: string,
-  session: DemoSession,
+  session: ConversationSession,
   memory: RecipientMemoryToolPort,
 ): Promise<TransferRecipientResolution> {
   const reference = detectRecipientReference(text);
