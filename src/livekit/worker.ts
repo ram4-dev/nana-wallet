@@ -14,7 +14,10 @@ import {
   type LiveKitWorkerConfig,
 } from "../config/process.js";
 import { getWalletAgentConfig } from "../agent/instructions.js";
-import type { NativeLiveKitAgentInput } from "./create-native-agent.js";
+import type {
+  NativeDecisionRouter,
+  NativeLiveKitAgentInput,
+} from "./create-native-agent.js";
 import { FinancialTaskRegistry } from "../conversations/financial-task-registry.js";
 import { createAgentSession } from "./create-agent-session.js";
 import {
@@ -78,12 +81,17 @@ async function runJob(
   let session: ReturnType<typeof createAgentSession>["session"] | undefined;
   let sessionClosed: Promise<void> | undefined;
   let unsubscribeRevisions: (() => void) | undefined;
+  let nativeNarrationInterrupted = false;
   const gate = createRoomConversationGate({
     conversation: roomConversation,
     startSession: async (binding) => {
       const native =
         config.agentRuntime === "native-livekit"
-          ? await createNativeAgentInput(binding, dependencies)
+          ? await createNativeAgentInput(binding, dependencies, async (text) => {
+            const events = await roomConversation.resolvePendingDecision(text);
+            if (events) nativeNarrationInterrupted = false;
+            return events;
+          })
           : undefined;
       const created = createAgentSession({
         conversationService: dependencies.conversationService,
@@ -94,10 +102,21 @@ async function runJob(
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (
           !event ||
-          typeof event !== "object" ||
-          (event as { type?: unknown }).type !== "state-revision"
+          typeof event !== "object"
         )
           return;
+        if (
+          config.agentRuntime === "native-livekit" &&
+          !nativeNarrationInterrupted &&
+          (event as { type?: unknown }).type === "spoken-segment"
+        ) {
+          const text = (event as { text?: unknown }).text;
+          if (typeof text === "string" && text.trim()) {
+            created.session.say(text, { addToChatCtx: false });
+          }
+          return;
+        }
+        if ((event as { type?: unknown }).type !== "state-revision") return;
         const revision = (event as { revision?: unknown }).revision;
         if (typeof revision !== "number") return;
         void agentParticipant.publishData(
@@ -141,6 +160,9 @@ async function runJob(
         });
       }
       agentParticipant.registerRpcMethod("interrupt_agent", async () => {
+        if (config.agentRuntime === "native-livekit") {
+          nativeNarrationInterrupted = true;
+        }
         await created.session?.interrupt({ force: true });
         return JSON.stringify({ ok: true });
       });
@@ -186,6 +208,7 @@ async function runJob(
 async function createNativeAgentInput(
   binding: { conversationId: string; userId: string },
   dependencies: WorkerDependencies,
+  resolvePendingDecision?: NativeDecisionRouter,
 ): Promise<NativeLiveKitAgentInput> {
   const recipientMemory = getConfiguredRecipientMemoryRuntime();
   const snapshot = await dependencies.conversations.get(
@@ -225,6 +248,7 @@ async function createNativeAgentInput(
         : {}),
     },
     conversationService: dependencies.conversationService,
+    ...(resolvePendingDecision ? { resolvePendingDecision } : {}),
   };
 }
 

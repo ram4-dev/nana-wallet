@@ -1,4 +1,9 @@
-import { Agent } from "@livekit/agents";
+import {
+  Agent,
+  StopResponse,
+  type ChatContext,
+  type ChatMessage,
+} from "@livekit/agents";
 import {
   createLiveKitModel,
   hydrateLiveKitChatContext,
@@ -13,11 +18,16 @@ import type { ConversationSnapshot } from "../conversations/types.js";
 import type { WalletConversationService } from "../conversations/service.js";
 import type { WalletConversationBinding } from "./wallet-conversation-llm.js";
 
+export type NativeDecisionRouter = (
+  text: string,
+) => Promise<AsyncIterable<import("../conversations/service.js").ConversationEvent> | undefined>;
+
 export type NativeLiveKitAgentInput = {
   binding: WalletConversationBinding;
   snapshot: ConversationSnapshot;
   context: WalletAgentContext;
   conversationService: WalletConversationService;
+  resolvePendingDecision?: NativeDecisionRouter;
 };
 
 export function createNativeLiveKitAgent(
@@ -28,7 +38,7 @@ export function createNativeLiveKitAgent(
   const availableTools = new Set(
     definition.tools(input.context).map((tool) => tool.name),
   );
-  return new Agent({
+  return new NativeLiveKitAgent({
     instructions: definition.instructions(input.context),
     llm: createLiveKitModel(),
     tools: toLiveKitTools(definition, input.context, {
@@ -56,7 +66,31 @@ export function createNativeLiveKitAgent(
       },
     }),
     chatCtx: hydrateLiveKitChatContext(input.snapshot.messages),
-  });
+  }, input.resolvePendingDecision);
+}
+
+class NativeLiveKitAgent extends Agent {
+  public constructor(
+    options: ConstructorParameters<typeof Agent>[0],
+    private readonly resolvePendingDecision?: NativeDecisionRouter,
+  ) {
+    super(options);
+  }
+
+  public override async onUserTurnCompleted(
+    _chatCtx: ChatContext,
+    newMessage: ChatMessage,
+  ): Promise<void> {
+    const text = newMessage.rawTextContent ?? newMessage.textContent;
+    const events = text
+      ? await this.resolvePendingDecision?.(text)
+      : undefined;
+    if (!events) return;
+    for await (const event of events) {
+      if (event.type === "turn-completed") break;
+    }
+    throw new StopResponse();
+  }
 }
 
 function isStatefulNativeTool(name: string): boolean {

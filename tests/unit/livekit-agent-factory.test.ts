@@ -1,5 +1,5 @@
-import { llm } from "@livekit/agents";
-import { describe, expect, it } from "vitest";
+import { llm, StopResponse } from "@livekit/agents";
+import { describe, expect, it, vi } from "vitest";
 import {
   createLiveKitModel,
   NATIVE_PREVIEW_TOOL_NAMES,
@@ -96,6 +96,36 @@ describe("native LiveKit wallet agent factory", () => {
       restoreEnvironment("OPENCODE_GO_BASE_URL", previous.baseURL);
       restoreEnvironment("OPENCODE_GO_MODEL", previous.model);
     }
+  });
+
+  it("stops native model generation when the room routes a pending decision", async () => {
+    const source = snapshot();
+    const resolvePendingDecision = vi.fn(async () => (async function* () {
+      yield {
+        type: "turn-completed" as const,
+        result: { status: "answer" as const, message: "Transfer is being processed." },
+      };
+    })());
+    const agent = withOpenCodeCredentials(() => createNativeLiveKitAgent({
+      binding: { conversationId: source.id, userId: source.userId },
+      snapshot: source,
+      context: {
+        conversationId: source.id,
+        userId: source.userId,
+        language: source.language,
+        config: { wallet: "agent-demo", network: "sepolia", token: "USDT" },
+        session: { id: source.id, messages: [...source.messages] },
+        wallet: new FixtureWalletProvider(),
+      },
+      conversationService,
+      resolvePendingDecision,
+    }));
+
+    await expect(agent.onUserTurnCompleted(
+      {} as never,
+      { rawTextContent: "confirmar la transferencia" } as never,
+    )).rejects.toBeInstanceOf(StopResponse);
+    expect(resolvePendingDecision).toHaveBeenCalledWith("confirmar la transferencia");
   });
 
   it("includes the canonical recipient-memory tools when memory is available", () => {
