@@ -1,6 +1,7 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { z } from "zod";
 import { readLiveKitPrivacyConfig } from "./livekit.js";
+import { readElevenLabsApiKey } from "./privacy.js";
 
 const uuid = z.string().uuid();
 
@@ -155,7 +156,10 @@ export function readWorkerProcessConfig(
   const databaseUrl = required(environment, "DATABASE_URL");
   const demoUserId = required(environment, "DEMO_USER_ID");
   if (!uuid.safeParse(demoUserId).success) throw new Error("DEMO_USER_ID must be a UUID for the worker.");
-  const elevenLabsApiKey = required(environment, "ELEVENLABS_API_KEY");
+  const elevenLabsApiKey = readElevenLabsApiKey(environment);
+  if (!elevenLabsApiKey) {
+    throw new Error("ELEVENLABS_API_KEY or ELEVEN_LABS is required for this process.");
+  }
   return { ...liveKit, publicKey, databaseUrl, demoUserId, elevenLabsApiKey };
 }
 

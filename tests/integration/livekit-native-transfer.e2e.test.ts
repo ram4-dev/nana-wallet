@@ -12,6 +12,7 @@ const userId = "11111111-1111-4111-8111-111111111111";
 const conversationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const previewId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const recipient = "0x1234567890123456789012345678901234567890";
+const recipientId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 function repositoryFixture() {
   let snapshot: ConversationSnapshot = {
@@ -31,6 +32,8 @@ function repositoryFixture() {
       to: recipient,
       amount: "2",
       wallet: "agent-demo",
+      recipientId,
+      recipientVersion: 1,
       preview: {
         network: "sepolia",
         token: "USDT",
@@ -92,6 +95,16 @@ describe("native LiveKit transfer", () => {
       conversations,
       wallet,
       financialTasks,
+      memory: {
+        userId,
+        service: {
+          getRecipientForVersion: vi.fn().mockResolvedValue({
+            id: recipientId,
+            version: 1,
+            address: recipient,
+          }),
+        },
+      } as never,
     });
     const room = new RoomConversation({
       publicKey: String(keys.publicKey.export({ type: "spki", format: "pem" })),
@@ -131,6 +144,16 @@ describe("native LiveKit transfer", () => {
       conversations,
       wallet,
       financialTasks,
+      memory: {
+        userId,
+        service: {
+          getRecipientForVersion: vi.fn().mockResolvedValue({
+            id: recipientId,
+            version: 1,
+            address: recipient,
+          }),
+        },
+      } as never,
     });
     const room = new RoomConversation({
       publicKey: String(keys.publicKey.export({ type: "spki", format: "pem" })),

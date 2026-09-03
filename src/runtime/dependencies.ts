@@ -23,6 +23,7 @@ import {
   type ContextBudget,
 } from "../conversations/context-renewal.js";
 import type { ConversationSnapshot } from "../conversations/types.js";
+import { getConfiguredRecipientMemoryRuntime } from "../memory/runtime.js";
 
 export type CoreDependencies = {
   wallet: WalletProvider;
@@ -87,11 +88,13 @@ export function createWorkerDependencies(
   const database = createConfiguredDatabaseClient(environment);
   const conversations = new PostgresConversationRepository(database);
   const core = createCoreDependencies(environment);
+  const memory = getConfiguredRecipientMemoryRuntime();
   const conversationService = createWalletConversationService({
     conversations,
     wallet: core.wallet,
     financialTasks,
     contextRenewal: core.contextRenewal,
+    ...(memory ? { memory } : {}),
   });
   return {
     ...core,

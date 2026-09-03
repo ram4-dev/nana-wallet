@@ -13,6 +13,7 @@ import { createCoreDependencies } from "./runtime/dependencies.js";
 import { DemoIdentityProvider } from "./auth/identity.js";
 import { FinancialTaskRegistry } from "./conversations/financial-task-registry.js";
 import { readApiProcessConfig } from "./config/process.js";
+import { getConfiguredRecipientMemoryRuntime } from "./memory/runtime.js";
 
 export const DEFAULT_CORS_ORIGINS = [
   "http://localhost:8083",
@@ -36,7 +37,7 @@ export function buildServer() {
 
   app.register(cors, {
     origin: resolveCorsOrigins(),
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "If-None-Match"],
     methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
   });
 
@@ -48,11 +49,13 @@ export function buildServer() {
     const database = createConfiguredDatabaseClient();
     const conversations = new PostgresConversationRepository(database);
     const financialTasks = new FinancialTaskRegistry();
+    const memory = getConfiguredRecipientMemoryRuntime();
     const service = createWalletConversationService({
       conversations,
       wallet: core.wallet,
       financialTasks,
       contextRenewal: core.contextRenewal,
+      ...(memory ? { memory } : {}),
     });
     const identity = new DemoIdentityProvider(config.demoUserId);
     app.addHook("onClose", async () => {

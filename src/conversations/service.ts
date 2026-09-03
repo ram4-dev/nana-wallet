@@ -26,6 +26,7 @@ import {
 } from './interpretation.js';
 import { detectConversationLanguage } from './language.js';
 import { evaluateContextRenewal, shouldRenewContext, type ContextBudget } from './context-renewal.js';
+import { isCancellation, isConfirmation } from '../livekit/resolution-phrases.js';
 
 export type HandleTurnInput = {
   conversationId: string;
@@ -745,18 +746,6 @@ async function isClaimedRecipientValid(transfer: PendingTransfer, memory?: Recip
   if (!memory) return false;
   const current = await memory.service.getRecipientForVersion(memory.userId, transfer.recipientId, transfer.recipientVersion);
   return Boolean(current && current.id === transfer.recipientId && current.version === transfer.recipientVersion && isValidEvmAddress(current.address) && current.address === transfer.to);
-}
-
-function normalize(text: string): string {
-  return text.trim().toLocaleLowerCase('es-AR').normalize('NFC').replace(/[.!]+$/u, '').trim().replace(/\s+/gu, ' ');
-}
-
-function isConfirmation(text: string): boolean {
-  return new Set(['confirm', 'i confirm', 'yes confirm', 'yes, confirm', 'confirmar', 'confirmo', 'sí confirmo', 'sí, confirmo', 'si confirmo', 'si, confirmo', 'confirmar transferencia', 'confirmar la transferencia', 'confirmo la transferencia']).has(normalize(text));
-}
-
-function isCancellation(text: string): boolean {
-  return new Set(['cancel', 'cancel transfer', 'cancel the transfer', 'cancel it', 'no, cancel', 'cancelar', 'cancelo', 'cancelar transferencia', 'cancelar la transferencia', 'cancelo la transferencia']).has(normalize(text));
 }
 
 function looksLikeTransfer(text: string): boolean {
