@@ -51,6 +51,16 @@ export type WorkerProcessConfig = LiveKitWorkerConfig & {
 
 export type LiveKitAgentRuntime = "service-adapter" | "native-livekit";
 
+export const nativeLiveKitRetirementGates = [
+  "runtime-parity",
+  "privacy-safe-metrics",
+  "cloud-smoke",
+  "browser-manual-verification",
+] as const;
+
+export type NativeLiveKitRetirementGate =
+  (typeof nativeLiveKitRetirementGates)[number];
+
 export type LiveKitWorkerConfig = {
   url: string;
   apiKey: string;

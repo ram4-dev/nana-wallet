@@ -17,10 +17,9 @@ import {
 import type { ConversationSnapshot } from "../conversations/types.js";
 import type { WalletConversationService } from "../conversations/service.js";
 import type { WalletConversationBinding } from "./wallet-conversation-llm.js";
+import type { NativeDecisionRouter } from "./native-text-turn-router.js";
 
-export type NativeDecisionRouter = (
-  text: string,
-) => Promise<AsyncIterable<import("../conversations/service.js").ConversationEvent> | undefined>;
+export type { NativeDecisionRouter } from "./native-text-turn-router.js";
 
 export type NativeLiveKitAgentInput = {
   binding: WalletConversationBinding;

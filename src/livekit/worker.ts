@@ -30,6 +30,13 @@ import {
   type WorkerDependencies,
 } from "../runtime/dependencies.js";
 import { getConfiguredRecipientMemoryRuntime } from "../memory/runtime.js";
+import {
+  VoiceLatencyMilestones,
+  VoiceMetrics,
+} from "../observability/voice-metrics.js";
+import { routeNativeTextTurn } from "./native-text-turn-router.js";
+import { canInspectVoiceMetrics } from "../config/privacy.js";
+import { createVoiceMetricsInspectionHandler } from "./voice-metrics-inspection.js";
 
 export { readLiveKitWorkerConfig } from "../config/process.js";
 export type { LiveKitWorkerConfig } from "../config/process.js";
@@ -37,14 +44,17 @@ export type { LiveKitWorkerConfig } from "../config/process.js";
 export function createLiveKitWorkerRuntime(input?: {
   dependencies?: WorkerDependencies;
   shutdownTimeoutMs?: number;
+  voiceMetrics?: VoiceMetrics;
 }) {
   let acceptingJobs = true;
   let closePromise: Promise<void> | undefined;
   const financialTasks =
     input?.dependencies?.financialTasks ?? new FinancialTaskRegistry();
   const shutdownTimeoutMs = input?.shutdownTimeoutMs ?? 10_000;
+  const voiceMetrics = input?.voiceMetrics ?? new VoiceMetrics();
   return {
     financialTasks,
+    voiceMetrics,
     get acceptingJobs() {
       return acceptingJobs;
     },
@@ -64,10 +74,13 @@ async function runJob(
   ctx: JobContext,
   config: LiveKitWorkerConfig,
   dependencies: WorkerDependencies,
+  voiceMetrics: VoiceMetrics,
 ): Promise<void> {
   if (!config.publicKey)
     throw new Error("LiveKit worker requires LIVE_VOICE_BINDING_PUBLIC_KEY.");
+  const latency = new VoiceLatencyMilestones(voiceMetrics, config.agentRuntime);
   await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
+  latency.connected();
   const participant = await ctx.waitForParticipant();
   const roomConversation = new RoomConversation({
     publicKey: config.publicKey,
@@ -82,6 +95,7 @@ async function runJob(
   let sessionClosed: Promise<void> | undefined;
   let unsubscribeRevisions: (() => void) | undefined;
   let nativeNarrationInterrupted = false;
+  let voiceMetricsInspectionRegistered = false;
   const gate = createRoomConversationGate({
     conversation: roomConversation,
     startSession: async (binding) => {
@@ -138,10 +152,43 @@ async function runJob(
       sessionClosed = new Promise<void>((resolve) =>
         created.session.once(AgentSessionEventTypes.Close, () => resolve()),
       );
+      created.session.on(AgentSessionEventTypes.UserInputTranscribed, (event) => {
+        if (event.isFinal) latency.finalTranscript();
+      });
+      created.session.on(AgentSessionEventTypes.MetricsCollected, (event) => {
+        if (event.metrics.type === "llm_metrics") {
+          latency.firstTokenDuration(event.metrics.ttftMs);
+        }
+        if (event.metrics.type === "tts_metrics") {
+          latency.firstAudioDuration(event.metrics.ttfbMs);
+        }
+      });
+      created.session.on(AgentSessionEventTypes.ConversationItemAdded, (event) => {
+        if (event.item.type === "message" && event.item.role === "assistant") {
+          latency.completed();
+        }
+      });
       await created.session.start({
         agent: created.agent,
         room: ctx.room,
         record: false,
+        ...(config.agentRuntime === "native-livekit"
+          ? {
+            inputOptions: {
+              textInputCallback: async (agentSession, event) => {
+                await routeNativeTextTurn({
+                  session: agentSession,
+                  text: event.text,
+                  resolvePendingDecision: (text) =>
+                    roomConversation.resolvePendingDecision(text),
+                  onDecisionRouted: () => {
+                    nativeNarrationInterrupted = false;
+                  },
+                });
+              },
+            },
+          }
+          : {}),
       });
       if (config.agentRuntime === "native-livekit") {
         created.session.on(AgentSessionEventTypes.ConversationItemAdded, (event) => {
@@ -160,12 +207,23 @@ async function runJob(
         });
       }
       agentParticipant.registerRpcMethod("interrupt_agent", async () => {
+        const interruptedAt = Date.now();
         if (config.agentRuntime === "native-livekit") {
           nativeNarrationInterrupted = true;
         }
         await created.session?.interrupt({ force: true });
+        latency.interrupted(interruptedAt);
         return JSON.stringify({ ok: true });
       });
+      const inspectVoiceMetrics = createVoiceMetricsInspectionHandler({
+        enabled: canInspectVoiceMetrics(),
+        participantIdentity: participant.identity,
+        metrics: voiceMetrics,
+      });
+      if (inspectVoiceMetrics) {
+        agentParticipant.registerRpcMethod("get_voice_metrics", inspectVoiceMetrics);
+        voiceMetricsInspectionRegistered = true;
+      }
     },
   });
   let resolveBinding!: (result: Awaited<ReturnType<typeof gate.bind>>) => void;
@@ -198,6 +256,9 @@ async function runJob(
     clearInterval(leaseRenewal);
     agentParticipant.unregisterRpcMethod("bind_conversation");
     agentParticipant.unregisterRpcMethod("interrupt_agent");
+    if (voiceMetricsInspectionRegistered) {
+      agentParticipant.unregisterRpcMethod("get_voice_metrics");
+    }
     unsubscribeRevisions?.();
     await session?.close();
     await roomConversation.release();
@@ -261,7 +322,7 @@ const agent = defineAgent({
       shutdownTimeoutMs: config.shutdownTimeoutMs,
     });
     ctx.addShutdownCallback(runtime.close);
-    await runJob(ctx, config, dependencies);
+    await runJob(ctx, config, dependencies, runtime.voiceMetrics);
   },
 });
 

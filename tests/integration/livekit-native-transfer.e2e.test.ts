@@ -120,4 +120,49 @@ describe("native LiveKit transfer", () => {
       lastTransactionHash: expect.stringMatching(/^0x[0-9a-f]{64}$/u),
     });
   });
+
+  it("persists an uncertain fixture broadcast without allowing a second dispatch", async () => {
+    const keys = generateKeyPairSync("ed25519");
+    const conversations = repositoryFixture();
+    const wallet = new FixtureWalletProvider({ forcedBroadcastOutcome: "uncertain" });
+    const broadcast = vi.spyOn(wallet, "broadcastTransfer");
+    const financialTasks = new FinancialTaskRegistry();
+    const service = createWalletConversationService({
+      conversations,
+      wallet,
+      financialTasks,
+    });
+    const room = new RoomConversation({
+      publicKey: String(keys.publicKey.export({ type: "spki", format: "pem" })),
+      conversations,
+      service,
+    });
+    const token = await issueLiveVoiceBinding({
+      userId,
+      conversationId,
+      privateKey: keys.privateKey,
+    });
+    await expect(room.bind({ token, participantUserId: userId })).resolves.toMatchObject({ ok: true });
+
+    const decision = await room.resolvePendingDecision("confirmar la transferencia");
+    if (!decision) throw new Error("Expected the native confirmation to resolve.");
+    for await (const _event of decision) {
+      // The event stream starts the durable financial task.
+    }
+    await financialTasks.drain({ timeoutMs: 1_000 });
+
+    expect(broadcast).toHaveBeenCalledOnce();
+    expect(conversations.snapshot()).toMatchObject({
+      pendingTransfer: expect.objectContaining({ previewId }),
+      progress: { phase: "uncertain" },
+    });
+
+    const repeated = await room.resolvePendingDecision("confirmar la transferencia");
+    if (repeated) {
+      for await (const _event of repeated) {
+        // The second decision must observe durable uncertainty instead of broadcasting.
+      }
+    }
+    expect(broadcast).toHaveBeenCalledOnce();
+  });
 });

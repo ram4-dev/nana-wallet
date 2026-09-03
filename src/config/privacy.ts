@@ -83,3 +83,9 @@ export function readVoiceProviderConfig(
     elevenLabsEnableLogging: !verified,
   };
 }
+
+export function canInspectVoiceMetrics(
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return readVoiceTraceConfig(environment).environment !== "production";
+}

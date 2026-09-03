@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  nativeLiveKitRetirementGates,
   readLiveKitAgentRuntime,
   readLiveKitWorkerConfig,
 } from "../../src/config/process.js";
@@ -40,6 +41,16 @@ describe("LiveKit agent runtime configuration", () => {
       );
     },
   );
+
+  it("keeps the legacy bridge until all native retirement gates are evidenced", () => {
+    expect(nativeLiveKitRetirementGates).toEqual([
+      "runtime-parity",
+      "privacy-safe-metrics",
+      "cloud-smoke",
+      "browser-manual-verification",
+    ]);
+    expect(readLiveKitAgentRuntime({})).toBe("service-adapter");
+  });
 });
 
 function liveKitEnvironment(): NodeJS.ProcessEnv {
