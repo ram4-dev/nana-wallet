@@ -9,16 +9,16 @@ multiuser or production wallet access.
 
 - The application persists no microphone audio, synthesized audio, or replayable recordings.
 - Agent sessions use `record: false`; LiveKit Egress and automatic Egress stay disabled.
-- Live voice is a single OpenAI Realtime speech-to-speech session (`gpt-realtime-2.1-mini`): transcription, inference, and speech generation happen inside the model session. There is no Deepgram STT, no ElevenLabs TTS, no silero VAD, and no separate `WalletConversationLLM` in the voice path.
-- OpenAI audio retention is governed by the OpenAI API data terms of the account; confirm zero-retention eligibility before production use.
-- ElevenLabs remains only in the API process for the recorded-transport `/v1/voice/speak` endpoint. Its logging stays disabled only when the account's zero-retention capability has been verified.
+- Deepgram uses LiveKit Inference with `mip_opt_out=true` and the documented ZDR path.
+- ElevenLabs logging is disabled only when the account's zero-retention capability has been verified. Otherwise provider defaults apply and may retain request history.
 - Content-free phase counters and latency aggregates are safe to keep with normal operational telemetry.
+- Native voice metrics are limited to the runtime label and aggregate connection, final-transcript, first-token, first-audio, interruption, recovery, and total-duration milestones.
 - Detailed traces are disabled by default. Development traces require explicit `VOICE_TRACE_ENABLED=true`, are redacted before storage, and expire after no more than seven days.
 - Production traces additionally require privacy approval, a retention destination, an audited access role, and a deletion mechanism. Raw audio, provider payloads, keys, addresses, names, tokens, amounts, and balances never belong in traces.
 
 Review the LiveKit Cloud project before a test window. Confirm that Egress,
 auto-Egress, room recording, and Agent Observability recording are disabled.
-Record any remaining ElevenLabs retention limitation (recorded-transport TTS) and the OpenAI Realtime data-handling review in the deployment notes.
+Record any remaining ElevenLabs retention limitation in the deployment notes.
 
 ## Prerequisites
 
@@ -60,26 +60,23 @@ LIVE_VOICE_BINDING_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC K
 LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=development-key
 LIVEKIT_API_SECRET=development-secret
-# Live voice: OpenAI Realtime (required by the worker)
-OPENAI_API_KEY=development-openai-key
-OPENAI_REALTIME_MODEL=gpt-realtime-2.1-mini
-OPENAI_REALTIME_VOICE=marin
-# Registered agent name; the browser token must request the same name
-LIVEKIT_AGENT_NAME=nani-agent
-# Recorded-transport TTS (API process only, /v1/voice/speak)
 ELEVENLABS_API_KEY=development-provider-key
+LIVEKIT_TTS_PROVIDER=elevenlabs
+# Development fallback when the ElevenLabs account cannot use API voices:
+# LIVEKIT_TTS_PROVIDER=inference
+# LIVEKIT_TTS_MODEL=cartesia/sonic-3
+# LIVEKIT_TTS_VOICE=5c5ad5e7-1020-476b-8b91-fdcbe9cc313c
 LIVEKIT_RECORDING_ENABLED=false
 AGENT_OBSERVABILITY_RECORDING=false
+LIVEKIT_AGENT_RUNTIME=service-adapter
 VOICE_TRACE_ENABLED=false
 VOICE_TRACE_RETENTION_DAYS=7
 ```
 
 The API needs the private binding key to issue grants. The worker receives the
 public key and refuses to start without its LiveKit credentials, database
-identity, and OpenAI credential. `ELEVENLABS_API_KEY` is no longer required for
-the worker — it remains only in the API process for the recorded-transport
-`/v1/voice/speak` endpoint. `readApiProcessConfig` and `readWorkerProcessConfig`
-reject malformed values before a process starts.
+identity, and ElevenLabs credential. `readApiProcessConfig` and
+`readWorkerProcessConfig` reject malformed values before a process starts.
 
 In the wallet `.env.local`, configure only public development values:
 
@@ -98,44 +95,25 @@ placed in `VITE_*` values. The returned media credential is scoped to the room
 and agent requested by the browser, while the signed Fastify binding remains
 the worker's application identity check.
 
-## Live voice architecture
+## Native runtime rollout and rollback
 
-Live voice is one OpenAI Realtime speech-to-speech session
-(`OPENAI_REALTIME_MODEL`, default `gpt-realtime-2.1-mini`; `OPENAI_REALTIME_VOICE`,
-default `marin`). The session is created in the worker from `OPENAI_API_KEY` and
-started with `record: false`. There is no separate STT/TTS/VAD step and no
-`WalletConversationLLM`: transcription, inference, and speech generation occur
-inside the Realtime model session.
+`LIVEKIT_AGENT_RUNTIME=service-adapter` is the default rollback-safe worker
+mode. It retains the existing `WalletConversationLLM` bridge. Set
+`LIVEKIT_AGENT_RUNTIME=native-livekit` only for a worker with the existing
+`OPENCODE_GO_API_KEY`; the worker rejects unsupported runtime values and never
+falls back silently.
 
-The worker builds a per-binding `WalletConversationService` after the
-`bind_conversation` gate succeeds. Its recipient-memory runtime scopes to the
-binding user (`binding.sub`), never the demo tenant — this is the REVIEW FIX V3
-wiring that makes `isClaimedRecipientValid` revalidate versioned recipients. The
-worker shares the repository, wallet, and `FinancialTaskRegistry` with that
-per-binding service, so the voice tools and the frontend Confirm/Cancel card
-arbitrate on the same database claim.
+The native runtime uses the same OpenCode Go-compatible DeepSeek endpoint and
+the same durable binding, lease, decision, revision, and HTTP-state contracts.
+It does not give a model tool broadcast or finality authority. To roll back a
+native test window, restart only the worker with `service-adapter`; do not
+replay an in-progress or uncertain transfer.
 
-Five model-facing realtime tools are exposed by `createRealtimeTools`:
-
-- `get_balance` — reads the configured wallet balance via `WalletProvider`.
-- `search_contacts` — searches `RecipientMemoryService` scoped per binding user
-  (`binding.sub`); returns address-free candidates, fails closed when memory is
-  unavailable.
-- `send_token` — preview-only. Its strict zod schema accepts only
-  `{ amount, recipientId, recipientVersion, memo? }` and rejects any unknown field,
-  so a model can never pass `dryRun`, a free-form `to` address, network, token, or
-  wallet. It delegates to the service's `previewTransfer`.
-- `confirm_transfer` / `cancel_transfer` — call `resolveDecision` with the
-  *current* persisted `previewId`, so a superseded or cancelled preview fails
-  closed to `stale_preview` instead of broadcasting.
-
-A preview is persisted through the PostgreSQL repository as a `pendingTransfer`
-on `conversation_state` plus a row in `conversation_transfer_attempts`. The unique
-partial index `conversation_one_active_transfer_idx` allows at most one active
-transfer per conversation. The worker subscribes to `financialTasks` state
-revisions and publishes `conversation_state_changed` data (topic
-`conversation_state_changed`) to the participant so the frontend Confirm/Cancel
-card appears without publish logic in the LiveKit tool layer.
+Keep the legacy bridge until all of these gates are evidenced for the deployed
+configuration: fixture runtime parity, privacy-safe metrics review, native
+cloud smoke, and browser manual verification. The smoke and browser checks are
+not replaceable with fixture tests because they exercise room dispatch, media,
+and client lifecycle boundaries.
 
 ## Start independently
 
@@ -163,6 +141,13 @@ conversation so the agent input stream receives the first track. The screen
 receives canonical financial revisions from Fastify, not financial payloads
 from room data.
 
+For a native-runtime verification window, keep Fastify and the web app running
+and start the worker with:
+
+```bash
+LIVEKIT_AGENT_RUNTIME=native-livekit npm run livekit:dev
+```
+
 ## Safe verification commands
 
 Run deterministic checks without Cloud, WDK, model, or provider credentials:
@@ -186,6 +171,7 @@ tools or move funds:
 
 ```bash
 LIVEKIT_E2E=1 \
+LIVEKIT_AGENT_RUNTIME=native-livekit \
 LIVEKIT_E2E_AGENT_NAME=nani \
 LIVEKIT_E2E_BINDING_TOKEN='short-lived-token' \
 LIVEKIT_E2E_BINDING_PUBLIC_KEY='public-key-pem' \
@@ -196,6 +182,29 @@ The command fails closed when any required input is missing. A successful
 smoke creates and deletes a temporary room, dispatches the configured agent,
 and verifies the binding purpose, audience, issuer, and signature. It never
 sets `WDK_ALLOW_BROADCAST` or `WDK_BROADCAST_APPROVED`.
+
+## Native cloud and browser verification
+
+Run the smoke with a separately running native-runtime worker. It verifies
+cloud room dispatch and binding only; it does not publish wallet audio or
+invoke wallet tools.
+
+During a native test window, use a real browser room to verify a normal voice
+turn, barge-in, reconnect recovery, typed fallback, preview cancellation,
+preview confirmation, uncertain broadcast display, and end-live teardown.
+Review the metrics snapshot or configured telemetry export after the window:
+it may contain aggregate timing keys prefixed by `native-livekit.` and
+counters, but no room ID, participant ID, transcript, address, amount, tool
+arguments, receipt, or provider payload.
+
+For a bound room in development or test mode, the worker also exposes the
+content-free `get_voice_metrics` RPC to that same participant. It is not
+registered in production and returns only the aggregate snapshot above.
+
+Also exercise the unchanged room protocol from an Android-capable client or
+SDK harness: `bind_conversation`, `interrupt_agent`, the
+`conversation_state_changed` packet, canonical HTTP refresh, and disconnect.
+These checks remain required before retiring `WalletConversationLLM`.
 
 ## Shutdown and incident handling
 

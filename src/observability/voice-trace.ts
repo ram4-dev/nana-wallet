@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { readVoiceTraceConfig, type VoiceTraceConfig } from '../config/privacy.js';
 import { redactText, redactValue } from './redaction.js';
+import type { VoiceRuntime } from './voice-metrics.js';
 
 export type VoiceTurnTrace = {
   traceId: string;
+  runtime?: VoiceRuntime;
+  nativeToolNames?: string[];
   conversationIdHash: string;
   roomIdHash: string;
   startedAt: string;
@@ -19,12 +22,24 @@ export function hashTraceIdentity(value: string): string { return createHash('sh
 export function redactVoiceTrace(trace: VoiceTurnTrace): VoiceTurnTrace {
   return {
     ...trace,
+    ...(trace.runtime ? { runtime: trace.runtime } : {}),
+    ...(trace.nativeToolNames
+      ? { nativeToolNames: trace.nativeToolNames.map(redactToolName) }
+      : {}),
     conversationIdHash: hashTraceIdentity(trace.conversationIdHash),
     roomIdHash: hashTraceIdentity(trace.roomIdHash),
     transcript: { ...trace.transcript, redactedText: redactText(trace.transcript.redactedText) },
     response: { ...trace.response, redactedText: redactText(trace.response.redactedText) },
-    toolCalls: trace.toolCalls.map((call) => ({ ...call, redactedInput: redactValue(call.redactedInput) })),
+    toolCalls: trace.toolCalls.map((call) => ({
+      ...call,
+      name: redactToolName(call.name),
+      redactedInput: redactValue(call.redactedInput),
+    })),
   };
+}
+
+function redactToolName(name: string): string {
+  return /^[a-z][a-z0-9_]{0,63}$/u.test(name) ? name : '[redacted]';
 }
 
 export type VoiceTraceSink = (trace: VoiceTurnTrace) => void | Promise<void>;

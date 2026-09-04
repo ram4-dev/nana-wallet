@@ -1,0 +1,117 @@
+{
+  "evaluated_model": "opencode:deepseek-v4-flash",
+  "judge_model": "opencode:deepseek-v4-pro",
+  "timestamp": "2026-09-04T16:24:48.372Z",
+  "samples": [
+    {
+      "input": "How much USDT do I have?",
+      "response": "Tenés 42.5 USDT en sepolia. ¿Querés hacer algo con eso?",
+      "verdict": {
+        "scores": {
+          "claridad": 3,
+          "jerga": 2,
+          "espanol": 5,
+          "tono": 5,
+          "sin_tecnica": 2
+        },
+        "justifications": {
+          "claridad": "La respuesta indica el monto pero menciona 'sepolia' sin explicar, lo que puede confundir a un adulto mayor no técnico.",
+          "jerga": "Emplea el término 'sepolia', una red técnica de prueba, que constituye jerga innecesaria para el usuario.",
+          "espanol": "El español es correcto y natural, con uso adecuado del voseo rioplatense ('Tenés').",
+          "tono": "El tono es cálido y empático, y ofrece ayuda adicional de manera respetuosa.",
+          "sin_tecnica": "Expone el detalle técnico 'sepolia', que es un identificador de red, innecesario para la consulta del usuario."
+        },
+        "overall": 3
+      },
+      "human_label": null
+    },
+    {
+      "input": "Send 10 USDT to 0x1234567890123456789012345678901234567890",
+      "response": "¿Confirmás la transferencia?\n\nSepolia / USDT · 10 a 0x1234...7890 · fee ≈ 0.0003 ETH. ¿La mando?",
+      "verdict": {
+        "scores": {
+          "claridad": 3,
+          "jerga": 2,
+          "espanol": 4,
+          "tono": 3,
+          "sin_tecnica": 5
+        },
+        "justifications": {
+          "claridad": "La respuesta muestra un resumen con 'Sepolia', 'USDT' y 'fee ≈ 0.0003 ETH', lo cual puede resultar confuso para un adulto mayor no técnico; la pregunta de confirmación es clara, pero el detalle técnico reduce la claridad.",
+          "jerga": "Incluye términos cripto como 'Sepolia', 'USDT', 'ETH' y la palabra en inglés 'fee', que son jerga innecesaria para el público objetivo.",
+          "espanol": "El voseo es correcto y natural, pero usa la palabra inglesa 'fee' en lugar de 'comisión', lo que afecta levemente la pureza del español.",
+          "tono": "El tono es neutro y directo, sin calidez ni empatía explícita; podría ser más amable para una persona mayor.",
+          "sin_tecnica": "No se exponen detalles técnicos internos como herramientas, estados o identificadores; solo se menciona información de la transferencia."
+        },
+        "overall": 3
+      },
+      "human_label": null
+    },
+    {
+      "input": "Send money to mamá",
+      "response": "¿Cuánto USDT le mando a mamá? Tenés 42,5 disponible en Sepolia.",
+      "verdict": {
+        "scores": {
+          "claridad": 3,
+          "jerga": 2,
+          "espanol": 5,
+          "tono": 4,
+          "sin_tecnica": 2
+        },
+        "justifications": {
+          "claridad": "La pregunta y el saldo son comprensibles, pero mencionar 'Sepolia' y 'USDT' puede confundir a una persona mayor no técnica.",
+          "jerga": "Incluye términos cripto/técnicos como 'USDT' y 'Sepolia' que no son necesarios y pueden resultar ajenos.",
+          "espanol": "El español es correcto y natural, con voseo rioplatense coherente ('Tenés').",
+          "tono": "El tono es amable y directo, aunque no especialmente cálido; resulta respetuoso.",
+          "sin_tecnica": "Menciona 'Sepolia', que es un detalle técnico de red no indispensable para la conversación."
+        },
+        "overall": 3
+      },
+      "human_label": null
+    },
+    {
+      "input": "Mandale plata a Lucas",
+      "response": "Which recipient do you mean: Lucas (mi nieto), Lucas (el electricista)?",
+      "verdict": {
+        "scores": {
+          "claridad": 1,
+          "jerga": 5,
+          "espanol": 1,
+          "tono": 2,
+          "sin_tecnica": 5
+        },
+        "justifications": {
+          "claridad": "La respuesta está en inglés, por lo que un adulto mayor hispanohablante no técnico no la entendería fácilmente.",
+          "jerga": "No utiliza jerga técnica ni términos cripto innecesarios.",
+          "espanol": "La respuesta no está en español; contiene una oración en inglés, por lo que no cumple con el idioma requerido.",
+          "tono": "El tono es neutro y poco cálido, y además está en inglés, lo que lo hace inadecuado para el público objetivo.",
+          "sin_tecnica": "No expone detalles técnicos internos ni información sensible."
+        },
+        "overall": 1
+      },
+      "human_label": null
+    },
+    {
+      "input": "Send 10 USDT",
+      "response": "¿A quién le mando los 10 USDT? Necesito el destinatario (nombre, relación o dirección).",
+      "verdict": {
+        "scores": {
+          "claridad": 5,
+          "jerga": 5,
+          "espanol": 5,
+          "tono": 5,
+          "sin_tecnica": 5
+        },
+        "justifications": {
+          "claridad": "La respuesta es directa y simple, pide el destinatario de forma comprensible.",
+          "jerga": "Repite 'USDT' del pedido del usuario sin agregar términos técnicos innecesarios.",
+          "espanol": "El español es correcto y natural, sin errores de concordancia u ortografía.",
+          "tono": "El tono es cordial y respetuoso, adecuado para una persona mayor.",
+          "sin_tecnica": "No expone detalles internos ni técnicos, solo solicita el destinatario."
+        },
+        "overall": 5
+      },
+      "human_label": null
+    }
+  ]
+}
