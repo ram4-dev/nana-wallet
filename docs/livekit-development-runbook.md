@@ -9,7 +9,7 @@ multiuser or production wallet access.
 
 - The application persists no microphone audio, synthesized audio, or replayable recordings.
 - Agent sessions use `record: false`; LiveKit Egress and automatic Egress stay disabled.
-- Live voice uses the OpenAI Realtime API (GPT-Realtime) as a single speech-to-speech session: transcription, inference, and speech generation happen inside the model session, and no intermediate provider (STT/TTS) is involved.
+- Live voice is a single OpenAI Realtime speech-to-speech session (`gpt-realtime-2.1-mini`): transcription, inference, and speech generation happen inside the model session. There is no Deepgram STT, no ElevenLabs TTS, no silero VAD, and no separate `WalletConversationLLM` in the voice path.
 - OpenAI audio retention is governed by the OpenAI API data terms of the account; confirm zero-retention eligibility before production use.
 - ElevenLabs remains only in the API process for the recorded-transport `/v1/voice/speak` endpoint. Its logging stays disabled only when the account's zero-retention capability has been verified.
 - Content-free phase counters and latency aggregates are safe to keep with normal operational telemetry.
@@ -76,8 +76,10 @@ VOICE_TRACE_RETENTION_DAYS=7
 
 The API needs the private binding key to issue grants. The worker receives the
 public key and refuses to start without its LiveKit credentials, database
-identity, and OpenAI credential. `readApiProcessConfig` and
-`readWorkerProcessConfig` reject malformed values before a process starts.
+identity, and OpenAI credential. `ELEVENLABS_API_KEY` is no longer required for
+the worker — it remains only in the API process for the recorded-transport
+`/v1/voice/speak` endpoint. `readApiProcessConfig` and `readWorkerProcessConfig`
+reject malformed values before a process starts.
 
 In the wallet `.env.local`, configure only public development values:
 
@@ -95,6 +97,45 @@ configuration; API keys, API secrets, and binding private keys must not be
 placed in `VITE_*` values. The returned media credential is scoped to the room
 and agent requested by the browser, while the signed Fastify binding remains
 the worker's application identity check.
+
+## Live voice architecture
+
+Live voice is one OpenAI Realtime speech-to-speech session
+(`OPENAI_REALTIME_MODEL`, default `gpt-realtime-2.1-mini`; `OPENAI_REALTIME_VOICE`,
+default `marin`). The session is created in the worker from `OPENAI_API_KEY` and
+started with `record: false`. There is no separate STT/TTS/VAD step and no
+`WalletConversationLLM`: transcription, inference, and speech generation occur
+inside the Realtime model session.
+
+The worker builds a per-binding `WalletConversationService` after the
+`bind_conversation` gate succeeds. Its recipient-memory runtime scopes to the
+binding user (`binding.sub`), never the demo tenant — this is the REVIEW FIX V3
+wiring that makes `isClaimedRecipientValid` revalidate versioned recipients. The
+worker shares the repository, wallet, and `FinancialTaskRegistry` with that
+per-binding service, so the voice tools and the frontend Confirm/Cancel card
+arbitrate on the same database claim.
+
+Five model-facing realtime tools are exposed by `createRealtimeTools`:
+
+- `get_balance` — reads the configured wallet balance via `WalletProvider`.
+- `search_contacts` — searches `RecipientMemoryService` scoped per binding user
+  (`binding.sub`); returns address-free candidates, fails closed when memory is
+  unavailable.
+- `send_token` — preview-only. Its strict zod schema accepts only
+  `{ amount, recipientId, recipientVersion, memo? }` and rejects any unknown field,
+  so a model can never pass `dryRun`, a free-form `to` address, network, token, or
+  wallet. It delegates to the service's `previewTransfer`.
+- `confirm_transfer` / `cancel_transfer` — call `resolveDecision` with the
+  *current* persisted `previewId`, so a superseded or cancelled preview fails
+  closed to `stale_preview` instead of broadcasting.
+
+A preview is persisted through the PostgreSQL repository as a `pendingTransfer`
+on `conversation_state` plus a row in `conversation_transfer_attempts`. The unique
+partial index `conversation_one_active_transfer_idx` allows at most one active
+transfer per conversation. The worker subscribes to `financialTasks` state
+revisions and publishes `conversation_state_changed` data (topic
+`conversation_state_changed`) to the participant so the frontend Confirm/Cancel
+card appears without publish logic in the LiveKit tool layer.
 
 ## Start independently
 

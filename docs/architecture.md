@@ -8,8 +8,10 @@ short-lived Ed25519 bindings, canonical projections, and touch decisions. The
 worker owns room jobs, media lifecycle, and the voice adapter. Both use the
 same Supabase PostgreSQL schema and tenant-scoped `recipient_app` role.
 
-The worker is started only after `LIVEKIT_URL`, API credentials, the binding
-public key, database identity, and ElevenLabs credentials validate. It stops
+The worker is started only after `LIVEKIT_URL`, LiveKit API credentials, the
+binding public key, database identity, and the OpenAI API key validate; it no
+longer requires ElevenLabs credentials. `ELEVENLABS_API_KEY` is used only by the
+API process for the recorded-transport `/v1/voice/speak` endpoint. It stops
 accepting jobs, drains registered financial tasks for the configured bounded
 interval, closes wallet and memory providers, and closes PostgreSQL last. A
 task that exceeds the drain deadline remains durable and fail-closed; it is
@@ -44,6 +46,65 @@ storage, and expire after at most seven days. Production additionally requires
 an explicit privacy approval, destination, access role, and deletion
 mechanism. Raw audio, provider payloads, secrets, addresses, names, tokens,
 amounts, and balances are never trace fields.
+
+## Realtime voice and confirmation boundary
+
+Live voice is a single OpenAI Realtime speech-to-speech session
+(`gpt-realtime-2.1-mini`, default voice `marin`) created in the worker from
+`OPENAI_API_KEY`. The voice path uses no Deepgram STT, no ElevenLabs TTS, no
+silero VAD, and no `WalletConversationLLM`: transcription, inference, and speech
+generation happen inside the Realtime model session, and the LiveKit session is
+started with `record: false`.
+
+The session is bound to one conversation through the worker's `bind_conversation`
+gate. The worker builds a per-binding `WalletConversationService` so the voice
+path's memory runtime scopes to the binding user (`binding.sub`), never the demo
+tenant. This is the REVIEW FIX V3 wiring: the worker feeds the memory runtime into
+the conversation service dependencies so `isClaimedRecipientValid` can revalidate
+versioned recipients instead of always returning false. The voice path therefore
+never reuses the demo-tenant text service.
+
+### Realtime function tools
+
+`createRealtimeTools` closes over the per-binding wallet, memory, and service so
+each room resolves the correct tenant without a global lookup. Five model-facing
+tools are exposed:
+
+- `get_balance` — reads the configured wallet balance through `WalletProvider`.
+- `search_contacts` — searches `RecipientMemoryService` scoped per binding user
+  (`binding.sub`); returns address-free candidates and fails closed to
+  `unavailable` when memory is missing.
+- `send_token` — preview-only. The strict zod schema accepts only
+  `{ amount, recipientId, recipientVersion, memo? }` and rejects any unknown field,
+  so a model can never pass `dryRun`, a free-form `to` address, network, token, or
+  wallet. It delegates to the per-binding service's `previewTransfer`.
+- `confirm_transfer` / `cancel_transfer` — call the service `resolveDecision` with
+  the *current* persisted `previewId` read at call time (REVIEW FIX V1), so a
+  superseded or cancelled preview fails closed to `stale_preview` instead of
+  broadcasting.
+
+### Financial invariants
+
+The text path and the voice path are not separate: they share the same repository,
+wallet, and `FinancialTaskRegistry`, so the voice tools and the frontend
+Confirm/Cancel card arbitrate on the same database claim.
+
+- A preview is persisted through the PostgreSQL repository as a `pendingTransfer`
+  on `conversation_state` plus a row in `conversation_transfer_attempts` (`status`
+  in `previewed`/`broadcasting`/`submitted`/`uncertain`). The unique partial index
+  `conversation_one_active_transfer_idx` enforces at most one active transfer per
+  conversation.
+- Revisions are published through `financialTasks` and the progress publish path,
+  then delivered to the room as `conversation_state_changed` data on the
+  `conversation_state_changed` topic, so the frontend card appears without any
+  publish logic living in the LiveKit tool layer.
+- Confirming or cancelling by voice (`confirm_transfer` / `cancel_transfer`) and
+  by the frontend Confirm/Cancel card both go through `resolveDecision`, which
+  revalidates the selected recipient, applies the wallet policy, and claims the
+  transfer in `conversation_transfer_attempts` — the same compare-and-set claim
+  used by `POST /v1/conversations/:conversationId/decisions`. A stale preview,
+  repeated decision, or uncertain broadcast returns `accepted: false` and never
+  starts another broadcast.
 
 ## Recipient address memory boundary
 
