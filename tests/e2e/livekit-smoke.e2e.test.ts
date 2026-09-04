@@ -1,4 +1,4 @@
-import { SignJWT } from 'jose';
+import { AccessToken, AgentDispatchClient } from 'livekit-server-sdk';
 import { describe, expect, it } from 'vitest';
 import { verifyLiveVoiceBinding } from '../../src/auth/live-binding.js';
 
@@ -7,6 +7,7 @@ const required = [
   'LIVEKIT_URL',
   'LIVEKIT_API_KEY',
   'LIVEKIT_API_SECRET',
+  'LIVEKIT_AGENT_RUNTIME',
   'LIVEKIT_E2E_AGENT_NAME',
   'LIVEKIT_E2E_BINDING_TOKEN',
   'LIVEKIT_E2E_BINDING_PUBLIC_KEY',
@@ -18,14 +19,20 @@ function httpUrl(url: string): string {
 }
 
 async function liveKitToken(room: string): Promise<string> {
-  return new SignJWT({
-    video: { room, roomJoin: true, canPublish: false, canSubscribe: true },
-  })
-    .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
-    .setIssuer(process.env.LIVEKIT_API_KEY!)
-    .setSubject(`nani-smoke-${Date.now()}`)
-    .setExpirationTime('5m')
-    .sign(new TextEncoder().encode(process.env.LIVEKIT_API_SECRET!));
+  const token = new AccessToken(
+    process.env.LIVEKIT_API_KEY!,
+    process.env.LIVEKIT_API_SECRET!,
+    { identity: `nani-smoke-${Date.now()}`, ttl: '5m' },
+  );
+  token.addGrant({
+    room,
+    roomJoin: true,
+    roomCreate: true,
+    roomAdmin: true,
+    canPublish: false,
+    canSubscribe: true,
+  });
+  return token.toJwt();
 }
 
 async function roomRequest(room: string, method: string, body: Record<string, unknown>): Promise<Response> {
@@ -42,17 +49,26 @@ describe.skipIf(!enabled)('opt-in LiveKit Cloud smoke', () => {
     expect(missing, `Set the explicit LiveKit smoke inputs before running this suite: ${missing.join(', ')}`).toEqual([]);
   });
 
+  it.skipIf(missing.length > 0)('requires the native worker runtime for rollout smoke', () => {
+    expect(process.env.LIVEKIT_AGENT_RUNTIME).toBe('native-livekit');
+  });
+
   it.skipIf(missing.length > 0)('creates a room and dispatches the configured agent without wallet calls', async () => {
     const room = process.env.LIVEKIT_E2E_ROOM ?? `nani-smoke-${Date.now()}`;
     const created = await roomRequest(room, 'CreateRoom', { name: room, empty_timeout: 60, max_participants: 2 });
     expect(created.ok, `LiveKit CreateRoom failed with HTTP ${created.status}`).toBe(true);
 
-    const dispatched = await roomRequest(room, 'CreateAgentDispatch', {
+    const dispatchClient = new AgentDispatchClient(
+      httpUrl(process.env.LIVEKIT_URL!),
+      process.env.LIVEKIT_API_KEY,
+      process.env.LIVEKIT_API_SECRET,
+    );
+    const dispatch = await dispatchClient.createDispatch(
       room,
-      agent_name: process.env.LIVEKIT_E2E_AGENT_NAME,
-      metadata: 'nani-livekit-smoke',
-    });
-    expect(dispatched.ok, `LiveKit agent dispatch failed with HTTP ${dispatched.status}`).toBe(true);
+      process.env.LIVEKIT_E2E_AGENT_NAME!,
+      { metadata: 'nani-livekit-smoke' },
+    );
+    expect(dispatch.id).toBeTruthy();
 
     const deleted = await roomRequest(room, 'DeleteRoom', { room });
     expect(deleted.ok, `LiveKit room cleanup failed with HTTP ${deleted.status}`).toBe(true);

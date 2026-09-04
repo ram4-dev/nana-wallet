@@ -34,6 +34,12 @@ export type VoiceProviderConfig = {
   elevenLabsEnableLogging: boolean;
 };
 
+export function readElevenLabsApiKey(
+  environment: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return environment.ELEVEN_LABS?.trim() || environment.ELEVENLABS_API_KEY?.trim() || undefined;
+}
+
 function isTrue(value: string | undefined): boolean {
   return value === "true" || value === "1";
 }
@@ -82,4 +88,10 @@ export function readVoiceProviderConfig(
     // verified zero-retention capability. Otherwise use provider defaults.
     elevenLabsEnableLogging: !verified,
   };
+}
+
+export function canInspectVoiceMetrics(
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return readVoiceTraceConfig(environment).environment !== "production";
 }

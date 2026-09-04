@@ -4,6 +4,7 @@ import { createWdkToolsFixture } from './wdk-tools.fixture.js';
 import { decodeMcpText, WdkMcpClient } from '../wdk/mcp-client.js';
 
 let client: WdkMcpClient | undefined;
+let clientOpening: Promise<WdkMcpClient> | undefined;
 let fixtureTools: Record<string, Tool> | undefined;
 type LiveWdkClient = Pick<WdkMcpClient, 'sendToken'>;
 
@@ -22,18 +23,29 @@ export async function getWdkTools(): Promise<Record<string, Tool>> {
 }
 
 async function ensureLiveClient(): Promise<WdkMcpClient> {
-  if (!client) {
-    client = createLiveWdkClient();
-    try {
-      await client.open();
-      await client.discover();
-    } catch (error) {
-      await client.close();
-      client = undefined;
-      throw error;
-    }
+  if (client) return client;
+  if (!clientOpening) {
+    const opening = openLiveClient();
+    clientOpening = opening;
+    void opening.then(
+      () => { if (clientOpening === opening) clientOpening = undefined; },
+      () => { if (clientOpening === opening) clientOpening = undefined; },
+    );
   }
-  return client;
+  return clientOpening;
+}
+
+async function openLiveClient(): Promise<WdkMcpClient> {
+  const candidate = createLiveWdkClient();
+  try {
+    await candidate.open();
+    await candidate.discover();
+    client = candidate;
+    return candidate;
+  } catch (error) {
+    await candidate.close();
+    throw error;
+  }
 }
 
 export function createLiveWdkClient(
@@ -49,11 +61,14 @@ export function createLiveWdkClient(
 }
 
 async function callLive(name: string, input: Record<string, unknown>): Promise<unknown> {
+  const activeClient = await ensureLiveClient();
   try {
-    return decodeMcpText(await (await ensureLiveClient()).call(name, input));
+    return decodeMcpText(await activeClient.call(name, input));
   } catch (error) {
-    await client?.close();
-    client = undefined;
+    if (client === activeClient) {
+      await activeClient.close();
+      client = undefined;
+    }
     throw error;
   }
 }
@@ -105,8 +120,10 @@ export function createLiveTools(
 }
 
 export async function closeWdkClient(): Promise<void> {
+  await clientOpening?.catch(() => undefined);
   await client?.close();
   client = undefined;
+  clientOpening = undefined;
   fixtureTools = undefined;
 }
 

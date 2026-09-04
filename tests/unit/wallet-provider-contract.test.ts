@@ -48,4 +48,31 @@ describe('WalletProvider contract', () => {
   ])('satisfies the normalized read and transfer contract: %s', async (_name, create) => {
     await assertContract(create());
   });
+
+  it('normalizes object-wrapped WDK network and token lists', async () => {
+    const tools = {
+      get_networks: { execute: async () => ({ networks: [{ name: 'sepolia', testnet: true }] }) },
+      list_tokens: { execute: async () => ({ tokens: [{ network: 'sepolia', token: 'USDT', decimals: 6 }] }) },
+    };
+    const provider = new WdkWalletProvider(async () => tools as never);
+
+    await expect(provider.listNetworks()).resolves.toEqual([{ network: 'sepolia', kind: 'testnet' }]);
+    await expect(provider.listTokens('sepolia')).resolves.toEqual([{ network: 'sepolia', token: 'USDT', decimals: 6 }]);
+  });
+
+  it('normalizes WDK token maps keyed by token name', async () => {
+    const tools = {
+      list_tokens: {
+        execute: async () => ({
+          network: 'sepolia',
+          tokens: { 'usdt-test': { symbol: 'USDT', decimals: 6 } },
+        }),
+      },
+    };
+    const provider = new WdkWalletProvider(async () => tools as never);
+
+    await expect(provider.listTokens('sepolia')).resolves.toEqual([
+      { network: 'sepolia', token: 'USDT', decimals: 6 },
+    ]);
+  });
 });

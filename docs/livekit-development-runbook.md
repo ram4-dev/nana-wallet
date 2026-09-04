@@ -12,6 +12,7 @@ multiuser or production wallet access.
 - Deepgram uses LiveKit Inference with `mip_opt_out=true` and the documented ZDR path.
 - ElevenLabs logging is disabled only when the account's zero-retention capability has been verified. Otherwise provider defaults apply and may retain request history.
 - Content-free phase counters and latency aggregates are safe to keep with normal operational telemetry.
+- Native voice metrics are limited to the runtime label and aggregate connection, final-transcript, first-token, first-audio, interruption, recovery, and total-duration milestones.
 - Detailed traces are disabled by default. Development traces require explicit `VOICE_TRACE_ENABLED=true`, are redacted before storage, and expire after no more than seven days.
 - Production traces additionally require privacy approval, a retention destination, an audited access role, and a deletion mechanism. Raw audio, provider payloads, keys, addresses, names, tokens, amounts, and balances never belong in traces.
 
@@ -67,6 +68,7 @@ LIVEKIT_TTS_PROVIDER=elevenlabs
 # LIVEKIT_TTS_VOICE=5c5ad5e7-1020-476b-8b91-fdcbe9cc313c
 LIVEKIT_RECORDING_ENABLED=false
 AGENT_OBSERVABILITY_RECORDING=false
+LIVEKIT_AGENT_RUNTIME=service-adapter
 VOICE_TRACE_ENABLED=false
 VOICE_TRACE_RETENTION_DAYS=7
 ```
@@ -92,6 +94,26 @@ configuration; API keys, API secrets, and binding private keys must not be
 placed in `VITE_*` values. The returned media credential is scoped to the room
 and agent requested by the browser, while the signed Fastify binding remains
 the worker's application identity check.
+
+## Native runtime rollout and rollback
+
+`LIVEKIT_AGENT_RUNTIME=service-adapter` is the default rollback-safe worker
+mode. It retains the existing `WalletConversationLLM` bridge. Set
+`LIVEKIT_AGENT_RUNTIME=native-livekit` only for a worker with the existing
+`OPENCODE_GO_API_KEY`; the worker rejects unsupported runtime values and never
+falls back silently.
+
+The native runtime uses the same OpenCode Go-compatible DeepSeek endpoint and
+the same durable binding, lease, decision, revision, and HTTP-state contracts.
+It does not give a model tool broadcast or finality authority. To roll back a
+native test window, restart only the worker with `service-adapter`; do not
+replay an in-progress or uncertain transfer.
+
+Keep the legacy bridge until all of these gates are evidenced for the deployed
+configuration: fixture runtime parity, privacy-safe metrics review, native
+cloud smoke, and browser manual verification. The smoke and browser checks are
+not replaceable with fixture tests because they exercise room dispatch, media,
+and client lifecycle boundaries.
 
 ## Start independently
 
@@ -119,6 +141,13 @@ conversation so the agent input stream receives the first track. The screen
 receives canonical financial revisions from Fastify, not financial payloads
 from room data.
 
+For a native-runtime verification window, keep Fastify and the web app running
+and start the worker with:
+
+```bash
+LIVEKIT_AGENT_RUNTIME=native-livekit npm run livekit:dev
+```
+
 ## Safe verification commands
 
 Run deterministic checks without Cloud, WDK, model, or provider credentials:
@@ -142,6 +171,7 @@ tools or move funds:
 
 ```bash
 LIVEKIT_E2E=1 \
+LIVEKIT_AGENT_RUNTIME=native-livekit \
 LIVEKIT_E2E_AGENT_NAME=nani \
 LIVEKIT_E2E_BINDING_TOKEN='short-lived-token' \
 LIVEKIT_E2E_BINDING_PUBLIC_KEY='public-key-pem' \
@@ -152,6 +182,29 @@ The command fails closed when any required input is missing. A successful
 smoke creates and deletes a temporary room, dispatches the configured agent,
 and verifies the binding purpose, audience, issuer, and signature. It never
 sets `WDK_ALLOW_BROADCAST` or `WDK_BROADCAST_APPROVED`.
+
+## Native cloud and browser verification
+
+Run the smoke with a separately running native-runtime worker. It verifies
+cloud room dispatch and binding only; it does not publish wallet audio or
+invoke wallet tools.
+
+During a native test window, use a real browser room to verify a normal voice
+turn, barge-in, reconnect recovery, typed fallback, preview cancellation,
+preview confirmation, uncertain broadcast display, and end-live teardown.
+Review the metrics snapshot or configured telemetry export after the window:
+it may contain aggregate timing keys prefixed by `native-livekit.` and
+counters, but no room ID, participant ID, transcript, address, amount, tool
+arguments, receipt, or provider payload.
+
+For a bound room in development or test mode, the worker also exposes the
+content-free `get_voice_metrics` RPC to that same participant. It is not
+registered in production and returns only the aggregate snapshot above.
+
+Also exercise the unchanged room protocol from an Android-capable client or
+SDK harness: `bind_conversation`, `interrupt_agent`, the
+`conversation_state_changed` packet, canonical HTTP refresh, and disconnect.
+These checks remain required before retiring `WalletConversationLLM`.
 
 ## Shutdown and incident handling
 

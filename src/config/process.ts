@@ -1,6 +1,7 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { z } from "zod";
 import { readLiveKitPrivacyConfig } from "./livekit.js";
+import { readElevenLabsApiKey } from "./privacy.js";
 
 const uuid = z.string().uuid();
 
@@ -49,13 +50,39 @@ export type WorkerProcessConfig = LiveKitWorkerConfig & {
   elevenLabsApiKey: string;
 };
 
+export type LiveKitAgentRuntime = "service-adapter" | "native-livekit";
+
+export const nativeLiveKitRetirementGates = [
+  "runtime-parity",
+  "privacy-safe-metrics",
+  "cloud-smoke",
+  "browser-manual-verification",
+] as const;
+
+export type NativeLiveKitRetirementGate =
+  (typeof nativeLiveKitRetirementGates)[number];
+
 export type LiveKitWorkerConfig = {
   url: string;
   apiKey: string;
   apiSecret: string;
   publicKey?: string;
   shutdownTimeoutMs: number;
+  agentRuntime: LiveKitAgentRuntime;
 };
+
+export function readLiveKitAgentRuntime(
+  environment: NodeJS.ProcessEnv = process.env,
+): LiveKitAgentRuntime {
+  const configured = environment.LIVEKIT_AGENT_RUNTIME;
+  if (configured === undefined) return "service-adapter";
+  if (configured === "service-adapter" || configured === "native-livekit") {
+    return configured;
+  }
+  throw new Error(
+    "LIVEKIT_AGENT_RUNTIME must be either service-adapter or native-livekit.",
+  );
+}
 
 export function readLiveKitWorkerConfig(
   environment: NodeJS.ProcessEnv = process.env,
@@ -75,7 +102,18 @@ export function readLiveKitWorkerConfig(
     "LIVEKIT_SHUTDOWN_TIMEOUT_MS",
     10_000,
   );
-  return { url, apiKey, apiSecret, publicKey, shutdownTimeoutMs };
+  const agentRuntime = readLiveKitAgentRuntime(environment);
+  if (agentRuntime === "native-livekit") {
+    required(environment, "OPENCODE_GO_API_KEY");
+  }
+  return {
+    url,
+    apiKey,
+    apiSecret,
+    publicKey,
+    shutdownTimeoutMs,
+    agentRuntime,
+  };
 }
 
 export function readApiProcessConfig(
@@ -118,7 +156,10 @@ export function readWorkerProcessConfig(
   const databaseUrl = required(environment, "DATABASE_URL");
   const demoUserId = required(environment, "DEMO_USER_ID");
   if (!uuid.safeParse(demoUserId).success) throw new Error("DEMO_USER_ID must be a UUID for the worker.");
-  const elevenLabsApiKey = required(environment, "ELEVENLABS_API_KEY");
+  const elevenLabsApiKey = readElevenLabsApiKey(environment);
+  if (!elevenLabsApiKey) {
+    throw new Error("ELEVENLABS_API_KEY or ELEVEN_LABS is required for this process.");
+  }
   return { ...liveKit, publicKey, databaseUrl, demoUserId, elevenLabsApiKey };
 }
 

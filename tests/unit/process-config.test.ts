@@ -43,4 +43,17 @@ describe('process-specific configuration', () => {
       demoUserId: '11111111-1111-4111-8111-111111111111',
     });
   });
+
+  it('accepts the vault ElevenLabs secret name for a worker', () => {
+    const keys = keyPair();
+    expect(readWorkerProcessConfig({
+      LIVEKIT_URL: 'wss://example.livekit.cloud',
+      LIVEKIT_API_KEY: 'dev-key',
+      LIVEKIT_API_SECRET: 'dev-secret',
+      DATABASE_URL: 'postgres://local',
+      DEMO_USER_ID: '11111111-1111-4111-8111-111111111111',
+      LIVE_VOICE_BINDING_PUBLIC_KEY: keys.publicKey,
+      ELEVEN_LABS: 'vault-eleven-key',
+    })).toMatchObject({ elevenLabsApiKey: 'vault-eleven-key' });
+  });
 });
