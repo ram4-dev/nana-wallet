@@ -26,7 +26,11 @@
     "test:e2e:recipient-memory-llm": "RECIPIENT_MEMORY_LLM_E2E=1 vitest run tests/e2e/recipient-memory-llm.e2e.test.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/memory/seed.ts",
-    "memory:prefetch": "tsx src/memory/prefetch.ts"
+    "memory:prefetch": "tsx src/memory/prefetch.ts",
+    "eval": "evalite run --hideTable",
+    "eval:real": "EVAL_REAL=1 evalite run --hideTable",
+    "eval:serve": "evalite serve",
+    "eval:voice:dataset": "tsx evals/voice/stt/download-dataset.ts"
   },
   "dependencies": {
     "@ai-sdk/mcp": "2.0.36",
@@ -48,6 +52,7 @@
     "fastify": "5.12.1",
     "jose": "^6.1.0",
     "pg": "8.23.0",
+    "tar-stream": "^3.2.1",
     "zod": "4.4.3"
   },
   "devDependencies": {
@@ -55,6 +60,7 @@
     "@types/node": "22.15.3",
     "@types/pg": "8.23.1",
     "eslint": "^9.32.0",
+    "evalite": "^0.19.0",
     "supabase": "2.80.0",
     "tsx": "4.23.12",
     "typescript": "6.0.3",
@@ -63,5 +69,8 @@
   },
   "allowScripts": {
     "@tetherto/wdk-cli@1.0.0-beta.2": true
+  },
+  "overrides": {
+    "better-sqlite3": "^13.0.3"
   }
 }

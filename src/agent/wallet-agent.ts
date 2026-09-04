@@ -380,9 +380,24 @@ function createMemoryAgentTools(raw: ReturnType<typeof createRecipientMemoryTool
   };
 }
 
-function clarificationMessage(candidates: Array<{ name: string; description: string }>): string {
-  if (candidates.length === 0) return 'I need to know which recipient you mean before preparing a transfer.';
-  return `Which recipient do you mean: ${candidates.map((candidate) => `${candidate.name} (${candidate.description})`).join(', ')}?`;
+const CLARIFICATION_COPY = {
+  en: {
+    ask: (list: string) => `Which recipient do you mean: ${list}?`,
+    missing: 'I need to know which recipient you mean before preparing a transfer.',
+  },
+  es: {
+    ask: (list: string) => `¿A qué destinatario te referís: ${list}?`,
+    missing: 'Necesito saber a qué destinatario te referís antes de preparar la transferencia.',
+  },
+} as const;
+
+function clarificationMessage(
+  candidates: Array<{ name: string; description: string }>,
+  language: 'en' | 'es' = 'en',
+): string {
+  const copy = CLARIFICATION_COPY[language] ?? CLARIFICATION_COPY.en;
+  if (candidates.length === 0) return copy.missing;
+  return copy.ask(candidates.map((candidate) => `${candidate.name} (${candidate.description})`).join(', '));
 }
 
 function mapAgentError(err: unknown): string {
@@ -500,7 +515,7 @@ export async function handleMessage(
         name: candidate.name,
         description: candidate.description,
       })));
-      const message = clarificationMessage(resolution.candidates);
+      const message = clarificationMessage(resolution.candidates, options.language ?? 'en');
       appendMessage(session, { role: 'assistant', content: message });
       return { status: 'clarification_required', message, candidates: resolution.candidates };
     }
