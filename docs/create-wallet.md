@@ -77,11 +77,11 @@ La wallet necesita:
 - Test USD₮ en Sepolia para el balance, preview y transferencia del demo.
 - Una cantidad pequeña de Sepolia ETH exclusivamente para pagar gas.
 
-Antes de continuar, verificá que el token registrado sea `usdt`:
+Antes de continuar, verificá que el token registrado sea `USDT`:
 
 ```bash
-./node_modules/.bin/wdk token info --network sepolia --token usdt
-./node_modules/.bin/wdk get balance --network sepolia --token usdt --wallet agent-dev
+./node_modules/.bin/wdk token info --network sepolia --token USDT
+./node_modules/.bin/wdk get balance --network sepolia --token USDT --wallet agent-dev
 ```
 
 Nunca sustituyas USD₮ por ETH como activo del producto. ETH es sólo gas.
@@ -125,7 +125,7 @@ Confirmá que `agent-dev` figure bloqueada. También podés bloquear todas las w
 - [ ] Seed respaldada offline; passphrase guardada por separado.
 - [ ] TTL corto y procesos no confiables cerrados.
 - [ ] Red exacta: `sepolia`.
-- [ ] Token exacto: `usdt`.
+- [ ] Token exacto: `USDT`.
 - [ ] ETH utilizado sólo para gas.
 - [ ] Dirección receptora controlada y verificada.
 - [ ] Monto pequeño de test USD₮.
