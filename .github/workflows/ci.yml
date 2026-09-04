@@ -31,11 +31,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run migrations
-        run: npm run db:migrate
+      - name: Apply database schema
         env:
-          DATABASE_URL: postgres://postgres@localhost:5432/wdk_agent
-          DEMO_USER_ID: 00000000-0000-4000-8000-000000000001
+          PSQL: docker compose exec -T db psql
+            -U postgres -d wdk_agent -v ON_ERROR_STOP=1
+        run: |
+          $PSQL -c "CREATE SCHEMA IF NOT EXISTS extensions;"
+          for f in supabase/roles.sql supabase/migrations/*.sql; do
+            echo "Applying $f"
+            $PSQL < "$f"
+          done
 
       - name: Lint
         run: npm run lint
