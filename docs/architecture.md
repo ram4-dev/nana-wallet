@@ -29,10 +29,14 @@ flowchart LR
 
 The application creates no recordings, persists no microphone or synthesized
 audio, and configures `record: false` for AgentSession. LiveKit Egress and
-automatic Egress remain disabled. Deepgram runs through the LiveKit Inference
-ZDR path with `mip_opt_out=true`. ElevenLabs request logging is disabled only
-when `ELEVENLABS_ZERO_RETENTION_VERIFIED=true`; otherwise provider defaults
-apply and the runbook documents that limitation.
+automatic Egress remain disabled. Live voice runs as a single OpenAI Realtime
+(GPT-Realtime) speech-to-speech session: transcription, inference, and speech
+generation happen inside the model session, with no intermediate STT/TTS
+providers. OpenAI audio retention follows the account's API data terms.
+ElevenLabs remains only behind the API process for the recorded-transport
+`/v1/voice/speak` endpoint; its request logging is disabled only when
+`ELEVENLABS_ZERO_RETENTION_VERIFIED=true`; otherwise provider defaults apply
+and the runbook documents that limitation.
 
 Voice metrics contain only aggregate phases, counts, and latency summaries.
 Detailed traces require `VOICE_TRACE_ENABLED=true`, are redacted before

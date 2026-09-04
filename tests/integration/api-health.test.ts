@@ -18,21 +18,29 @@ describe('GET /health', () => {
   });
 
   it('allows the configured frontend origin without reflecting an unknown origin', async () => {
-    const app = buildServer();
-    const allowed = await app.inject({
-      method: 'GET',
-      url: '/health',
-      headers: { origin: 'http://localhost:8083' },
-    });
-    const unknown = await app.inject({
-      method: 'GET',
-      url: '/health',
-      headers: { origin: 'https://untrusted.example' },
-    });
+    // Hermetic: the local development .env may set CORS_ORIGINS; this test
+    // exercises the built-in default allowlist instead.
+    const previous = process.env.CORS_ORIGINS;
+    delete process.env.CORS_ORIGINS;
+    try {
+      const app = buildServer();
+      const allowed = await app.inject({
+    method: 'GET',
+    url: '/health',
+    headers: { origin: 'http://localhost:8083' },
+      });
+      const unknown = await app.inject({
+    method: 'GET',
+    url: '/health',
+    headers: { origin: 'https://untrusted.example' },
+      });
 
-    expect(allowed.headers['access-control-allow-origin']).toBe('http://localhost:8083');
-    expect(unknown.headers['access-control-allow-origin']).toBeUndefined();
+      expect(allowed.headers['access-control-allow-origin']).toBe('http://localhost:8083');
+      expect(unknown.headers['access-control-allow-origin']).toBeUndefined();
 
-    await app.close();
+      await app.close();
+    } finally {
+      if (previous !== undefined) process.env.CORS_ORIGINS = previous;
+    }
   });
 });

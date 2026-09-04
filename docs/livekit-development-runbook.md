@@ -9,15 +9,16 @@ multiuser or production wallet access.
 
 - The application persists no microphone audio, synthesized audio, or replayable recordings.
 - Agent sessions use `record: false`; LiveKit Egress and automatic Egress stay disabled.
-- Deepgram uses LiveKit Inference with `mip_opt_out=true` and the documented ZDR path.
-- ElevenLabs logging is disabled only when the account's zero-retention capability has been verified. Otherwise provider defaults apply and may retain request history.
+- Live voice uses the OpenAI Realtime API (GPT-Realtime) as a single speech-to-speech session: transcription, inference, and speech generation happen inside the model session, and no intermediate provider (STT/TTS) is involved.
+- OpenAI audio retention is governed by the OpenAI API data terms of the account; confirm zero-retention eligibility before production use.
+- ElevenLabs remains only in the API process for the recorded-transport `/v1/voice/speak` endpoint. Its logging stays disabled only when the account's zero-retention capability has been verified.
 - Content-free phase counters and latency aggregates are safe to keep with normal operational telemetry.
 - Detailed traces are disabled by default. Development traces require explicit `VOICE_TRACE_ENABLED=true`, are redacted before storage, and expire after no more than seven days.
 - Production traces additionally require privacy approval, a retention destination, an audited access role, and a deletion mechanism. Raw audio, provider payloads, keys, addresses, names, tokens, amounts, and balances never belong in traces.
 
 Review the LiveKit Cloud project before a test window. Confirm that Egress,
 auto-Egress, room recording, and Agent Observability recording are disabled.
-Record any remaining ElevenLabs retention limitation in the deployment notes.
+Record any remaining ElevenLabs retention limitation (recorded-transport TTS) and the OpenAI Realtime data-handling review in the deployment notes.
 
 ## Prerequisites
 
@@ -59,12 +60,14 @@ LIVE_VOICE_BINDING_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC K
 LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=development-key
 LIVEKIT_API_SECRET=development-secret
+# Live voice: OpenAI Realtime (required by the worker)
+OPENAI_API_KEY=development-openai-key
+OPENAI_REALTIME_MODEL=gpt-realtime-2.1-mini
+OPENAI_REALTIME_VOICE=marin
+# Registered agent name; the browser token must request the same name
+LIVEKIT_AGENT_NAME=nani-agent
+# Recorded-transport TTS (API process only, /v1/voice/speak)
 ELEVENLABS_API_KEY=development-provider-key
-LIVEKIT_TTS_PROVIDER=elevenlabs
-# Development fallback when the ElevenLabs account cannot use API voices:
-# LIVEKIT_TTS_PROVIDER=inference
-# LIVEKIT_TTS_MODEL=cartesia/sonic-3
-# LIVEKIT_TTS_VOICE=5c5ad5e7-1020-476b-8b91-fdcbe9cc313c
 LIVEKIT_RECORDING_ENABLED=false
 AGENT_OBSERVABILITY_RECORDING=false
 VOICE_TRACE_ENABLED=false
@@ -73,7 +76,7 @@ VOICE_TRACE_RETENTION_DAYS=7
 
 The API needs the private binding key to issue grants. The worker receives the
 public key and refuses to start without its LiveKit credentials, database
-identity, and ElevenLabs credential. `readApiProcessConfig` and
+identity, and OpenAI credential. `readApiProcessConfig` and
 `readWorkerProcessConfig` reject malformed values before a process starts.
 
 In the wallet `.env.local`, configure only public development values:

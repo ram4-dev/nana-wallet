@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createWalletConversationService, type ConversationEvent } from '../../src/conversations/service.js';
+import { createWalletConversationService, type ConversationEvent, type ConversationProgressPublisher } from '../../src/conversations/service.js';
 import type { ConversationRepository } from '../../src/conversations/repository.js';
 import type { ConversationSnapshot, ConversationState, WalletProgress } from '../../src/conversations/types.js';
 import type { PendingTransfer } from '../../src/contracts/http.js';
@@ -9,6 +9,7 @@ import { FinancialTaskRegistry } from '../../src/conversations/financial-task-re
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const recipient = '0x1234567890123456789012345678901234567890';
+const recipientId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
 function repositoryFixture(initialTransfer?: PendingTransfer): ConversationRepository {
   let snapshot: ConversationSnapshot = {
@@ -212,12 +213,56 @@ describe('WalletConversationService', () => {
     expect(broadcast).not.toHaveBeenCalled();
   });
 
-  it('allows only one spoken or touch confirmation to claim the preview', async () => {
-    const repository = repositoryFixture();
-    const wallet = walletFixture();
-    const broadcast = vi.spyOn(wallet, 'broadcastTransfer');
-    const registry = new FinancialTaskRegistry();
-    const service = createWalletConversationService({ conversations: repository, wallet, financialTasks: registry });
+      it('maps a superseded previewId to stale_preview on confirm (V1)', async () => {
+        const transfer: PendingTransfer = {
+          network: 'sepolia', token: 'USDT', to: recipient, amount: '10', wallet: 'agent-demo',
+          preview: { network: 'sepolia', token: 'USDT', recipient, amount: '10', estimatedFee: '0.0003 ETH' },
+          previewId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        };
+        const repository = repositoryFixture(transfer);
+        const wallet = walletFixture();
+        const service = createWalletConversationService({ conversations: repository, wallet });
+        const events: ConversationEvent[] = [];
+        for await (const event of service.resolveDecision({
+          conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          userId,
+          previewId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          decision: 'confirm',
+        })) events.push(event);
+        const completed = events.find((event) => event.type === 'turn-completed');
+        expect(completed).toMatchObject({ result: { status: 'error', code: 'stale_preview' } });
+      });
+
+      it('maps a missing claim to stale_preview, never broadcast_in_progress (V5)', async () => {
+        const repository = {
+          get: async () => ({
+            id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, mode: 'typed' as const,
+            createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(),
+            revision: 1, language: 'es' as const, generation: 1, messages: [],
+            pendingTransfer: { previewId: 'p-1' },
+          }),
+          claimPendingTransfer: async () => ({ status: 'missing' as const }),
+          cancelPendingTransfer: async () => 'already_resolved' as const,
+        } as unknown as ConversationRepository;
+        const wallet = walletFixture();
+        const service = createWalletConversationService({ conversations: repository, wallet });
+        const events: ConversationEvent[] = [];
+        for await (const event of service.resolveDecision({
+          conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          userId,
+          previewId: 'p-1',
+          decision: 'confirm',
+        })) events.push(event);
+        const completed = events.find((event) => event.type === 'turn-completed');
+        expect(completed).toMatchObject({ result: { status: 'error', code: 'stale_preview' } });
+      });
+
+      it('allows only one spoken or touch confirmation to claim the preview', async () => {
+        const repository = repositoryFixture();
+        const wallet = walletFixture();
+        const broadcast = vi.spyOn(wallet, 'broadcastTransfer');
+        const registry = new FinancialTaskRegistry();
+        const service = createWalletConversationService({ conversations: repository, wallet, financialTasks: registry });
     await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
 
     const [spoken, touch] = await Promise.all([
@@ -234,14 +279,170 @@ describe('WalletConversationService', () => {
     expect(registry.has('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')).toBe(false);
   });
 
-  afterEach(() => {
-    if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
-    else process.env.AGENT_RUNTIME = previousRuntime;
-    if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousSource;
-    if (previousMaximum === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
-    if (previousAllowed === undefined) delete process.env.WDK_ALLOWED_RECIPIENTS;
-    else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
-  });
-});
+      afterEach(() => {
+        if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
+        else process.env.AGENT_RUNTIME = previousRuntime;
+        if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
+        else process.env.WDK_TOOLS_SOURCE = previousSource;
+        if (previousMaximum === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
+        else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
+        if (previousAllowed === undefined) delete process.env.WDK_ALLOWED_RECIPIENTS;
+        else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
+      });
+    });
+
+    describe('WalletConversationService.previewTransfer', () => {
+      const previousSource = process.env.WDK_TOOLS_SOURCE;
+      const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
+      const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
+
+      beforeEach(() => {
+        process.env.WDK_TOOLS_SOURCE = 'fixture';
+      });
+
+      afterEach(() => {
+        if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
+        else process.env.WDK_TOOLS_SOURCE = previousSource;
+        if (previousMaximum === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
+        else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
+        if (previousAllowed === undefined) delete process.env.WDK_ALLOWED_RECIPIENTS;
+        else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
+      });
+
+      const previewInput = {
+        conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        userId,
+        amount: '10',
+        recipientId,
+        recipientVersion: 2,
+      };
+
+      const memoryThatResolves = () => ({
+        userId,
+        service: {
+          getRecipientForVersion: vi.fn().mockResolvedValue({
+            id: recipientId,
+            userId,
+            version: 2,
+            address: recipient,
+            name: 'Lucas Gutiérrez',
+            normalizedName: 'lucas gutiérrez',
+            description: 'Amigo del equipo',
+            status: 'active',
+            embeddingModelRevision: 'rev',
+          }),
+        },
+      } as never);
+
+      it('persists a pending transfer and emits a state revision on the service publish path', async () => {
+        const repository = repositoryFixture();
+        const wallet = walletFixture();
+        const published: ConversationEvent[] = [];
+        const progress: ConversationProgressPublisher = { publish: (event) => { published.push(event); } };
+        const service = createWalletConversationService({
+          conversations: repository,
+          wallet,
+          memory: memoryThatResolves(),
+          progress,
+        });
+
+        const result = await service.previewTransfer(previewInput);
+
+        expect(result).toMatchObject({
+          status: 'confirmation_required',
+          message: expect.stringContaining('Lucas Gutiérrez'),
+          preview: { recipient, amount: '10', token: 'USDT' },
+        });
+        expect(published).toContainEqual(expect.objectContaining({ type: 'state-revision' }));
+      });
+
+      it('returns policy_rejected before persisting when live policy is not configured', async () => {
+        process.env.WDK_TOOLS_SOURCE = 'live';
+        delete process.env.WDK_MAX_TRANSFER_AMOUNT;
+        delete process.env.WDK_ALLOWED_RECIPIENTS;
+        const repository = repositoryFixture();
+        const wallet = walletFixture();
+        const preview = vi.spyOn(wallet, 'previewTransfer');
+        const setPending = vi.spyOn(repository, 'setPendingTransfer');
+        const service = createWalletConversationService({
+          conversations: repository,
+          wallet,
+          memory: memoryThatResolves(),
+        });
+
+        await expect(service.previewTransfer(previewInput)).resolves.toMatchObject({
+          status: 'error',
+          code: 'policy_rejected',
+        });
+        expect(preview).not.toHaveBeenCalled();
+        expect(setPending).not.toHaveBeenCalled();
+      });
+
+      it('fails closed to recipient_revalidation_required when the recipient version is stale', async () => {
+        const repository = repositoryFixture();
+        const wallet = walletFixture();
+        const preview = vi.spyOn(wallet, 'previewTransfer');
+        const memory = {
+          userId,
+          service: { getRecipientForVersion: vi.fn().mockResolvedValue(undefined) },
+        } as never;
+        const service = createWalletConversationService({ conversations: repository, wallet, memory });
+
+        await expect(service.previewTransfer(previewInput)).resolves.toMatchObject({
+          status: 'error',
+          code: 'recipient_revalidation_required',
+        });
+        expect(preview).not.toHaveBeenCalled();
+      });
+
+      it('fails closed to recipient_revalidation_required when memory is unavailable (V3)', async () => {
+        const repository = repositoryFixture();
+        const wallet = walletFixture();
+        const service = createWalletConversationService({ conversations: repository, wallet });
+
+        await expect(service.previewTransfer(previewInput)).resolves.toMatchObject({
+          status: 'error',
+          code: 'recipient_revalidation_required',
+        });
+      });
+
+      it('publishes state revisions across preview, claim, and finality (V8.4)', async () => {
+        const repository = repositoryFixture();
+        const wallet = walletFixture();
+        const published: ConversationEvent[] = [];
+        const progress: ConversationProgressPublisher = { publish: (event) => { published.push(event); } };
+        const registry = new FinancialTaskRegistry();
+        const service = createWalletConversationService({
+          conversations: repository,
+          wallet,
+          memory: memoryThatResolves(),
+          progress,
+          financialTasks: registry,
+        });
+
+        const preview = await service.previewTransfer(previewInput);
+        expect(preview.status).toBe('confirmation_required');
+        const previewRevisions = published.filter((event) => event.type === 'state-revision').length;
+        expect(previewRevisions).toBeGreaterThanOrEqual(1);
+
+        const current = await repository.get(userId, previewInput.conversationId);
+        const previewId = current?.pendingTransfer?.previewId;
+        expect(previewId).toBeTruthy();
+        const events: ConversationEvent[] = [];
+        for await (const event of service.resolveDecision({
+          conversationId: previewInput.conversationId,
+          userId,
+          previewId: previewId!,
+          decision: 'confirm',
+          waitForFinancialTask: true,
+        })) events.push(event);
+        await registry.drain({ timeoutMs: 1000 });
+
+        const finalRevisions = published.filter((event) => event.type === 'state-revision').length;
+        expect(finalRevisions).toBeGreaterThan(previewRevisions);
+        expect(events.some((event) => event.type === 'turn-completed')).toBe(true);
+        const finalSnapshot = await repository.get(userId, previewInput.conversationId);
+        expect(finalSnapshot?.pendingTransfer).toBeUndefined();
+        expect(finalSnapshot?.lastTransactionHash).toMatch(/^0x[0-9a-f]{64}$/u);
+      });
+    });

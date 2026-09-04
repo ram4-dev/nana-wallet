@@ -12,9 +12,13 @@ import {
   readLiveKitWorkerConfig,
   readWorkerProcessConfig,
   type LiveKitWorkerConfig,
+  type WorkerProcessConfig,
 } from "../config/process.js";
 import { FinancialTaskRegistry } from "../conversations/financial-task-registry.js";
+import { createWalletConversationService } from "../conversations/service.js";
+import { getConfiguredRecipientMemoryService } from "../memory/runtime.js";
 import { createAgentSession } from "./create-agent-session.js";
+import { createRealtimeTools } from "./realtime-tools/index.js";
 import {
   createBindingRpcHandler,
   createRoomConversationGate,
@@ -56,7 +60,7 @@ export function createLiveKitWorkerRuntime(input?: {
 
 async function runJob(
   ctx: JobContext,
-  config: LiveKitWorkerConfig,
+  config: WorkerProcessConfig,
   dependencies: WorkerDependencies,
 ): Promise<void> {
   if (!config.publicKey)
@@ -78,10 +82,28 @@ async function runJob(
   const gate = createRoomConversationGate({
     conversation: roomConversation,
     startSession: async (binding) => {
-      const created = createAgentSession({
-        conversationService: dependencies.conversationService,
-        binding,
+      const memoryService = getConfiguredRecipientMemoryService();
+      // REVIEW FIX V3 (voice path): the voice service is built per binding so its
+      // recipient memory runtime scopes to `binding.sub` — never the demo tenant.
+      // It shares the repository, wallet, and financialTasks with the worker so all
+      // paths (voice tool, text transcript, touch button) arbitrate on the same
+      // claim and emit revisions through the same frontend data topic.
+      const voiceService = createWalletConversationService({
+        conversations: dependencies.conversations,
+        wallet: dependencies.wallet,
+        ...(memoryService ? { memory: { userId: binding.userId, service: memoryService } } : {}),
+        financialTasks: dependencies.financialTasks,
+        contextRenewal: dependencies.contextRenewal,
       });
+      const tools = createRealtimeTools({
+        conversationId: binding.conversationId,
+        userId: binding.userId,
+        wallet: dependencies.wallet,
+        service: voiceService,
+        conversations: dependencies.conversations,
+        ...(memoryService ? { recipientMemory: memoryService } : {}),
+      });
+      const created = createAgentSession({ tools });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (
           !event ||

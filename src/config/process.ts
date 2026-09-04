@@ -46,7 +46,6 @@ export type ApiProcessConfig = {
 export type WorkerProcessConfig = LiveKitWorkerConfig & {
   databaseUrl: string;
   demoUserId: string;
-  elevenLabsApiKey: string;
 };
 
 export type LiveKitWorkerConfig = {
@@ -118,8 +117,13 @@ export function readWorkerProcessConfig(
   const databaseUrl = required(environment, "DATABASE_URL");
   const demoUserId = required(environment, "DEMO_USER_ID");
   if (!uuid.safeParse(demoUserId).success) throw new Error("DEMO_USER_ID must be a UUID for the worker.");
-  const elevenLabsApiKey = required(environment, "ELEVENLABS_API_KEY");
-  return { ...liveKit, publicKey, databaseUrl, demoUserId, elevenLabsApiKey };
+  required(environment, "OPENAI_API_KEY");
+  return {
+    ...liveKit,
+    publicKey,
+    databaseUrl,
+    demoUserId,
+  };
 }
 
 export const readApiConfig = readApiProcessConfig;
