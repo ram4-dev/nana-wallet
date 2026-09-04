@@ -4,7 +4,10 @@ import { isValidEvmAddress } from '../memory/address.js';
 import type { RecipientMemoryRuntime } from '../memory/runtime.js';
 import type { ConversationSession } from '../conversations/session-state.js';
 import { getWalletAgentConfig, type WalletAgentConfig } from '../agent/instructions.js';
+import { validateWalletTransferPolicy } from '../agent/definition.js';
 import type { WalletProvider, TransferRequest } from './provider.js';
+
+export { validateWalletTransferPolicy } from '../agent/definition.js';
 
 const sendTokenSchema = z.object({
   network: z.string().trim().min(1),
@@ -29,9 +32,6 @@ const addressSchema = z.object({
 });
 
 const GENERIC_USDT_NAMES = new Set(['usdt', 'usd₮', 'tether']);
-const DECIMAL_AMOUNT = /^\d+(?:\.\d+)?$/u;
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
 
 export type WalletAgentToolsDependencies = {
   wallet: WalletProvider;
@@ -163,36 +163,4 @@ function matchesPending(pending: ConversationSession['pendingTransfer'], input: 
 
 function normalizeToken(token: string, configuredToken: string): string {
   return GENERIC_USDT_NAMES.has(token.trim().normalize('NFKC').toLocaleLowerCase('en-US')) ? configuredToken : token;
-}
-
-export function validateWalletTransferPolicy(input: SendTokenInput, config: WalletAgentConfig): { error: 'policy_rejected'; message: string } | undefined {
-  if (process.env.WDK_TOOLS_SOURCE !== 'live') return undefined;
-  const maximum = process.env.WDK_MAX_TRANSFER_AMOUNT?.trim();
-  const allowed = process.env.WDK_ALLOWED_RECIPIENTS?.split(',').map((value) => value.trim()).filter(Boolean);
-  if (!maximum || !allowed?.length) return { error: 'policy_rejected', message: 'Live transfer policy is not configured: set WDK_MAX_TRANSFER_AMOUNT and WDK_ALLOWED_RECIPIENTS.' };
-  if (!positiveDecimal(maximum)) return { error: 'policy_rejected', message: 'Live transfer policy is invalid: WDK_MAX_TRANSFER_AMOUNT must be a positive plain decimal.' };
-  if (input.wallet !== config.wallet || input.network !== config.network || input.token !== config.token) return { error: 'policy_rejected', message: 'Refusing live transfer: wallet, network, and token must exactly match the configured wallet.' };
-  if (!positiveDecimal(input.amount)) return { error: 'policy_rejected', message: 'Refusing live transfer: amount must be a positive plain decimal.' };
-  if (compareDecimals(input.amount, maximum) > 0) return { error: 'policy_rejected', message: 'Refusing live transfer: amount exceeds WDK_MAX_TRANSFER_AMOUNT.' };
-  if (!isValidEvmAddress(input.to) || isBurnAddress(input.to)) return { error: 'policy_rejected', message: 'Refusing live transfer: recipient must be a valid non-burn EVM address.' };
-  if (!allowed.some((value) => value.toLocaleLowerCase('en-US') === input.to.toLocaleLowerCase('en-US'))) return { error: 'policy_rejected', message: 'Refusing live transfer: recipient is not in WDK_ALLOWED_RECIPIENTS.' };
-  return undefined;
-}
-
-function positiveDecimal(value: string): boolean {
-  return DECIMAL_AMOUNT.test(value) && /[1-9]/u.test(value.replace('.', ''));
-}
-
-function compareDecimals(left: string, right: string): number {
-  const [leftWhole, leftFraction = ''] = left.split('.');
-  const [rightWhole, rightFraction = ''] = right.split('.');
-  if (leftWhole.length !== rightWhole.length) return leftWhole.length < rightWhole.length ? -1 : 1;
-  if (leftWhole !== rightWhole) return leftWhole < rightWhole ? -1 : 1;
-  const width = Math.max(leftFraction.length, rightFraction.length);
-  return leftFraction.padEnd(width, '0').localeCompare(rightFraction.padEnd(width, '0'));
-}
-
-function isBurnAddress(address: string): boolean {
-  const normalized = address.toLocaleLowerCase('en-US');
-  return normalized === ZERO_ADDRESS || normalized === DEAD_ADDRESS;
 }

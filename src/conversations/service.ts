@@ -1,8 +1,12 @@
 import type { LanguageModel } from 'ai';
 import { handleMessage, type HandleMessageOptions } from '../agent/wallet-agent.js';
+import {
+  canonicalizeTransferPreview,
+  type SendTokenInput,
+} from '../agent/definition.js';
 import { getWalletAgentConfig } from '../agent/instructions.js';
 import type { ConversationTurnResult, PendingTransfer } from '../contracts/http.js';
-import { appendMessage } from './session-state.js';
+import { appendMessage, type ConversationSession } from './session-state.js';
 import { errorFromCode, safeErrorMessage, type ConversationErrorCode } from './errors.js';
 import type { ConversationRepository } from './repository.js';
 import { createNarrationPolicy, narrateFinancialFact, type NarrationPolicy } from './narration-policy.js';
@@ -22,6 +26,7 @@ import {
 } from './interpretation.js';
 import { detectConversationLanguage } from './language.js';
 import { evaluateContextRenewal, shouldRenewContext, type ContextBudget } from './context-renewal.js';
+import { isCancellation, isConfirmation } from '../livekit/resolution-phrases.js';
 
 export type HandleTurnInput = {
   conversationId: string;
@@ -39,6 +44,30 @@ export type ResolveDecisionInput = {
   waitForFinancialTask?: boolean;
 };
 
+export type PersistNativeToolStateInput = {
+  conversationId: string;
+  userId: string;
+  session: ConversationSession;
+};
+
+export type PersistNativePreviewInput = PersistNativeToolStateInput & {
+  input: SendTokenInput;
+  output: unknown;
+};
+
+export type NativePreviewCommandResult =
+  | {
+    status: 'preview_created';
+    preview: PendingTransfer['preview'];
+    previewId?: string;
+    revision: number;
+  }
+  | {
+    status: 'error';
+    error: 'invalid_tool_result' | 'pending_confirmation';
+    message: string;
+  };
+
 export type ConversationActivity = 'idle' | 'working' | 'awaiting_confirmation' | 'verifying' | 'uncertain' | 'request_waiting';
 
 export type ConversationEvent =
@@ -54,6 +83,14 @@ export interface WalletConversationService {
   handleTurn(input: HandleTurnInput): Promise<ConversationTurnResult>;
   handleTurnStream(input: HandleTurnInput): AsyncIterable<ConversationEvent>;
   resolveDecision(input: ResolveDecisionInput): AsyncIterable<ConversationEvent>;
+  persistNativeToolState(input: PersistNativeToolStateInput): Promise<ConversationSnapshot>;
+  persistNativePreview(input: PersistNativePreviewInput): Promise<NativePreviewCommandResult | Record<string, unknown>>;
+  appendNativeMessage(input: {
+    conversationId: string;
+    userId: string;
+    role: 'user' | 'assistant';
+    text: string;
+  }): Promise<void>;
 }
 
 export type WalletConversationDependencies = {
@@ -420,6 +457,121 @@ export function createWalletConversationService(dependencies: WalletConversation
     return result;
   }
 
+  async function persistNativeToolState(
+    input: PersistNativeToolStateInput,
+  ): Promise<ConversationSnapshot> {
+    const snapshot = await nativeSnapshot(input);
+    const persisted = await dependencies.conversations.saveSnapshot(
+      input.userId,
+      {
+        ...snapshot,
+        recipientMemory: input.session.recipientMemory,
+      },
+      snapshot.messages.length,
+    );
+    await publish(stateEvent(persisted));
+    return persisted;
+  }
+
+  async function persistNativePreview(
+    input: PersistNativePreviewInput,
+  ): Promise<NativePreviewCommandResult | Record<string, unknown>> {
+    const snapshot = await nativeSnapshot(input);
+    if (!input.input.dryRun) {
+      return {
+        status: 'error',
+        error: 'pending_confirmation',
+        message: 'A transfer preview must be confirmed before it can be broadcast.',
+      };
+    }
+    if (snapshot.pendingTransfer || snapshot.transferResolutionState) {
+      return {
+        status: 'error',
+        error: 'pending_confirmation',
+        message: 'A transfer is waiting for your decision. Confirm or cancel it before preparing another transfer.',
+      };
+    }
+    if (isToolError(input.output)) return input.output;
+    const preview = canonicalizeTransferPreview(input.input, input.output);
+    if (!preview) {
+      return {
+        status: 'error',
+        error: 'invalid_tool_result',
+        message: safeErrorMessage('invalid_tool_result'),
+      };
+    }
+    const selected = input.session.recipientMemory?.previewedRecipient;
+    const persisted = await dependencies.conversations.saveSnapshot(
+      input.userId,
+      {
+        ...snapshot,
+        recipientMemory: input.session.recipientMemory,
+        pendingTransfer: {
+          network: input.input.network,
+          token: input.input.token,
+          to: input.input.to,
+          amount: input.input.amount,
+          wallet: input.input.wallet,
+          preview,
+          ...(selected
+            ? {
+              recipientId: selected.recipientId,
+              recipientVersion: selected.version,
+            }
+            : {}),
+        },
+        progress: {
+          phase: 'awaiting_confirmation',
+          label: 'Transfer preview ready for confirmation',
+        },
+      },
+      snapshot.messages.length,
+    );
+    await publish(stateEvent(persisted));
+    return {
+      status: 'preview_created',
+      preview,
+      previewId: persisted.pendingTransfer?.previewId,
+      revision: persisted.revision,
+    };
+  }
+
+  async function appendNativeMessage(input: {
+    conversationId: string;
+    userId: string;
+    role: 'user' | 'assistant';
+    text: string;
+  }): Promise<void> {
+    if (!input.text.trim()) return;
+    const snapshot = await dependencies.conversations.get(
+      input.userId,
+      input.conversationId,
+    );
+    if (!snapshot) throw new Error('conversation_not_found');
+    await dependencies.conversations.appendMessage(input.userId, input.conversationId, {
+      role: input.role,
+      content: input.text,
+    });
+  }
+
+  async function nativeSnapshot(
+    input: PersistNativeToolStateInput,
+  ): Promise<ConversationSnapshot> {
+    if (
+      input.session.id !== input.conversationId ||
+      !input.conversationId ||
+      !input.userId
+    ) {
+      throw new Error('Native tool session does not match its conversation.');
+    }
+    const snapshot = await dependencies.conversations.get(
+      input.userId,
+      input.conversationId,
+    );
+    if (!snapshot) throw new Error('conversation_not_found');
+    return snapshot;
+  }
+
   async function setProgress(snapshot: ConversationSnapshot, progress: WalletProgress): Promise<ConversationSnapshot> {
     if (!dependencies.conversations.setProgress) return snapshot;
     const state = await dependencies.conversations.setProgress(snapshot.userId, snapshot.id, progress);
@@ -450,7 +602,14 @@ export function createWalletConversationService(dependencies: WalletConversation
     });
   }
 
-  return { handleTurn, handleTurnStream, resolveDecision };
+  return {
+    handleTurn,
+    handleTurnStream,
+    resolveDecision,
+    persistNativeToolState,
+    persistNativePreview,
+    appendNativeMessage,
+  };
 }
 
 async function appendServiceMessage(snapshot: ConversationSnapshot, userId: string, text: string, repository: ConversationRepository): Promise<void> {
@@ -556,6 +715,16 @@ function sanitizeResult(result: ConversationTurnResult): ConversationTurnResult 
   return { status: 'error', code, message: safeErrorMessage(code) };
 }
 
+function isToolError(output: unknown): output is Record<string, unknown> {
+  return Boolean(
+    output &&
+      typeof output === 'object' &&
+      !Array.isArray(output) &&
+      typeof (output as { error?: unknown }).error === 'string' &&
+      typeof (output as { message?: unknown }).message === 'string',
+  );
+}
+
 async function* completedError(input: HandleTurnInput, code: ConversationErrorCode): AsyncIterable<ConversationEvent> {
   const result = errorResult(errorFromCode(code));
   yield { type: 'spoken-segment', id: crypto.randomUUID(), text: result.message, reason: 'answer' };
@@ -577,18 +746,6 @@ async function isClaimedRecipientValid(transfer: PendingTransfer, memory?: Recip
   if (!memory) return false;
   const current = await memory.service.getRecipientForVersion(memory.userId, transfer.recipientId, transfer.recipientVersion);
   return Boolean(current && current.id === transfer.recipientId && current.version === transfer.recipientVersion && isValidEvmAddress(current.address) && current.address === transfer.to);
-}
-
-function normalize(text: string): string {
-  return text.trim().toLocaleLowerCase('es-AR').normalize('NFC').replace(/[.!]+$/u, '').trim().replace(/\s+/gu, ' ');
-}
-
-function isConfirmation(text: string): boolean {
-  return new Set(['confirm', 'i confirm', 'yes confirm', 'yes, confirm', 'confirmar', 'confirmo', 'sí confirmo', 'sí, confirmo', 'si confirmo', 'si, confirmo', 'confirmar transferencia', 'confirmar la transferencia', 'confirmo la transferencia']).has(normalize(text));
-}
-
-function isCancellation(text: string): boolean {
-  return new Set(['cancel', 'cancel transfer', 'cancel the transfer', 'cancel it', 'no, cancel', 'cancelar', 'cancelo', 'cancelar transferencia', 'cancelar la transferencia', 'cancelo la transferencia']).has(normalize(text));
 }
 
 function looksLikeTransfer(text: string): boolean {

@@ -4,11 +4,13 @@ import { buildServer } from '../../src/server.js';
 const originalFetch = global.fetch;
 const originalNanKey = process.env.NAN_API_KEY;
 const originalElevenKey = process.env.ELEVENLABS_API_KEY;
+const originalElevenVaultKey = process.env.ELEVEN_LABS;
 
 afterEach(() => {
   global.fetch = originalFetch;
   process.env.NAN_API_KEY = originalNanKey;
   process.env.ELEVENLABS_API_KEY = originalElevenKey;
+  process.env.ELEVEN_LABS = originalElevenVaultKey;
 });
 
 describe('POST /v1/agent/transcribe', () => {
@@ -80,8 +82,9 @@ describe('POST /v1/agent/transcribe', () => {
 });
 
 describe('POST /v1/voice/speak', () => {
-  it('returns 500 when ELEVENLABS_API_KEY is not configured', async () => {
+  it('returns 500 when an ElevenLabs API key is not configured', async () => {
     delete process.env.ELEVENLABS_API_KEY;
+    delete process.env.ELEVEN_LABS;
     const app = buildServer();
     const res = await app.inject({
       method: 'POST',
@@ -94,7 +97,7 @@ describe('POST /v1/voice/speak', () => {
   });
 
   it('rejects an empty text field', async () => {
-    process.env.ELEVENLABS_API_KEY = 'test-key';
+    process.env.ELEVEN_LABS = 'test-key';
     const app = buildServer();
     const res = await app.inject({
       method: 'POST',
@@ -106,7 +109,7 @@ describe('POST /v1/voice/speak', () => {
   });
 
   it('forwards text upstream and streams back the audio bytes', async () => {
-    process.env.ELEVENLABS_API_KEY = 'test-key';
+    process.env.ELEVEN_LABS = 'test-key';
     const audioBytes = new Uint8Array([1, 2, 3, 4]);
     global.fetch = vi.fn(
       async () => new Response(audioBytes, { status: 200 }),

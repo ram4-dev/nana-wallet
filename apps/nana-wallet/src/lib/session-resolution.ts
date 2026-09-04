@@ -55,7 +55,8 @@ function normalizeResolutionText(text: string) {
   return text
     .trim()
     .toLocaleLowerCase("es-AR")
-    .normalize("NFC")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
     .replace(/[.!]+$/u, "")
     .trim()
     .replace(/\s+/gu, " ");

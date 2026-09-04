@@ -43,25 +43,24 @@ export class WdkWalletProvider implements WalletProvider {
   }
 
   public async listNetworks(): Promise<WalletNetwork[]> {
-    const result = unwrap(await this.call('get_networks', {}));
-    if (!Array.isArray(result)) throw new Error('WDK networks response is invalid.');
+    const result = listResult(unwrap(await this.call('get_networks', {})), 'networks', 'WDK networks');
     return result.map((value, index) => {
       const row = record(value, `WDK network ${index}`);
-      const kind = row.kind === 'mainnet' ? 'mainnet' : 'testnet';
-      return { network: stringValue(row.network, `WDK network ${index}`), kind };
+      const kind = row.kind === 'mainnet' || row.testnet === false ? 'mainnet' : 'testnet';
+      return { network: stringValue(row.network ?? row.name, `WDK network ${index}`), kind };
     });
   }
 
   public async listTokens(network?: string): Promise<WalletToken[]> {
-    const result = unwrap(await this.call('list_tokens', network ? { network } : {}));
-    if (!Array.isArray(result)) throw new Error('WDK tokens response is invalid.');
-    return result.map((value, index) => {
+    const raw = unwrap(await this.call('list_tokens', network ? { network } : {}));
+    const result = tokenResult(raw, network);
+    return result.map(({ token, value }, index) => {
       const row = record(value, `WDK token ${index}`);
       const decimals = row.decimals;
       if (!Number.isInteger(decimals) || (decimals as number) < 0) throw new Error(`WDK token ${index} decimals are invalid.`);
       return {
-        network: stringValue(row.network ?? network, `WDK token ${index} network`),
-        token: stringValue(row.token, `WDK token ${index}`),
+        network: stringValue(row.network ?? result.network ?? network, `WDK token ${index} network`),
+        token: stringValue(row.token ?? row.symbol ?? token, `WDK token ${index}`),
         decimals: decimals as number,
       };
     });
@@ -195,6 +194,37 @@ function unwrap(value: unknown, depth = 0): unknown {
     if (key in object) return unwrap(object[key], depth + 1);
   }
   return value;
+}
+
+function listResult(value: unknown, key: 'networks' | 'tokens', label: string): unknown[] {
+  if (Array.isArray(value)) return value;
+  const result = record(value, `${label} response`);
+  if (!Array.isArray(result[key])) throw new Error(`${label} response is invalid.`);
+  return result[key];
+}
+
+function tokenResult(value: unknown, requestedNetwork?: string): {
+  network?: unknown;
+  map: <T>(callback: (entry: { token?: string; value: unknown }, index: number) => T) => T[];
+} {
+  if (Array.isArray(value)) {
+    return {
+      map: (callback) => value.map((entry, index) => callback({ value: entry }, index)),
+    };
+  }
+  const result = record(value, 'WDK tokens response');
+  const tokenList = result.tokens;
+  if (Array.isArray(tokenList)) {
+    return {
+      network: result.network ?? requestedNetwork,
+      map: (callback) => tokenList.map((entry, index) => callback({ value: entry }, index)),
+    };
+  }
+  const tokens = record(tokenList, 'WDK tokens');
+  return {
+    network: result.network ?? requestedNetwork,
+    map: (callback) => Object.entries(tokens).map(([token, entry], index) => callback({ token, value: entry }, index)),
+  };
 }
 
 function normalizeBaseUnits(value: unknown, decimals: unknown): string {
