@@ -630,17 +630,26 @@ export const handlers = [
 
   http.get(apiPath("/conversations/:conversationId/state"), () => {
     if (shouldUseLiveAgentBackend()) return passthrough();
-    return HttpResponse.json({ status: "error", message: "Conversation state is unavailable." }, { status: 404 });
+    return HttpResponse.json(
+      { status: "error", message: "Conversation state is unavailable." },
+      { status: 404 },
+    );
   }),
 
   http.post(apiPath("/conversations/:conversationId/decisions"), () => {
     if (shouldUseLiveAgentBackend()) return passthrough();
-    return HttpResponse.json({ status: "error", message: "Conversation decisions are unavailable." }, { status: 404 });
+    return HttpResponse.json(
+      { status: "error", message: "Conversation decisions are unavailable." },
+      { status: 404 },
+    );
   }),
 
   http.post(apiPath("/live-bindings"), () => {
     if (shouldUseLiveAgentBackend()) return passthrough();
-    return HttpResponse.json({ status: "error", message: "Live voice is unavailable." }, { status: 503 });
+    return HttpResponse.json(
+      { status: "error", message: "Live voice is unavailable." },
+      { status: 503 },
+    );
   }),
 
   http.get(apiPath("/me"), () => ok(me)),
