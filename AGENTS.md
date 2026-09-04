@@ -66,3 +66,26 @@ Reglas:
 - Comandos del front: `npm run dev`, `npm test`, `npm run mobile:sync` (en `apps/nana-wallet/`).
 - Los comentarios y UI del front están en español rioplatense; seguí esa convención en cada parte.
 - Tests: backend en `tests/{unit,integration,simulation,e2e}`, evals en `evals/`; front colocaliza tests junto al código.
+
+## Dónde encontrar más
+
+- [docs/architecture.md](docs/architecture.md) — arquitectura, límites de evidencia y boundary WDK.
+- [docs/api.md](docs/api.md) — contrato HTTP `/v1` (fuente de verdad: `src/contracts/http.ts`).
+- [docs/evals.md](docs/evals.md) — evalite, cómo correr y leer los evals del agente.
+- [docs/demo-runbook.md](docs/demo-runbook.md) — rehearsel de recipient memory en fixture.
+- [docs/local-live-runbook.md](docs/local-live-runbook.md) — integración live completa (wallet WDK local + Supabase).
+- [docs/livekit-development-runbook.md](docs/livekit-development-runbook.md) — live voice (LiveKit Cloud + binding Ed25519).
+- [docs/create-wallet.md](docs/create-wallet.md) — crear y habilitar la wallet dedicada del agente.
+- [docs/observability-proposal.md](docs/observability-proposal.md) — propuesta futura de observabilidad (no implementada).
+
+## Flujo de desarrollo en dos etapas
+
+Para cada feature el repo trabaja en dos etapas, con un límite claro entre **pensar** y **escribir código**.
+
+### Etapa 1 — planificación humana (`.agent-workflow/`)
+
+Antes de escribir código se planifica en `.agent-workflow/`. Es el flujo RPI (intake, research questions, design discussion): el lado humano, el que arranca con la entrada de la idea, arma las preguntas de investigación y discute el enfoque de diseño SIN tocar código. Acá se define el problema y se negocian las decisiones; si la feature no tiene aún un scaffold en `.agent-workflow/`, se arma primero.
+
+### Etapa 2 — implementación (SDD en `openspec/`)
+
+Una vez que el diseño está claro, la implementación va por `openspec/` (SDD): `proposal → spec → design → tasks → apply → verify → archive`. Los artefactos viven en `openspec/changes/<change>/` y el contexto raíz en `openspec/config.yaml`. Cada fase se valida contra la anterior; `apply` escribe código y `verify` chequea el resultado contra la spec.

@@ -1,5 +1,7 @@
 # Observability proposal
 
+> **Status: FUTURE PROPOSAL — not implemented.** Langfuse, Sentry, and OpenTelemetry exporters are NOT implemented yet. The observability that exists today lives in `src/observability/` (voice metrics, redacted voice traces, redaction helpers). Treat the content below as a design target, not a description of working code.
+
 Nana will keep LiveKit Agent Insights for voice-session diagnosis and send application telemetry to the services already in use.
 
 - Langfuse receives redacted OpenTelemetry traces from LiveKit and the wallet domain. It is where we inspect agent turns, tool execution, latency, and model usage.
