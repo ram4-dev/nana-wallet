@@ -44,16 +44,15 @@ describe('process-specific configuration', () => {
     });
   });
 
-  it('accepts the vault ElevenLabs secret name for a worker', () => {
+  it('requires OPENAI_API_KEY for a worker (realtime is the only voice path)', () => {
     const keys = keyPair();
-    expect(readWorkerProcessConfig({
+    expect(() => readWorkerProcessConfig({
       LIVEKIT_URL: 'wss://example.livekit.cloud',
       LIVEKIT_API_KEY: 'dev-key',
       LIVEKIT_API_SECRET: 'dev-secret',
       DATABASE_URL: 'postgres://local',
       DEMO_USER_ID: '11111111-1111-4111-8111-111111111111',
       LIVE_VOICE_BINDING_PUBLIC_KEY: keys.publicKey,
-      ELEVEN_LABS: 'vault-eleven-key',
-    })).toMatchObject({ elevenLabsApiKey: 'vault-eleven-key' });
+    })).toThrowError('OPENAI_API_KEY is required');
   });
 });
