@@ -14,3 +14,6 @@ dist/
 # Supabase CLI runtime metadata
 supabase/.branches/
 supabase/.temp/
+
+# Voice eval dataset (downloaded audio, never committed)
+evals/voice/.audio/
