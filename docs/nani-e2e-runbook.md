@@ -96,6 +96,7 @@ Latency per turn (first audio + tool breakdown) is logged to
 | CORS error on `/v1/conversations/:id/state` (`if-none-match`) | ETag conditional reads not in the CORS allowlist | Already fixed in `src/server.ts` (`If-None-Match`, `If-Modified-Since`) |
 | Voice button says "La voz no está disponible" | Missing `apps/nana-wallet/.env.local` VITE vars | Copy from `.env.example` and set `VITE_LIVEKIT_TOKEN_SERVER_ID` + participant identity |
 | Confirm/Cancel card never appears | Tool wrote in-memory only, or revision not published | The preview path must persist via the repository and publish via `financialTasks`; covered by tests (V8.4) |
+| Live mode: EVERY `send_token` returns `policy_rejected` | Recreated `.env` (from template) lacks `WDK_MAX_TRANSFER_AMOUNT` / `WDK_ALLOWED_RECIPIENTS` — live policy fails closed when absent. Same class: wallet name/token defaults (`agent-demo`/`USDT`) don't match a machine's created wallet | Add the policy vars + the real `WDK_WALLET_NAME`/`WDK_TOKEN` to `.env`, restart the stack (`scripts/nani-e2e.sh`) |
 
 ## Architecture invariants (do not break)
 
