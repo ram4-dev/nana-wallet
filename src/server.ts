@@ -35,11 +35,19 @@ export function buildServer() {
     bodyLimit: 25 * 1024 * 1024,
   });
 
-  app.register(cors, {
-    origin: resolveCorsOrigins(),
-    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key", "If-None-Match"],
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  });
+      app.register(cors, {
+        origin: resolveCorsOrigins(),
+        // If-None-Match/If-Modified-Since back the ETag-based conversation state
+        // reads (GET /v1/conversations/:id/state) used by the voice revision flow.
+        allowedHeaders: [
+          "Content-Type",
+          "Authorization",
+          "Idempotency-Key",
+          "If-None-Match",
+          "If-Modified-Since",
+        ],
+        methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+      });
 
   const core = createCoreDependencies();
   app.register(registerHealthRoutes, { wallet: core.walletReads });

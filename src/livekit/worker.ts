@@ -12,14 +12,13 @@ import {
   readLiveKitWorkerConfig,
   readWorkerProcessConfig,
   type LiveKitWorkerConfig,
+  type WorkerProcessConfig,
 } from "../config/process.js";
-import { getWalletAgentConfig } from "../agent/instructions.js";
-import type {
-  NativeDecisionRouter,
-  NativeLiveKitAgentInput,
-} from "./create-native-agent.js";
 import { FinancialTaskRegistry } from "../conversations/financial-task-registry.js";
+import { createWalletConversationService } from "../conversations/service.js";
+import { getConfiguredRecipientMemoryService } from "../memory/runtime.js";
 import { createAgentSession } from "./create-agent-session.js";
+import { createRealtimeTools } from "./realtime-tools/index.js";
 import {
   createBindingRpcHandler,
   createRoomConversationGate,
@@ -29,14 +28,6 @@ import {
   createWorkerDependencies,
   type WorkerDependencies,
 } from "../runtime/dependencies.js";
-import { getConfiguredRecipientMemoryRuntime } from "../memory/runtime.js";
-import {
-  VoiceLatencyMilestones,
-  VoiceMetrics,
-} from "../observability/voice-metrics.js";
-import { routeNativeTextTurn } from "./native-text-turn-router.js";
-import { canInspectVoiceMetrics } from "../config/privacy.js";
-import { createVoiceMetricsInspectionHandler } from "./voice-metrics-inspection.js";
 
 export { readLiveKitWorkerConfig } from "../config/process.js";
 export type { LiveKitWorkerConfig } from "../config/process.js";
@@ -44,17 +35,14 @@ export type { LiveKitWorkerConfig } from "../config/process.js";
 export function createLiveKitWorkerRuntime(input?: {
   dependencies?: WorkerDependencies;
   shutdownTimeoutMs?: number;
-  voiceMetrics?: VoiceMetrics;
 }) {
   let acceptingJobs = true;
   let closePromise: Promise<void> | undefined;
   const financialTasks =
     input?.dependencies?.financialTasks ?? new FinancialTaskRegistry();
   const shutdownTimeoutMs = input?.shutdownTimeoutMs ?? 10_000;
-  const voiceMetrics = input?.voiceMetrics ?? new VoiceMetrics();
   return {
     financialTasks,
-    voiceMetrics,
     get acceptingJobs() {
       return acceptingJobs;
     },
@@ -72,15 +60,12 @@ export function createLiveKitWorkerRuntime(input?: {
 
 async function runJob(
   ctx: JobContext,
-  config: LiveKitWorkerConfig,
+  config: WorkerProcessConfig,
   dependencies: WorkerDependencies,
-  voiceMetrics: VoiceMetrics,
 ): Promise<void> {
   if (!config.publicKey)
     throw new Error("LiveKit worker requires LIVE_VOICE_BINDING_PUBLIC_KEY.");
-  const latency = new VoiceLatencyMilestones(voiceMetrics, config.agentRuntime);
   await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
-  latency.connected();
   const participant = await ctx.waitForParticipant();
   const roomConversation = new RoomConversation({
     publicKey: config.publicKey,
@@ -94,43 +79,38 @@ async function runJob(
   let session: ReturnType<typeof createAgentSession>["session"] | undefined;
   let sessionClosed: Promise<void> | undefined;
   let unsubscribeRevisions: (() => void) | undefined;
-  let nativeNarrationInterrupted = false;
-  let voiceMetricsInspectionRegistered = false;
   const gate = createRoomConversationGate({
     conversation: roomConversation,
     startSession: async (binding) => {
-      const native =
-        config.agentRuntime === "native-livekit"
-          ? await createNativeAgentInput(binding, dependencies, async (text) => {
-            const events = await roomConversation.resolvePendingDecision(text);
-            if (events) nativeNarrationInterrupted = false;
-            return events;
-          })
-          : undefined;
-      const created = createAgentSession({
-        conversationService: dependencies.conversationService,
-        binding,
-        runtime: config.agentRuntime,
-        ...(native ? { native } : {}),
+      const memoryService = getConfiguredRecipientMemoryService();
+      // REVIEW FIX V3 (voice path): the voice service is built per binding so its
+      // recipient memory runtime scopes to `binding.sub` — never the demo tenant.
+      // It shares the repository, wallet, and financialTasks with the worker so all
+      // paths (voice tool, text transcript, touch button) arbitrate on the same
+      // claim and emit revisions through the same frontend data topic.
+      const voiceService = createWalletConversationService({
+        conversations: dependencies.conversations,
+        wallet: dependencies.wallet,
+        ...(memoryService ? { memory: { userId: binding.userId, service: memoryService } } : {}),
+        financialTasks: dependencies.financialTasks,
+        contextRenewal: dependencies.contextRenewal,
       });
+      const tools = createRealtimeTools({
+        conversationId: binding.conversationId,
+        userId: binding.userId,
+        wallet: dependencies.wallet,
+        service: voiceService,
+        conversations: dependencies.conversations,
+        ...(memoryService ? { recipientMemory: memoryService } : {}),
+      });
+      const created = createAgentSession({ tools });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (
           !event ||
-          typeof event !== "object"
+          typeof event !== "object" ||
+          (event as { type?: unknown }).type !== "state-revision"
         )
           return;
-        if (
-          config.agentRuntime === "native-livekit" &&
-          !nativeNarrationInterrupted &&
-          (event as { type?: unknown }).type === "spoken-segment"
-        ) {
-          const text = (event as { text?: unknown }).text;
-          if (typeof text === "string" && text.trim()) {
-            created.session.say(text, { addToChatCtx: false });
-          }
-          return;
-        }
-        if ((event as { type?: unknown }).type !== "state-revision") return;
         const revision = (event as { revision?: unknown }).revision;
         if (typeof revision !== "number") return;
         void agentParticipant.publishData(
@@ -152,78 +132,15 @@ async function runJob(
       sessionClosed = new Promise<void>((resolve) =>
         created.session.once(AgentSessionEventTypes.Close, () => resolve()),
       );
-      created.session.on(AgentSessionEventTypes.UserInputTranscribed, (event) => {
-        if (event.isFinal) latency.finalTranscript();
-      });
-      created.session.on(AgentSessionEventTypes.MetricsCollected, (event) => {
-        if (event.metrics.type === "llm_metrics") {
-          latency.firstTokenDuration(event.metrics.ttftMs);
-        }
-        if (event.metrics.type === "tts_metrics") {
-          latency.firstAudioDuration(event.metrics.ttfbMs);
-        }
-      });
-      created.session.on(AgentSessionEventTypes.ConversationItemAdded, (event) => {
-        if (event.item.type === "message" && event.item.role === "assistant") {
-          latency.completed();
-        }
-      });
       await created.session.start({
         agent: created.agent,
         room: ctx.room,
         record: false,
-        ...(config.agentRuntime === "native-livekit"
-          ? {
-            inputOptions: {
-              textInputCallback: async (agentSession, event) => {
-                await routeNativeTextTurn({
-                  session: agentSession,
-                  text: event.text,
-                  resolvePendingDecision: (text) =>
-                    roomConversation.resolvePendingDecision(text),
-                  onDecisionRouted: () => {
-                    nativeNarrationInterrupted = false;
-                  },
-                });
-              },
-            },
-          }
-          : {}),
       });
-      if (config.agentRuntime === "native-livekit") {
-        created.session.on(AgentSessionEventTypes.ConversationItemAdded, (event) => {
-          if (
-            event.item.type !== "message" ||
-            (event.item.role !== "user" && event.item.role !== "assistant")
-          ) return;
-          const text = event.item.textContent;
-          if (!text) return;
-          void dependencies.conversationService.appendNativeMessage({
-            conversationId: binding.conversationId,
-            userId: binding.userId,
-            role: event.item.role,
-            text,
-          });
-        });
-      }
       agentParticipant.registerRpcMethod("interrupt_agent", async () => {
-        const interruptedAt = Date.now();
-        if (config.agentRuntime === "native-livekit") {
-          nativeNarrationInterrupted = true;
-        }
         await created.session?.interrupt({ force: true });
-        latency.interrupted(interruptedAt);
         return JSON.stringify({ ok: true });
       });
-      const inspectVoiceMetrics = createVoiceMetricsInspectionHandler({
-        enabled: canInspectVoiceMetrics(),
-        participantIdentity: participant.identity,
-        metrics: voiceMetrics,
-      });
-      if (inspectVoiceMetrics) {
-        agentParticipant.registerRpcMethod("get_voice_metrics", inspectVoiceMetrics);
-        voiceMetricsInspectionRegistered = true;
-      }
     },
   });
   let resolveBinding!: (result: Awaited<ReturnType<typeof gate.bind>>) => void;
@@ -256,61 +173,11 @@ async function runJob(
     clearInterval(leaseRenewal);
     agentParticipant.unregisterRpcMethod("bind_conversation");
     agentParticipant.unregisterRpcMethod("interrupt_agent");
-    if (voiceMetricsInspectionRegistered) {
-      agentParticipant.unregisterRpcMethod("get_voice_metrics");
-    }
     unsubscribeRevisions?.();
     await session?.close();
     await roomConversation.release();
   });
   await sessionClosed;
-}
-
-async function createNativeAgentInput(
-  binding: { conversationId: string; userId: string },
-  dependencies: WorkerDependencies,
-  resolvePendingDecision?: NativeDecisionRouter,
-): Promise<NativeLiveKitAgentInput> {
-  const recipientMemory = getConfiguredRecipientMemoryRuntime();
-  const snapshot = await dependencies.conversations.get(
-    binding.userId,
-    binding.conversationId,
-  );
-  if (!snapshot) {
-    throw new Error("Bound conversation disappeared before native LiveKit startup.");
-  }
-  return {
-    binding,
-    snapshot,
-    context: {
-      conversationId: snapshot.id,
-      userId: snapshot.userId,
-      language: snapshot.language,
-      config: getWalletAgentConfig(),
-      session: {
-        id: snapshot.id,
-        messages: [...snapshot.messages],
-        ...(snapshot.pendingTransfer
-          ? { pendingTransfer: snapshot.pendingTransfer }
-          : {}),
-        ...(snapshot.recipientMemory
-          ? { recipientMemory: snapshot.recipientMemory }
-          : {}),
-        ...(snapshot.transferResolutionState
-          ? { transferResolutionState: snapshot.transferResolutionState }
-          : {}),
-        ...(snapshot.lastTransactionHash
-          ? { lastTransactionHash: snapshot.lastTransactionHash }
-          : {}),
-      },
-      wallet: dependencies.wallet,
-      ...(recipientMemory
-        ? { recipientMemory }
-        : {}),
-    },
-    conversationService: dependencies.conversationService,
-    ...(resolvePendingDecision ? { resolvePendingDecision } : {}),
-  };
 }
 
 const agent = defineAgent({
@@ -322,7 +189,7 @@ const agent = defineAgent({
       shutdownTimeoutMs: config.shutdownTimeoutMs,
     });
     ctx.addShutdownCallback(runtime.close);
-    await runJob(ctx, config, dependencies, runtime.voiceMetrics);
+    await runJob(ctx, config, dependencies);
   },
 });
 

@@ -16,7 +16,16 @@ import {
 } from "../agent/definition.js";
 import type { ConversationSnapshot } from "../conversations/types.js";
 import type { WalletConversationService } from "../conversations/service.js";
-import type { WalletConversationBinding } from "./wallet-conversation-llm.js";
+/**
+ * Post-migration binding identity used by the native agent factory. The voice
+ * path composes the OpenAI Realtime session, so only the claim mapping
+ * ({ userId, conversationId }) survives here — the old
+ * `wallet-conversation-llm.js` wrapper module was retired with the pipeline.
+ */
+type WalletConversationBinding = {
+  userId: string;
+  conversationId: string;
+};
 import type { NativeDecisionRouter } from "./native-text-turn-router.js";
 
 export type { NativeDecisionRouter } from "./native-text-turn-router.js";

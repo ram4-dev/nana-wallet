@@ -88,10 +88,17 @@ export function createWorkerDependencies(
   const database = createConfiguredDatabaseClient(environment);
   const conversations = new PostgresConversationRepository(database);
   const core = createCoreDependencies(environment);
-  const memory = getConfiguredRecipientMemoryRuntime();
+  // REVIEW FIX V3: `isClaimedRecipientValid` needs a defined memory service to
+  // revalidate versioned recipients; without it the check always returns false.
+  // The service contract today scopes the TEXT path to the demo tenant
+  // (DEMO_USER_ID), so we feed the demo-user runtime and keep tenant behavior
+  // unchanged. Voice tools do NOT use this runtime — they build a shared
+  // per-binding service in src/livekit/worker.ts and pass binding.sub as userId.
+  const memory = getConfiguredRecipientMemoryRuntime(environment);
   const conversationService = createWalletConversationService({
     conversations,
     wallet: core.wallet,
+    memory,
     financialTasks,
     contextRenewal: core.contextRenewal,
     ...(memory ? { memory } : {}),

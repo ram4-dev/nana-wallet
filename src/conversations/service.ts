@@ -5,7 +5,7 @@ import {
   type SendTokenInput,
 } from '../agent/definition.js';
 import { getWalletAgentConfig } from '../agent/instructions.js';
-import type { ConversationTurnResult, PendingTransfer } from '../contracts/http.js';
+import type { ConversationTurnResult, PendingTransfer, TransferPreview } from '../contracts/http.js';
 import { appendMessage, type ConversationSession } from './session-state.js';
 import { errorFromCode, safeErrorMessage, type ConversationErrorCode } from './errors.js';
 import type { ConversationRepository } from './repository.js';
@@ -42,6 +42,16 @@ export type ResolveDecisionInput = {
   decision: 'confirm' | 'cancel';
   signal?: AbortSignal;
   waitForFinancialTask?: boolean;
+};
+
+export type PreviewTransferInput = {
+  conversationId: string;
+  userId: string;
+  amount: string;
+  recipientId: string;
+  recipientVersion: number;
+  /** Accepted for the voice schema but never persisted: the pending transfer stores no memo field. */
+  memo?: string;
 };
 
 export type PersistNativeToolStateInput = {
@@ -83,6 +93,7 @@ export interface WalletConversationService {
   handleTurn(input: HandleTurnInput): Promise<ConversationTurnResult>;
   handleTurnStream(input: HandleTurnInput): AsyncIterable<ConversationEvent>;
   resolveDecision(input: ResolveDecisionInput): AsyncIterable<ConversationEvent>;
+  previewTransfer(input: PreviewTransferInput): Promise<ConversationTurnResult>;
   persistNativeToolState(input: PersistNativeToolStateInput): Promise<ConversationSnapshot>;
   persistNativePreview(input: PersistNativePreviewInput): Promise<NativePreviewCommandResult | Record<string, unknown>>;
   appendNativeMessage(input: {
@@ -276,7 +287,9 @@ export function createWalletConversationService(dependencies: WalletConversation
 
     const claim = await dependencies.conversations.claimPendingTransfer(input.userId, input.conversationId, input.previewId);
     if (claim.status !== 'claimed') {
-      const code: ConversationErrorCode = claim.status === 'uncertain' ? 'broadcast_uncertain' : 'broadcast_in_progress';
+      // REVIEW FIX V5: a claim over a missing/superseded attempt is `stale_preview`,
+      // never `broadcast_in_progress` — the preview no longer exists to be broadcast.
+      const code: ConversationErrorCode = claim.status === 'uncertain' ? 'broadcast_uncertain' : claim.status === 'missing' ? 'stale_preview' : 'broadcast_in_progress';
       const result = errorResult(errorFromCode(code));
       yield* emit(stateEvent(snapshot));
       yield* emitSpoken(result.message, claim.status === 'uncertain' ? 'uncertain' : 'answer');
@@ -313,14 +326,75 @@ export function createWalletConversationService(dependencies: WalletConversation
       return;
     }
 
-    const result = await runFinancialTransfer({ ...input, claimed, snapshot });
-    const updated = await dependencies.conversations.get(input.userId, input.conversationId) ?? snapshot;
-    yield* emit(stateEvent(updated));
-    yield* emitSpoken(result.message, result.status === 'error' ? 'uncertain' : result.status === 'sent' ? 'result' : 'answer');
-    yield event({ type: 'turn-completed', result });
-  }
+        const result = await runFinancialTransfer({ ...input, claimed, snapshot });
+        const updated = await dependencies.conversations.get(input.userId, input.conversationId) ?? snapshot;
+        yield* emit(stateEvent(updated));
+        yield* emitSpoken(result.message, result.status === 'error' ? 'uncertain' : result.status === 'sent' ? 'result' : 'answer');
+        yield event({ type: 'turn-completed', result });
+      }
 
-  async function publish(current: ConversationEvent): Promise<void> {
+      /**
+       * REVIEW FIX V2 — reusable preview entry point. The realtime voice `send_token`
+       * calls this (never duplicating guard logic in livekit): it revalidates the
+       * versioned recipient, applies the wallet policy, persists the pending transfer
+       * through the repository, and emits the state revision via the same publish path
+       * the text service uses (financialTasks + progress) so the frontend card appears.
+       */
+      async function previewTransfer(input: PreviewTransferInput): Promise<ConversationTurnResult> {
+        const snapshot = await dependencies.conversations.get(input.userId, input.conversationId);
+        if (!snapshot) return errorResult(errorFromCode('conversation_not_found'));
+
+        const recipient = await resolveRecipientForTransfer(input.userId, input.recipientId, input.recipientVersion);
+        if (!recipient.ok) return errorResult(errorFromCode('recipient_revalidation_required'));
+
+        const config = getWalletAgentConfig();
+        const transferRequest: TransferRequest = {
+          network: config.network,
+          token: config.token,
+          to: recipient.address,
+          amount: input.amount,
+          wallet: config.wallet,
+        };
+        const policyError = validateWalletTransferPolicy({ ...transferRequest, dryRun: false }, config);
+        if (policyError) return errorResult(errorFromCode('policy_rejected'));
+
+        let preview: TransferPreview;
+        try {
+          preview = await dependencies.wallet.previewTransfer(transferRequest);
+        } catch {
+          return errorResult(errorFromCode('wallet_unavailable'));
+        }
+
+        const pendingTransfer: PendingTransfer = {
+          ...transferRequest,
+          preview,
+          recipientId: input.recipientId,
+          recipientVersion: input.recipientVersion,
+        };
+        const state = await dependencies.conversations.setPendingTransfer(input.userId, input.conversationId, pendingTransfer);
+        await publish(stateEvent(state));
+
+        const message = snapshot.language === 'es'
+          ? `Preparé una transferencia de ${input.amount} ${config.token} para ${recipient.name}. Confirmá para continuar.`
+          : `Prepared a ${input.amount} ${config.token} transfer for ${recipient.name}. Confirm to continue.`;
+        return { status: 'confirmation_required', message, preview };
+      }
+
+      async function resolveRecipientForTransfer(
+        userId: string,
+        recipientId: string,
+        recipientVersion: number,
+      ): Promise<{ ok: true; address: string; name: string } | { ok: false }> {
+        if (!recipientId || recipientVersion === undefined || recipientVersion <= 0) return { ok: false };
+        if (!dependencies.memory) return { ok: false };
+        const current = await dependencies.memory.service.getRecipientForVersion(userId, recipientId, recipientVersion);
+        if (!current || current.id !== recipientId || current.version !== recipientVersion || !isValidEvmAddress(current.address)) {
+          return { ok: false };
+        }
+        return { ok: true, address: current.address, name: current.name };
+      }
+
+      async function publish(current: ConversationEvent): Promise<void> {
     await dependencies.progress?.publish(current);
     dependencies.financialTasks?.publish(current);
   }
@@ -606,6 +680,7 @@ export function createWalletConversationService(dependencies: WalletConversation
     handleTurn,
     handleTurnStream,
     resolveDecision,
+    previewTransfer,
     persistNativeToolState,
     persistNativePreview,
     appendNativeMessage,
@@ -632,11 +707,16 @@ async function* spoken(text: string, reason: 'started' | 'delayed' | 'decision' 
   yield event({ type: 'spoken-segment', id: crypto.randomUUID(), text, reason });
 }
 
-function stateEvent(snapshot: ConversationSnapshot): ConversationEvent {
+type ActivityState = Pick<
+  ConversationSnapshot,
+  'pendingTransfer' | 'pendingInterpretation' | 'transferResolutionState' | 'progress'
+> & { revision: number };
+
+function stateEvent(snapshot: ActivityState): ConversationEvent {
   return { type: 'state-revision', revision: snapshot.revision, activity: activityFor(snapshot) };
 }
 
-function activityFor(snapshot: ConversationSnapshot): ConversationActivity {
+function activityFor(snapshot: ActivityState): ConversationActivity {
   if (snapshot.pendingInterpretation) return 'request_waiting';
   if (snapshot.transferResolutionState === 'uncertain') return 'uncertain';
   if (snapshot.transferResolutionState === 'broadcasting') return 'verifying';

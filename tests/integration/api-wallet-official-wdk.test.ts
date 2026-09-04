@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// Hermetic against the ambient .env (which may select WDK_TOOLS_SOURCE=live).
+process.env.WDK_TOOLS_SOURCE = 'fixture';
+
 const fixture = vi.hoisted(() => ({
   calls: [] as Array<{ name: string; input: Record<string, unknown> }>,
 }));
