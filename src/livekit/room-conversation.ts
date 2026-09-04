@@ -186,6 +186,30 @@ export class RoomConversation {
     return this.deferredTurns.peek();
   }
 
+  public async resolvePendingDecision(
+    text: string,
+  ): Promise<AsyncIterable<ConversationEvent> | undefined> {
+    if (!this.binding) return undefined;
+    const decision = isConfirmation(text)
+      ? 'confirm'
+      : isCancellation(text)
+        ? 'cancel'
+        : undefined;
+    if (!decision) return undefined;
+    const snapshot = await this.dependencies.conversations.get(
+      this.binding.sub,
+      this.binding.conversationId,
+    );
+    const previewId = snapshot?.pendingTransfer?.previewId;
+    if (!previewId) return undefined;
+    return this.dependencies.service.resolveDecision({
+      conversationId: this.binding.conversationId,
+      userId: this.binding.sub,
+      previewId,
+      decision,
+    });
+  }
+
   private async currentRevision(): Promise<number> {
     if (!this.binding) return 0;
     const snapshot = await this.dependencies.conversations.get(
@@ -203,11 +227,13 @@ export class RoomConversation {
       | undefined;
     let failed = true;
     try {
-      for await (const event of this.dependencies.service.handleTurnStream({
+      const decisionEvents = await this.resolvePendingDecision(text);
+      const events = decisionEvents ?? this.dependencies.service.handleTurnStream({
         conversationId: this.binding.conversationId,
         userId: this.binding.sub,
         text,
-      })) {
+      });
+      for await (const event of events) {
         if (event.type === 'turn-completed') completedResult = event.result;
         yield event;
       }

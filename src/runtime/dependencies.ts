@@ -101,6 +101,7 @@ export function createWorkerDependencies(
     memory,
     financialTasks,
     contextRenewal: core.contextRenewal,
+    ...(memory ? { memory } : {}),
   });
   return {
     ...core,

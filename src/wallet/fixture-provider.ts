@@ -17,9 +17,24 @@ import type {
 const HASH_PREFIX = '0x';
 let fixtureTxCounter = 0;
 
+export type FixtureWalletProviderTestOptions = {
+  forcedBroadcastOutcome?: 'uncertain';
+};
+
 export class FixtureWalletProvider implements WalletProvider {
   public readonly id = 'fixture';
   public readonly mode = 'fixture' as const;
+
+  public constructor(
+    private readonly testOptions: FixtureWalletProviderTestOptions = {},
+  ) {
+    if (
+      testOptions.forcedBroadcastOutcome &&
+      process.env.NODE_ENV !== 'test'
+    ) {
+      throw new Error('Fixture wallet fault injection is available only in test mode.');
+    }
+  }
 
   public async health(): Promise<WalletProviderHealth> {
     return { status: 'healthy' };
@@ -66,6 +81,9 @@ export class FixtureWalletProvider implements WalletProvider {
   }
 
   public async broadcastTransfer(request: TransferRequest): Promise<BroadcastOutcome> {
+    if (this.testOptions.forcedBroadcastOutcome === 'uncertain') {
+      return { kind: 'uncertain', reason: 'Test fixture forced an uncertain broadcast result.' };
+    }
     fixtureTxCounter += 1;
     const transactionHash = `${HASH_PREFIX}${fixtureTxCounter.toString(16).padStart(64, '0')}`;
     const transaction: TransactionResult = {

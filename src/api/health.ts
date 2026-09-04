@@ -2,9 +2,12 @@ import type { FastifyInstance } from 'fastify';
 import type { HealthResponse } from '../contracts/http.js';
 import type { WalletProvider } from '../wallet/provider.js';
 
-const NETWORK = process.env.WDK_NETWORK ?? 'sepolia';
-const WALLET = process.env.WDK_WALLET_NAME ?? 'agent-demo';
-const MODE = process.env.WDK_TOOLS_SOURCE === 'live' ? 'live' : 'fixture';
+const NETWORK = () => process.env.WDK_NETWORK ?? 'sepolia';
+const WALLET = () => process.env.WDK_WALLET_NAME ?? 'agent-demo';
+// Read lazily: module-level constants froze the ambient .env at import time and
+// made the health contract depend on dotenv evaluation order (hermetic tests pin
+// the env before building the server).
+const MODE = () => (process.env.WDK_TOOLS_SOURCE === 'live' ? 'live' : 'fixture');
 
 export async function registerHealthRoutes(app: FastifyInstance, dependencies: { wallet: WalletProvider }): Promise<void> {
   app.get('/health', async (): Promise<HealthResponse> => {
@@ -20,13 +23,13 @@ export async function registerHealthRoutes(app: FastifyInstance, dependencies: {
 
     if (mcp === 'connected') {
       try {
-        await dependencies.wallet.getAddress({ network: NETWORK, wallet: WALLET });
+        await dependencies.wallet.getAddress({ network: NETWORK(), wallet: WALLET() });
         wallet = 'unlocked';
       } catch {
         wallet = 'locked';
       }
     }
 
-    return { status: 'ok', mode: MODE, mcp, wallet, network: NETWORK };
+    return { status: 'ok', mode: MODE(), mcp, wallet, network: NETWORK() };
   });
 }

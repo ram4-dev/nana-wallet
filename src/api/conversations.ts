@@ -7,12 +7,7 @@ import { z } from 'zod';
 import type { ConversationSnapshot } from '../conversations/types.js';
 import { projectConversationState } from '../conversations/state-projection.js';
 import { conversationDecisionRequestSchema, endLiveConversationRequestSchema, conversationTurnRequestSchema, type ConversationStateResponse, type CreateConversationResponse } from '../contracts/http.js';
-
-const CONFIRMATIONS = new Set(['confirm', 'i confirm', 'yes confirm', 'yes, confirm', 'confirmar', 'confirmo', 'sí confirmo', 'sí, confirmo', 'si confirmo', 'si, confirmo', 'confirmar transferencia', 'confirmar la transferencia', 'confirmo la transferencia']);
-
-function isConfirmation(message: string): boolean {
-  return CONFIRMATIONS.has(message.trim().toLocaleLowerCase('es-AR').normalize('NFC').replace(/[.!]+$/u, '').trim().replace(/\s+/gu, ' '));
-}
+import { isConfirmation } from '../livekit/resolution-phrases.js';
 
 export type ConversationRouteDependencies = {
   conversations: ConversationRepository;

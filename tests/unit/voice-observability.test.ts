@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { readVoiceTraceConfig } from '../../src/config/privacy.js';
-import { VoiceMetrics } from '../../src/observability/voice-metrics.js';
+import {
+  canInspectVoiceMetrics,
+  readVoiceTraceConfig,
+} from '../../src/config/privacy.js';
+import {
+  VoiceLatencyMilestones,
+  VoiceMetrics,
+} from '../../src/observability/voice-metrics.js';
 import { VoiceTraceRecorder } from '../../src/observability/voice-trace.js';
 
 describe('voice observability', () => {
@@ -15,9 +21,40 @@ describe('voice observability', () => {
     });
   });
 
+  it('records native latency milestones with only the runtime label', () => {
+    let now = 0;
+    const metrics = new VoiceMetrics();
+    const milestones = new VoiceLatencyMilestones(metrics, 'native-livekit', () => now);
+
+    now = 20;
+    milestones.connected();
+    now = 40;
+    milestones.finalTranscript();
+    milestones.firstTokenDuration(12);
+    milestones.firstAudioDuration(18);
+    now = 70;
+    milestones.completed();
+
+    expect(metrics.snapshot()).toEqual({
+      counters: { turns_started: 1, turns_completed: 1 },
+      latencyMs: {
+        'native-livekit.connection': { count: 1, total: 20, max: 20 },
+        'native-livekit.final_transcript': { count: 1, total: 40, max: 40 },
+        'native-livekit.first_token': { count: 1, total: 12, max: 12 },
+        'native-livekit.first_audio': { count: 1, total: 18, max: 18 },
+        'native-livekit.total': { count: 1, total: 30, max: 30 },
+      },
+    });
+    expect(JSON.stringify(metrics.snapshot())).not.toContain('Send 10 USDT');
+    expect(JSON.stringify(metrics.snapshot())).not.toContain('0x');
+  });
+
   it('is disabled by default and rejects unapproved production traces', () => {
     expect(readVoiceTraceConfig({ NODE_ENV: 'production' })).toMatchObject({ enabled: false, retentionDays: 7 });
     expect(() => readVoiceTraceConfig({ NODE_ENV: 'production', VOICE_TRACE_ENABLED: 'true' })).toThrow('PRIVACY_APPROVED');
+    expect(canInspectVoiceMetrics({ NODE_ENV: 'development' })).toBe(true);
+    expect(canInspectVoiceMetrics({ NODE_ENV: 'test' })).toBe(true);
+    expect(canInspectVoiceMetrics({ NODE_ENV: 'production' })).toBe(false);
   });
 
   it('redacts before storing and expires traces after at most seven days', async () => {
@@ -30,6 +67,8 @@ describe('voice observability', () => {
     }, () => now);
     await recorder.record({
       traceId: 'trace-1',
+      runtime: 'native-livekit',
+      nativeToolNames: ['send_token', 'send 10 USDT to Ana'],
       conversationIdHash: 'conversation-1',
       roomIdHash: 'room-1',
       startedAt: new Date(0).toISOString(),
@@ -41,6 +80,12 @@ describe('voice observability', () => {
     const stored = recorder.list()[0];
     expect(stored?.transcript.redactedText).not.toContain('10 USDT');
     expect(stored?.transcript.redactedText).not.toContain('0x1111');
+    expect(stored?.runtime).toBe('native-livekit');
+    expect(stored?.nativeToolNames).toEqual(['send_token', '[redacted]']);
+    const serialized = JSON.stringify(stored);
+    expect(serialized).not.toContain('10 USDT');
+    expect(serialized).not.toContain('0x1111');
+    expect(serialized).not.toContain('Ana');
     now = 7 * 24 * 60 * 60 * 1000;
     expect(recorder.list()).toEqual([]);
   });

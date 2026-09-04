@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildServer } from '../../src/server.js';
 
+// Hermetic: the local development .env may set WDK_TOOLS_SOURCE=live; these
+// tests exercise the fixture provider contract.
+process.env.WDK_TOOLS_SOURCE = 'fixture';
+
 describe('wallet read endpoints', () => {
   it('GET /v1/wallet/address returns the fixture address', async () => {
     const app = buildServer();
