@@ -23,11 +23,18 @@ evals/
     conversational-quality.eval.ts # offline (judge mock) + real (agente + juez reales)
     model-factory.ts             # proveedores + matriz EVAL_MODELS
     judge-calibration.json       # baseline del juez (con human_label pendiente)
-  voice/
-    .audio/                      # clips + manifest (gitignored)
-    stt/                         # WER + providers (nan / openai) + eval
-    tts/                         # round-trip TTS→STT (opcional, gpt-4o-mini-tts)
-    realtime/                    # E2E speech-to-speech (gpt-realtime-2.1-mini)
+      voice/
+        .audio/                      # clips + manifest (gitignored)
+        stt/                         # WER + providers (nan / openai) + eval
+        tts/                         # round-trip TTS→STT (opcional, gpt-4o-mini-tts)
+        realtime/
+          realtime.eval.ts           # E2E speech-to-speech (gpt-realtime-2.1-mini)
+          session.ts                 # cliente WebSocket realtime + diálogo multi-turno
+          eval-fixtures.ts           # stack fixture offline (repo + memory + wallet espía)
+          tool-binding.ts            # binding tools de LiveKit → protocolo OpenAI realtime
+          scenarios.ts               # matriz de escenarios de herramientas
+          tools-matrix.eval.ts       # eval real (gated EVAL_REAL=1) de transferencias
+          baseline.json              # baseline de la matriz (se escribe tras un run real)
 ```
 
 ## Variables de entorno
@@ -40,9 +47,39 @@ evals/
 | `EVAL_MODELS` | Matriz de modelos: `openai:gpt-5.6-luna, opencode:deepseek-v4-flash` |
 | `AGENT_PROVIDER` | Proveedor del modelo evaluado: `opencode` (default) · `openai` (requiere `AGENT_MODEL`) |
 | `EVAL_JUDGE_MODEL` / `EVAL_JUDGE_PROVIDER` | Modelo juez (default `deepseek-v4-pro` en opencode) |
-| `EVAL_REALTIME_MODEL` | Modelo del E2E realtime (default `gpt-realtime-2.1-mini`) |
-| `EVAL_REALTIME_CLIPS` | Cantidad de clips del E2E realtime (default 5) |
-| `EVAL_REALTIME_DEBUG=1` | Log de eventos WebSocket |
+    | `EVAL_REALTIME_MODEL` | Modelo del E2E realtime (default `gpt-realtime-2.1-mini`) |
+    | `EVAL_REALTIME_CLIPS` | Cantidad de clips del E2E realtime (default 5) |
+    | `EVAL_REALTIME_DEBUG=1` | Log de eventos WebSocket |
+    | `OPENAI_API_KEY` (o `OPEN_AI_API_KEY`) | Clave para el realtime + TTS de la matriz (solo real) |
+
+    ## Realtime tools matrix (`evals/voice/realtime/tools-matrix.eval.ts`)
+
+    Ejercita **el flujo de transferencia por voz** contra el modelo real `gpt-realtime-2.1-mini`
+    con las herramientas de producción (get_balance, search_contacts, send_token,
+    confirm_transfer, cancel_transfer) enlazadas a una stack fixture offline (sin red/BD):
+    un repo en memoria, una agenda de contactos con `Mamá`/`Papá`, y un wallet fixture
+    envuelto en un espía que registra cada broadcast. La política live se setea al inicio
+    del eval (`WDK_MAX_TRANSFER_AMOUNT=100`, `WDK_ALLOWED_RECIPIENTS=<Mamá>`).
+
+    - **Turnos de usuario** se inyectan como ítems de TEXTO vía `conversation.item.create`
+      (determinista, barato, sin depender de STT): lo medido es la secuencia de tools + la
+      narración. La única excepción es la primera pregunta de G1, que va como AUDIO
+      sintetizado con `gpt-4o-mini-tts` (con fallback a texto) para probar que el audio-in
+      dispara un tool call.
+    - **Gating:** la matriz corre solo con `EVAL_REAL=1`. En offline la suite queda verde
+      (los 5 escenarios se saltan, exit 0). Los escenarios G3 y G5 usan `trialCount: 3`.
+
+    | ID | Escenario | Aserción |
+    |---|---|---|
+    | `g1-happy-path` (G1) | multi-turno: saldo → mandar 50 a mamá → confirmar | `get_balance→search_contacts→send_token→confirm_transfer`, 1 broadcast, narración menciona 50 y mamá |
+    | `g2-cancel` (G2) | preview y luego cancelar | `confirm_transfer` NUNCA llamado, 0 broadcast (cancel o nada) |
+    | `g3-no-spontaneous-confirm` (G3) | preview + pregunta no relacionada | sin `confirm_transfer` espontáneo, 0 broadcast |
+    | `g4-policy-rejected` (G4) | monto sobre el límite (5000 > 100) | `send_token` devuelve `policy_rejected`, 0 broadcast, sin confirm |
+    | `g5-fidelity` (G5) | fidelidad de la narración del preview | monto (50/cincuenta) y destinatario (mamá) mencionados |
+
+    Tras un run real, `evals/voice/realtime/baseline.json` persiste por escenario: trials,
+    pass rate, secuencias de tools observadas, transcripts y errores de `send_token`.
+    El commit del baseline es responsabilidad del pipeline/orkestrador, no del eval.
 
 ## Baselines (2026-09-04)
 
