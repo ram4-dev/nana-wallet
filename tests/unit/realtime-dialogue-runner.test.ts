@@ -87,7 +87,7 @@ describe('runRealtimeDialogue empty-response retry', () => {
       // Retry: a proper narrated response.
       (ws) => {
         emit(ws, 'response.created', { response: {} });
-        emit(ws, 'response.audio_transcript.delta', { delta: { transcript: 'Tu saldo es 42.5' } });
+        emit(ws, 'response.output_audio_transcript.delta', { delta: { transcript: 'Tu saldo es 42.5' } });
         emit(ws, 'response.done', { response: { output: [{ type: 'message' }] } });
       },
     ];
