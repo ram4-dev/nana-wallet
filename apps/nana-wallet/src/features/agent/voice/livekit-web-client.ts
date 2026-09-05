@@ -25,10 +25,8 @@ export type LiveKitWebClientOptions = {
 };
 
 function readConfig(options: LiveKitWebClientOptions) {
-  const tokenServerId =
-    options.tokenServerId ?? import.meta.env["VITE_LIVEKIT_TOKEN_SERVER_ID"];
-  const agentName =
-    options.agentName ?? import.meta.env["VITE_LIVEKIT_AGENT_NAME"] ?? "nani-agent";
+  const tokenServerId = options.tokenServerId ?? import.meta.env["VITE_LIVEKIT_TOKEN_SERVER_ID"];
+  const agentName = options.agentName ?? import.meta.env["VITE_LIVEKIT_AGENT_NAME"] ?? "nani-agent";
   const participantIdentity =
     options.participantIdentity ?? import.meta.env["VITE_LIVEKIT_PARTICIPANT_IDENTITY"];
   if (!tokenServerId || !participantIdentity)
@@ -202,9 +200,7 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
 }
 
 async function waitForAgent(room: Room): Promise<RemoteParticipant> {
-  const current = [...room.remoteParticipants.values()].find(
-    (participant) => participant.isAgent,
-  );
+  const current = [...room.remoteParticipants.values()].find((participant) => participant.isAgent);
   if (current) return current;
   return new Promise<RemoteParticipant>((resolve, reject) => {
     const timeout = window.setTimeout(() => {

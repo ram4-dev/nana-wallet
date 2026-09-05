@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (lint, typecheck, tests, evals)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: npm
+
+      # Same database image and init script as local development (compose.yaml).
+      - name: Start database
+        run: docker compose up -d --wait db
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply database schema
+        env:
+          PSQL: docker compose exec -T db psql
+            -U postgres -d wdk_agent -v ON_ERROR_STOP=1
+        run: |
+          $PSQL -c "CREATE SCHEMA IF NOT EXISTS extensions;"
+          for f in supabase/roles.sql supabase/migrations/*.sql; do
+            echo "Applying $f"
+            $PSQL < "$f"
+          done
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+        env:
+          DATABASE_URL: postgres://postgres@localhost:5432/wdk_agent
+          DEMO_USER_ID: 00000000-0000-4000-8000-000000000001
+
+      - name: Evals
+        run: npm run eval
+        env:
+          DATABASE_URL: postgres://postgres@localhost:5432/wdk_agent
+          DEMO_USER_ID: 00000000-0000-4000-8000-000000000001
+
+  frontend:
+    name: Frontend (lint, typecheck, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/nana-wallet
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: npm
+          cache-dependency-path: apps/nana-wallet/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test

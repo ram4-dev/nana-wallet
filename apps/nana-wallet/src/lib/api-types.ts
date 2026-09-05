@@ -1,3 +1,8 @@
+// Estos tipos duplican manualmente los contratos HTTP del backend definidos en
+// `src/contracts/http.ts` (zod). Son la fuente de verdad del servidor; el front
+// los replica a mano. Si cambiás el contrato HTTP, actualizá AMBOS lados en el
+// mismo PR.
+
 export type Ok<T> = { ok: true; data: T };
 
 export type Err = {

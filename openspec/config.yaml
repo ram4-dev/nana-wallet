@@ -5,7 +5,7 @@ context: |
   Repository state: Node.js TypeScript Fastify backend with a fixture/live WDK agent boundary.
   Stack: Node.js, TypeScript, Fastify, AI SDK Core, @ai-sdk/mcp, WDK, Vitest.
   Recipient-memory foundation: PostgreSQL 16 with pgvector, pg, and Transformers.js.
-  Canonical planning document: docs/wdk-agent-development-plan.md.
+  Canonical planning document: docs/architecture.md.
   Artifact persistence: OpenSpec files under openspec/.
   Strict TDD is disabled until a test runner and implementation workspace exist.
 
@@ -30,7 +30,7 @@ testing:
 
 rules:
   proposal:
-    - Keep scope aligned with the backend-only WDK transaction-agent demo in docs/wdk-agent-development-plan.md.
+    - Keep scope aligned with the backend-only WDK transaction-agent demo in docs/architecture.md.
     - Include a rollback plan for risky changes involving wallet or transaction behavior.
   specs:
     - Use Given/When/Then scenarios.

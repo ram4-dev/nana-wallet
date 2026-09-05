@@ -84,7 +84,7 @@ WDK_TOOLS_SOURCE=live
 AGENT_RUNTIME=llm
 WDK_WALLET_NAME=agent-dev
 WDK_NETWORK=sepolia
-WDK_TOKEN=usdt
+WDK_TOKEN=USDT
 WDK_MAX_TRANSFER_AMOUNT=0.05
 WDK_ALLOWED_RECIPIENTS=0x1111111111111111111111111111111111111111
 ```
@@ -103,7 +103,7 @@ Before any transfer, verify the process is live rather than fixture mode:
 
 ```bash
 curl -fsS http://localhost:3000/health | jq
-curl -fsS 'http://localhost:3000/v1/wallet/balance?network=sepolia&token=usdt' | jq
+curl -fsS 'http://localhost:3000/v1/wallet/balance?network=sepolia&token=USDT' | jq
 ```
 
 Stop if health reports `mode: fixture`, a wallet is locked, the network is not

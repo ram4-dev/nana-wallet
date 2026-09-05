@@ -95,25 +95,59 @@ placed in `VITE_*` values. The returned media credential is scoped to the room
 and agent requested by the browser, while the signed Fastify binding remains
 the worker's application identity check.
 
-## Native runtime rollout and rollback
+## Live voice architecture
 
-`LIVEKIT_AGENT_RUNTIME=service-adapter` is the default rollback-safe worker
-mode. It retains the existing `WalletConversationLLM` bridge. Set
-`LIVEKIT_AGENT_RUNTIME=native-livekit` only for a worker with the existing
-`OPENCODE_GO_API_KEY`; the worker rejects unsupported runtime values and never
-falls back silently.
+Live voice is one OpenAI Realtime speech-to-speech session
+(`OPENAI_REALTIME_MODEL`, default `gpt-realtime-2.1-mini`; `OPENAI_REALTIME_VOICE`,
+default `marin`). The session is created in the worker from `OPENAI_API_KEY` and
+started with `record: false`. There is no separate STT/TTS/VAD step and no
+`WalletConversationLLM`: transcription, inference, and speech generation occur
+inside the Realtime model session.
 
-The native runtime uses the same OpenCode Go-compatible DeepSeek endpoint and
-the same durable binding, lease, decision, revision, and HTTP-state contracts.
-It does not give a model tool broadcast or finality authority. To roll back a
-native test window, restart only the worker with `service-adapter`; do not
-replay an in-progress or uncertain transfer.
+The worker builds a per-binding `WalletConversationService` after the
+`bind_conversation` gate succeeds. Its recipient-memory runtime scopes to the
+binding user (`binding.sub`), never the demo tenant — this is the REVIEW FIX V3
+wiring that makes `isClaimedRecipientValid` revalidate versioned recipients. The
+worker shares the repository, wallet, and `FinancialTaskRegistry` with that
+per-binding service, so the voice tools and the frontend Confirm/Cancel card
+arbitrate on the same database claim.
 
-Keep the legacy bridge until all of these gates are evidenced for the deployed
-configuration: fixture runtime parity, privacy-safe metrics review, native
-cloud smoke, and browser manual verification. The smoke and browser checks are
-not replaceable with fixture tests because they exercise room dispatch, media,
-and client lifecycle boundaries.
+Five model-facing realtime tools are exposed by `createRealtimeTools`:
+
+- `get_balance` — reads the configured wallet balance via `WalletProvider`.
+- `search_contacts` — searches `RecipientMemoryService` scoped per binding user
+  (`binding.sub`); returns address-free candidates, fails closed when memory is
+  unavailable.
+- `send_token` — preview-only. Its strict zod schema accepts only
+  `{ amount, recipientId, recipientVersion, memo? }` and rejects any unknown field,
+  so a model can never pass `dryRun`, a free-form `to` address, network, token, or
+  wallet. It delegates to the service's `previewTransfer`.
+- `confirm_transfer` / `cancel_transfer` — call `resolveDecision` with the
+  *current* persisted `previewId`, so a superseded or cancelled preview fails
+  closed to `stale_preview` instead of broadcasting.
+
+A preview is persisted through the PostgreSQL repository as a `pendingTransfer`
+on `conversation_state` plus a row in `conversation_transfer_attempts`. The unique
+partial index `conversation_one_active_transfer_idx` allows at most one active
+transfer per conversation. The worker subscribes to `financialTasks` state
+revisions and publishes `conversation_state_changed` data (topic
+`conversation_state_changed`) to the participant so the frontend Confirm/Cancel
+card appears without publish logic in the LiveKit tool layer.
+
+## Native runtime selector
+
+`LIVEKIT_AGENT_RUNTIME` is retained as worker configuration (`service-adapter` by
+default, or `native-livekit`) so the native LiveKit eval tooling and server code
+that read `readLiveKitAgentRuntime` keep compiling. It does not change how the
+worker composes its session: the worker always builds the single OpenAI Realtime
+speech-to-speech session above. The worker rejects unsupported runtime values and
+never falls back silently.
+
+Keep the legacy bridge decision gates (fixture runtime parity, privacy-safe
+metrics review, native cloud smoke, and browser manual verification) as
+read-only evidence for the retained runtime selector; they are not replaceable
+with fixture tests because they exercise room dispatch, media, and client
+lifecycle boundaries.
 
 ## Start independently
 

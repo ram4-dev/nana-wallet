@@ -44,15 +44,20 @@ describe('process-specific configuration', () => {
     });
   });
 
-  it('requires OPENAI_API_KEY for a worker (realtime is the only voice path)', () => {
+  it('requires the OpenAI key for the worker and no longer consumes ElevenLabs there', () => {
+    // Post-migration: the worker requires OPENAI_API_KEY and no longer consumes
+    // ElevenLabs (ElevenLabs remains only in the API process for the recorded
+    // transport /v1/voice/speak).
     const keys = keyPair();
-    expect(() => readWorkerProcessConfig({
+    const base = {
       LIVEKIT_URL: 'wss://example.livekit.cloud',
       LIVEKIT_API_KEY: 'dev-key',
       LIVEKIT_API_SECRET: 'dev-secret',
       DATABASE_URL: 'postgres://local',
       DEMO_USER_ID: '11111111-1111-4111-8111-111111111111',
       LIVE_VOICE_BINDING_PUBLIC_KEY: keys.publicKey,
-    })).toThrowError('OPENAI_API_KEY is required');
+    };
+    expect(() => readWorkerProcessConfig(base)).toThrow('OPENAI_API_KEY is required');
+    expect(readWorkerProcessConfig({ ...base, OPENAI_API_KEY: 'vault-openai-key' })).toBeDefined();
   });
 });

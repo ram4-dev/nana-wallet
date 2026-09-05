@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildServer } from '../../src/server.js';
 
+// Hermetic: the local development .env may select live wallet mode; these tests
+// assert the fixture-mode health contract.
+process.env.WDK_TOOLS_SOURCE = 'fixture';
+
 describe('GET /health', () => {
   it('reports ok status with mcp and wallet state', async () => {
     const app = buildServer();

@@ -1,7 +1,6 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
 import { z } from "zod";
 import { readLiveKitPrivacyConfig } from "./livekit.js";
-import { readElevenLabsApiKey } from "./privacy.js";
 
 const uuid = z.string().uuid();
 
