@@ -13,7 +13,7 @@ import type { Contact } from "@/lib/api-types";
  * Product decision (2026-09-10, wallet-profile scope): the payment-permission
  * allowlist is exactly the user's saved contacts (Q3), so adding a trusted
  * recipient here means creating a contact. The form lives INSIDE
- * "Administrar billetera" (WP-012): it never loads just by opening /mi-plata,
+ * /perfil (owner decision 2026-10-07): it never loads just by opening a screen,
  * and the balance section is unaffected by its errors. The activation flow in
  * WalletLifecycle consumes the refreshed contacts automatically.
  */
