@@ -84,7 +84,10 @@ describe('POST /v1/agent/transcribe', () => {
     await app.close();
   });
 
-  it('returns 502 when the upstream service fails', async () => {
+  it('returns 502 when the upstream service fails', {
+    // Same CI-load headroom rationale as the /v1/voice/speak group below.
+    timeout: 15_000,
+  }, async () => {
     process.env.NAN_API_KEY = 'test-key';
     global.fetch = vi.fn(async () => new Response('', { status: 500 })) as unknown as typeof fetch;
 

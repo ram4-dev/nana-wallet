@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   const getBalance = vi.fn(async () => ({
-    network: "sepolia",
-    token: "USDT",
+    network: "arc-testnet",
+    token: "USDC",
     address: "0x1234000000000000000000000000000000abcd",
     balance: "42.5",
   }));
@@ -13,7 +13,10 @@ const h = vi.hoisted(() => {
 });
 
 vi.mock("@livekit/agents", () => ({
-  tool: (def: Record<string, unknown>) => ({ type: "function", ...def }),
+  llm: {
+    tool: (def: Record<string, unknown>) => ({ type: "function", ...def }),
+    ToolFlag: { CANCELLABLE: 1, NONE: 0 },
+  },
 }));
 
 import { createRealtimeTools } from "../../src/livekit/realtime-tools/index.js";
@@ -66,6 +69,22 @@ function balanceTool(toolDef: unknown): (input?: unknown) => Promise<BalanceTool
   return (input: unknown = {}) => execute(input);
 }
 
+const walletStub = () => ({
+  listNetworks: async () => [],
+  listTokens: async () => [],
+  getAddress: async () => ({}),
+  getBalance: async () => ({}),
+  getHistory: async () => ({ transactions: [] }),
+});
+
+function byName(tools: unknown, name: string): { name: string; execute: unknown; parameters?: { parse(input: unknown): unknown } } {
+  const found = (tools as unknown as Array<{ name: string; execute: unknown; parameters?: { parse(input: unknown): unknown } }>).find(
+    (t) => t.name === name,
+  );
+  if (!found) throw new Error(`${name} tool not found`);
+  return found;
+}
+
 describe("createRealtimeTools", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -76,11 +95,11 @@ describe("createRealtimeTools", () => {
 
   it("get_balance returns the provider balance with an empty parameters schema", async () => {
     const wallet = { getBalance: h.getBalance } as never;
-    const [getBalanceTool] = createRealtimeTools({
+    const getBalanceTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
       wallet,
-    });
+    }), "get_balance");
 
     // Explicit empty params: the schema accepts {} and requires nothing.
     expect(getBalanceTool.name).toBe("get_balance");
@@ -92,15 +111,14 @@ describe("createRealtimeTools", () => {
     const result = await balanceTool(getBalanceTool)();
 
     expect(h.getBalance).toHaveBeenCalledWith({
-      network: "sepolia",
-      token: "USDT",
+      network: "arc-testnet",
       wallet: "agent-demo",
     });
     expect(result).toMatchObject({
-      network: "sepolia",
-      token: "USDT",
+      network: "arc-testnet",
+      token: "USDC",
       balance: "42.50",
-      balanceSpoken: "forty-two USDT and fifty cents",
+      balanceSpoken: "forty-two USDC and fifty cents",
     });
   });
 
@@ -139,12 +157,12 @@ describe("createRealtimeTools", () => {
       };
     });
     const recipientMemory = { searchRecipients } as never;
-    const [, searchContactsTool] = createRealtimeTools({
+    const searchContactsTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
+      wallet: walletStub() as never,
       recipientMemory,
-    });
+    }), "search_recipients");
 
     const result = await (
       searchContactsTool.execute as SearchContactsExecute
@@ -197,12 +215,12 @@ describe("createRealtimeTools", () => {
       };
     });
     const recipientMemory = { searchRecipients } as never;
-    const [, searchContactsTool] = createRealtimeTools({
+    const searchContactsTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
+      wallet: walletStub() as never,
       recipientMemory,
-    });
+    }), "search_recipients");
 
     const result = await (
       searchContactsTool.execute as SearchContactsExecute
@@ -222,12 +240,12 @@ describe("createRealtimeTools", () => {
       return { status: "no_match", candidates: [] };
     });
     const recipientMemory = { searchRecipients } as never;
-    const [, searchContactsTool] = createRealtimeTools({
+    const searchContactsTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-sub-uuid",
-      wallet: {} as never,
+      wallet: walletStub() as never,
       recipientMemory,
-    });
+    }), "search_recipients");
 
     await (searchContactsTool.execute as SearchContactsExecute)({ query: "Lucas" });
 
@@ -239,11 +257,11 @@ describe("createRealtimeTools", () => {
   });
 
   it("search_contacts fails closed to unavailable without a memory service", async () => {
-    const [, searchContactsTool] = createRealtimeTools({
+    const searchContactsTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
-    });
+      wallet: walletStub() as never,
+    }), "search_recipients");
 
     const result = await (
       searchContactsTool.execute as SearchContactsExecute
@@ -262,9 +280,9 @@ describe("createRealtimeTools", () => {
     const tools = createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
+      wallet: walletStub() as never,
     });
-    const sendToken = financialTool(tools[2], 2);
+    const sendToken = financialTool(byName(tools, "send_token"), 2);
 
     // Preview-only accepts exactly amount/recipientId/recipientVersion(+memo).
     expect(sendToken.parameters.parse({ amount: "10", recipientId: "c-1", recipientVersion: 2 })).toBeTruthy();
@@ -289,13 +307,13 @@ describe("createRealtimeTools", () => {
     const service = {
       previewTransfer: vi.fn().mockResolvedValue({
 status: "confirmation_required",
-message: "Preparé una transferencia de 10 USDT para Lucas. Confirmá para continuar.",
-preview: { network: "sepolia", token: "USDT", recipient: "0xsecret", amount: "10", estimatedFee: "0.0003 ETH" },
+message: "Preparé una transferencia de 10 USDC para Lucas. Confirmá para continuar.",
+preview: { network: "arc-testnet", token: "USDC", recipient: "0xsecret", amount: "10", estimatedFee: "0.0003 ETH" },
       }),
     };
     const conversations = {
       get: vi.fn().mockResolvedValue({ pendingTransfer: {
-        previewId: "preview-abc", amount: "10", token: "USDT", network: "sepolia",
+        previewId: "preview-abc", amount: "10", token: "USDC", network: "arc-testnet",
       }, language: "es" }),
     };
     const voiceDecisionGate = createVoiceDecisionGate({ isConfirmation, isCancellation });
@@ -303,14 +321,14 @@ preview: { network: "sepolia", token: "USDT", recipient: "0xsecret", amount: "10
     const tools = createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
+      wallet: walletStub() as never,
       service,
       recipientMemory: recipientMemory as never,
       conversations: conversations as never,
       voiceDecisionGate,
       speakPreview,
     } as never);
-    const sendToken = financialTool(tools[2], 2);
+    const sendToken = financialTool(byName(tools, "send_token"), 2);
 
     const result = await sendToken.execute({ amount: "10", recipientId: "c-1", recipientVersion: 2 });
 
@@ -328,7 +346,7 @@ preview: { network: "sepolia", token: "USDT", recipient: "0xsecret", amount: "10
     );
     expect(result.status).toBe("confirmation_required");
     expect(result.amount).toBe("10");
-    expect(result.token).toBe("USDT");
+    expect(result.token).toBe("USDC");
     expect(result).toMatchObject({
       recipientName: "Lucas",
       estimatedFee: "0.0003 ETH",
@@ -353,12 +371,12 @@ yield { type: "turn-completed", result: { status: "sent", message: "Transfer con
     const tools = createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
+      wallet: walletStub() as never,
       conversations,
       service,
       voiceDecisionGate,
     } as never);
-    const confirm = financialTool(tools[3], 3);
+    const confirm = financialTool(byName(tools, "confirm_transfer"), 3);
 
     const result = await confirm.execute({});
 
@@ -377,11 +395,11 @@ yield { type: "turn-completed", result: { status: "sent", message: "Transfer con
     const tools = createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
+      wallet: walletStub() as never,
       conversations,
       service,
     } as never);
-    const confirm = financialTool(tools[3], 3);
+    const confirm = financialTool(byName(tools, "confirm_transfer"), 3);
 
     const result = await confirm.execute({});
 
@@ -402,12 +420,12 @@ yield { type: "turn-completed", result: { status: "cancelled", message: "Transfe
     const tools = createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: {} as never,
+      wallet: walletStub() as never,
       conversations,
       service,
       voiceDecisionGate,
     } as never);
-    const cancel = financialTool(tools[4], 4);
+    const cancel = financialTool(byName(tools, "cancel_transfer"), 4);
 
     const result = await cancel.execute({});
 
@@ -420,22 +438,22 @@ yield { type: "turn-completed", result: { status: "cancelled", message: "Transfe
 
   it("rounds the provider balance to two decimals and spells it out for the voice model", async () => {
     const getBalance = vi.fn(async () => ({
-      network: "sepolia",
+      network: "arc-testnet",
       token: "USDC",
       address: "0x1234000000000000000000000000000000abcd",
       balance: "97.989332609300122852",
     }));
-    const [getBalanceTool] = createRealtimeTools({
+    const getBalanceTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
       wallet: { getBalance } as never,
-    });
+    }), "get_balance");
 
     const result = await balanceTool(getBalanceTool)();
 
     // The 24-character provider decimal never reaches the model: no digit-by-digit read.
     expect(result).toEqual({
-      network: "sepolia",
+      network: "arc-testnet",
       token: "USDC",
       address: "0x1234000000000000000000000000000000abcd",
       balance: "97.99",
@@ -445,17 +463,17 @@ yield { type: "turn-completed", result: { status: "cancelled", message: "Transfe
 
   it("speaks the balance in the persisted conversation language", async () => {
     const conversations = { get: vi.fn(async () => ({ language: "es" })) };
-    const [getBalanceTool] = createRealtimeTools({
+    const getBalanceTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
       wallet: { getBalance: h.getBalance } as never,
       conversations: conversations as never,
-    });
+    }), "get_balance");
 
     const result = await balanceTool(getBalanceTool)();
 
     expect(conversations.get).toHaveBeenCalledWith("binding-user", "conv-1");
-    expect(result.balanceSpoken).toBe("cuarenta y dos USDT con cincuenta centavos");
+    expect(result.balanceSpoken).toBe("cuarenta y dos USDC con cincuenta centavos");
   });
 
   it("defaults the spoken balance to English when the language cannot be resolved", async () => {
@@ -465,35 +483,35 @@ yield { type: "turn-completed", result: { status: "cancelled", message: "Transfe
       }),
     };
     const unknownConversation = { get: vi.fn(async () => undefined) };
-    const [withFailure] = createRealtimeTools({
+    const withFailure = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
       wallet: { getBalance: h.getBalance } as never,
       conversations: failing as never,
-    });
-    const [withoutConversation] = createRealtimeTools({
+    }), "get_balance");
+    const withoutConversation = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
       wallet: { getBalance: h.getBalance } as never,
       conversations: unknownConversation as never,
-    });
-    const [withoutRepository] = createRealtimeTools({
+    }), "get_balance");
+    const withoutRepository = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
       wallet: { getBalance: h.getBalance } as never,
-    });
+    }), "get_balance");
 
     await expect(balanceTool(withFailure)()).resolves.toMatchObject({
       balance: "42.50",
-      balanceSpoken: "forty-two USDT and fifty cents",
+      balanceSpoken: "forty-two USDC and fifty cents",
     });
     await expect(balanceTool(withoutConversation)()).resolves.toMatchObject({
       balance: "42.50",
-      balanceSpoken: "forty-two USDT and fifty cents",
+      balanceSpoken: "forty-two USDC and fifty cents",
     });
     await expect(balanceTool(withoutRepository)()).resolves.toMatchObject({
       balance: "42.50",
-      balanceSpoken: "forty-two USDT and fifty cents",
+      balanceSpoken: "forty-two USDC and fifty cents",
     });
   });
 });

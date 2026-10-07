@@ -42,7 +42,7 @@ LIVEKIT_AGENT_NAME=nani-agent         # must match the frontend VITE_LIVEKIT_AGE
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 DEMO_USER_ID=11111111-1111-4111-8111-111111111111
 RECIPIENT_MEMORY_ENABLED=true         # real contacts search; without it
-                                      # search_contacts fails closed (unavailable)
+                                      # search_recipients fails closed (unavailable)
 ```
 
 Frontend (`apps/nana-wallet/.env.local`, public values only):
@@ -72,7 +72,7 @@ Open `https://nana-wallet.localhost` (hard-reload after env changes: vite caches
 env at startup) and speak to Nani:
 
 1. **"¿Cuánto tengo?"** → `get_balance` (provider balance).
-2. **"¿Le puedo mandar plata a Lucas?"** → `search_contacts` → two Lucases → the
+2. **"¿Le puedo mandar plata a Lucas?"** → `search_recipients` → two Lucases → the
    agent must ask which one (ambiguity from the DB classification).
 3. **"Para Lucas Herrera, 1 USDT"** → `send_token` preview → spoken preview +
    Confirm/Cancel card in the UI (same persisted `pendingTransfer`).
@@ -91,8 +91,8 @@ Latency per turn (first audio + tool breakdown) is logged to
 | --- | --- | --- |
 | Worker FATAL `getaddrinfo ENOTFOUND <project>.livekit.cloud` | Transient DNS/network blip | Re-run `scripts/nani-e2e.sh`; verify with `nslookup` |
 | Job dispatched but binding fails (`ok:false`) | Another worker with the same (empty) name registered on the LiveKit project stole the job and validates a different binding key | Name your worker (`LIVEKIT_AGENT_NAME`) and match it in `VITE_LIVEKIT_AGENT_NAME` |
-| `search_contacts` returns `status:"unavailable"`, count 0 | `RECIPIENT_MEMORY_ENABLED` not `true` → memory service absent, tool fails closed | Enable it in `.env` and restart the worker |
-| First `search_contacts` very slow (40s+) | 470 MB fp32 ONNX model never finished downloading; interrupted downloads leave `.onnx.tmp.*` and every call re-downloads | `rm .cache/recipient-memory-model/**/onnx/*.tmp.*`; download `model.onnx` once from HF (resume with `curl -C -`); after that: load ~1.5 s, inference ~9 ms |
+| `search_recipients` returns `status:"unavailable"`, count 0 | `RECIPIENT_MEMORY_ENABLED` not `true` → memory service absent, tool fails closed | Enable it in `.env` and restart the worker |
+| First `search_recipients` very slow (40s+) | 470 MB fp32 ONNX model never finished downloading; interrupted downloads leave `.onnx.tmp.*` and every call re-downloads | `rm .cache/recipient-memory-model/**/onnx/*.tmp.*`; download `model.onnx` once from HF (resume with `curl -C -`); after that: load ~1.5 s, inference ~9 ms |
 | CORS error on `/v1/conversations/:id/state` (`if-none-match`) | ETag conditional reads not in the CORS allowlist | Already fixed in `src/server.ts` (`If-None-Match`, `If-Modified-Since`) |
 | Voice button says "La voz no está disponible" | Missing `apps/nana-wallet/.env.local` VITE vars | Copy from `.env.example` and set `VITE_LIVEKIT_TOKEN_SERVER_ID` + participant identity |
 | Confirm/Cancel card never appears | Tool wrote in-memory only, or revision not published | The preview path must persist via the repository and publish via `financialTasks`; covered by tests (V8.4) |
@@ -100,7 +100,7 @@ Latency per turn (first audio + tool breakdown) is logged to
 
 ## Architecture invariants (do not break)
 
-- The model never sees recipient addresses: `search_contacts` returns stripped
+- The model never sees recipient addresses: `search_recipients` returns stripped
   candidates; the payee address travels only inside the service machinery.
 - Broadcast happens exclusively through `confirm_transfer`/`resolveDecision`;
   the voice `send_token` schema is preview-only (`zod .strict()`, no `dryRun`,

@@ -71,7 +71,7 @@ each room resolves the correct tenant without a global lookup. Five model-facing
 tools are exposed:
 
 - `get_balance` — reads the configured wallet balance through `WalletProvider`.
-- `search_contacts` — searches `RecipientMemoryService` scoped per binding user
+- `search_recipients` — searches `RecipientMemoryService` scoped per binding user
   (`binding.sub`); returns address-free candidates and fails closed to
   `unavailable` when memory is missing.
 - `send_token` — preview-only. The strict zod schema accepts only

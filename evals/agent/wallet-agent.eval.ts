@@ -5,6 +5,7 @@ import { toolSelectionScenarios } from './scenarios/tool-selection.js';
 import { guardScenarios } from './scenarios/guards.js';
 import { previewConfirmScenarios } from './scenarios/preview-confirm.js';
 import { recipientResolutionScenarios } from './scenarios/recipient-resolution.js';
+import { unifiedCoverageScenarios } from './scenarios/unified-coverage.js';
 
 function dataFor(
   scenarios: AgentScenario[],
@@ -32,6 +33,12 @@ evalite('Agent: preview → confirm flow', {
 
 evalite('Agent: recipient resolution', {
   data: dataFor(recipientResolutionScenarios),
+  task: (scenario: AgentScenario) => runAgentScenario(scenario),
+  scorers: agentScorers,
+});
+
+evalite('Agent: unified surface coverage', {
+  data: dataFor(unifiedCoverageScenarios),
   task: (scenario: AgentScenario) => runAgentScenario(scenario),
   scorers: agentScorers,
 });

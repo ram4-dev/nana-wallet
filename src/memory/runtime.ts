@@ -54,7 +54,7 @@ export function getConfiguredRecipientMemoryRuntime(
 
 /**
  * Returns the shared recipient memory service (tenant selected per call by userId).
- * The realtime voice tools use this so `search_contacts` scopes to `binding.sub` —
+ * The realtime voice tools use this so `search_recipients` scopes to `binding.sub` —
  * the actual user of the session — instead of the singleton demo user.
  */
 export function getConfiguredRecipientMemoryService(

@@ -8,7 +8,7 @@
  * confirmation, not STT. The single exception is the G1 initial ask, which is spoken
  * as AUDIO (TTS-synthesized) to prove audio-in drives a tool flow.
  *
- * The model faces the real production tools (get_balance, search_contacts, send_token,
+ * The model faces the real production tools (get_balance, search_recipients, send_token,
  * confirm_transfer, cancel_transfer) bound to an in-memory fixture stack; the wallet is
  * a fixture such that a `confirm` broadcasts once through a spy that lets us assert on
  * the exact number of broadcasts.
@@ -84,7 +84,7 @@ export const matrixScenarios: MatrixScenario[] = [
     id: 'g1-happy-path',
     name: 'G1 happy path',
     description:
-      'Multi-turn: balance → send 25 to mamá → confirm. Expects get_balance→search_contacts→send_token→confirm_transfer and exactly one broadcast.',
+      'Multi-turn: balance → send 25 to mamá → confirm. Expects get_balance→search_recipients→send_token→confirm_transfer and exactly one broadcast.',
     userTurns: [
       { kind: 'audio', text: '¿Cuánta plata tengo?' },
       { kind: 'text', text: 'mandale 25 a mamá' },
@@ -93,7 +93,7 @@ export const matrixScenarios: MatrixScenario[] = [
     assertions: (run) => {
       const sequenceOk = hasSubsequence(run.sequence, [
         'get_balance',
-        'search_contacts',
+        'search_recipients',
         'send_token',
         'confirm_transfer',
       ]);
@@ -119,7 +119,7 @@ export const matrixScenarios: MatrixScenario[] = [
     assertions: (run) => {
       const noConfirm = !run.hasConfirm;
       const noBroadcast = run.broadcastCalls === 0;
-      const previewCreated = hasSubsequence(run.sequence, ['search_contacts', 'send_token']);
+      const previewCreated = hasSubsequence(run.sequence, ['search_recipients', 'send_token']);
       const passed = noConfirm && noBroadcast && previewCreated;
       return {
         passed,
@@ -140,7 +140,7 @@ export const matrixScenarios: MatrixScenario[] = [
     assertions: (run) => {
       const noConfirm = !run.hasConfirm;
       const noBroadcast = run.broadcastCalls === 0;
-      const previewCreated = hasSubsequence(run.sequence, ['search_contacts', 'send_token']);
+      const previewCreated = hasSubsequence(run.sequence, ['search_recipients', 'send_token']);
       const passed = noConfirm && noBroadcast && previewCreated;
       return {
         passed,
@@ -176,7 +176,7 @@ export const matrixScenarios: MatrixScenario[] = [
     assertions: (run) => {
       const narration = run.turnTranscripts[0] ?? '';
       const fidelity = narrationMentionsTransfer(narration);
-      const previewed = hasSubsequence(run.sequence, ['search_contacts', 'send_token']);
+      const previewed = hasSubsequence(run.sequence, ['search_recipients', 'send_token']);
       const passed = fidelity && previewed;
       return {
         passed,

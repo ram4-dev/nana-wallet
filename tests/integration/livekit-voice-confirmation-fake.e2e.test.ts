@@ -53,7 +53,13 @@ function harness(options: { interrupted?: boolean; earlyConfirmation?: boolean }
   const tools = createRealtimeTools({
     conversationId: "conversation-1",
     userId: "user-1",
-    wallet: {} as never,
+    wallet: {
+      listNetworks: async () => [],
+      listTokens: async () => [],
+      getAddress: async () => ({ network: "arc-testnet", address: "0xtest" }),
+      getBalance: async () => ({ network: "arc-testnet", token: "USDC", address: "0xtest", balance: "0" }),
+      getHistory: async () => ({ network: "arc-testnet", transactions: [] }),
+    } as never,
     service: service as never,
     conversations: conversations as never,
     recipientMemory: recipientMemory as never,
@@ -66,11 +72,12 @@ function harness(options: { interrupted?: boolean; earlyConfirmation?: boolean }
       return { interrupted: options.interrupted ?? false };
     }),
   });
-  const invoke = (index: number) => (tools[index] as unknown as { execute(input: unknown): Promise<Record<string, unknown>> }).execute({});
+  const byName = (name: string) =>
+    (tools as unknown as Array<{ name: string; execute: (input: unknown) => Promise<Record<string, unknown>> }>).find((t) => t.name === name)!;
   const send = (input = { amount: "0.01", recipientId: "contact-1", recipientVersion: 4 }) =>
-    (tools[2] as unknown as { execute(input: unknown): Promise<Record<string, unknown>> }).execute(input);
-  const confirm = () => invoke(3);
-  const cancel = () => invoke(4);
+    byName("send_token").execute(input);
+  const confirm = () => byName("confirm_transfer").execute({});
+  const cancel = () => byName("cancel_transfer").execute({});
   const speakDecision = (text: string, overrides: { isFinal?: boolean; authenticatedSpeaker?: boolean } = {}) =>
     gate.recordTranscript({
       previewId: "preview-1",

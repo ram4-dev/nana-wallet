@@ -10,7 +10,9 @@
  *  - a `FixtureWalletProvider` wrapped in a spy that records every `broadcastTransfer`,
  *  - a `WalletConversationService` built with `memory: { userId, service }` at the
  *    service level (so `previewTransfer` and `resolveDecision` can revalidate),
- *  - `createRealtimeTools` over that stack.
+ *  - `createRealtimeTools` over that stack (now the unified definition surface:
+ *    text and voice share one tool set; the fixture remains the demo-legacy
+ *    sepolia/USDT provider, which this stack targets explicitly).
  *
  * A hard guard runs at construction: `wallet.mode === 'fixture'` must hold, otherwise
  * the stack throws. This guarantees the env-selected live wallet can never leak into
