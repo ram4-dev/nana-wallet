@@ -375,9 +375,17 @@
   font-weight: 700;
 }
 
-.lg-nav-item:hover { color: var(--brand-ink); background: var(--muted); }
-.lg-nav-item[data-active="true"] { color: var(--brand-ink); }
-.lg-nav-item svg { width: 1.2rem; height: 1.2rem; }
+.lg-nav-item:hover {
+  color: var(--brand-ink);
+  background: var(--muted);
+}
+.lg-nav-item[data-active="true"] {
+  color: var(--brand-ink);
+}
+.lg-nav-item svg {
+  width: 1.2rem;
+  height: 1.2rem;
+}
 
 .lg-nav-voice-wrap {
   position: relative;
@@ -402,8 +410,12 @@
   transition: transform 160ms ease;
 }
 
-.lg-nav-voice:hover { transform: scale(1.04); }
-.lg-nav-voice:active { transform: scale(0.97); }
+.lg-nav-voice:hover {
+  transform: scale(1.04);
+}
+.lg-nav-voice:active {
+  transform: scale(0.97);
+}
 
 /* Voice orbit: dual ring + per-state waves (luckgnome .gnome-orbit) */
 .lg-orbit {
@@ -415,7 +427,9 @@
   border: 1px solid color-mix(in oklch, var(--primary) 30%, var(--border));
   border-radius: 50%;
   background: color-mix(in oklch, var(--primary) 5%, var(--surface));
-  transition: background 220ms ease, border-color 220ms ease;
+  transition:
+    background 220ms ease,
+    border-color 220ms ease;
 }
 
 .lg-orbit::before {
@@ -446,12 +460,20 @@
 }
 
 @keyframes lg-wave-ring {
-  0% { transform: scale(1); opacity: 0.9; }
-  100% { transform: scale(1.22); opacity: 0; }
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.22);
+    opacity: 0;
+  }
 }
 
 @keyframes lg-orbit-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .lg-voice-waves {
@@ -508,8 +530,12 @@
 }
 
 @keyframes lg-sound-wave {
-  from { transform: scaleY(0.4); }
-  to { transform: scaleY(1.35); }
+  from {
+    transform: scaleY(0.4);
+  }
+  to {
+    transform: scaleY(1.35);
+  }
 }
 
 /* Balance card destacada (luckgnome .balance-card) */
@@ -522,7 +548,9 @@
 }
 
 /* Filas de activos/actividad/contactos (luckgnome .asset-row/.contact-row) */
-.lg-row-list { border-top: 1px solid var(--border); }
+.lg-row-list {
+  border-top: 1px solid var(--border);
+}
 
 .lg-row {
   display: flex;
@@ -537,7 +565,9 @@
   text-align: left;
 }
 
-.lg-row:hover { background: color-mix(in oklch, var(--surface) 60%, transparent); }
+.lg-row:hover {
+  background: color-mix(in oklch, var(--surface) 60%, transparent);
+}
 
 .lg-row-icon {
   display: grid;
@@ -571,7 +601,9 @@
   text-transform: uppercase;
 }
 
-.lg-settings-list { border-top: 1px solid var(--border); }
+.lg-settings-list {
+  border-top: 1px solid var(--border);
+}
 
 .lg-setting-row {
   display: flex;
@@ -589,8 +621,15 @@
   text-align: left;
 }
 
-.lg-setting-row:hover { background: color-mix(in oklch, var(--primary) 4%, transparent); }
-.lg-setting-row svg { width: 1rem; height: 1rem; flex: 0 0 1rem; color: var(--muted-foreground); }
+.lg-setting-row:hover {
+  background: color-mix(in oklch, var(--primary) 4%, transparent);
+}
+.lg-setting-row svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  color: var(--muted-foreground);
+}
 
 /* Suggestion chips (luckgnome .suggestion-chip) */
 .lg-chip {
@@ -601,7 +640,9 @@
   color: var(--foreground);
   background: var(--card);
   font-size: 0.75rem;
-  transition: border-color 160ms ease, background 160ms ease;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease;
 }
 
 .lg-chip:hover {

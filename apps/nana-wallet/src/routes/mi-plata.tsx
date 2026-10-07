@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useState } from "react";
-import { Bell, RefreshCw, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, Bell, Check, Copy, RefreshCw, Send, Wallet } from "lucide-react";
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
@@ -137,6 +137,18 @@ function MiPlataPage() {
     refetchInterval: false,
   });
 
+  // LuckGnome structure: "Tus activos" covers every chain the user holds.
+  const networkBalancesQuery = useQuery({
+    queryKey: queryKeys.networkBalances(userId),
+    queryFn: api.getNetworkBalances,
+    enabled: Boolean(userId),
+    staleTime: 30_000,
+    refetchOnMount: "always",
+    retry: false,
+  });
+  const [addressVisible, setAddressVisible] = useState(false);
+  const [addressCopied, setAddressCopied] = useState(false);
+
   // WP-011: the identity error renders before any dependent load.
   if (meQuery.isPending) return <RoutePending label="Estamos buscando tu plata" />;
   if (meQuery.isError) {
@@ -173,26 +185,31 @@ function MiPlataPage() {
   }
 
   const balances = balancesQuery.data;
+  const networkBalances = networkBalancesQuery.data ?? [];
+  const activity = notifications.items
+    .filter((item) => item.category === "wallet_event" || item.category === "assistant_transfer")
+    .slice(0, 3);
 
   return (
-    <main className="mx-auto max-w-md px-6 pt-12 pb-40">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-extrabold">Billetera</h1>
+    <main className="mx-auto max-w-md px-5 pt-12 pb-40">
+      <header className="flex items-center justify-end gap-3">
         <Link
           to="/notificaciones"
-          className="press inline-flex min-h-12 items-center gap-2 rounded-xl border border-border px-4 font-extrabold text-foreground"
+          className="press inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-bold text-foreground"
           aria-label={`Notificaciones${notifications.unreadCount ? `, ${notifications.unreadCount} sin leer` : ""}`}
           data-testid="notifications-shortcut"
         >
-          <Bell className="size-5" aria-hidden="true" />
+          <Bell className="size-4" aria-hidden="true" />
           Notificaciones
           {notifications.unreadCount > 0 ? (
-            <span className="rounded-full bg-primary px-2 py-0.5 text-sm" aria-hidden="true">
+            <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground" aria-hidden="true">
               {notifications.unreadCount}
             </span>
           ) : null}
         </Link>
-      </div>
+      </header>
+
+      <h1 className="mt-1 text-3xl font-extrabold tracking-tight">Mi cartera</h1>
 
       {balances.walletState === "ready" ? (
         <section className="lg-balance-card" aria-label="Tu saldo">
@@ -230,15 +247,127 @@ function MiPlataPage() {
         </section>
       )}
 
-      <Button
-        type="button"
-        variant="outline"
-        className="press mt-4 min-h-12 w-full text-base font-extrabold"
-        onClick={() => void balancesQuery.refetch()}
-      >
-        <RefreshCw className="size-5" aria-hidden="true" />
-        Actualizar saldo
-      </Button>
+      {balances.walletState === "ready" ? (
+        <>
+          <div className="mt-4 grid grid-cols-2 gap-2.5">
+            <Link
+              to="/"
+              className="press inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-primary bg-primary font-extrabold text-primary-foreground"
+            >
+              <Send className="size-4" aria-hidden="true" />
+              Enviar
+            </Link>
+            <button
+              type="button"
+              className="press inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-border bg-card font-extrabold text-foreground"
+              onClick={() => setAddressVisible((visible) => !visible)}
+              aria-expanded={addressVisible}
+            >
+              <ArrowDownLeft className="size-4" aria-hidden="true" />
+              Recibir
+            </button>
+          </div>
+          {addressVisible ? (
+            <div className="mt-3 rounded-2xl border border-border bg-card p-4">
+              <p className="text-sm font-bold">Tu dirección en Arc testnet</p>
+              <p className="mt-1.5 break-all font-mono text-xs text-muted-foreground">
+                {balances.address}
+              </p>
+              <button
+                type="button"
+                className="press mt-2.5 inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-border px-3 text-sm font-bold"
+                onClick={() => {
+                  void navigator.clipboard.writeText(balances.address);
+                  setAddressCopied(true);
+                  window.setTimeout(() => setAddressCopied(false), 2000);
+                }}
+              >
+                {addressCopied ? (
+                  <Check className="size-4 text-brand-ink" aria-hidden="true" />
+                ) : (
+                  <Copy className="size-4" aria-hidden="true" />
+                )}
+                {addressCopied ? "Copiada" : "Copiar dirección"}
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      <section className="mt-7">
+        <div className="flex items-center justify-between gap-2.5">
+          <h2 className="text-base font-extrabold">Tus activos</h2>
+          <span className="text-xs text-muted-foreground">{networkBalances.length || 1}</span>
+        </div>
+        <div className="lg-row-list mt-2">
+          {networkBalances.length === 0 ? (
+            <div className="lg-row">
+              <span className="lg-row-icon" aria-hidden="true">
+                <Wallet className="size-5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">USD Coin</span>
+                <span className="block text-xs text-muted-foreground">USDC · Arc testnet</span>
+              </span>
+              <span className="text-right">
+                <strong className="block text-sm font-bold" data-testid="usdc-balance">
+                  {balances.walletState === "ready"
+                    ? `${formatUsdcBalance(balances.assets[0]!.balanceAtomic)} USDC`
+                    : "—"}
+                </strong>
+              </span>
+            </div>
+          ) : (
+            networkBalances.map((asset) => (
+              <div key={asset.network} className="lg-row">
+                <span className="lg-row-icon" aria-hidden="true">
+                  <Wallet className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold">
+                    {asset.token === "USDC" ? "USD Coin" : "Solana"}
+                  </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {asset.token} · {asset.network}
+                  </span>
+                </span>
+                <span className="text-right">
+                  <strong className="block whitespace-nowrap text-sm font-bold">
+                    {asset.balance} {asset.token}
+                  </strong>
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section className="mt-6">
+        <h2 className="text-base font-extrabold">Actividad reciente</h2>
+        {activity.length === 0 ? (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Todavía no tenés actividad de billetera.
+          </p>
+        ) : (
+          <div className="lg-row-list mt-2">
+            {activity.map((item) => (
+              <div key={item.id} className="lg-row">
+                <span className="lg-row-icon" aria-hidden="true">
+                  <ArrowUpRight className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold">{item.title}</span>
+                  {item.explanation ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {item.explanation}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <ManageWalletSection userId={userId} />
 
@@ -249,8 +378,8 @@ function MiPlataPage() {
         <DelegatedGrantsSection userId={userId} />
       </Suspense>
 
-      <section className="mt-10 rounded-2xl border border-border bg-secondary p-5">
-        <p className="text-base text-muted-foreground">
+      <section className="mt-8 rounded-2xl border border-border bg-card p-4">
+        <p className="text-sm text-muted-foreground">
           Acá ves tu saldo en USDC sobre Arc testnet. No mostramos pesos, cotizaciones ni
           movimientos simulados.
         </p>

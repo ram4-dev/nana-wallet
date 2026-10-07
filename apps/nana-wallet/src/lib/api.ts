@@ -439,6 +439,35 @@ export const api = {
   // contract; the server resolves owner, chain and token itself.
   getBalances: () => request<BalancesData>("/v1/wallets/current/balances"),
 
+  // LuckGnome structure (owner decision 2026-10-07): "Tus activos" covers
+  // every chain the user holds. Privy mode reads each network through the
+  // per-user conversation wallet API; demo mode keeps the single fixture.
+  getNetworkBalances: async (): Promise<
+    Array<{ network: string; token: string; address: string; balance: string }>
+  > => {
+    if (!isPrivyIdentityProvider()) return [];
+    const arc = await rawConversationRequest<WalletBalanceResponse>(
+      "/v1/wallet/balance?network=arc-testnet&token=USDC",
+      {},
+    );
+    const solana = await rawConversationRequest<WalletBalanceResponse>(
+      "/v1/wallet/balance?network=solana-devnet&token=SOL",
+      {},
+    ).catch(() => null);
+    const rows = [
+      { network: "Arc testnet", token: "USDC", address: arc.address, balance: arc.balance },
+    ];
+    if (solana) {
+      rows.push({
+        network: "Solana devnet",
+        token: "SOL",
+        address: solana.address,
+        balance: solana.balance,
+      });
+    }
+    return rows;
+  },
+
   // DGC-5: delegated grants lifecycle (authenticated HTTP only; never
   // voice). The server enforces scope, caps, window, expiry and revocation.
   listGrants: () => request<ListDelegatedGrantsResponse>("/v1/grants"),
@@ -685,6 +714,7 @@ export const queryKeys = {
   // WP-013: personal balances cache is user-scoped with its own "balances"
   // root, distinct from the legacy wallet summary keys.
   balances: (userId: string | undefined, chainId: number) => ["balances", userId, chainId] as const,
+  networkBalances: (userId: string | undefined) => ["balances", "networks", userId] as const,
   wallet: (userId: string | undefined) => ["wallet", "summary", userId] as const,
   movements: (userId: string | undefined) => ["wallet", "movements", userId] as const,
   currentWallet: (userId: string | undefined) => ["wallet", "current", userId] as const,
