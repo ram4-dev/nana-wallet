@@ -312,10 +312,13 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     }
   }
 
+  // The button must appear in BOTH identity modes: in privy mode the click
+  // branches into the PEW-014 prepare/addSigners/complete enrollment; in demo
+  // mode it performs the direct activation with server read-back. Gating on
+  // !privy here deadlocked privy users (button never rendered).
   const canActivate =
     wallet.state === "ready" &&
-    (permission.state === "pending" || permission.state === "unavailable") &&
-    !privy;
+    (permission.state === "pending" || permission.state === "unavailable");
 
   return (
     <section className="surface-card mt-10 p-5" aria-label="Tu billetera y el permiso de pagos">
