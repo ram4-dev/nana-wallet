@@ -319,10 +319,25 @@ export async function resolvePreviewRecipient(
  * `handleMessage` can persist the full pending transfer (to/wallet from
  * the resolved recipient, not from the model).
  */
-export function augmentPreviewOutput(output: unknown, internal: SendTokenInput): unknown {
-  if (!output || typeof output !== 'object' || Array.isArray(output)) return output;
+export type AugmentedPreviewOutput = {
+  preview: true;
+  network: string;
+  token: string;
+  to: string;
+  amount: string;
+  wallet: string;
+  estimatedFee?: string;
+};
+
+export function augmentPreviewOutput(
+  output: unknown,
+  internal: SendTokenInput,
+): AugmentedPreviewOutput | Record<string, unknown> {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) {
+    return { preview: true, ...internal, dryRun: undefined } as AugmentedPreviewOutput;
+  }
   const c = output as Record<string, unknown>;
-  if (c.preview !== true) return output;
+  if (c.preview !== true) return c;
   return { ...c, network: internal.network, token: internal.token, to: internal.to, amount: internal.amount, wallet: internal.wallet };
 }
 
@@ -458,14 +473,55 @@ function createWalletOperations(context: WalletAgentContext): AgentToolDefinitio
     },
     {
       name: 'get_balance',
-      description: 'Read a wallet balance.',
+      description:
+        'Read wallet balances. Without arguments returns a JSON with the balance of EVERY supported network so the agent can answer any balance question in one call. With a network, returns just that network\'s balance. Never ask the user which wallet or network: the result already covers all of them — answer only what the user asked for.',
       inputSchema: balanceInputSchema,
       execute: async (input) => {
         const parsed = input as z.infer<typeof balanceInputSchema>;
         const token = parsed.token
           ? normalizeWalletToken(parsed.token, context.config.token)
           : undefined;
-        const network = parsed.network ?? DEFAULT_READ_NETWORK;
+        // Multi-network read: omitting `network` asks for EVERY network the
+        // wallet supports, so the model never needs to ask which wallet — it
+        // answers only what the user asked about (user decision 2026-10-07).
+        if (!parsed.network) {
+          const networks = await context.wallet.listNetworks();
+          const balances = await Promise.all(
+            networks.map(async ({ network }) => {
+              try {
+                const balance = await context.wallet.getBalance({
+                  network,
+                  ...(token ? { token } : {}),
+                  wallet: parsed.wallet ?? context.config.wallet,
+                });
+                const presentation = formatBalanceForAgent({
+                  balance: balance.balance,
+                  token: balance.token ?? token ?? context.config.token,
+                  language: context.language,
+                });
+                return {
+                  network: balance.network,
+                  token: balance.token ?? token ?? context.config.token,
+                  address: balance.address,
+                  balance: presentation.balance,
+                  balanceSpoken: presentation.balanceSpoken,
+                };
+              } catch (error) {
+                // One network failing must never reject the whole read: the
+                // model narrates the available balances plus the degraded one.
+                return {
+                  network,
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : 'Balance unavailable for this network.',
+                };
+              }
+            }),
+          );
+          return { balances };
+        }
+        const network = parsed.network;
         const balance = await context.wallet.getBalance({
           network,
           ...(token ? { token } : {}),
