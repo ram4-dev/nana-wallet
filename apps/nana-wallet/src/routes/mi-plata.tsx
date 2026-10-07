@@ -1,7 +1,16 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useState } from "react";
-import { ArrowDownLeft, ArrowUpRight, Bell, Check, Copy, RefreshCw, Send, Wallet } from "lucide-react";
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Bell,
+  Check,
+  Copy,
+  RefreshCw,
+  Send,
+  Wallet,
+} from "lucide-react";
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
@@ -202,7 +211,10 @@ function MiPlataPage() {
           <Bell className="size-4" aria-hidden="true" />
           Notificaciones
           {notifications.unreadCount > 0 ? (
-            <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground" aria-hidden="true">
+            <span
+              className="rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground"
+              aria-hidden="true"
+            >
               {notifications.unreadCount}
             </span>
           ) : null}
