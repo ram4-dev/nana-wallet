@@ -64,7 +64,7 @@ type BalanceToolResult = {
   balanceSpoken: string;
 };
 
-function balanceTool(toolDef: unknown): (input?: unknown) => Promise<BalanceToolResult> {
+function balanceTool(toolDef: unknown): (input?: unknown) => Promise<unknown> {
   const execute = (toolDef as unknown as { execute: (input: unknown) => Promise<BalanceToolResult> }).execute;
   return (input: unknown = {}) => execute(input);
 }
@@ -94,7 +94,7 @@ describe("createRealtimeTools", () => {
   });
 
   it("get_balance returns the provider balance with an empty parameters schema", async () => {
-    const wallet = { getBalance: h.getBalance } as never;
+    const wallet = { getBalance: h.getBalance, listNetworks: async () => [{ network: 'arc-testnet', kind: 'testnet' }] } as never;
     const getBalanceTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
@@ -108,18 +108,23 @@ describe("createRealtimeTools", () => {
     expect(params).toBeDefined();
     expect(params.parse({})).toEqual({});
 
-    const result = await balanceTool(getBalanceTool)();
+    const result = (await balanceTool(getBalanceTool)()) as {
+      balances: Array<{ network: string; token: string; balance: string; balanceSpoken: string }>;
+    };
 
     expect(h.getBalance).toHaveBeenCalledWith({
       network: "arc-testnet",
       wallet: "agent-demo",
     });
-    expect(result).toMatchObject({
-      network: "arc-testnet",
-      token: "USDC",
-      balance: "42.50",
-      balanceSpoken: "forty-two USDC and fifty cents",
-    });
+    expect(result.balances).toEqual([
+      {
+        network: "arc-testnet",
+        token: "USDC",
+        address: "0x1234000000000000000000000000000000abcd",
+        balance: "42.50",
+        balanceSpoken: "forty-two USDC and fifty cents",
+      },
+    ]);
   });
 
   it("search_contacts strips address/userId and flags an ambiguous query", async () => {
@@ -446,19 +451,23 @@ yield { type: "turn-completed", result: { status: "cancelled", message: "Transfe
     const getBalanceTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: { getBalance } as never,
+      wallet: { getBalance, listNetworks: async () => [{ network: 'arc-testnet', kind: 'testnet' }] } as never,
     }), "get_balance");
 
-    const result = await balanceTool(getBalanceTool)();
+    const result = (await balanceTool(getBalanceTool)()) as {
+      balances: Array<{ network: string; token: string; balance: string; balanceSpoken: string }>;
+    };
 
     // The 24-character provider decimal never reaches the model: no digit-by-digit read.
-    expect(result).toEqual({
-      network: "arc-testnet",
-      token: "USDC",
-      address: "0x1234000000000000000000000000000000abcd",
-      balance: "97.99",
-      balanceSpoken: "ninety-seven USDC and ninety-nine cents",
-    });
+    expect(result.balances).toEqual([
+      {
+        network: "arc-testnet",
+        token: "USDC",
+        address: "0x1234000000000000000000000000000000abcd",
+        balance: "97.99",
+        balanceSpoken: "ninety-seven USDC and ninety-nine cents",
+      },
+    ]);
   });
 
   it("speaks the balance in the persisted conversation language", async () => {
@@ -466,14 +475,16 @@ yield { type: "turn-completed", result: { status: "cancelled", message: "Transfe
     const getBalanceTool = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: { getBalance: h.getBalance } as never,
+      wallet: { getBalance: h.getBalance, listNetworks: async () => [{ network: 'arc-testnet', kind: 'testnet' }] } as never,
       conversations: conversations as never,
     }), "get_balance");
 
-    const result = await balanceTool(getBalanceTool)();
+    const result = (await balanceTool(getBalanceTool)()) as {
+      balances: Array<{ balanceSpoken: string }>;
+    };
 
     expect(conversations.get).toHaveBeenCalledWith("binding-user", "conv-1");
-    expect(result.balanceSpoken).toBe("cuarenta y dos USDC con cincuenta centavos");
+    expect(result.balances[0].balanceSpoken).toBe("cuarenta y dos USDC con cincuenta centavos");
   });
 
   it("defaults the spoken balance to English when the language cannot be resolved", async () => {
@@ -486,32 +497,35 @@ yield { type: "turn-completed", result: { status: "cancelled", message: "Transfe
     const withFailure = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: { getBalance: h.getBalance } as never,
+      wallet: { getBalance: h.getBalance, listNetworks: async () => [{ network: 'arc-testnet', kind: 'testnet' }] } as never,
       conversations: failing as never,
     }), "get_balance");
     const withoutConversation = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: { getBalance: h.getBalance } as never,
+      wallet: { getBalance: h.getBalance, listNetworks: async () => [{ network: 'arc-testnet', kind: 'testnet' }] } as never,
       conversations: unknownConversation as never,
     }), "get_balance");
     const withoutRepository = byName(createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
-      wallet: { getBalance: h.getBalance } as never,
+      wallet: { getBalance: h.getBalance, listNetworks: async () => [{ network: 'arc-testnet', kind: 'testnet' }] } as never,
     }), "get_balance");
 
     await expect(balanceTool(withFailure)()).resolves.toMatchObject({
-      balance: "42.50",
-      balanceSpoken: "forty-two USDC and fifty cents",
+      balances: [
+        { balance: "42.50", balanceSpoken: "forty-two USDC and fifty cents" },
+      ],
     });
     await expect(balanceTool(withoutConversation)()).resolves.toMatchObject({
-      balance: "42.50",
-      balanceSpoken: "forty-two USDC and fifty cents",
+      balances: [
+        { balance: "42.50", balanceSpoken: "forty-two USDC and fifty cents" },
+      ],
     });
     await expect(balanceTool(withoutRepository)()).resolves.toMatchObject({
-      balance: "42.50",
-      balanceSpoken: "forty-two USDC and fifty cents",
+      balances: [
+        { balance: "42.50", balanceSpoken: "forty-two USDC and fifty cents" },
+      ],
     });
   });
 });
