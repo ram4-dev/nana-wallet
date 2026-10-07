@@ -17,6 +17,10 @@ import {
   normalizeBroadcastResult,
   normalizeWalletToken as normalizeCanonicalWalletToken,
   sendTokenInputSchema,
+  internalSendTokenInputSchema,
+  resolvePreviewRecipient,
+  augmentPreviewOutput,
+  guardedSendTokenSchema,
   isLiveTransferSource,
   type SendTokenInput,
 } from './definition.js';
@@ -285,9 +289,27 @@ export function buildGuardedTools(
 
   const guardedSendToken = tool({
     description: baseSendToken.description,
-    inputSchema: sendTokenInputSchema,
-    execute: async (input: SendTokenInput, options) => {
-      const normalizedInput = normalizeSendTokenInput(input, config.token);
+    inputSchema: guardedSendTokenSchema,
+    execute: async (rawInput: unknown, options) => {
+      // Model-facing preview-only path: resolve the versioned recipient
+      // server-side (the model never sees or supplies an address).
+      const preview = sendTokenInputSchema.safeParse(rawInput);
+      if (preview.success) {
+        const resolved = await resolvePreviewRecipient(preview.data, {
+          session,
+          recipientMemory,
+          config,
+        });
+        if (!resolved.ok) return resolved.error;
+        const output = await baseSendToken.execute!(resolved.internal, options);
+        return augmentPreviewOutput(output, resolved.internal);
+      }
+      // Internal path (deterministic / confirmed broadcast / legacy WDK).
+      const parsedInternal = internalSendTokenInputSchema.safeParse(rawInput);
+      if (!parsedInternal.success) {
+        return { error: 'confirmation_required', message: 'Missing recipient: supply recipientId and recipientVersion for a preview.' };
+      }
+      const normalizedInput = normalizeSendTokenInput(parsedInternal.data, config.token);
       const policyRejection = validateLiveTransferPolicy(normalizedInput, config);
       if (policyRejection) return policyRejection;
       const selected = session.recipientMemory?.selectedRecipient;
@@ -342,15 +364,14 @@ export function buildGuardedTools(
             'Refusing to broadcast: no matching confirmed preview for this transfer in the current session.',
         };
       }
-      // Single injection point for the persisted preview idempotency key
-      // (CAR-006): only a broadcast that matches a confirmed preview carries
-      // its previewId, and only when one exists — direct previews and the
-      // legacy WDK path (whose in-memory pending transfer has no previewId)
-      // stay byte-identical.
       const broadcastInput = normalizedInput.dryRun || !session.pendingTransfer?.previewId
         ? normalizedInput
         : { ...normalizedInput, previewId: session.pendingTransfer.previewId };
-      return baseSendToken.execute!(broadcastInput, options);
+      const output = await baseSendToken.execute!(broadcastInput, options);
+      // The legacy WDK path returns a raw provider payload without a `preview`
+      // flag; augment it so the caller can build the PendingTransfer (the
+      // preview-only model path already receives an augmented shape).
+      return normalizedInput.dryRun ? augmentLegacyPreview(output, normalizedInput) : output;
     },
   });
 
@@ -632,30 +653,22 @@ export async function handleMessage(
       };
     }
 
-    const parsedArgs = sendTokenInputSchema.safeParse(lastCall.input);
-    const args = parsedArgs.success
-      ? normalizeSendTokenInput(parsedArgs.data, agentConfig.token)
-      : null;
-    const transaction = normalizeBroadcastResult(output, args?.network ?? agentConfig.network);
-    if (transaction) {
-      clearPendingTransfer(session);
-      setLastTransactionHash(session, transaction.transactionHash);
-      return { status: 'sent', message: result.text, transaction };
-    }
-
-    const preview = args ? canonicalizeTransferPreview(args, output) : null;
-    if (preview && args) {
-      const selected = session.recipientMemory?.previewedRecipient;
-      setPendingTransfer(session, {
-        network: args.network,
-        token: args.token,
-        to: args.to,
-        amount: args.amount,
-        wallet: args.wallet,
-        preview,
-        ...(selected ? { recipientId: selected.recipientId, recipientVersion: selected.version } : {}),
-      });
-      return { status: 'confirmation_required', message: result.text, preview };
+    const previewTarget = extractPreviewTarget(output);
+    if (previewTarget) {
+      const preview = canonicalizeTransferPreview(previewTarget, output);
+      if (preview) {
+        const selected = session.recipientMemory?.previewedRecipient;
+        setPendingTransfer(session, {
+          network: previewTarget.network,
+          token: previewTarget.token,
+          to: previewTarget.to,
+          amount: previewTarget.amount,
+          wallet: previewTarget.wallet,
+          preview,
+          ...(selected ? { recipientId: selected.recipientId, recipientVersion: selected.version } : {}),
+        });
+        return { status: 'confirmation_required', message: result.text, preview };
+      }
     }
 
     const message = 'The wallet returned an invalid transfer preview.';
@@ -688,6 +701,7 @@ async function executeConfirmedTransfer(
     amount: pending.amount,
     wallet: pending.wallet,
     dryRun: false,
+    ...(pending.previewId ? { previewId: pending.previewId } : {}),
   };
 
       // D3: the provider's waitForFinality is the single Arc verification
@@ -796,6 +810,37 @@ function markBroadcastUncertain(session: ConversationSession): ConversationTurnR
     'The broadcast result is uncertain. Check the wallet history before taking another action.';
   appendMessage(session, { role: 'assistant', content: message });
   return { status: 'error', message, code: 'broadcast_uncertain' };
+}
+
+/**
+ * Extract a SendTokenInput from the augmented preview output returned by
+ * `augmentPreviewOutput` so the caller can build a PendingTransfer and
+ * canonicalize the preview.
+ */
+function extractPreviewTarget(output: unknown): SendTokenInput | null {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return null;
+  const c = output as Record<string, unknown>;
+  if (c.preview !== true) return null;
+  const parsed = internalSendTokenInputSchema.safeParse({
+    network: c.network,
+    token: c.token,
+    to: c.to,
+    amount: c.amount,
+    wallet: c.wallet,
+    dryRun: true,
+  });
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * Legacy WDK preview augmentation: tags a raw provider preview payload with the
+ * internal transfer input so `extractPreviewTarget` can build the PendingTransfer
+ * (the model-facing preview-only path returns an already-augmented shape).
+ */
+function augmentLegacyPreview(output: unknown, internal: SendTokenInput): unknown {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return output;
+  const c = output as Record<string, unknown>;
+  return { ...c, preview: true, network: internal.network, token: internal.token, to: internal.to, amount: internal.amount, wallet: internal.wallet };
 }
 
 async function handleDeterministicTurn(

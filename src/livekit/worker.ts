@@ -42,13 +42,59 @@ import {
 export function bindLiveKitWalletForUser(
   walletForUser: WalletForUser,
   userId: string,
-  network: string | (() => string),
+  network?: string | (() => string),
 ) {
-  return bindWalletForUser(walletForUser, userId, () =>
-    walletChainFamilyForNetwork(
-      typeof network === "function" ? network() : network,
-    ),
-  );
+  /**
+   * Legacy: when a fixed network hint is provided, use the old single-net binding
+   * (kept for tests that assert chain-family selection). Production voice binding
+   * now omits this parameter so each tool call resolves chain family from its
+   * requested network (see spec: unified-agent-tools, D3).
+   */
+  if (network !== undefined) {
+    return bindWalletForUser(walletForUser, userId, () =>
+      walletChainFamilyForNetwork(
+        typeof network === "function" ? network() : network,
+      ),
+    );
+  }
+  // Per-call resolution: each method derives the chain family from the method's
+  // network argument so the voice agent can read balances on any supported
+  // network without the session being locked to one.
+  const defaultFamily = () =>
+    walletChainFamilyForNetwork(getWalletAgentConfig().network);
+  const familyFor = (
+    net: string | undefined,
+  ): import("../wallet/privy-user-provider.js").WalletChainFamilyHint =>
+    !net || net === "" ? defaultFamily : () => walletChainFamilyForNetwork(net);
+  const resolve = (family?: import("../wallet/privy-user-provider.js").WalletChainFamilyHint) =>
+    walletForUser(userId, family);
+  type WP = import("../wallet/provider.js").WalletProvider;
+  return {
+    id: "privy-user-scoped",
+    mode: "live" as const,
+    health: async (ctx) => {
+      try {
+        return await (await resolve(defaultFamily())).health(ctx);
+      } catch (err) {
+        return {
+          status: "unavailable" as const,
+          reason: err instanceof Error ? err.message : "Wallet is unavailable.",
+        };
+      }
+    },
+    listNetworks: async () => (await resolve(defaultFamily())).listNetworks(),
+    listTokens: async (net) => (await resolve(familyFor(net))).listTokens(net),
+    getAddress: async (ctx) => (await resolve(familyFor(ctx.network))).getAddress(ctx),
+    getBalance: async (q) => (await resolve(familyFor(q.network))).getBalance(q),
+    getHistory: async (q) => (await resolve(familyFor(q.network))).getHistory(q),
+    previewTransfer: async (r) => (await resolve(familyFor(r.network))).previewTransfer(r),
+    broadcastTransfer: async (r) => (await resolve(familyFor(r.network))).broadcastTransfer(r),
+    waitForFinality: async (r, signal) => {
+      const tx = "transaction" in r ? r.transaction : r;
+      return (await resolve(familyFor(tx.network))).waitForFinality(r, signal);
+    },
+    close: async () => {},
+  } as WP;
 }
 
 export { readLiveKitWorkerConfig } from "../config/process.js";
@@ -110,7 +156,6 @@ async function runJob(
         ? bindLiveKitWalletForUser(
             dependencies.walletForUser,
             binding.userId,
-            () => getWalletAgentConfig().network,
           )
         : dependencies.wallet;
       // REVIEW FIX V3 (voice path): the voice service is built per binding so its

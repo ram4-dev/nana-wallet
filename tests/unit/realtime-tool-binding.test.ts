@@ -42,12 +42,22 @@ describe('realtime tool binding — declaration', () => {
     const stack = createRealtimeFixtureStack();
     const binding = createRealtimeToolBinding(stack.deps);
     const names = binding.tools.map((t) => t.name).sort();
+    // Unified surface: voice exposes the shared definition tools (parity)
+    // plus the voice-only spoken-decision gate tools.
     expect(names).toEqual([
       'cancel_transfer',
       'confirm_transfer',
+      'get_address',
       'get_balance',
-      'search_contacts',
+      'get_history',
+      'get_networks',
+      'get_selected_recipient_address',
+      'list_tokens',
+      'search_recipients',
+      'search_user_memory',
       'send_token',
+      'stage_user_memory',
+      'write_user_memory',
     ]);
     for (const tool of binding.tools) {
       expect(tool.type).toBe('function');
@@ -66,7 +76,7 @@ describe('realtime tool binding — strict schema is a real boundary', () => {
         amount: '50',
         recipientId: MAMA_RECIPIENT_ID,
         recipientVersion: MAMA_RECIPIENT_VERSION,
-        dryRun: true,
+        to: '0xsecret-not-allowed',
       }),
     );
     const parsed = JSON.parse(output.output) as { error?: string };
@@ -115,10 +125,10 @@ describe('realtime tool binding — production execution against the fixture sta
     expect(binding.calls).toHaveLength(1);
   });
 
-  it('search_contacts resolves mamá from the memory stub', async () => {
+  it('search_recipients resolves mamá from the memory stub', async () => {
     const stack = createRealtimeFixtureStack();
     const binding = createRealtimeToolBinding(stack.deps);
-    const output = await binding.executeFunctionCall(call('search_contacts', { query: 'mamá' }));
+    const output = await binding.executeFunctionCall(call('search_recipients', { query: 'mamá' }));
     const parsed = JSON.parse(output.output) as {
       contacts?: Array<{ id: string; address?: string }>;
       ambiguous?: boolean;

@@ -6,10 +6,20 @@ import { invalidateSelectedRecipient, type ConversationSession } from '../conver
 import type { RecipientMemoryRuntime } from '../memory/runtime.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
 import { isValidEvmAddress, isValidRecipientAddress } from '../memory/address.js';
+import type { RecipientCandidate } from '../memory/types.js';
+import type { RecipientSearchResult } from '../memory/service.js';
 import type { WalletProvider, TransferRequest } from '../wallet/provider.js';
 import { explorerUrlFor } from '../wallet/provider.js';
 import { decodeMcpText } from '../wdk/mcp-client.js';
-import { transactionResultSchema, transferPreviewSchema, type TransferPreview } from '../contracts/http.js';
+import type { WalletConversationService } from '../conversations/service.js';
+import type { ConversationRepository } from '../conversations/repository.js';
+import type { VoiceDecisionGate } from '../livekit/voice-decision-gate.js';
+import {
+  transactionResultSchema,
+  transferPreviewSchema,
+  type ConversationTurnResult,
+  type TransferPreview,
+} from '../contracts/http.js';
 
 export type WalletAgentContext = {
   conversationId: string;
@@ -20,6 +30,19 @@ export type WalletAgentContext = {
   wallet: WalletProvider;
   recipientMemory?: RecipientMemoryRuntime;
   signal?: AbortSignal;
+  /**
+   * Voice-only runtime seam. When present, the shared `send_token` preview
+   * delegates to the per-binding conversation service instead of the raw wallet
+   * provider, and `confirm_transfer`/`cancel_transfer` are produced. Absent for
+   * the text agent, which keeps the shared preview -> chat-confirmation flow.
+   */
+  voiceService?: WalletConversationService;
+  /** Voice-only: repository the read-back snapshot and pending preview are read from. */
+  voiceConversations?: ConversationRepository;
+  /** Voice-only: spoken-decision evidence gate (fail closed when absent). */
+  voiceDecisionGate?: VoiceDecisionGate;
+  /** Voice-only: plays the preview read-back aloud before the spoken decision. */
+  speakPreview?: (text: string) => Promise<{ interrupted: boolean }>;
 };
 
 export type AgentToolDefinition<Input, Output> = {
@@ -34,37 +57,110 @@ export type WalletAgentDefinition = {
   tools(context: WalletAgentContext): readonly AgentToolDefinition<unknown, unknown>[];
 };
 
+/**
+ * Voice-only tools: the single permitted divergence between the text surface and
+ * the voice surface. They are produced only for a voice context and are gated by
+ * the spoken-decision evidence gate; the text agent confirms through a chat turn.
+ * The parity test asserts every other tool name is shared.
+ */
+export const VOICE_ONLY_TOOLS = ['confirm_transfer', 'cancel_transfer'] as const;
+
+/**
+ * Model-facing transfer schema, shared by the text and voice agents. Preview-only:
+ * the model supplies the amount plus the versioned recipient it already resolved;
+ * address, network, and token are resolved server-side. `.strict()` is the security
+ * boundary — a model inventing `to`, `dryRun`, `network`, `token`, or `wallet` fails
+ * closed before the tool ever executes.
+ */
 export const sendTokenInputSchema = z.object({
+  amount: z.string().trim().min(1),
+  recipientId: z.string().trim().min(1),
+  recipientVersion: z.number().int().positive(),
+  memo: z.string().trim().max(200).optional(),
+}).strict();
+export type PreviewSendTokenInput = z.infer<typeof sendTokenInputSchema>;
+
+/**
+ * Internal broadcast input used by the guarded tool wrapper, the deterministic
+ * path, and the confirmed-broadcast path. Never exposed to a model. `previewId`
+ * is model-invisible: the zod input schema must never expose it, or a hallucinated
+ * key could silently defeat the duplicate-broadcast idempotency protection.
+ */
+export const internalSendTokenInputSchema = z.object({
   network: z.string().trim().min(1),
   token: z.string().trim().min(1),
   to: z.string().trim().min(1),
   amount: z.string().trim().min(1),
   wallet: z.string().trim().min(1),
   dryRun: z.boolean(),
+  // previewId is model-invisible (CAR-006) but passes through internal calls.
+  previewId: z.string().optional(),
 });
-export type SendTokenInput = z.infer<typeof sendTokenInputSchema>;
-
-/**
- * Internal broadcast input carried between the guarded tool wrapper and the
- * canonical sendToken operation. `previewId` is model-invisible: the zod input
- * schema must never expose it, or a hallucinated key could silently defeat the
- * duplicate-broadcast idempotency protection.
- */
+export type SendTokenInput = z.infer<typeof internalSendTokenInputSchema>;
 export type SendTokenBroadcastInput = SendTokenInput & { previewId?: string };
 
+/** Default network for a shared read tool that omits `network`. */
+export const DEFAULT_READ_NETWORK = 'arc-testnet';
+
+/**
+ * Guarded-wrapper schema: accepts BOTH the model-facing preview-only shape and
+ * the internal broadcast shape. Internal/deterministic callers and the legacy
+ * WDK path exercise the wrapper directly; the wrapper's dual-parse and runtime
+ * guards (pending preview match, policy, revalidation) stay authoritative.
+ */
+export const guardedSendTokenSchema = z.union([sendTokenInputSchema, internalSendTokenInputSchema]);
+
 export const balanceInputSchema = z.object({
-  network: z.string().trim().min(1),
+  network: z.string().trim().min(1).optional(),
   token: z.string().trim().min(1).optional(),
   wallet: z.string().trim().min(1).optional(),
   index: z.number().int().nonnegative().optional(),
 });
 
 const addressInputSchema = z.object({
-  network: z.string().trim().min(1),
+  network: z.string().trim().min(1).optional(),
   wallet: z.string().trim().min(1).optional(),
 });
 const listTokensInputSchema = z.object({ network: z.string().trim().min(1).optional() });
 const emptyInputSchema = z.object({}).strict();
+export type RealtimeContactCandidate = {
+  id: string;
+  name: string;
+  normalizedName: string;
+  description: string;
+  version: number;
+  status: 'active' | 'inactive';
+  evidence: string;
+  score: number;
+  network?: 'solana-devnet';
+};
+
+/** Frontend-facing voice search result (see `RealtimeSearchContactsResult`). */
+export type RealtimeSearchContactsResult = {
+  query: string;
+  count: number;
+  ambiguous: boolean;
+  status: RecipientSearchResult['status'];
+  contacts: RealtimeContactCandidate[];
+};
+
+/**
+ * Address-free financial tool result for the voice model. The recipient address
+ * only ever travels inside the service machinery; the model receives
+ * amount/token/status/message plus typed errors it can narrate in plain Spanish.
+ */
+export type RealtimeVoiceToolResult = {
+  status: 'confirmation_required' | 'sent' | 'cancelled' | 'error';
+  message: string;
+  code?: string;
+  amount?: string;
+  token?: string;
+  recipientName?: string;
+  estimatedFee?: string;
+  network?: string;
+  transactionHash?: string;
+};
+
 export const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
 export const memoryWriteSchema = z.object({ confirmationId: z.string().uuid() });
 export const memoryDraftSchema = z.object({
@@ -83,6 +179,152 @@ export const memoryDraftSchema = z.object({
   }
   if (!value.fact) issue.addIssue({ code: 'custom', path: ['fact'], message: 'Memory fact is required.' });
 });
+
+// ---------------------------------------------------------------------------
+// Voice result helpers (shared definitions → frontend contract)
+// ---------------------------------------------------------------------------
+
+/** Map a service `ConversationTurnResult` onto an address-free tool result. */
+function toVoiceToolResult(result: ConversationTurnResult): RealtimeVoiceToolResult {
+  switch (result.status) {
+    case 'confirmation_required':
+      return { status: 'confirmation_required', message: result.message, amount: result.preview.amount, token: result.preview.token };
+    case 'sent':
+      return { status: 'sent', message: result.message, transactionHash: result.transaction.transactionHash };
+    case 'cancelled':
+      return { status: 'cancelled', message: result.message };
+    case 'error':
+      return { status: 'error', code: result.code, message: result.message };
+    default:
+      return { status: 'error', code: 'internal_error', message: result.message };
+  }
+}
+
+/** Map a raw memory search result onto the voice-shaped result. */
+function toVoiceSearchResult(
+  query: string,
+  result: { status: string; candidates?: Array<Record<string, unknown>>; recipient?: RecipientCandidate },
+): RealtimeSearchContactsResult {
+  if (result.status === 'unavailable') {
+    return { query, count: 0, ambiguous: false, status: 'unavailable', contacts: [] };
+  }
+  const candidates = result.status === 'no_match' ? [] : (result.candidates ?? []) as RecipientCandidate[];
+  const contacts = candidates.map(stripContact);
+  return {
+    query,
+    count: contacts.length,
+    ambiguous: result.status === 'clarification_required',
+    status: result.status as RecipientSearchResult['status'],
+    contacts,
+  };
+}
+
+function stripContact(candidate: RecipientCandidate): RealtimeContactCandidate {
+  return {
+    id: candidate.id,
+    name: candidate.name,
+    normalizedName: candidate.normalizedName,
+    description: candidate.description,
+    version: candidate.version,
+    status: candidate.status,
+    evidence: candidate.evidence,
+    score: candidate.score,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Shared transfer utilities (preview-only model path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a versioned recipient into a full internal broadcast input.
+ * Reuses the same validation rules that `validatePreviewRecipient` uses
+ * so the definition, the guarded wrapper, and the service agree.
+ */
+export async function resolvePreviewRecipient(
+  input: PreviewSendTokenInput,
+  ctx: {
+    session: ConversationSession;
+    recipientMemory?: RecipientMemoryRuntime;
+    config: WalletAgentConfig;
+  },
+): Promise<
+  | { ok: true; internal: SendTokenInput }
+  | { ok: false; error: { error: 'recipient_revalidation_required'; message: string } }
+> {
+  if (!ctx.recipientMemory) {
+    invalidateSelectedRecipient(ctx.session);
+    return {
+      ok: false,
+      error: {
+        error: 'recipient_revalidation_required',
+        message: 'Recipient memory is unavailable; resolve the recipient again before previewing.',
+      },
+    };
+  }
+  if (ctx.session.recipientMemory?.recipientSelectionRequired && !ctx.session.recipientMemory.selectedRecipient) {
+    return {
+      ok: false,
+      error: {
+        error: 'recipient_revalidation_required',
+        message: 'Recipient changed or is no longer valid; resolve the recipient again.',
+      },
+    };
+  }
+  const recipient = await ctx.recipientMemory.service.getRecipientForVersion(
+    ctx.recipientMemory.userId,
+    input.recipientId,
+    input.recipientVersion,
+  );
+  if (!recipient || recipient.id !== input.recipientId || recipient.version !== input.recipientVersion || !isValidRecipientAddress(recipient.address, recipient.network)) {
+    invalidateSelectedRecipient(ctx.session);
+    return {
+      ok: false,
+      error: {
+        error: 'recipient_revalidation_required',
+        message: 'Recipient changed or is no longer valid; resolve the recipient again.',
+      },
+    };
+  }
+  // Also require the session's selected recipient matches the resolved one.
+  const selected = ctx.session.recipientMemory?.selectedRecipient;
+  if (selected && (selected.recipientId !== input.recipientId || selected.version !== input.recipientVersion)) {
+    invalidateSelectedRecipient(ctx.session);
+    return {
+      ok: false,
+      error: {
+        error: 'recipient_revalidation_required',
+        message: 'Recipient changed or is no longer valid; resolve the recipient again.',
+      },
+    };
+  }
+  const network = recipient.network ?? ctx.config.network;
+  const token = recipient.network === 'solana-devnet' ? 'SOL' : ctx.config.token;
+  const internal: SendTokenInput = {
+    network,
+    token,
+    to: recipient.address,
+    amount: input.amount,
+    wallet: ctx.config.wallet,
+    dryRun: true,
+  };
+  if (selected) {
+    ctx.session.recipientMemory!.previewedRecipient = { recipientId: recipient.id, version: recipient.version };
+  }
+  return { ok: true, internal };
+}
+
+/**
+ * Augment a preview result from the definition's internal preview path so
+ * `handleMessage` can persist the full pending transfer (to/wallet from
+ * the resolved recipient, not from the model).
+ */
+export function augmentPreviewOutput(output: unknown, internal: SendTokenInput): unknown {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return output;
+  const c = output as Record<string, unknown>;
+  if (c.preview !== true) return output;
+  return { ...c, network: internal.network, token: internal.token, to: internal.to, amount: internal.amount, wallet: internal.wallet };
+}
 
 const GENERIC_USDT_NAMES = new Set(['usdt', 'usd₮', 'tether']);
 const DECIMAL_AMOUNT = /^\d+(?:\.\d+)?$/u;
@@ -183,6 +425,7 @@ export function createWalletAgentDefinition(): WalletAgentDefinition {
     tools: (context) => [
       ...createWalletOperations(context),
       ...createRecipientMemoryOperations(context),
+      ...createVoiceDecisionOperations(context),
     ],
   };
 }
@@ -207,7 +450,10 @@ function createWalletOperations(context: WalletAgentContext): AgentToolDefinitio
       inputSchema: addressInputSchema,
       execute: async (input) => {
         const parsed = input as z.infer<typeof addressInputSchema>;
-        return context.wallet.getAddress({ network: parsed.network, wallet: parsed.wallet ?? context.config.wallet });
+        return context.wallet.getAddress({
+          network: parsed.network ?? DEFAULT_READ_NETWORK,
+          wallet: parsed.wallet ?? context.config.wallet,
+        });
       },
     },
     {
@@ -219,14 +465,12 @@ function createWalletOperations(context: WalletAgentContext): AgentToolDefinitio
         const token = parsed.token
           ? normalizeWalletToken(parsed.token, context.config.token)
           : undefined;
+        const network = parsed.network ?? DEFAULT_READ_NETWORK;
         const balance = await context.wallet.getBalance({
-          network: parsed.network,
+          network,
           ...(token ? { token } : {}),
           wallet: parsed.wallet ?? context.config.wallet,
         });
-        // The provider value is presented, never rewritten: the model gets the
-        // amount at two decimals plus its spoken form in the conversation
-        // language, so the voice does not read a 24-character decimal.
         const presentation = formatBalanceForAgent({
           balance: balance.balance,
           token: balance.token ?? token ?? context.config.token,
@@ -246,7 +490,7 @@ function createWalletOperations(context: WalletAgentContext): AgentToolDefinitio
       execute: async (input) => {
         const parsed = input as z.infer<typeof balanceInputSchema>;
         return context.wallet.getHistory({
-          network: parsed.network,
+          network: parsed.network ?? DEFAULT_READ_NETWORK,
           ...(parsed.token ? { token: normalizeWalletToken(parsed.token, context.config.token) } : {}),
           wallet: parsed.wallet ?? context.config.wallet,
         });
@@ -254,26 +498,252 @@ function createWalletOperations(context: WalletAgentContext): AgentToolDefinitio
     },
     {
       name: 'send_token',
-      description: 'Preview or execute a wallet transfer.',
+      description:
+        'Preview or execute a wallet transfer. For preview, supply only the amount ' +
+        'and the already-resolved recipient (recipientId + recipientVersion). Never ' +
+        'supply an address, network, token, wallet, or dryRun — those are resolved ' +
+        'server-side. For internal confirmation, supply the full broadcast input ' +
+        '(network, token, to, amount, wallet, dryRun).',
       inputSchema: sendTokenInputSchema,
-      execute: async (input) => sendToken(input as SendTokenBroadcastInput, context),
+      execute: async (input) => executeSendToken(input as unknown, context),
     },
   ];
 }
 
 function createRecipientMemoryOperations(context: WalletAgentContext): AgentToolDefinition<unknown, unknown>[] {
-  if (!context.recipientMemory) return [];
+  if (!context.recipientMemory) {
+    // Fail-closed search_recipients: always present so voice parity holds even
+    // when recipient memory is unavailable — it never invents data.
+    return [
+      {
+        name: 'search_recipients',
+        description: 'Search current-user recipient names and descriptions. Results never include addresses.',
+        inputSchema: memorySearchSchema,
+        execute: async (input) => {
+          const query = (input as { query: string }).query;
+          return { query, count: 0, ambiguous: false, status: 'unavailable' as const, contacts: [] };
+        },
+      },
+    ];
+  }
   const raw = createRecipientMemoryTools({
     userId: context.recipientMemory.userId,
     session: context.session,
     service: context.recipientMemory.service,
   });
   return [
-    { name: 'search_recipients', description: 'Search current-user recipient names and descriptions. Results never include addresses.', inputSchema: memorySearchSchema, execute: async (input) => raw.search_recipients(input) },
+    {
+      name: 'search_recipients',
+      description: 'Search current-user recipient names and descriptions. Results never include addresses.',
+      inputSchema: memorySearchSchema,
+      execute: async (input) => {
+        const rawResult = await raw.search_recipients(input);
+        return toVoiceSearchResult((input as { query: string }).query, rawResult);
+      },
+    },
     { name: 'search_user_memory', description: 'Search confirmed current-user relationship facts. Facts are evidence, not recipient identity proof.', inputSchema: memorySearchSchema, execute: async (input) => raw.search_user_memory(input) },
     { name: 'get_selected_recipient_address', description: 'Get the exact address for the recipient already selected and version-bound in this session. Takes no IDs or version arguments.', inputSchema: emptyInputSchema, execute: async (input) => raw.get_selected_recipient_address(input) },
     { name: 'stage_user_memory', description: 'Stage a recipient or relationship for explicit user confirmation. Display the returned draft exactly, including any address.', inputSchema: memoryDraftSchema, execute: async (input) => raw.stage_user_memory(input) },
     { name: 'write_user_memory', description: 'Persist only a staged, explicitly confirmed memory proposal using its one-time confirmation ID.', inputSchema: memoryWriteSchema, execute: async (input) => raw.write_user_memory(input) },
+  ];
+}
+
+/**
+ * Unified send_token entry point. Dual-parse: the model-facing preview-only
+ * schema (text or voice) OR the internal broadcast schema (deterministic / confirmed).
+ * The internal path preserves the existing preview/broadcast logic.
+ */
+async function executeSendToken(input: unknown, context: WalletAgentContext): Promise<unknown> {
+  const preview = sendTokenInputSchema.safeParse(input);
+  if (preview.success) {
+    if (context.voiceService && context.voiceConversations) {
+      return voicePreviewTransfer(preview.data, context);
+    }
+    return textPreviewTransfer(preview.data, context);
+  }
+  const parsed = internalSendTokenInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return { error: 'confirmation_required', message: 'Missing recipient: supply recipientId and recipientVersion for a preview.' };
+  }
+  return sendToken(parsed.data as SendTokenBroadcastInput, context);
+}
+
+/**
+ * Text-agent preview: resolve the versioned recipient, run policy,
+ * call the wallet provider, and return the augmented preview.
+ */
+async function textPreviewTransfer(
+  input: PreviewSendTokenInput,
+  context: WalletAgentContext,
+): Promise<unknown> {
+  const resolved = await resolvePreviewRecipient(input, {
+    session: context.session,
+    recipientMemory: context.recipientMemory,
+    config: context.config,
+  });
+  if (!resolved.ok) return resolved.error;
+  const policyError = validateWalletTransferPolicy(resolved.internal, context.config);
+  if (policyError) return policyError;
+  const preview = await context.wallet.previewTransfer({
+    network: resolved.internal.network,
+    token: resolved.internal.token,
+    to: resolved.internal.to,
+    amount: resolved.internal.amount,
+    wallet: resolved.internal.wallet,
+  });
+  return { preview: true, ...preview, network: resolved.internal.network, token: resolved.internal.token, to: resolved.internal.to, amount: resolved.internal.amount, wallet: resolved.internal.wallet };
+}
+
+/**
+ * Voice preview: delegate to the per-binding conversation service which
+ * persists the pending preview and revalidates the recipient. Then read
+ * the preview aloud and gate on the spoken-decision evidence.
+ */
+async function voicePreviewTransfer(
+  input: PreviewSendTokenInput,
+  context: WalletAgentContext,
+): Promise<RealtimeVoiceToolResult> {
+  const service = context.voiceService!;
+  const conversations = context.voiceConversations;
+  if (!conversations) {
+    return { status: 'error', code: 'wallet_unavailable', message: 'The wallet service is unavailable.' };
+  }
+  const result = await service.previewTransfer({
+    conversationId: context.conversationId,
+    userId: context.userId,
+    amount: input.amount,
+    recipientId: input.recipientId,
+    recipientVersion: input.recipientVersion,
+    ...(input.memo ? { memo: input.memo } : {}),
+  });
+  const output = toVoiceToolResult(result);
+  if (result.status !== 'confirmation_required') return output;
+  const current = await conversations.get(context.userId, context.conversationId);
+  const pending = current?.pendingTransfer;
+  const previewId = pending?.previewId;
+  if (
+    !previewId ||
+    !pending ||
+    pending.amount !== result.preview.amount ||
+    pending.token !== result.preview.token ||
+    pending.network !== result.preview.network ||
+    !context.voiceDecisionGate ||
+    !context.speakPreview
+  ) {
+    if (previewId) context.voiceDecisionGate?.clear(previewId);
+    return {
+      status: 'error',
+      code: 'confirmation_required',
+      message: 'The saved preview could not be read back safely. Please try again.',
+    };
+  }
+  const recipient = context.recipientMemory
+    ? await context.recipientMemory.service.getRecipientForVersion(
+        context.userId,
+        input.recipientId,
+        input.recipientVersion,
+      )
+    : undefined;
+  if (
+    !recipient ||
+    recipient.id !== input.recipientId ||
+    recipient.version !== input.recipientVersion
+  ) {
+    context.voiceDecisionGate.clear(previewId);
+    return {
+      status: 'error',
+      code: 'recipient_revalidation_required',
+      message: 'The saved contact changed. Please select the contact again.',
+    };
+  }
+  const state = await conversations.get(context.userId, context.conversationId);
+  const language = state?.language ?? 'en';
+  const network = result.preview.network;
+  const networkLabel = network === 'solana-devnet' ? 'Solana devnet' : network;
+  const fee = result.preview.estimatedFee;
+  const readback = language === 'es'
+    ? `Transferencia de ${result.preview.amount} ${result.preview.token} por ${networkLabel} para ${recipient.name}. Comisión estimada: ${fee}. ¿Confirmás o cancelás?`
+    : `Transfer ${result.preview.amount} ${result.preview.token} on ${networkLabel} to ${recipient.name}. Estimated fee: ${fee}. Do you confirm or cancel?`;
+  context.voiceDecisionGate.prepare(previewId);
+  try {
+    const playout = await context.speakPreview(readback);
+    context.voiceDecisionGate.completeNarration(previewId, { interrupted: playout.interrupted });
+  } catch {
+    context.voiceDecisionGate.completeNarration(previewId, { interrupted: true });
+  }
+  return {
+    ...output,
+    message: language === 'es'
+      ? 'La vista previa ya se leyó en voz alta. Esperá la respuesta explícita sin repetirla.'
+      : 'The server has read the preview aloud. Wait for the user\'s explicit decision without repeating it.',
+    recipientName: recipient.name,
+    estimatedFee: fee,
+    network,
+  };
+}
+
+/** Ported decideTransfer logic from create-realtime-tools.ts. */
+async function decideTransfer(
+  decision: 'confirm' | 'cancel',
+  context: WalletAgentContext,
+): Promise<RealtimeVoiceToolResult> {
+  if (!context.voiceService || !context.voiceConversations) {
+    return { status: 'error', code: 'wallet_unavailable', message: 'The wallet service is unavailable.' };
+  }
+  const conversations = context.voiceConversations;
+  const snapshot = await conversations.get(context.userId, context.conversationId);
+  const previewId = snapshot?.pendingTransfer?.previewId;
+  if (!previewId) {
+    return { status: 'error', code: 'stale_preview', message: 'There is no pending transfer to confirm or cancel.' };
+  }
+  if (!context.voiceDecisionGate?.consume(previewId, decision)) {
+    return {
+      status: 'error',
+      code: 'confirmation_required',
+      message: decision === 'confirm'
+        ? 'Please explicitly confirm the current preview after hearing it.'
+        : 'Please explicitly cancel the current preview after hearing it.',
+    };
+  }
+  let result: ConversationTurnResult | undefined;
+  const iterable = context.voiceService.resolveDecision({
+    conversationId: context.conversationId,
+    userId: context.userId,
+    previewId,
+    decision,
+    waitForFinancialTask: decision === 'confirm',
+  });
+  for await (const event of iterable) {
+    if (event.type === 'turn-completed') result = event.result;
+  }
+  if (!result) {
+    return { status: 'error', code: 'internal_error', message: 'The transfer could not be resolved.' };
+  }
+  return toVoiceToolResult(result);
+}
+
+/**
+ * Voice-only operations (confirm/cancel) produced only for a voice context.
+ * When the gate is absent the tools still exist but fail-closed to
+ * `confirmation_required`.
+ */
+function createVoiceDecisionOperations(context: WalletAgentContext): AgentToolDefinition<unknown, unknown>[] {
+  if (!context.voiceService || !context.voiceConversations) return [];
+  return [
+    {
+      name: 'confirm_transfer',
+      description:
+        'Confirms the current transfer only after a fresh final exact spoken confirmation following the server read-back. A model tool call is not authorization. Takes no parameters.',
+      inputSchema: emptyInputSchema,
+      execute: () => decideTransfer('confirm', context),
+    },
+    {
+      name: 'cancel_transfer',
+      description:
+        'Cancels the current transfer only after a fresh final exact spoken cancellation following the server read-back. Takes no parameters.',
+      inputSchema: emptyInputSchema,
+      execute: () => decideTransfer('cancel', context),
+    },
   ];
 }
 

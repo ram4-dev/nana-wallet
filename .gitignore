@@ -22,3 +22,4 @@ evals/voice/.audio/
 
 # local model cache from arc provider experiments
 recipient-memory-model/
+node_modules

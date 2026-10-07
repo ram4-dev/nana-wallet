@@ -235,7 +235,7 @@ arbitrate on the same database claim.
 Five model-facing realtime tools are exposed by `createRealtimeTools`:
 
 - `get_balance` — reads the configured wallet balance via `WalletProvider`.
-- `search_contacts` — searches `RecipientMemoryService` scoped per binding user
+- `search_recipients` — searches `RecipientMemoryService` scoped per binding user
   (`binding.sub`); returns address-free candidates, fails closed when memory is
   unavailable.
 - `send_token` — preview-only. Its strict zod schema accepts only

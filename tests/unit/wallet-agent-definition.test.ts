@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createWalletAgentDefinition,
+  internalSendTokenInputSchema,
   normalizeBroadcastResult,
   normalizeWalletToken,
   validateWalletTransferPolicy,
@@ -55,19 +56,29 @@ describe("wallet agent definition", () => {
       "get_balance",
       "get_history",
       "send_token",
+      "search_recipients",
     ]);
+    // Model-facing schema is preview-only (unified contract): no to/dryRun.
     expect(
       definition
         .tools(input)
         .find((tool) => tool.name === "send_token")
         ?.inputSchema.safeParse({
-          network: "sepolia",
-          token: "USDT",
-          to: "0x1234567890123456789012345678901234567890",
           amount: "10",
-          wallet: "agent-demo",
-          dryRun: true,
+          recipientId: "c-1",
+          recipientVersion: 1,
         }).success,
+    ).toBe(true);
+    // The internal broadcast schema still accepts the full internal input.
+    expect(
+      internalSendTokenInputSchema.safeParse({
+        network: "sepolia",
+        token: "USDT",
+        to: "0x1234567890123456789012345678901234567890",
+        amount: "10",
+        wallet: "agent-demo",
+        dryRun: true,
+      }).success,
     ).toBe(true);
   });
 

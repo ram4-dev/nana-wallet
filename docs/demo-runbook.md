@@ -24,7 +24,7 @@ WDK_TOOLS_SOURCE=fixture
 ```
 
 `RECIPIENT_MEMORY_ENABLED=true` is required for the agent to search saved contacts:
-without it `search_contacts` fails closed to `unavailable` and the agent reports
+without it `search_recipients` fails closed to `unavailable` and the agent reports
 no saved contacts. `RECIPIENT_MEMORY_SEED_FILE` points at the confirmed demo data
 loaded by `npm run db:seed`.
 

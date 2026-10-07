@@ -1,15 +1,28 @@
-import { tool } from "@livekit/agents";
-import { z } from "zod";
-import { formatBalanceForAgent } from "../../agent/balance-format.js";
-import { getWalletAgentConfig } from "../../agent/instructions.js";
-import type { ConversationLanguage } from "../../conversations/language.js";
-import type { RecipientMemoryService, RecipientSearchResult } from "../../memory/service.js";
-import type { RecipientCandidate } from "../../memory/types.js";
-import type { WalletProvider } from "../../wallet/provider.js";
-import type { ConversationRepository } from "../../conversations/repository.js";
-import type { WalletConversationService } from "../../conversations/service.js";
-import type { ConversationTurnResult } from "../../contracts/http.js";
-import type { VoiceDecisionGate } from "../voice-decision-gate.js";
+import { getWalletAgentConfig } from '../../agent/instructions.js';
+import { createWalletAgentDefinition, type WalletAgentContext } from '../../agent/definition.js';
+import { toLivekitRealtimeTools } from '../../agent/livekit-realtime-adapter.js';
+import type { ConversationLanguage } from '../../conversations/language.js';
+import type { ConversationSession } from '../../conversations/session-state.js';
+import type { RecipientMemoryService } from '../../memory/service.js';
+import type { WalletProvider } from '../../wallet/provider.js';
+import type { ConversationRepository } from '../../conversations/repository.js';
+import type { WalletConversationService } from '../../conversations/service.js';
+import type { VoiceDecisionGate } from '../voice-decision-gate.js';
+
+export type {
+  RealtimeContactCandidate,
+  RealtimeSearchContactsResult,
+  RealtimeVoiceToolResult,
+} from '../../agent/definition.js';
+
+/** A model-facing voice balance result. */
+export type RealtimeBalanceResult = {
+  network: string;
+  token: string;
+  address: string;
+  balance: string;
+  balanceSpoken: string;
+};
 
 /**
  * Dependencies used to build the realtime voice tools for a single conversation.
@@ -17,7 +30,7 @@ import type { VoiceDecisionGate } from "../voice-decision-gate.js";
  * `userId` is the binding user (`binding.sub`) — NEVER the demo-tenant singleton.
  * `recipientMemory` is a shared tenant-agnostic service; the tenant is scoped per
  * call by passing `userId` to `searchRecipients`. When memory is unavailable the
- * `search_contacts` tool fails closed to `unavailable` rather than inventing data.
+ * `search_recipients` tool fails closed to `unavailable` rather than inventing data.
  *
  * `service` is the per-binding conversation service built in the worker with the
  * binding user's memory runtime. The financial tools (`send_token`, `confirm_transfer`,
@@ -38,394 +51,51 @@ export type RealtimeToolsDependencies = {
   publishRevision?: (revision: number) => void;
 };
 
-/** A contact candidate exposed to the model — never contains address or userId. */
-export type RealtimeContactCandidate = {
-  id: string;
-  name: string;
-  normalizedName: string;
-  description: string;
-  version: number;
-  status: "active" | "inactive";
-  evidence: string;
-  score: number;
-  network?: "solana-devnet";
-};
-
-export type RealtimeSearchContactsResult = {
-  query: string;
-  count: number;
-  ambiguous: boolean;
-  status: RecipientSearchResult["status"];
-  contacts: RealtimeContactCandidate[];
-};
-
-export type RealtimeBalanceResult = {
-  network: string;
-  token: string;
-  address: string;
-  balance: string;
-  /**
-   * The same amount written out in words in the conversation language, so the voice
-   * model narrates "forty-two USDC and fifty cents" instead of reading the provider's
-   * raw decimal digit by digit.
-   */
-  balanceSpoken: string;
-};
-
-/**
- * A model-facing (address-free) financial tool result. The recipient address only ever
- * travels inside the service machinery; the model receives amount/token/status/message
- * plus typed errors it can narrate in plain Spanish.
- */
-export type RealtimeVoiceToolResult = {
-  status: "confirmation_required" | "sent" | "cancelled" | "error";
-  message: string;
-  code?: string;
-  amount?: string;
-  token?: string;
-  recipientName?: string;
-  estimatedFee?: string;
-  network?: string;
-  transactionHash?: string;
-};
-
-/**
- * REVIEW FIX V6: the voice `send_token` schema is preview-only and enforced by zod.
- * It accepts ONLY `{ amount, recipientId, recipientVersion, memo? }` — no `dryRun`,
- * no free-form `to` address, no network/token/wallet (the configured wallet is used
- * internally). `.strict()` rejects any unknown field so a model inventing a `to` or
- * a `dryRun` flag fails closed at the schema boundary, never reaching the service.
- */
-const sendTokenSchema = z
-  .object({
-    amount: z.string().trim().min(1),
-    recipientId: z.string().trim().min(1),
-    recipientVersion: z.number().int().positive(),
-    memo: z.string().trim().max(200).optional(),
-  })
-  .strict();
-type SendTokenInput = z.infer<typeof sendTokenSchema>;
-
-const confirmationSchema = z.object({}).strict();
-const cancelSchema = z.object({}).strict();
-
-/**
- * Deliberately strips every field that could leak a payee address or another user's
- * identity. `RecipientCandidate` already omits `address`/`userId`, but rebuilding the
- * object here keeps the model-facing payload contract explicit and future-proof: if a
- * candidate ever grows a sensitive field it will not leak unless added here on purpose.
- */
-function stripCandidate(candidate: RecipientCandidate): RealtimeContactCandidate {
-  return {
-    id: candidate.id,
-    name: candidate.name,
-    normalizedName: candidate.normalizedName,
-    description: candidate.description,
-    version: candidate.version,
-    status: candidate.status,
-    evidence: candidate.evidence,
-    score: candidate.score,
-    ...(candidate.network ? { network: candidate.network } : {}),
-  };
-}
-
-/** Map the service classification faithfully onto the model-facing result shape. */
-function toSearchContactsResult(
-  query: string,
-  result: RecipientSearchResult,
-): RealtimeSearchContactsResult {
-  if (result.status === "unavailable") {
-    return { query, count: 0, ambiguous: false, status: "unavailable", contacts: [] };
-  }
-  // A negative status must never ship candidates: the model reads `status`, and a
-  // contradictory payload is exactly what made it deny a contact it was just handed.
-  const candidates = result.status === "no_match" ? [] : result.candidates;
-  const contacts = candidates.map(stripCandidate);
-  return {
-    query,
-    count: contacts.length,
-    ambiguous: result.status === "clarification_required",
-    status: result.status,
-    contacts,
-  };
-}
-
-/**
- * Map a service `ConversationTurnResult` onto an address-free tool result. The
- * `preview.recipient` address is deliberately dropped: the model never needs it and
- * the privacy invariant keeps the address book inside the machinery.
- */
-function toVoiceToolResult(result: ConversationTurnResult): RealtimeVoiceToolResult {
-  switch (result.status) {
-    case "confirmation_required":
-      return {
-        status: "confirmation_required",
-        message: result.message,
-        amount: result.preview.amount,
-        token: result.preview.token,
-      };
-    case "sent":
-      return {
-        status: "sent",
-        message: result.message,
-        transactionHash: result.transaction.transactionHash,
-      };
-    case "cancelled":
-      return { status: "cancelled", message: result.message };
-    case "error":
-      return { status: "error", code: result.code, message: result.message };
-    default:
-      return {
-        status: "error",
-        code: "internal_error",
-        message: result.message,
-      };
-  }
-}
-
-/**
- * Resolve the language the balance should be spoken in.
- *
- * The voice path has no `context.language`: it runs outside the text agent, so the
- * language is read from the conversation snapshot the worker already binds per room.
- * A missing repository, an unknown conversation, or a repository failure all fall back
- * to English — never to a mixed-language narration — and a balance read must never
- * fail because the language lookup did.
- */
+/** Resolve the language the balance should be spoken in. */
 async function resolveConversationLanguage(
   dependencies: RealtimeToolsDependencies,
 ): Promise<ConversationLanguage> {
-  if (!dependencies.conversations) return "en";
+  if (!dependencies.conversations) return 'en';
   try {
     const snapshot = await dependencies.conversations.get(
       dependencies.userId,
       dependencies.conversationId,
     );
-    return snapshot?.language === "es" ? "es" : "en";
+    return snapshot?.language === 'es' ? 'es' : 'en';
   } catch {
-    return "en";
+    return 'en';
   }
 }
 
 /**
  * Builds the realtime voice tools bound to one conversation. Tools are closures over
  * the deps so each room gets the correct wallet/tenant/service without global lookups.
+ *
+ * Produces tools from the shared definition so parity is structural: the same
+ * name/description/schema that the text agent sees is also available to voice
+ * (except `VOICE_ONLY_TOOLS`).
  */
 export function createRealtimeTools(dependencies: RealtimeToolsDependencies) {
   const config = getWalletAgentConfig();
-
-  const getBalanceTool = tool({
-    name: "get_balance",
-    description:
-      "Returns the current balance of the connected wallet for the default token. Takes no input.",
-    parameters: z.object({}),
-    execute: async (): Promise<RealtimeBalanceResult> => {
-          const [balance, language] = await Promise.all([
-            dependencies.wallet.getBalance({
-              network: config.network,
-              token: config.token,
-              wallet: config.wallet,
-            }),
-            resolveConversationLanguage(dependencies),
-          ]);
-      const token = balance.token ?? config.token;
-      // The provider value is only presented: the model receives two decimals plus
-      // the spoken form, and the wallet keeps returning its exact amount untouched.
-      const presentation = formatBalanceForAgent({
-        balance: balance.balance,
-        token,
-        language,
-      });
-      return {
-        network: balance.network,
-        token,
-        address: balance.address,
-        balance: presentation.balance,
-        balanceSpoken: presentation.balanceSpoken,
-      };
+  const session: ConversationSession = { id: dependencies.conversationId, messages: [] };
+  const context: WalletAgentContext = {
+    conversationId: dependencies.conversationId,
+    userId: dependencies.userId,
+    language: 'en',
+    config,
+    session,
+    wallet: dependencies.wallet,
+    ...(dependencies.recipientMemory
+      ? { recipientMemory: { userId: dependencies.userId, service: dependencies.recipientMemory } }
+      : {}),
+    ...(dependencies.service ? { voiceService: dependencies.service } : {}),
+    ...(dependencies.conversations ? { voiceConversations: dependencies.conversations } : {}),
+    ...(dependencies.voiceDecisionGate ? { voiceDecisionGate: dependencies.voiceDecisionGate } : {}),
+    ...(dependencies.speakPreview ? { speakPreview: dependencies.speakPreview } : {}),
+  };
+  return toLivekitRealtimeTools(createWalletAgentDefinition(), context, {
+    refreshContext: async (ctx) => {
+      ctx.language = await resolveConversationLanguage(dependencies);
     },
   });
-
-  const searchContactsTool = tool({
-    name: "search_contacts",
-    description:
-      "Searches saved contacts by name. Returns matching candidates (never addresses), a count, and a status. Ask for clarification when ambiguous.",
-    parameters: z.object({ query: z.string().trim().min(1) }),
-    execute: async ({ query }): Promise<RealtimeSearchContactsResult> => {
-      if (!dependencies.recipientMemory) {
-        return {
-          query,
-          count: 0,
-          ambiguous: false,
-          status: "unavailable",
-          contacts: [],
-        };
-      }
-      const result = await dependencies.recipientMemory.searchRecipients(
-        dependencies.userId,
-        query,
-      );
-      return toSearchContactsResult(query, result);
-    },
-  });
-
-  const sendTokenTool = tool({
-    name: "send_token",
-    description:
-      "Prepares a transfer for explicit user confirmation. Takes the amount and the already-resolved recipient (recipientId + recipientVersion). Never takes an address, network, token, or dryRun. The server reads back amount, saved contact name, network, and estimated fee, then asks for a clear decision. Call confirm_transfer only after a fresh exact user confirmation after that read-back.",
-    parameters: sendTokenSchema,
-    execute: async (input: SendTokenInput): Promise<RealtimeVoiceToolResult> => {
-      if (!dependencies.service || !dependencies.conversations) {
-        return {
-          status: "error",
-          code: "wallet_unavailable",
-          message: "The wallet service is unavailable.",
-        };
-      }
-      const conversations = dependencies.conversations;
-      const result = await dependencies.service.previewTransfer({
-        conversationId: dependencies.conversationId,
-        userId: dependencies.userId,
-        amount: input.amount,
-        recipientId: input.recipientId,
-        recipientVersion: input.recipientVersion,
-      });
-      const output = toVoiceToolResult(result);
-      if (result.status !== "confirmation_required") return output;
-      const current = await conversations.get(
-        dependencies.userId,
-        dependencies.conversationId,
-      );
-      const pending = current?.pendingTransfer;
-      const previewId = pending?.previewId;
-      if (
-        !previewId ||
-        !pending ||
-        pending.amount !== result.preview.amount ||
-        pending.token !== result.preview.token ||
-        pending.network !== result.preview.network ||
-        !dependencies.voiceDecisionGate ||
-        !dependencies.speakPreview
-      ) {
-        if (previewId) dependencies.voiceDecisionGate?.clear(previewId);
-        return {
-          status: "error",
-          code: "confirmation_required",
-          message: "The saved preview could not be read back safely. Please try again.",
-        };
-      }
-      const recipient = await dependencies.recipientMemory?.getRecipientForVersion(
-        dependencies.userId,
-        input.recipientId,
-        input.recipientVersion,
-      );
-      if (!recipient || recipient.id !== input.recipientId || recipient.version !== input.recipientVersion) {
-        dependencies.voiceDecisionGate.clear(previewId);
-        return {
-          status: "error",
-          code: "recipient_revalidation_required",
-          message: "The saved contact changed. Please select the contact again.",
-        };
-      }
-      const state = await conversations.get(
-        dependencies.userId,
-        dependencies.conversationId,
-      );
-      const language = state?.language ?? "en";
-      const network = result.preview.network;
-      const networkLabel = network === "solana-devnet" ? "Solana devnet" : network;
-      const fee = result.preview.estimatedFee;
-      const readback = language === "es"
-        ? `Transferencia de ${result.preview.amount} ${result.preview.token} por ${networkLabel} para ${recipient.name}. Comisión estimada: ${fee}. ¿Confirmás o cancelás?`
-        : `Transfer ${result.preview.amount} ${result.preview.token} on ${networkLabel} to ${recipient.name}. Estimated fee: ${fee}. Do you confirm or cancel?`;
-      dependencies.voiceDecisionGate.prepare(previewId);
-      try {
-        const playout = await dependencies.speakPreview(readback);
-        dependencies.voiceDecisionGate.completeNarration(previewId, { interrupted: playout.interrupted });
-      } catch {
-        dependencies.voiceDecisionGate.completeNarration(previewId, { interrupted: true });
-      }
-      return {
-        ...output,
-        message: language === "es"
-          ? "La vista previa ya se leyó en voz alta. Esperá la respuesta explícita sin repetirla."
-          : "The server has read the preview aloud. Wait for the user's explicit decision without repeating it.",
-        recipientName: recipient.name,
-        estimatedFee: fee,
-        network,
-      };
-    },
-  });
-
-  async function decideTransfer(
-    decision: "confirm" | "cancel",
-  ): Promise<RealtimeVoiceToolResult> {
-    if (!dependencies.service || !dependencies.conversations) {
-      return {
-        status: "error",
-        code: "wallet_unavailable",
-        message: "The wallet service is unavailable.",
-      };
-    }
-    // REVIEW FIX V1: read the CURRENT persisted preview each call — never capture it
-    // at bind time, so a superseded/cancelled preview fails closed to stale_preview.
-    const snapshot = await dependencies.conversations.get(
-      dependencies.userId,
-      dependencies.conversationId,
-    );
-    const previewId = snapshot?.pendingTransfer?.previewId;
-    if (!previewId) {
-      return {
-        status: "error",
-        code: "stale_preview",
-        message: "There is no pending transfer to confirm or cancel.",
-      };
-    }
-    if (!dependencies.voiceDecisionGate?.consume(previewId, decision)) {
-      return {
-        status: "error",
-        code: "confirmation_required",
-        message: decision === "confirm"
-          ? "Please explicitly confirm the current preview after hearing it."
-          : "Please explicitly cancel the current preview after hearing it.",
-      };
-    }
-    let result: ConversationTurnResult | undefined;
-    const iterable = dependencies.service.resolveDecision({
-      conversationId: dependencies.conversationId,
-      userId: dependencies.userId,
-      previewId,
-      decision,
-      waitForFinancialTask: decision === "confirm",
-    });
-    for await (const event of iterable) {
-      if (event.type === "turn-completed") result = event.result;
-    }
-    if (!result) {
-      return {
-        status: "error",
-        code: "internal_error",
-        message: "The transfer could not be resolved.",
-      };
-    }
-    return toVoiceToolResult(result);
-  }
-
-  const confirmTransferTool = tool({
-    name: "confirm_transfer",
-    description:
-      "Confirms the current transfer only after a fresh final exact spoken confirmation following the server read-back. A model tool call is not authorization. Takes no parameters.",
-    parameters: confirmationSchema,
-    execute: async (): Promise<RealtimeVoiceToolResult> => decideTransfer("confirm"),
-  });
-
-  const cancelTransferTool = tool({
-    name: "cancel_transfer",
-    description:
-      "Cancels the current transfer only after a fresh final exact spoken cancellation following the server read-back. Takes no parameters.",
-    parameters: cancelSchema,
-    execute: async (): Promise<RealtimeVoiceToolResult> => decideTransfer("cancel"),
-  });
-
-  return [getBalanceTool, searchContactsTool, sendTokenTool, confirmTransferTool, cancelTransferTool] as const;
 }
