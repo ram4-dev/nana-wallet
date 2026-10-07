@@ -29,18 +29,6 @@ const WalletLifecycle = lazy(() =>
   })),
 );
 
-const SolanaWalletSetup = lazy(() =>
-  import("@/features/wallet/SolanaWalletSetup").then((module) => ({
-    default: module.SolanaWalletSetup,
-  })),
-);
-
-const DelegatedGrantsSection = lazy(() =>
-  import("@/features/wallet/DelegatedGrantsSection").then((module) => ({
-    default: module.DelegatedGrantsSection,
-  })),
-);
-
 export const Route = createFileRoute("/perfil")({
   head: () => ({
     meta: [
@@ -171,9 +159,7 @@ function PerfilPage() {
         <Suspense
           fallback={<p className="mt-3 text-sm text-muted-foreground">Cargando permisos…</p>}
         >
-          {isPrivyIdentityProvider() ? <SolanaWalletSetup userId={userId} /> : null}
           <WalletLifecycle userId={userId} />
-          <DelegatedGrantsSection userId={userId} />
         </Suspense>
       </section>
     </main>
