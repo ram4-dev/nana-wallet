@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { vi, describe, expect, it } from 'vitest';
+
+// CI-load headroom: server-injection cases can exceed Vitest's 5s default under
+// full-suite parallel load (documented pattern in api-voice).
+vi.setConfig({ testTimeout: 15_000 });
+
 import { buildServer } from '../../src/server.js';
 
 describe('conversation API', () => {

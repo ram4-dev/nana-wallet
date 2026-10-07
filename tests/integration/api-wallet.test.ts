@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// CI-load headroom: these server-injection cases can exceed Vitest's 5s
+// default under full-suite parallel load (documented pattern in api-voice).
+vi.setConfig({ testTimeout: 15_000 });
+
 // Hermetic: the local development .env may set WDK_TOOLS_SOURCE=live; these
 // tests exercise the fixture provider contract. The pins run before the server
 // import because dotenv evaluates the ambient .env during that import chain

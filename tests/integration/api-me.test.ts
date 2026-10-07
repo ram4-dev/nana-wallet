@@ -1,5 +1,10 @@
 import { generateKeyPairSync } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { vi, afterAll, beforeAll, describe, expect, it } from "vitest";
+
+// CI-load headroom: server-injection cases can exceed Vitest's 5s default under
+// full-suite parallel load (documented pattern in api-voice).
+vi.setConfig({ testTimeout: 15_000 });
+
 import { SignJWT } from "jose";
 import { buildServer } from "../../src/server.js";
 
