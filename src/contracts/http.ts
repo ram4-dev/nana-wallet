@@ -389,6 +389,7 @@ export type EnrollmentPrepareInput = z.infer<
 export const enrollmentPreparationResponseSchema = z.object({
   walletId: z.string().uuid(),
   walletAddress: z.string(),
+  walletChainFamily: z.enum(["arc", "solana"]),
   policyId: z.string(),
   quorumId: z.string(),
   perTransferUsdc: z.string(),

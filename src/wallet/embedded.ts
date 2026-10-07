@@ -215,6 +215,7 @@ export type PermissionSummary = {
 export type EnrollmentPreparation = {
   walletId: string;
   walletAddress: string;
+  walletChainFamily: "arc" | "solana";
   policyId: string;
   quorumId: string;
   perTransferUsdc: string;
@@ -368,6 +369,28 @@ export class EmbeddedWalletService {
        * otherwise the legacy Arc/EVM row. Keeps the EVM flow byte-identical
        * while letting Solana consent enrollment address its own wallet.
        */
+      /** Ready Solana wallet row for a Solana-recipient enrollment. */
+      private async solanaEnrollmentWalletRow(
+        userId: string,
+      ): Promise<CurrentWallet> {
+        const solana = await this.database.withUserTransaction(
+          userId,
+          (client) => this.currentSolanaWalletRow(userId, client),
+        );
+        if (!solana) {
+          return {
+            userId,
+            id: "",
+            state: "unprovisioned",
+            address: "",
+            chainFamily: "solana",
+            provider: "privy",
+            verifiedAt: null,
+          };
+        }
+        return mapWallet(solana);
+      }
+
       private async enrollmentWalletRow(
         userId: string,
       ): Promise<CurrentWallet> {
@@ -885,10 +908,22 @@ export class EmbeddedWalletService {
     userId: string,
     recipients: string[],
   ): Promise<EnrollmentPreparation> {
-    const wallet = await this.enrollmentWalletRow(userId);
+    // Chain selection by RECIPIENT type, not by which wallet row happens to
+    // be preferred (multi-wallet users hold both arc and solana rows). Mixed
+    // recipients are rejected: one permission binds one wallet + one policy.
+    const wantsSolana = recipients.every((r) => isValidSolanaAddress(r));
+    const wantsEvm = recipients.every((r) => isValidEvmAddress(r));
+    if (!wantsSolana && !wantsEvm) {
+      throw new GrantValidationError(
+        "All recipients must share one chain (EVM addresses or Solana addresses).",
+      );
+    }
+    const wallet = wantsSolana
+      ? await this.solanaEnrollmentWalletRow(userId)
+      : await this.getCurrentWallet(userId);
     if (wallet.state !== "ready") {
       throw new WalletNotFoundError(
-        `Wallet is not ready (state: ${wallet.state}).`,
+        `Wallet is not ready (state: ${wallet.state}, chain: ${wantsSolana ? "solana" : "arc"}).`,
       );
     }
     if (!this.enrollment?.keyQuorumId) {
@@ -996,6 +1031,7 @@ export class EmbeddedWalletService {
     return {
       walletId: wallet.id,
       walletAddress: wallet.address,
+      walletChainFamily: isSolanaWallet ? "solana" : "arc",
       policyId,
       quorumId: this.enrollment.keyQuorumId,
       perTransferUsdc: isSolanaWallet ? "" : ENROLLMENT_PER_TRANSFER_USDC,
