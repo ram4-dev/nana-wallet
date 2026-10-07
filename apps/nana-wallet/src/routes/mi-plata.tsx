@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { lazy, Suspense, useState } from "react";
+import { useState } from "react";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -14,7 +14,7 @@ import {
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
-import { api, getErrorMessage, isPrivyIdentityProvider, queryKeys } from "@/lib/api";
+import { api, getErrorMessage, queryKeys } from "@/lib/api";
 import { formatUsdcBalance } from "@/lib/usdc-format";
 import { ARC_TESTNET_CHAIN_ID } from "@/lib/api-types";
 import { useNotificationsFeed } from "@/features/notifications/useNotificationsFeed";
@@ -27,31 +27,10 @@ import { useNotificationsFeed } from "@/features/notifications/useNotificationsF
  * Balance read (WP-011): staleTime 30 s, refetchOnMount "always", no retry,
  * no polling, explicit refresh button. Error state wins over cached data so a
  * failed refresh always hides a previously shown amount. WalletLifecycle only
- * mounts after the explicit "Administrar billetera" action and never for the
- * balance read itself (WP-012).
+ * Payment-authorization management lives in /perfil (owner decision
+ * 2026-10-07): this screen shows balance, assets and activity only.
  */
 
-// Lazy: the lifecycle (contacts/permission queries) must never load just by
-// opening the screen; it mounts only behind the explicit action.
-const WalletLifecycle = lazy(() =>
-  import("@/features/wallet/WalletLifecycle").then((module) => ({
-    default: module.WalletLifecycle,
-  })),
-);
-
-const DelegatedGrantsSection = lazy(() =>
-  import("@/features/wallet/DelegatedGrantsSection").then((module) => ({
-    default: module.DelegatedGrantsSection,
-  })),
-);
-
-// Privy-only: the Solana embedded-wallet setup imports Privy Solana hooks and
-// must never load in demo mode or before identity mode is known.
-const SolanaWalletSetup = lazy(() =>
-  import("@/features/wallet/SolanaWalletSetup").then((module) => ({
-    default: module.SolanaWalletSetup,
-  })),
-);
 
 export const Route = createFileRoute("/mi-plata")({
   head: () => ({
@@ -93,41 +72,11 @@ function formatObservedAt(observedAt: string): string {
 }
 
 /**
- * WP-012: "Administrar billetera" mounts WalletLifecycle only after the
+ * WP-012 (superseded 2026-10-07): WalletLifecycle moved to /perfil.
  * explicit user action, in its own section. Its load/errors are independent
  * from the balance and never hide or replace the balance section. It does not
  * provision anything by itself; WalletLifecycle only reads when mounted.
  */
-function ManageWalletSection({ userId }: { userId: string | undefined }) {
-  const [isManaging, setIsManaging] = useState(false);
-
-  if (!isManaging) {
-    return (
-      <Button
-        type="button"
-        variant="outline"
-        className="press mt-4 min-h-12 w-full text-base font-extrabold"
-        onClick={() => setIsManaging(true)}
-        data-testid="manage-wallet"
-      >
-        <Wallet className="size-5" aria-hidden="true" />
-        Administrar billetera
-      </Button>
-    );
-  }
-
-  return (
-    <section className="mt-4" aria-label="Administrar billetera">
-      <Suspense
-        fallback={
-          <p className="mt-4 text-base text-muted-foreground">Preparando la administración…</p>
-        }
-      >
-        <WalletLifecycle userId={userId} />
-      </Suspense>
-    </section>
-  );
-}
 
 function MiPlataPage() {
   const meQuery = useQuery({ queryKey: queryKeys.me, queryFn: api.getMe });
@@ -380,15 +329,6 @@ function MiPlataPage() {
           </div>
         )}
       </section>
-
-      <ManageWalletSection userId={userId} />
-
-      <Suspense
-        fallback={<p className="mt-6 text-sm text-muted-foreground">Cargando autorizaciones…</p>}
-      >
-        {isPrivyIdentityProvider() ? <SolanaWalletSetup userId={userId} /> : null}
-        <DelegatedGrantsSection userId={userId} />
-      </Suspense>
 
       <section className="mt-8 rounded-2xl border border-border bg-card p-4">
         <p className="text-sm text-muted-foreground">

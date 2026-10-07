@@ -2,11 +2,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useLogout } from "@privy-io/react-auth";
 import { Bell, ChevronRight, LogOut } from "lucide-react";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
-import { api, getErrorMessage, queryKeys } from "@/lib/api";
+import { api, getErrorMessage, isPrivyIdentityProvider, queryKeys } from "@/lib/api";
 import { resetSession } from "@/lib/session-isolation";
 
 /**
@@ -20,6 +20,26 @@ import { resetSession } from "@/lib/session-isolation";
  */
 
 const isPrivyEnabled = import.meta.env["VITE_IDENTITY_PROVIDER"] === "privy";
+
+// Payment-authorization management (owner decision 2026-10-07): lives in the
+// account screen, in its own section — never in the wallet balance view.
+const WalletLifecycle = lazy(() =>
+  import("@/features/wallet/WalletLifecycle").then((module) => ({
+    default: module.WalletLifecycle,
+  })),
+);
+
+const SolanaWalletSetup = lazy(() =>
+  import("@/features/wallet/SolanaWalletSetup").then((module) => ({
+    default: module.SolanaWalletSetup,
+  })),
+);
+
+const DelegatedGrantsSection = lazy(() =>
+  import("@/features/wallet/DelegatedGrantsSection").then((module) => ({
+    default: module.DelegatedGrantsSection,
+  })),
+);
 
 export const Route = createFileRoute("/perfil")({
   head: () => ({
@@ -106,6 +126,7 @@ function PerfilPage() {
   // WP-001: null, empty or whitespace-only names are all "absent". Nothing is
   // persisted and no identifier (userId/DID) is ever displayed.
   const displayName = me.displayName?.trim() ? me.displayName : null;
+  const userId = me.userId;
 
   return (
     <main className="mx-auto max-w-md px-6 pt-12 pb-40">
@@ -132,7 +153,7 @@ function PerfilPage() {
       </section>
 
       <section className="mt-6">
-        <h2 className="lg-group-title">Tu plata</h2>
+        <h2 className="lg-group-title">Cuenta</h2>
         <div className="lg-settings-list">
           <Link to="/mi-plata" className="lg-setting-row press">
             <span>Billetera</span>
@@ -145,18 +166,15 @@ function PerfilPage() {
         </div>
       </section>
 
-      <section className="mt-5">
-        <h2 className="lg-group-title">Preferencias</h2>
-        <div className="lg-settings-list">
-          <Link to="/mi-plata" className="lg-setting-row press">
-            <span>Destinatarios de confianza</span>
-            <ChevronRight aria-hidden="true" />
-          </Link>
-          <Link to="/mi-plata" className="lg-setting-row press">
-            <span>Permisos de pago</span>
-            <ChevronRight aria-hidden="true" />
-          </Link>
-        </div>
+      <section className="mt-7" aria-label="Permisos de pago">
+        <h2 className="text-base font-extrabold">Permisos de pago</h2>
+        <Suspense
+          fallback={<p className="mt-3 text-sm text-muted-foreground">Cargando permisos…</p>}
+        >
+          {isPrivyIdentityProvider() ? <SolanaWalletSetup userId={userId} /> : null}
+          <WalletLifecycle userId={userId} />
+          <DelegatedGrantsSection userId={userId} />
+        </Suspense>
       </section>
     </main>
   );
