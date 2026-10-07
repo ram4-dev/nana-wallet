@@ -31,7 +31,6 @@ import { useNotificationsFeed } from "@/features/notifications/useNotificationsF
  * 2026-10-07): this screen shows balance, assets and activity only.
  */
 
-
 export const Route = createFileRoute("/mi-plata")({
   head: () => ({
     meta: [
