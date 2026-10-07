@@ -195,30 +195,27 @@ function MiPlataPage() {
       </div>
 
       {balances.walletState === "ready" ? (
-        <section className="relative mt-5 overflow-hidden rounded-[2rem] border border-foreground bg-foreground px-7 py-6 text-background">
-          <span
-            className="absolute -top-10 -right-8 size-28 rounded-full bg-primary"
-            aria-hidden="true"
-          />
-          <div className="relative">
-            <p className="text-base font-bold text-background/70">Tu saldo</p>
-            {/* WP-010: exact string/BigInt format; es-AR separators. */}
-            <p
-              className="mt-1 break-words text-4xl font-extrabold tracking-tight"
-              data-testid="usdc-balance"
-            >
-              {formatUsdcBalance(balances.assets[0]!.balanceAtomic)} USDC
+        <section className="lg-balance-card" aria-label="Tu saldo">
+          <p className="text-sm text-muted-foreground">Tu saldo</p>
+          {/* WP-010: exact string/BigInt format; es-AR separators. */}
+          <p
+            className="mt-1.5 mb-1.5 break-words text-4xl font-extrabold tracking-tight"
+            data-testid="usdc-balance"
+          >
+            {formatUsdcBalance(balances.assets[0]!.balanceAtomic)} USDC
+          </p>
+          <p className="inline-flex items-center gap-1.5 text-sm font-bold text-brand-ink">
+            <Wallet className="size-4" aria-hidden="true" />
+            Arc testnet
+          </p>
+          {balances.source === "fixture" ? (
+            <p className="mt-2 inline-flex rounded-full border border-border bg-card px-3 py-1 text-sm font-bold text-foreground">
+              Monto de demostración
             </p>
-            <p className="mt-2 text-base font-bold text-background/70">Arc testnet</p>
-            {balances.source === "fixture" ? (
-              <p className="mt-2 inline-flex rounded-full bg-background/15 px-3 py-1 text-sm font-bold text-background/80">
-                Monto de demostración
-              </p>
-            ) : null}
-            <p className="mt-2 text-sm font-bold text-background/60">
-              Consultado: {formatObservedAt(balances.observedAt)}
-            </p>
-          </div>
+          ) : null}
+          <p className="mt-2 text-sm text-muted-foreground">
+            Consultado: {formatObservedAt(balances.observedAt)}
+          </p>
         </section>
       ) : (
         <section className="surface-card mt-5 p-5" role="status" data-testid="wallet-not-ready">

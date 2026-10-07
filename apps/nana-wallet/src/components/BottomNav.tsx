@@ -1,45 +1,48 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { User, Wallet, Sparkles } from "lucide-react";
+import { Sparkles, User, Wallet } from "lucide-react";
 
+/**
+ * LuckGnome-structure pill nav (owner decision 2026-10-07): floating pill with
+ * the voice orb raised at the center, Nana violet palette and Nani branding.
+ */
 export function BottomNav() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
-  return (
-    <nav
-      className="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-background/95 backdrop-blur-md"
-      aria-label="Navegación principal"
-    >
-      <div className="relative mx-auto flex h-[76px] max-w-md items-center justify-between px-7 pt-1 pb-2">
-        <Link
-          to="/perfil"
-          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-brand-ink"
-          activeProps={{ className: "active bg-secondary" }}
-          aria-current={pathname === "/perfil" ? "page" : undefined}
-        >
-          <User className="size-6" strokeWidth={2.4} />
-          <span className="text-sm font-extrabold">Mi perfil</span>
-        </Link>
+  const itemClass = "lg-nav-item press";
 
+  return (
+    <nav className="lg-pill-nav" aria-label="Navegación principal">
+      <Link
+        to="/mi-plata"
+        className={itemClass}
+        data-active={pathname === "/mi-plata"}
+        aria-current={pathname === "/mi-plata" ? "page" : undefined}
+      >
+        <Wallet strokeWidth={2.4} aria-hidden="true" />
+        <span>Billetera</span>
+      </Link>
+
+      <div className="lg-nav-voice-wrap">
         <Link
           to="/"
-          activeOptions={{ exact: true }}
-          className="press plastic absolute -top-9 left-1/2 flex size-24 -translate-x-1/2 items-center justify-center rounded-full"
+          className="lg-nav-voice press"
           aria-label="Nani"
           aria-current={pathname === "/" ? "page" : undefined}
         >
-          <Sparkles className="size-12" strokeWidth={2.2} aria-hidden="true" />
+          <Sparkles className="size-8 text-primary" strokeWidth={2.2} aria-hidden="true" />
         </Link>
-
-        <Link
-          to="/mi-plata"
-          className="press flex h-14 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl py-1 text-muted-foreground [&.active]:text-brand-ink"
-          activeProps={{ className: "active bg-secondary" }}
-          aria-current={pathname === "/mi-plata" ? "page" : undefined}
-        >
-          <Wallet className="size-6" strokeWidth={2.4} />
-          <span className="text-sm font-extrabold">Billetera</span>
-        </Link>
+        <span className="sr-only">Voz</span>
       </div>
+
+      <Link
+        to="/perfil"
+        className={itemClass}
+        data-active={pathname === "/perfil" || pathname === "/notificaciones"}
+        aria-current={pathname === "/perfil" ? "page" : undefined}
+      >
+        <User strokeWidth={2.4} aria-hidden="true" />
+        <span>Perfil</span>
+      </Link>
     </nav>
   );
 }

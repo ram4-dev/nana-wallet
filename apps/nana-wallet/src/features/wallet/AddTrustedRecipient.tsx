@@ -172,16 +172,24 @@ export function AddTrustedRecipient({
           permiso de pagos.
         </p>
       ) : (
-        <ul className="mt-3 space-y-2">
+        <ul className="lg-row-list mt-3">
           {contacts.map((contact) => (
-            <li key={contact.id} className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-base font-bold">{contact.name}</p>
+            <li key={contact.id} className="lg-row">
+              <span
+                className="flex size-9 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-sm font-extrabold text-brand-ink"
+                aria-hidden="true"
+              >
+                {contact.name.charAt(0).toLocaleUpperCase("es-AR")}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-bold">{contact.name}</span>
                 {contact.network === "solana-devnet" ? (
-                  <p className="text-xs font-bold text-brand-ink">Solana devnet</p>
+                  <span className="block text-xs font-bold text-brand-ink">Solana devnet</span>
                 ) : null}
-                <p className="truncate text-sm text-muted-foreground">{contact.address}</p>
-              </div>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {contact.address}
+                </span>
+              </span>
               <Button
                 type="button"
                 variant="ghost"

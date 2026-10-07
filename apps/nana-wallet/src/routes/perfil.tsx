@@ -109,17 +109,17 @@ function PerfilPage() {
 
   return (
     <main className="mx-auto max-w-md px-6 pt-12 pb-40">
-      <section className="surface-card flex items-center gap-4 p-5">
+      <section className="lg-profile-card">
         <div
-          className="plastic flex size-16 shrink-0 items-center justify-center rounded-full text-2xl font-extrabold"
+          className="flex size-13 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-xl font-extrabold text-brand-ink"
           aria-hidden="true"
         >
           {displayName ? displayName.charAt(0).toLocaleUpperCase("es-AR") : "N"}
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-extrabold">Tu perfil</h1>
+          <h1 className="text-lg font-extrabold">Tu perfil</h1>
           <p
-            className="mt-1 break-words text-2xl font-extrabold"
+            className="mt-1 break-words text-base font-bold"
             {...(displayName ? {} : { "data-testid": "profile-name-absent" })}
           >
             {displayName ?? "Todavía no tenemos tu nombre"}

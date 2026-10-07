@@ -332,3 +332,286 @@
     box-shadow: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   LuckGnome structure (owner decision 2026-10-07): layout and components from
+   the luckgnome-voice-wallet.html prototype with Nana's violet/cream palette.
+   Visual layer only: routes, hooks, and contracts are unchanged.
+--------------------------------------------------------------------------- */
+
+/* Nav píldora flotante con orb central elevado (luckgnome .bottom-nav) */
+.lg-pill-nav {
+  position: fixed;
+  z-index: 50;
+  right: 1rem;
+  bottom: 0.875rem;
+  left: 1rem;
+  display: grid;
+  grid-template-columns: 1fr 72px 1fr;
+  align-items: center;
+  max-width: 28rem;
+  margin-inline: auto;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid color-mix(in oklch, var(--border) 46%, transparent);
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--card) 55%, transparent);
+  box-shadow: 0 10px 28px color-mix(in oklch, var(--foreground) 12%, transparent);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+}
+
+.lg-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 55px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  background: transparent;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.lg-nav-item:hover { color: var(--brand-ink); background: var(--muted); }
+.lg-nav-item[data-active="true"] { color: var(--brand-ink); }
+.lg-nav-item svg { width: 1.2rem; height: 1.2rem; }
+
+.lg-nav-voice-wrap {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  height: 62px;
+}
+
+.lg-nav-voice {
+  position: absolute;
+  top: -0.8rem;
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid color-mix(in oklch, var(--primary) 40%, var(--border));
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 10px 24px color-mix(in oklch, var(--primary) 26%, transparent);
+  transition: transform 160ms ease;
+}
+
+.lg-nav-voice:hover { transform: scale(1.04); }
+.lg-nav-voice:active { transform: scale(0.97); }
+
+/* Voice orbit: dual ring + per-state waves (luckgnome .gnome-orbit) */
+.lg-orbit {
+  position: relative;
+  display: grid;
+  width: min(13.5rem, 58dvw);
+  aspect-ratio: 1;
+  place-items: center;
+  border: 1px solid color-mix(in oklch, var(--primary) 30%, var(--border));
+  border-radius: 50%;
+  background: color-mix(in oklch, var(--primary) 5%, var(--surface));
+  transition: background 220ms ease, border-color 220ms ease;
+}
+
+.lg-orbit::before {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border: 1px solid color-mix(in oklch, var(--primary) 20%, transparent);
+  border-radius: 50%;
+}
+
+.lg-orbit[data-voice-state="listening"] {
+  border-color: color-mix(in oklch, var(--primary) 55%, var(--accent));
+}
+
+.lg-orbit[data-voice-state="listening"]::before {
+  animation: lg-wave-ring 1.8s ease-out infinite;
+}
+
+.lg-orbit[data-voice-state="speaking"]::before {
+  animation: lg-wave-ring 1.35s ease-out infinite;
+}
+
+.lg-orbit[data-voice-state="thinking"]::before {
+  border-color: transparent;
+  border-top-color: var(--primary);
+  border-right-color: color-mix(in oklch, var(--primary) 40%, white);
+  animation: lg-orbit-spin 1.15s linear infinite;
+}
+
+@keyframes lg-wave-ring {
+  0% { transform: scale(1); opacity: 0.9; }
+  100% { transform: scale(1.22); opacity: 0; }
+}
+
+@keyframes lg-orbit-spin {
+  to { transform: rotate(360deg); }
+}
+
+.lg-voice-waves {
+  position: absolute;
+  inset: 0 -34px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lg-orbit[data-voice-state="listening"] .lg-voice-waves,
+.lg-orbit[data-voice-state="speaking"] .lg-voice-waves {
+  opacity: 1;
+}
+
+.lg-voice-wave-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 42px;
+}
+
+.lg-voice-wave-cluster i {
+  width: 3px;
+  height: 23px;
+  border-radius: 5px;
+  background: var(--primary);
+  transform: scaleY(0.55);
+}
+
+.lg-voice-wave-cluster i:nth-child(2) {
+  height: 44px;
+  background: var(--brand-ink);
+}
+
+.lg-orbit[data-voice-state="listening"] .lg-voice-waves i,
+.lg-orbit[data-voice-state="speaking"] .lg-voice-waves i {
+  animation: lg-sound-wave 700ms ease-in-out infinite alternate;
+}
+
+.lg-orbit[data-voice-state="listening"] .lg-voice-waves i:nth-child(2n) {
+  animation-delay: 180ms;
+}
+
+.lg-orbit[data-voice-state="listening"] .lg-voice-waves i:nth-child(3n) {
+  animation-delay: 330ms;
+}
+
+.lg-orbit[data-voice-state="speaking"] .lg-voice-waves i {
+  animation-duration: 440ms;
+}
+
+@keyframes lg-sound-wave {
+  from { transform: scaleY(0.4); }
+  to { transform: scaleY(1.35); }
+}
+
+/* Balance card destacada (luckgnome .balance-card) */
+.lg-balance-card {
+  margin-top: 1rem;
+  padding: 1.2rem;
+  border: 1px solid color-mix(in oklch, var(--primary) 15%, var(--border));
+  border-radius: var(--radius-2xl);
+  background: color-mix(in oklch, var(--primary) 5%, var(--card));
+}
+
+/* Filas de activos/actividad/contactos (luckgnome .asset-row/.contact-row) */
+.lg-row-list { border-top: 1px solid var(--border); }
+
+.lg-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.7rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+  background: transparent;
+  text-align: left;
+}
+
+.lg-row:hover { background: color-mix(in oklch, var(--surface) 60%, transparent); }
+
+.lg-row-icon {
+  display: grid;
+  flex: 0 0 2.4rem;
+  width: 2.4rem;
+  height: 2.4rem;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--brand-ink);
+  background: color-mix(in oklch, var(--primary) 10%, var(--card));
+}
+
+/* Tarjeta de perfil (luckgnome .profile-card) */
+.lg-profile-card {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--card);
+}
+
+.lg-group-title {
+  margin: 0 0 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.lg-settings-list { border-top: 1px solid var(--border); }
+
+.lg-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 2.9rem;
+  padding: 0.5rem 0.1rem;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+  background: transparent;
+  font-size: 0.8rem;
+  text-align: left;
+}
+
+.lg-setting-row:hover { background: color-mix(in oklch, var(--primary) 4%, transparent); }
+.lg-setting-row svg { width: 1rem; height: 1rem; flex: 0 0 1rem; color: var(--muted-foreground); }
+
+/* Suggestion chips (luckgnome .suggestion-chip) */
+.lg-chip {
+  min-height: 2.4rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--foreground);
+  background: var(--card);
+  font-size: 0.75rem;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.lg-chip:hover {
+  border-color: var(--brand-ink);
+  background: color-mix(in oklch, var(--primary) 6%, var(--card));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lg-orbit::before,
+  .lg-voice-waves i {
+    animation: none;
+  }
+}
