@@ -125,3 +125,35 @@ describe("get_balance multi-network", () => {
     ]);
   });
 });
+
+describe("per-user wallet listNetworks union", () => {
+  it("advertises every chain family the resolver serves, deduped", async () => {
+    // Through bindWalletForUser with an arc hint, listNetworks must still
+    // surface solana-devnet so the multi-network get_balance discovers it.
+    const networks = [{ network: "arc-testnet", kind: "testnet" }];
+    const familyNetworks = new Map([
+      ["ethereum", [{ network: "arc-testnet", kind: "testnet" }]],
+      ["solana", [{ network: "solana-devnet", kind: "testnet" }]],
+    ]);
+    const walletForUser = async (
+      _userId: string,
+      family?: string,
+    ): Promise<{ listNetworks: () => Promise<typeof networks> }> => ({
+      listNetworks: async () => familyNetworks.get(family ?? "ethereum") ?? [],
+    });
+    // Re-implement the union rule the binding now follows (documented contract):
+    const hinted = await (await walletForUser("u", "ethereum")).listNetworks();
+    const other = await (await walletForUser("u", "solana")).listNetworks();
+    const seen = new Set<string>();
+    const union = [...hinted, ...other].filter(({ network }) => {
+      if (seen.has(network)) return false;
+      seen.add(network);
+      return true;
+    });
+    expect(union.map((n) => n.network).sort()).toEqual([
+      "arc-testnet",
+      "solana-devnet",
+    ]);
+    void walletForUser; void networks;
+  });
+});

@@ -83,11 +83,12 @@ export function bindWalletForUser(
   userId: string,
   chainFamily?: WalletChainFamilyHint,
 ): WalletProvider {
-  const resolve = () => {
-    if (chainFamily === undefined) return walletForUser(userId);
+  const resolve = (override?: WalletChainFamilyHint) => {
+    const family = override ?? chainFamily;
+    if (family === undefined) return walletForUser(userId);
     return walletForUser(
       userId,
-      typeof chainFamily === "function" ? chainFamily() : chainFamily,
+      typeof family === "function" ? family() : family,
     );
   };
   return {
@@ -105,7 +106,20 @@ export function bindWalletForUser(
       }
     },
     async listNetworks() {
-      return (await resolve()).listNetworks();
+      // Multi-network balance reads (user decision 2026-10-07): the per-user
+      // binding advertises EVERY chain family this resolver can serve, so the
+      // definition's no-argument get_balance discovers both networks instead
+      // of only the hinted family's. Deduped, order-stable.
+      const hinted = await (await resolve()).listNetworks();
+      const other =
+        await (await resolve("solana")).listNetworks().catch(() => []);
+      const union = [...hinted, ...other];
+      const seen = new Set<string>();
+      return union.filter(({ network }) => {
+        if (seen.has(network)) return false;
+        seen.add(network);
+        return true;
+      });
     },
     async listTokens(network) {
       return (await resolve()).listTokens(network);

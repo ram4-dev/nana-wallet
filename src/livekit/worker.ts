@@ -82,7 +82,18 @@ export function bindLiveKitWalletForUser(
         };
       }
     },
-    listNetworks: async () => (await resolve(defaultFamily())).listNetworks(),
+    listNetworks: async () => {
+      // Union of both chain families so the multi-network get_balance
+      // discovers every network the user can hold (see unified-agent-tools).
+      const hinted = await (await resolve(defaultFamily())).listNetworks();
+      const other = await (await resolve("solana")).listNetworks().catch(() => []);
+      const seen = new Set<string>();
+      return [...hinted, ...other].filter(({ network }) => {
+        if (seen.has(network)) return false;
+        seen.add(network);
+        return true;
+      });
+    },
     listTokens: async (net) => (await resolve(familyFor(net))).listTokens(net),
     getAddress: async (ctx) => (await resolve(familyFor(ctx.network))).getAddress(ctx),
     getBalance: async (q) => (await resolve(familyFor(q.network))).getBalance(q),
