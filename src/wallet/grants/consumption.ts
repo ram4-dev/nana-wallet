@@ -709,3 +709,64 @@ export class GrantWalletUnavailableError extends Error {
     this.name = "GrantWalletUnavailableError";
   }
 }
+
+/**
+ * DGC-6: the caller supplies the grant limits and lifetime; wallet identity and
+ * the `transfer` action are resolved/derived by the creator, never by a model.
+ */
+export type GrantCreatorInput = Omit<CreateGrantInput, "walletId" | "action">;
+
+/** Result of one ledger creation plus its provider policy projection. */
+export type GrantCreatorResult = {
+  grantId: string;
+  /**
+   * True ONLY when the provider enforcement surface was provisioned. A created
+   * grant whose policy sync failed is still recorded, but non-executable.
+   */
+  policyReady: boolean;
+  /** Provider failure message when `policyReady` is false. Informational only. */
+  policyError?: string;
+};
+
+/** Narrow creation port shared by the HTTP lifecycle and the Nani conversation seam. */
+export interface GrantCreator {
+  create(input: GrantCreatorInput): Promise<GrantCreatorResult>;
+}
+
+/** The minimal policy-sync surface the creator needs (PrivyPolicySyncService). */
+export type GrantPolicySyncer = {
+  syncGrant(
+    grantId: string,
+    userId: string,
+    walletId: string,
+  ): Promise<{ policyId: string | null; error?: string }>;
+};
+
+/**
+ * Compose the provider-facing creation sequence from an existing ledger service
+ * and policy-sync service: resolve the user's sole ready wallet for the chain,
+ * commit the ledger row + audit, then project the provider policy AFTER the
+ * transaction (never inside it). A provider failure keeps the grant created but
+ * non-executable (`policyReady: false`) and is surfaced honestly.
+ */
+export function composeGrantCreator(
+  grants: DelegatedGrantService,
+  policySync: GrantPolicySyncer,
+): GrantCreator {
+  return {
+    async create(input) {
+      const walletId = await grants.resolveWalletId(input.userId, input.chain);
+      const grant = await grants.createGrant({
+        ...input,
+        walletId,
+        action: "transfer",
+      });
+      const sync = await policySync.syncGrant(grant.id, input.userId, walletId);
+      return {
+        grantId: grant.id,
+        policyReady: sync.policyId !== null,
+        ...(sync.error ? { policyError: sync.error } : {}),
+      };
+    },
+  };
+}

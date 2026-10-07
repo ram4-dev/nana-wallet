@@ -17,6 +17,7 @@ import { issueRoomToken, type RoomTokenInput } from "./livekit/token-issuer.js";
 import {
   createConfiguredWalletForUser,
   createCoreDependencies,
+  createGrantCreator,
 } from "./runtime/dependencies.js";
 import {
   DemoIdentityProvider,
@@ -205,6 +206,13 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
       privyServer,
       quorumId: privyServerConfig?.keyQuorumId,
     }).service;
+    // DGC-6: the same grant-creation owners as the LiveKit worker, exposed to
+    // the conversation service so Nani (voice/text) can create grants.
+    const grantCreator = createGrantCreator(
+      database,
+      privyServer,
+      privyServerConfig?.keyQuorumId,
+    );
     app.register(registerGrantsRoutes, {
       grants,
       policySync: grantPolicySync,
@@ -222,6 +230,7 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
       wallet: core.wallet,
       ...(walletForUser ? { walletForUser } : {}),
       financialTasks,
+      grantCreator,
       contextRenewal: core.contextRenewal,
       // slice3-grant-execution: server-owned grant gate (original user
       // turn path only; the service never consults it for model-tool

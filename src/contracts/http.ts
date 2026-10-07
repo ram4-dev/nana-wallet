@@ -389,6 +389,7 @@ export type EnrollmentPrepareInput = z.infer<
 export const enrollmentPreparationResponseSchema = z.object({
   walletId: z.string().uuid(),
   walletAddress: z.string(),
+  walletChainFamily: z.enum(["arc", "solana"]),
   policyId: z.string(),
   quorumId: z.string(),
   perTransferUsdc: z.string(),
@@ -542,3 +543,16 @@ export const revokeDelegatedGrantResponseSchema = z.object({
   grant: delegatedGrantResponseSchema,
 });
 export type RevokeDelegatedGrantResponse = z.infer<typeof revokeDelegatedGrantResponseSchema>;
+
+// DGC-6: the model-facing result of a Nani-initiated grant creation. `policyReady`
+// is reported honestly — a created grant whose provider policy could not be
+// provisioned stays non-executable, and the narration says so.
+export const naniGrantCreationResultSchema = z.object({
+  status: z.enum(["created", "error"]),
+  message: z.string().min(1),
+  code: z.string().min(1).optional(),
+  grantId: z.string().uuid().optional(),
+  maxPerTransfer: z.string().min(1).optional(),
+  policyReady: z.boolean().optional(),
+});
+export type NaniGrantCreationResult = z.infer<typeof naniGrantCreationResultSchema>;

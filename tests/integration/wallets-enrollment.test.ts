@@ -1616,3 +1616,53 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     expect(await solanaReadyRowCount(userId)).toBe("0");
   });
 });
+
+describe("prepare with multiple chain wallets (multi-wallet users)", () => {
+  let database: DatabaseClient;
+
+  beforeAll(async () => {
+    if (!databaseUrl) return;
+    database = createDatabaseClient(databaseUrl);
+  });
+
+  afterAll(async () => {
+    if (database) await database.close();
+  });
+
+  it("prepares an EVM recipient permission on the Arc wallet even when a ready Solana wallet exists", {
+    timeout: 60_000,
+  }, async () => {
+    const did = `did:privy:multi-${randomUUID()}`;
+    const userId = await provisionUser(database, did);
+    // Both chains synced: one EVM wallet + one Solana wallet, both ready.
+    const solWallet = {
+      id: `sol-provider-${randomUUID()}`,
+      address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      chain_type: "solana",
+      policy_ids: [],
+      owner_id: "owner-key-quorum",
+      additional_signers: [],
+      archived_at: null,
+    };
+    const { client } = mockServerClient({
+      list: [enrollWallet("pol_multi_1")],
+      solanaList: [solWallet],
+    });
+    const service = new EmbeddedWalletService(
+      database,
+      createPrivyWalletApiClient(process.env, {}),
+      client,
+      { keyQuorumId: "key-quorum-1" },
+    );
+    await service.syncWallet(userId);
+
+    // An EVM recipient must validate on the EVM path — the presence of a
+    // Solana wallet must not flip validation to base58 (regression: the
+    // enrollment resolver preferred the Solana row and rejected the address).
+    const prep = await service.preparePermission(userId, [
+      "0x1531F7AA08D5dF6E9e7d1e0dF8C88656BF9EBd5C",
+    ]);
+    expect(prep.walletChainFamily).toBe("arc");
+    expect(prep.policyId).toBe("pol_1");
+  });
+});

@@ -18,6 +18,7 @@ import {
   transactionResultSchema,
   transferPreviewSchema,
   type ConversationTurnResult,
+  type NaniGrantCreationResult,
   type TransferPreview,
 } from '../contracts/http.js';
 
@@ -43,6 +44,12 @@ export type WalletAgentContext = {
   voiceDecisionGate?: VoiceDecisionGate;
   /** Voice-only: plays the preview read-back aloud before the spoken decision. */
   speakPreview?: (text: string) => Promise<{ interrupted: boolean }>;
+  /**
+   * Delegated-grant creation seam (DGC-6). Present for the text agent when the
+   * conversation service is wired; voice uses `voiceService`. Absent ⇒ the
+   * `create_grant` tool fails closed to `grant_creation_unavailable`.
+   */
+  grantService?: GrantCreationPort;
 };
 
 export type AgentToolDefinition<Input, Output> = {
@@ -79,6 +86,49 @@ export const sendTokenInputSchema = z.object({
   memo: z.string().trim().max(200).optional(),
 }).strict();
 export type PreviewSendTokenInput = z.infer<typeof sendTokenInputSchema>;
+
+/**
+ * Model-facing `create_grant` input (DGC-6). Preview-strict: the model supplies
+ * only the already-resolved recipient and the SOL limits. The chain, rolling
+ * window, expiry, and recipient address are resolved server-side, so `.strict()`
+ * fails a model that invents `to`, `address`, `chain`, `windowSeconds`,
+ * `expiresAt`, `recipients`, or `walletId` before the tool ever executes.
+ */
+export const createGrantInputSchema = z
+  .object({
+    recipientId: z.string().trim().min(1),
+    recipientVersion: z.number().int().positive(),
+    maxPerTransferSol: z
+      .string()
+      .trim()
+      .regex(/^\d+(?:\.\d{1,9})?$/u, 'must be a positive SOL amount with at most 9 decimals'),
+    maxCumulativeSol: z
+      .string()
+      .trim()
+      .regex(/^\d+(?:\.\d{1,9})?$/u, 'must be a positive SOL amount with at most 9 decimals'),
+  })
+  .strict();
+export type CreateGrantToolInput = z.infer<typeof createGrantInputSchema>;
+
+/** Input accepted by the grant-creation seam (bound to one conversation). */
+export type CreateDelegatedGrantInput = {
+  userId: string;
+  conversationId: string;
+  recipientId: string;
+  recipientVersion: number;
+  maxPerTransferSol: string;
+  maxCumulativeSol: string;
+};
+
+/** Model-facing grant-creation result. */
+export type CreateDelegatedGrantResult = NaniGrantCreationResult;
+
+/** Narrow seam the `create_grant` tool calls; implemented by the conversation service. */
+export type GrantCreationPort = {
+  createDelegatedGrant(
+    input: CreateDelegatedGrantInput,
+  ): Promise<CreateDelegatedGrantResult>;
+};
 
 /**
  * Internal broadcast input used by the guarded tool wrapper, the deterministic
@@ -563,6 +613,19 @@ function createWalletOperations(context: WalletAgentContext): AgentToolDefinitio
       inputSchema: sendTokenInputSchema,
       execute: async (input) => executeSendToken(input as unknown, context),
     },
+    {
+      name: 'create_grant',
+      description:
+        'Create a delegated spending grant (a pre-authorized allowance) for one ' +
+        'already-resolved Solana recipient. Supply only the resolved recipient ' +
+        '(recipientId + recipientVersion) and the SOL limits ' +
+        '(maxPerTransferSol, maxCumulativeSol). Never supply an address, chain, ' +
+        'window, expiry, wallet, or recipients list — those are resolved ' +
+        'server-side. Report the returned message verbatim, including whether the ' +
+        'grant is ready to execute.',
+      inputSchema: createGrantInputSchema,
+      execute: async (input) => executeCreateGrant(input as unknown, context),
+    },
   ];
 }
 
@@ -622,6 +685,44 @@ async function executeSendToken(input: unknown, context: WalletAgentContext): Pr
     return { error: 'confirmation_required', message: 'Missing recipient: supply recipientId and recipientVersion for a preview.' };
   }
   return sendToken(parsed.data as SendTokenBroadcastInput, context);
+}
+
+/**
+ * `create_grant` execution: the model-facing schema is re-validated here (the
+ * adapter already validates, but this is the fail-closed boundary), then the
+ * call is delegated to the grant seam. Voice prefers its per-binding
+ * `voiceService`; the text agent uses the service threaded through
+ * `HandleMessageOptions`. With no seam the tool fails closed.
+ */
+async function executeCreateGrant(
+  input: unknown,
+  context: WalletAgentContext,
+): Promise<CreateDelegatedGrantResult> {
+  const parsed = createGrantInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      status: 'error',
+      code: 'invalid_grant_request',
+      message:
+        'The grant request is invalid: supply a recipientId, a positive recipientVersion, and positive SOL limits with at most 9 decimals.',
+    };
+  }
+  const seam = context.voiceService ?? context.grantService;
+  if (!seam) {
+    return {
+      status: 'error',
+      code: 'grant_creation_unavailable',
+      message: 'Grant creation is unavailable in this session.',
+    };
+  }
+  return seam.createDelegatedGrant({
+    userId: context.userId,
+    conversationId: context.conversationId,
+    recipientId: parsed.data.recipientId,
+    recipientVersion: parsed.data.recipientVersion,
+    maxPerTransferSol: parsed.data.maxPerTransferSol,
+    maxCumulativeSol: parsed.data.maxCumulativeSol,
+  });
 }
 
 /**

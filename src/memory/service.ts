@@ -1,6 +1,6 @@
 import { EMBEDDING_MODEL_ID, type Embedding, type RecipientCandidate, type RecipientInput, type RecipientRecord, type UserMemoryFact, type UserMemoryInput } from './types.js';
 import { factEmbeddingText, normalizeMemoryText, recipientEmbeddingText } from './embedding.js';
-import { isValidEvmAddress } from './address.js';
+import { isValidEvmAddress, isValidRecipientAddress } from './address.js';
 import { factSupportsRelationshipReference, isRelationshipReference, relationshipFactIdentity } from './relationship.js';
 
 export type RecipientMemoryRepositoryPort = {
@@ -179,7 +179,7 @@ export class RecipientMemoryService {
   public async getRecipientForVersion(userId: string, recipientId: string, expectedVersion: number): Promise<RecipientRecord | undefined> {
     try {
       const recipient = await this.repository.getRecipientForVersion(userId, recipientId, expectedVersion);
-      return recipient && isValidEvmAddress(recipient.address) ? recipient : undefined;
+      return recipient && isValidRecipientAddress(recipient.address, recipient.network) ? recipient : undefined;
     } catch {
       return undefined;
     }

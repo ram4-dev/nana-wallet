@@ -56,6 +56,7 @@ describe("wallet agent definition", () => {
       "get_balance",
       "get_history",
       "send_token",
+      "create_grant",
       "search_recipients",
     ]);
     // Model-facing schema is preview-only (unified contract): no to/dryRun.

@@ -182,6 +182,9 @@ async function runJob(
           ? { memory: { userId: binding.userId, service: memoryService } }
           : {}),
         financialTasks: dependencies.financialTasks,
+        // DGC-6: the voice binding shares the worker's grant-creation seam, so
+        // a grant created through voice goes through the same ledger composition.
+        grantCreator: dependencies.grantCreator,
         contextRenewal: dependencies.contextRenewal,
       });
       const tools = createRealtimeTools({
