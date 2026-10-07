@@ -43,6 +43,12 @@ import { readIdentityProviderMode } from "../config/process.js";
 import { readPrivyServerConfig } from "../config/privy-server.js";
 import { PrivyServerClient } from "../wallet/privy-server-client.js";
 import {
+  composeGrantCreator,
+  DelegatedGrantService,
+  type GrantCreator,
+} from "../wallet/grants/consumption.js";
+import { createGrantPolicySyncService } from "../wallet/grants/privy-policy-runtime.js";
+import {
   PrivyWalletRuntimeError,
   createPrivyWalletForUserResolver,
   createUnavailablePrivyWalletResolver,
@@ -66,8 +72,35 @@ export type WorkerDependencies = CoreDependencies & {
   conversationService: WalletConversationService;
   walletForUser?: WalletForUser;
   financialTasks: FinancialTaskRegistry;
+  /**
+   * DGC-6: shared delegated-grant creation seam. Both the text path (via
+   * `conversationService`) and the per-binding voice service use it, so a grant
+   * created by voice or text goes through exactly the same ledger composition.
+   */
+  grantCreator: GrantCreator;
   close(): Promise<void>;
 };
+
+/**
+ * DGC-6: the small grant-creation factory shared by the HTTP server and the
+ * LiveKit worker. It owns the provider-facing composition (resolve wallet →
+ * commit the ledger row → project the Privy policy) behind a narrow
+ * `{ create(input) }` port; the conversation seam owns recipient/amount guards.
+ * Without signed server credentials and the authorization quorum the ledger row
+ * is still created, but the grant stays non-executable (`policyReady: false`).
+ */
+export function createGrantCreator(
+  database: DatabaseClient,
+  privyServer?: PrivyServerClient,
+  quorumId?: string,
+): GrantCreator {
+  const { service: policySync } = createGrantPolicySyncService({
+    database,
+    privyServer,
+    quorumId,
+  });
+  return composeGrantCreator(new DelegatedGrantService(database), policySync);
+}
 
 export function createConfiguredWalletForUser(
   database: DatabaseClient,
@@ -197,7 +230,26 @@ export function createWorkerDependencies(
   const database = createConfiguredDatabaseClient(environment);
   const conversations = new PostgresConversationRepository(database);
   const core = createCoreDependencies(environment);
-  const walletForUser = createConfiguredWalletForUser(database, environment);
+  const privyServerConfig = readPrivyServerConfig(environment);
+  const privyServer = privyServerConfig
+    ? new PrivyServerClient({
+        appId: privyServerConfig.appId,
+        appSecret: privyServerConfig.appSecret,
+        baseUrl: privyServerConfig.baseUrl,
+        authorizationPrivateKey:
+          environment.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim() || undefined,
+      })
+    : undefined;
+  const walletForUser = createConfiguredWalletForUser(
+    database,
+    environment,
+    privyServer,
+  );
+  const grantCreator = createGrantCreator(
+    database,
+    privyServer,
+    privyServerConfig?.keyQuorumId,
+  );
   // REVIEW FIX V3: `isClaimedRecipientValid` needs a defined memory service to
   // revalidate versioned recipients; without it the check always returns false.
   // The service contract today scopes the TEXT path to the demo tenant
@@ -211,6 +263,7 @@ export function createWorkerDependencies(
     ...(walletForUser ? { walletForUser } : {}),
     memory,
     financialTasks,
+    grantCreator,
     contextRenewal: core.contextRenewal,
     ...(memory ? { memory } : {}),
     // PMU-014: claimed-recipient revalidation resolves the runtime for the
@@ -224,6 +277,7 @@ export function createWorkerDependencies(
     conversationService,
     ...(walletForUser ? { walletForUser } : {}),
     financialTasks,
+    grantCreator,
     async close() {
       if (core.walletReads !== core.wallet) await core.walletReads.close();
       await core.wallet.close();

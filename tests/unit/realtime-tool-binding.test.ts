@@ -47,6 +47,7 @@ describe('realtime tool binding — declaration', () => {
     expect(names).toEqual([
       'cancel_transfer',
       'confirm_transfer',
+      'create_grant',
       'get_address',
       'get_balance',
       'get_history',

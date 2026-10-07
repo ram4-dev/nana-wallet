@@ -22,6 +22,7 @@ import {
   augmentPreviewOutput,
   guardedSendTokenSchema,
   isLiveTransferSource,
+  type GrantCreationPort,
   type SendTokenInput,
 } from './definition.js';
 import { getWdkTools } from './wdk-tools.js';
@@ -240,6 +241,11 @@ export type HandleMessageOptions = {
   abortSignal?: AbortSignal;
   claimedTransfer?: PendingTransfer;
   language?: ConversationLanguage;
+  /**
+   * Delegated-grant creation seam (DGC-6). The conversation service threads its
+   * own seam here for the text agent; the voice agent uses `voiceService`.
+   */
+  grantService?: GrantCreationPort;
 };
 
 const selectedRecipientAddressSchema = z.object({}).strict();
@@ -529,6 +535,7 @@ export async function handleMessage(
               wallet: options.walletProvider,
               ...(recipientMemory ? { recipientMemory } : {}),
               ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+              ...(options.grantService ? { grantService: options.grantService } : {}),
             })
             : await getWdkTools();
           const tools = buildGuardedTools(baseTools, session, recipientMemory, agentConfig);
@@ -599,6 +606,7 @@ export async function handleMessage(
       wallet: options.walletProvider,
       ...(recipientMemory ? { recipientMemory } : {}),
       ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+      ...(options.grantService ? { grantService: options.grantService } : {}),
     })
     : await getWdkTools();
   const tools = buildGuardedTools(

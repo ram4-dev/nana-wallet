@@ -5,6 +5,8 @@ import {
 } from "../agent/wallet-agent.js";
 import {
   canonicalizeTransferPreview,
+  type CreateDelegatedGrantInput,
+  type CreateDelegatedGrantResult,
   type SendTokenInput,
 } from "../agent/definition.js";
 import { getWalletAgentConfig } from "../agent/instructions.js";
@@ -38,6 +40,11 @@ import {
   type WalletForUser,
 } from "../wallet/privy-user-provider.js";
 import { validateWalletTransferPolicy } from "../wallet/agent-tools.js";
+import {
+  GrantWalletUnavailableError,
+  InvalidGrantInputError,
+  type GrantCreator,
+} from "../wallet/grants/consumption.js";
 import { isValidRecipientAddress } from "../memory/address.js";
 import type { FinancialTaskRegistry } from "./financial-task-registry.js";
 import {
@@ -171,6 +178,15 @@ export interface WalletConversationService {
     role: "user" | "assistant";
     text: string;
   }): Promise<void>;
+  /**
+   * DGC-6: create a delegated grant through conversation (Nani voice/text).
+   * The model supplies only the versioned recipient and the SOL limits; the
+   * chain, rolling window, expiry, and recipient address are resolved here.
+   * The result is model-facing and narrates the honest `policyReady` state.
+   */
+  createDelegatedGrant(
+    input: CreateDelegatedGrantInput,
+  ): Promise<CreateDelegatedGrantResult>;
 }
 
 export type WalletConversationDependencies = {
@@ -253,7 +269,93 @@ export type WalletConversationDependencies = {
       reason: string;
     }): Promise<void>;
   };
+  /**
+   * DGC-6: delegated-grant creation seam (Nani). Absent ⇒ grant creation fails
+   * closed with `grant_creation_unavailable` instead of inventing a grant.
+   */
+  grantCreator?: GrantCreator;
 };
+
+/** Rolling consumption window for conversation-created grants (one day). */
+const GRANT_WINDOW_SECONDS = 86_400;
+/** Server-computed grant lifetime (7 days). The model never supplies it. */
+const GRANT_TTL_MS = 7 * 86_400_000;
+/** Mirror of the HTTP route ceiling: 0.01 SOL = 10,000,000 lamports. */
+const GRANT_MAX_PER_TRANSFER_LAMPORTS = 10_000_000n;
+
+/**
+ * Parse a positive decimal SOL amount (at most 9 decimals) into lamports.
+ * String math only: no float rounding can ever invent or lose a lamport. Returns
+ * null for anything non-positive or malformed so callers fail closed.
+ */
+function solToLamports(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d{1,9})?$/u.test(trimmed)) return null;
+  const [whole = "0", fraction = ""] = trimmed.split(".");
+  const lamports =
+    BigInt(whole) * 1_000_000_000n + BigInt(fraction.padEnd(9, "0") || "0");
+  return lamports > 0n ? lamports.toString() : null;
+}
+
+/** Honest, localized narration for a successful creation (policy state included). */
+function grantedMessage(
+  language: "es" | "en",
+  recipientName: string,
+  maxPerTransferSol: string,
+  maxCumulativeSol: string,
+  policyReady: boolean,
+): string {
+  if (language === "es") {
+    return policyReady
+      ? `Listo. Creé una autorización para ${recipientName}: hasta ${maxPerTransferSol} SOL por transferencia y ${maxCumulativeSol} SOL en total, válida por 7 días.`
+      : `Creé la autorización para ${recipientName} (hasta ${maxPerTransferSol} SOL por transferencia), pero su política de ejecución todavía no está lista, así que no puede usarse hasta que se complete la configuración.`;
+  }
+  return policyReady
+    ? `Done. I created a grant for ${recipientName}: up to ${maxPerTransferSol} SOL per transfer and ${maxCumulativeSol} SOL in total, valid for 7 days.`
+    : `I created the grant for ${recipientName} (up to ${maxPerTransferSol} SOL per transfer), but its execution policy is not ready yet, so it cannot be used until provisioning completes.`;
+}
+
+const GRANT_ERROR_COPY = {
+  en: {
+    recipient_revalidation_required:
+      "I could not confirm that contact, so I did not create the grant. Please select the recipient again.",
+    recipient_not_solana:
+      "Delegated grants only support Solana recipients, so I did not create one for this contact.",
+    invalid_amount:
+      "The SOL limits are invalid: use positive amounts with at most 9 decimals, and a cumulative limit at least as large as the per-transfer limit.",
+    amount_over_ceiling:
+      "The per-transfer limit cannot exceed 0.01 SOL, so I did not create the grant.",
+    wallet_unavailable:
+      "No ready Solana wallet is available for this account, so I could not create the grant.",
+    grant_creation_unavailable:
+      "Grant creation is unavailable in this session.",
+    internal_error:
+      "I could not create the grant right now. Please try again.",
+  },
+  es: {
+    recipient_revalidation_required:
+      "No pude confirmar ese contacto, así que no creé la autorización. Elegí el destinatario de nuevo.",
+    recipient_not_solana:
+      "Las autorizaciones delegadas solo funcionan con destinatarios de Solana, así que no creé ninguna para este contacto.",
+    invalid_amount:
+      "Los límites en SOL no son válidos: usá montos positivos con hasta 9 decimales y un límite acumulado al menos igual al límite por transferencia.",
+    amount_over_ceiling:
+      "El límite por transferencia no puede superar 0.01 SOL, así que no creé la autorización.",
+    wallet_unavailable:
+      "No hay una billetera Solana lista para esta cuenta, así que no pude crear la autorización.",
+    grant_creation_unavailable:
+      "La creación de autorizaciones no está disponible en esta sesión.",
+    internal_error:
+      "No pude crear la autorización ahora. Probá de nuevo.",
+  },
+} as const;
+
+function grantErrorResult(
+  language: "es" | "en",
+  code: keyof (typeof GRANT_ERROR_COPY)["en"],
+): CreateDelegatedGrantResult {
+  return { status: "error", code, message: GRANT_ERROR_COPY[language][code] };
+}
 
 export function createWalletConversationService(
   dependencies: WalletConversationDependencies,
@@ -457,6 +559,9 @@ export function createWalletConversationService(
         walletProvider: walletForUser(input.userId),
         ...(input.signal ? { abortSignal: input.signal } : {}),
         language: workingSnapshot.language,
+        // DGC-6: thread the same service seam into the text agent so its
+        // `create_grant` tool uses the exact recipient/amount guard logic.
+        grantService: { createDelegatedGrant },
       };
       result = sanitizeResult(
         await handleMessage(workingSnapshot, input.text, options),
@@ -885,6 +990,89 @@ export function createWalletConversationService(
         ? `Preparé una transferencia de ${input.amount} ${config.token} para ${recipient.name}. Confirmá para continuar.`
         : `Prepared a ${input.amount} ${config.token} transfer for ${recipient.name}. Confirm to continue.`;
     return { status: "confirmation_required", message, preview };
+  }
+
+  /**
+   * DGC-6: create a delegated grant through conversation (Nani voice/text).
+   * Deterministic gates only: the versioned recipient is revalidated
+   * server-side and MUST be a Solana devnet contact, amounts are positive SOL
+   * with at most 9 decimals and a per-transfer ceiling of 0.01 SOL, and the
+   * rolling window / expiry are server-computed. Wallet identity, chain, and
+   * address are never model-supplied. Failures map to typed, narratable
+   * results instead of throwing.
+   */
+  async function createDelegatedGrant(
+    input: CreateDelegatedGrantInput,
+  ): Promise<CreateDelegatedGrantResult> {
+    const snapshot = await dependencies.conversations.get(
+      input.userId,
+      input.conversationId,
+    );
+    const language: "es" | "en" =
+      snapshot?.language === "es" ? "es" : "en";
+
+    if (!dependencies.grantCreator) {
+      return grantErrorResult(language, "grant_creation_unavailable");
+    }
+
+    // Reuse the exact preview-path revalidation: a stale/foreign recipient and
+    // any raw address the model tried to supply can never reach the ledger.
+    const recipient = await resolveRecipientForTransfer(
+      input.userId,
+      input.recipientId,
+      input.recipientVersion,
+    );
+    if (!recipient.ok) {
+      return grantErrorResult(language, "recipient_revalidation_required");
+    }
+    if (recipient.network !== "solana-devnet") {
+      return grantErrorResult(language, "recipient_not_solana");
+    }
+
+    const perTransferLamports = solToLamports(input.maxPerTransferSol);
+    const cumulativeLamports = solToLamports(input.maxCumulativeSol);
+    if (perTransferLamports === null || cumulativeLamports === null) {
+      return grantErrorResult(language, "invalid_amount");
+    }
+    if (BigInt(perTransferLamports) > GRANT_MAX_PER_TRANSFER_LAMPORTS) {
+      return grantErrorResult(language, "amount_over_ceiling");
+    }
+    if (BigInt(cumulativeLamports) < BigInt(perTransferLamports)) {
+      return grantErrorResult(language, "invalid_amount");
+    }
+
+    try {
+      const created = await dependencies.grantCreator.create({
+        userId: input.userId,
+        chain: "solana",
+        recipients: [recipient.address],
+        maxPerTransfer: perTransferLamports,
+        maxCumulative: cumulativeLamports,
+        windowSeconds: GRANT_WINDOW_SECONDS,
+        expiresAt: new Date(clock.now() + GRANT_TTL_MS),
+      });
+      return {
+        status: "created",
+        message: grantedMessage(
+          language,
+          recipient.name,
+          input.maxPerTransferSol,
+          input.maxCumulativeSol,
+          created.policyReady,
+        ),
+        grantId: created.grantId,
+        maxPerTransfer: input.maxPerTransferSol,
+        policyReady: created.policyReady,
+      };
+    } catch (error) {
+      if (error instanceof GrantWalletUnavailableError) {
+        return grantErrorResult(language, "wallet_unavailable");
+      }
+      if (error instanceof InvalidGrantInputError) {
+        return grantErrorResult(language, "invalid_amount");
+      }
+      return grantErrorResult(language, "internal_error");
+    }
   }
 
   async function resolveRecipientForTransfer(
@@ -1486,6 +1674,7 @@ export function createWalletConversationService(
     handleTurnStream,
     resolveDecision,
     previewTransfer,
+    createDelegatedGrant,
     persistNativeToolState,
     persistNativePreview,
     appendNativeMessage,
