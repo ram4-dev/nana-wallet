@@ -124,10 +124,7 @@ export function AgentScreen(props: AgentScreenProps) {
           LuckGnome structure: the avatar lives inside the dual-ring orbit with
           state-driven wave rings. Nana palette + Nani mascot are preserved.
         */}
-        <div
-          className="lg-orbit"
-          data-voice-state={lgOrbitState(props.voiceState.phase)}
-        >
+        <div className="lg-orbit" data-voice-state={lgOrbitState(props.voiceState.phase)}>
           <div className="lg-voice-waves" aria-hidden="true">
             <span className="lg-voice-wave-cluster">
               <i />
@@ -160,11 +157,7 @@ export function AgentScreen(props: AgentScreenProps) {
           </button>
         </div>
         <div className="mt-2 flex items-center gap-2">
-          <span
-            className="text-sm font-bold text-brand-ink"
-            role="status"
-            aria-live="polite"
-          >
+          <span className="text-sm font-bold text-brand-ink" role="status" aria-live="polite">
             {props.isNative && props.isRecording
               ? "Te estoy escuchando"
               : voiceLabel(props.voiceState)}

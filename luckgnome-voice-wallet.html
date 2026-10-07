@@ -1,0 +1,1359 @@
+
+<!doctype html>
+<html lang="es-ES">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <title>LuckGnome — cartera por voz</title>
+  <style>
+    :root {
+      --bg: #FFFFFF;
+      --surface: #F5F6F6;
+      --fg: #102A1C;
+      --muted: #939F99;
+      --border: #DEE1DF;
+      --accent: #16A34A;
+      --forest: #15803D;
+      --deep: #14532D;
+      --gold: #F59E0B;
+
+      --accent-soft: color-mix(in oklch, var(--accent) 10%, transparent);
+      --fg-soft: color-mix(in oklch, var(--fg) 5%, transparent);
+      --gold-soft: color-mix(in oklch, var(--gold) 16%, transparent);
+      --font-display: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica Neue, Arial, sans-serif;
+      --font-body: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica Neue, Arial, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+      --radius: 8px;
+      --radius-lg: 22px;
+      --container: 1440px;
+      --gutter: 32px;
+      --gap-sm: 12px;
+      --gap-md: 20px;
+      --gap-lg: 32px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      color: var(--fg);
+      background: var(--bg);
+      font-family: var(--font-body);
+      font-size: 15px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    img, svg { display: block; max-width: 100%; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    p, h1, h2, h3 { text-wrap: pretty; }
+    h1, h2, h3 { font-family: var(--font-display); }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid color-mix(in oklch, var(--accent) 46%, var(--surface));
+      outline-offset: 3px;
+    }
+
+    .svg-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+    .container { width: 100%; max-width: var(--container); margin-inline: auto; padding-inline: var(--gutter); }
+    .section { padding-block: 48px 72px; }
+    .stack { display: flex; flex-direction: column; gap: var(--gap-md); }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+    .h1, h1 { margin: 0; font-size: clamp(30px, 4vw, 46px); line-height: 1.08; letter-spacing: -0.045em; }
+    .h2, h2 { margin: 0; font-size: 21px; line-height: 1.2; letter-spacing: -0.025em; }
+    .h3, h3 { margin: 0; font-size: 16px; line-height: 1.3; letter-spacing: -0.01em; }
+    .eyebrow {
+      margin: 0;
+      color: var(--forest);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.075em;
+      text-transform: uppercase;
+    }
+    .lead { max-width: 48ch; margin: 10px 0 0; color: var(--muted); font-size: 16px; }
+    .meta { color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+    .num { font-variant-numeric: tabular-nums; }
+    .row { display: flex; align-items: center; gap: 12px; }
+    .row-between { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .btn {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      font-size: 14px;
+      font-weight: 650;
+      transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { color: var(--bg); background: var(--deep); border-color: var(--deep); }
+    .btn-primary:hover { background: color-mix(in oklch, var(--deep) 88%, black); }
+    .btn-secondary { color: var(--fg); background: var(--bg); border-color: var(--border); }
+    .btn-secondary:hover { background: var(--surface); border-color: var(--forest); }
+    .btn-ghost { color: var(--fg); background: transparent; border-color: transparent; }
+    .btn-ghost:hover { background: var(--fg-soft); }
+    .card { padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+
+    .prototype-section { padding-top: 42px; }
+    .canvas-heading { margin-bottom: 34px; }
+    .canvas-heading h1 { margin-top: 9px; }
+    .screen-grid { align-items: start; }
+    .device-figure { min-width: 0; }
+    .screen-label { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px 3px; }
+    .screen-label .meta { color: var(--forest); }
+    .screen-label h2 { font-size: 15px; font-weight: 650; }
+
+    .phone {
+      position: relative;
+      width: 100%;
+      max-width: 390px;
+      aspect-ratio: 393 / 852;
+      margin-inline: auto;
+      padding: 9px;
+      overflow: hidden;
+      border: 1px solid color-mix(in oklch, var(--fg) 14%, var(--border));
+      border-radius: 48px;
+      background: var(--surface);
+      box-shadow: 0 26px 60px color-mix(in oklch, var(--fg) 13%, transparent);
+      isolation: isolate;
+    }
+    .phone-screen {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      border: 1px solid color-mix(in oklch, var(--fg) 5%, transparent);
+      border-radius: 39px;
+      background: var(--bg);
+    }
+    .status-bar {
+      position: absolute;
+      z-index: 5;
+      top: 8px;
+      left: 19px;
+      right: 19px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 700;
+      pointer-events: none;
+    }
+    .dynamic-island {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      width: 82px;
+      height: 22px;
+      transform: translateX(-50%);
+      border-radius: 20px;
+      background: var(--fg);
+    }
+    .status-icons { display: flex; align-items: center; gap: 4px; color: var(--fg); }
+    .status-icons svg { width: 14px; height: 14px; }
+    .battery { width: 19px !important; }
+
+    .screen-scroll {
+      position: absolute;
+      inset: 35px 0 0;
+      overflow: auto;
+      padding: 0 20px 110px;
+      scrollbar-width: none;
+      overscroll-behavior: contain;
+    }
+    .screen-scroll::-webkit-scrollbar { display: none; }
+    .app-topbar { min-height: 48px; display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+    .icon-button {
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 50%;
+      color: var(--fg);
+      background: transparent;
+    }
+    .icon-button:hover { background: var(--surface); }
+    .icon-button svg { width: 19px; height: 19px; }
+
+    .voice-view { min-height: 100%; display: flex; flex-direction: column; }
+    .voice-intro { padding-top: 16px; text-align: center; }
+    .voice-question { margin: 0; font-size: 27px; font-weight: 700; letter-spacing: -0.045em; line-height: 1.13; }
+    .voice-instruction { max-width: 25ch; margin: 9px auto 0; color: var(--muted); font-size: 14px; }
+    .voice-stage { display: grid; justify-items: center; padding-top: 24px; }
+    .gnome-orbit {
+      position: relative;
+      width: 204px;
+      aspect-ratio: 1;
+      display: grid;
+      place-items: center;
+      border: 1px solid color-mix(in oklch, var(--gold) 44%, var(--border));
+      border-radius: 50%;
+      background: color-mix(in oklch, var(--accent) 5%, var(--surface));
+      transition: background 220ms ease, border-color 220ms ease;
+    }
+    .gnome-orbit::before {
+      content: "";
+      position: absolute;
+      inset: 9px;
+      border: 1px solid color-mix(in oklch, var(--accent) 18%, transparent);
+      border-radius: 50%;
+    }
+    .gnome-trigger {
+      position: relative;
+      z-index: 2;
+      width: 158px;
+      height: 158px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      transition: transform 180ms ease;
+    }
+    .gnome-trigger:hover { transform: scale(1.035); }
+    .gnome-trigger:active { transform: scale(.98); }
+    .gnome-mark { width: 100%; height: 100%; border-radius: 50%; object-fit: contain; object-position: 50% 50%; }
+    .voice-waves {
+      position: absolute;
+      z-index: 1;
+      inset: 0 -34px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .voice-wave-cluster { width: 42px; display: flex; align-items: center; justify-content: space-between; }
+    .voice-wave-cluster i { width: 3px; height: 23px; border-radius: 5px; background: var(--accent); transform: scaleY(.55); }
+    .voice-wave-cluster i:nth-child(2) { height: 44px; background: var(--forest); }
+    .voice-state-label { margin: 18px 0 0; color: var(--forest); font-size: 13px; font-weight: 650; }
+    .voice-helper { max-width: 27ch; margin: 4px auto 0; color: var(--muted); font-size: 12px; text-align: center; }
+    .voice-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 21px; }
+    .suggestion-chip {
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--fg);
+      background: var(--bg);
+      font-size: 12px;
+      transition: border-color 160ms ease, background 160ms ease;
+    }
+    .suggestion-chip:hover { border-color: var(--forest); background: var(--surface); }
+    .voice-transcript { display: none; margin: 14px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
+    .voice-result {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: var(--surface);
+      animation: reveal 220ms ease both;
+    }
+    .voice-result h3 { margin-bottom: 5px; font-size: 14px; }
+    .voice-result p { margin: 0; color: var(--muted); font-size: 12px; }
+    .voice-result .btn { min-height: 38px; margin-top: 12px; font-size: 12px; }
+
+    .phone[data-voice-state="listening"] .gnome-orbit { border-color: color-mix(in oklch, var(--accent) 55%, var(--gold)); }
+    .phone[data-voice-state="listening"] .gnome-orbit::before { animation: wave-ring 1.8s ease-out infinite; }
+    .phone[data-voice-state="listening"] .voice-waves { opacity: 1; }
+    .phone[data-voice-state="listening"] .voice-waves i { animation: sound-wave 700ms ease-in-out infinite alternate; }
+    .phone[data-voice-state="listening"] .voice-waves i:nth-child(2n) { animation-delay: 180ms; }
+    .phone[data-voice-state="listening"] .voice-waves i:nth-child(3n) { animation-delay: 330ms; }
+    .phone[data-voice-state="speaking"] .gnome-orbit::before { animation: wave-ring 1.35s ease-out infinite; }
+    .phone[data-voice-state="speaking"] .voice-waves { opacity: 1; }
+    .phone[data-voice-state="speaking"] .voice-waves i { animation: sound-wave 440ms ease-in-out infinite alternate; }
+    .phone[data-voice-state="speaking"] .voice-waves i:nth-child(2n) { animation-delay: 120ms; }
+    .phone[data-voice-state="speaking"] .voice-waves i:nth-child(3n) { animation-delay: 240ms; }
+    .phone[data-voice-state="thinking"] .gnome-orbit::before {
+      border-color: transparent;
+      border-top-color: var(--gold);
+      border-right-color: var(--accent);
+      animation: orbit-spin 1.15s linear infinite;
+    }
+    .phone[data-voice-state="thinking"] .voice-state-label { color: var(--deep); }
+
+    .wallet-heading, .profile-heading { padding-top: 9px; }
+    .page-title { margin: 0; font-size: 27px; font-weight: 720; letter-spacing: -0.045em; }
+    .balance-card {
+      margin-top: 17px;
+      padding: 19px;
+      border: 1px solid color-mix(in oklch, var(--accent) 15%, var(--border));
+      border-radius: 22px;
+      background: color-mix(in oklch, var(--accent) 5%, var(--surface));
+    }
+    .balance-label { margin: 0; color: var(--muted); font-size: 12px; }
+    .balance-amount { margin: 7px 0 6px; font-size: 34px; font-weight: 730; letter-spacing: -0.06em; line-height: 1.08; }
+    .balance-trend { display: inline-flex; align-items: center; gap: 5px; margin: 0; color: var(--forest); font-size: 12px; font-weight: 650; }
+    .balance-trend svg { width: 14px; height: 14px; }
+    .wallet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 13px; }
+    .wallet-actions .btn { min-height: 46px; border-radius: 14px; }
+    .secondary-actions { display: flex; justify-content: center; gap: 20px; margin-top: 7px; }
+    .secondary-action { min-height: 38px; padding: 6px 8px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; font-size: 12px; }
+    .secondary-action:hover { color: var(--fg); background: var(--surface); }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 22px 0 9px; }
+    .section-heading h3 { font-size: 15px; }
+    .section-note { margin: -3px 0 7px; color: var(--muted); font-size: 10px; line-height: 1.35; }
+    .asset-list, .activity-list { border-top: 1px solid var(--border); }
+    .asset-row, .activity-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 11px 0;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      color: var(--fg);
+      background: transparent;
+      text-align: left;
+    }
+    .asset-row { cursor: pointer; }
+    .asset-row:hover, .activity-row:hover { background: color-mix(in oklch, var(--surface) 60%, transparent); }
+    .token-icon {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: var(--forest);
+      background: var(--accent-soft);
+    }
+    .token-icon svg { width: 21px; height: 21px; }
+    .token-icon.eth { color: var(--deep); background: color-mix(in oklch, var(--deep) 8%, var(--surface)); }
+    .token-icon.sol { color: var(--forest); background: var(--gold-soft); }
+    .asset-copy, .activity-copy { min-width: 0; flex: 1; }
+    .asset-name, .activity-title { display: block; font-size: 12px; font-weight: 650; line-height: 1.3; }
+    .asset-symbol, .activity-detail { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .asset-value { text-align: right; }
+    .asset-value strong { display: block; font-size: 12px; font-weight: 650; white-space: nowrap; }
+    .asset-value small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+    .activity-icon {
+      width: 32px;
+      height: 32px;
+      flex: 0 0 32px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      color: var(--forest);
+      background: var(--surface);
+    }
+    .activity-icon svg { width: 16px; height: 16px; }
+
+    .profile-card {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin-top: 14px;
+      padding: 15px;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: var(--surface);
+    }
+    .avatar {
+      width: 52px;
+      height: 52px;
+      flex: 0 0 52px;
+      display: grid;
+      place-items: center;
+      border: 1px solid color-mix(in oklch, var(--gold) 40%, var(--border));
+      border-radius: 50%;
+      color: var(--deep);
+      background: color-mix(in oklch, var(--accent) 8%, var(--bg));
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .profile-name { margin: 0; font-size: 16px; font-weight: 700; }
+    .wallet-address { margin: 3px 0 0; color: var(--muted); font-family: var(--font-mono); font-size: 10px; }
+    .verified-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 6px;
+      color: var(--forest);
+      font-size: 10px;
+      font-weight: 650;
+    }
+    .verified-badge svg { width: 13px; height: 13px; }
+    .profile-group { margin-top: 18px; }
+    .profile-group-title { margin: 0 0 6px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    .settings-list { border-top: 1px solid var(--border); }
+    .setting-row {
+      width: 100%;
+      min-height: 45px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 1px;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      color: var(--fg);
+      background: transparent;
+      text-align: left;
+      font-size: 12px;
+    }
+    .setting-row:hover { background: var(--fg-soft); }
+    .setting-row svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--muted); }
+    .contacts-topbar { justify-content: space-between; gap: 8px; }
+    .contacts-topbar .page-title { flex: 1; text-align: center; font-size: 21px; }
+    .contacts-description { margin: 6px 0 16px; color: var(--muted); font-size: 12px; }
+    .contacts-search {
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 0 13px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      color: var(--muted);
+      background: var(--surface);
+    }
+    .contacts-search svg { width: 17px; height: 17px; flex: 0 0 17px; }
+    .contacts-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--fg); background: transparent; font-size: 12px; }
+    .contacts-search input::placeholder { color: var(--muted); opacity: 1; }
+    .contacts-search:focus-within { border-color: var(--accent); outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+    .contacts-list-section { margin-top: 22px; }
+    .contacts-section-title { margin: 0 0 8px; font-size: 13px; font-weight: 700; }
+    .contact-list { border-top: 1px solid var(--border); }
+    .contact-row {
+      width: 100%;
+      min-height: 66px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 9px 2px;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      color: var(--fg);
+      background: transparent;
+      text-align: left;
+      transition: background 150ms ease;
+    }
+    .contact-row:hover { background: var(--fg-soft); }
+    .contact-row[hidden] { display: none; }
+    .contact-avatar {
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      display: grid;
+      place-items: center;
+      border: 1px solid color-mix(in oklch, var(--accent) 13%, var(--border));
+      border-radius: 50%;
+      color: var(--deep);
+      background: color-mix(in oklch, var(--accent) 7%, var(--surface));
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .contact-copy { min-width: 0; flex: 1; }
+    .contact-name { display: block; font-size: 12px; font-weight: 680; }
+    .contact-detail { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .contact-row > svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--muted); }
+    .contacts-empty { margin: 17px 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+    .bottom-nav {
+      position: absolute;
+      z-index: 6;
+      right: 17px;
+      bottom: 14px;
+      left: 17px;
+      height: 67px;
+      display: grid;
+      grid-template-columns: 1fr 66px 1fr;
+      align-items: center;
+      padding: 5px 8px;
+      border: 1px solid color-mix(in oklch, var(--border) 46%, transparent);
+      border-radius: 999px;
+      background: color-mix(in oklch, var(--bg) 22%, transparent);
+      box-shadow: 0 10px 28px color-mix(in oklch, var(--fg) 12%, transparent);
+      backdrop-filter: blur(22px) saturate(1.15);
+      -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    }
+    .nav-item {
+      height: 55px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 9px;
+      font-weight: 600;
+    }
+    .nav-item svg { width: 19px; height: 19px; }
+    .nav-item:hover { color: var(--deep); background: var(--fg-soft); }
+    .nav-item[aria-pressed="true"] { color: var(--forest); }
+    .nav-voice-wrap { position: relative; height: 59px; display: flex; justify-content: center; }
+    .nav-voice {
+      position: absolute;
+      top: -13px;
+      width: 56px;
+      height: 56px;
+      display: grid;
+      place-items: center;
+      border: 1.5px solid color-mix(in oklch, var(--gold) 75%, var(--bg));
+      border-radius: 50%;
+      color: var(--bg);
+      background: var(--deep);
+      box-shadow: 0 6px 14px color-mix(in oklch, var(--deep) 22%, transparent);
+      transition: transform 160ms ease, background 160ms ease;
+    }
+    .nav-voice:hover { transform: translateY(-2px); background: var(--forest); }
+    .nav-voice:active { transform: translateY(0) scale(.97); }
+    .nav-voice svg { width: 22px; height: 22px; }
+    .nav-voice-label {
+      position: absolute;
+      bottom: 0;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 600;
+    }
+    .phone[data-current="voice"] .nav-voice-label { color: var(--forest); }
+    .phone[data-current="voice"] .nav-voice { box-shadow: 0 0 0 3px var(--accent-soft), 0 6px 14px color-mix(in oklch, var(--deep) 22%, transparent); }
+
+    .phone-sheet[hidden] { display: none; }
+    .phone-sheet {
+      position: absolute;
+      z-index: 10;
+      inset: 0;
+      display: flex;
+      align-items: flex-end;
+      padding: 10px;
+      background: color-mix(in oklch, var(--fg) 32%, transparent);
+      animation: reveal 150ms ease both;
+    }
+    .sheet-panel {
+      width: 100%;
+      max-height: 82%;
+      overflow: auto;
+      padding: 21px 18px 18px;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      background: var(--bg);
+      box-shadow: 0 16px 42px color-mix(in oklch, var(--fg) 18%, transparent);
+    }
+    .sheet-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+    .sheet-title { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.035em; }
+    .sheet-close {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      color: var(--fg);
+      background: var(--bg);
+      font-size: 20px;
+      line-height: 1;
+    }
+    .sheet-copy { margin: 9px 0 15px; color: var(--muted); font-size: 13px; }
+    .sheet-form { display: grid; gap: 12px; }
+    .sheet-form label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; }
+    .sheet-form input, .sheet-form select {
+      width: 100%;
+      min-height: 44px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--fg);
+      background: var(--bg);
+      font-size: 14px;
+    }
+    .sheet-panel .btn { width: 100%; margin-top: 14px; }
+    .sheet-message {
+      margin: 12px 0;
+      padding: 13px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+      font-size: 13px;
+    }
+    .sheet-message strong { display: block; margin-bottom: 4px; }
+    .sheet-message p { margin: 0; color: var(--muted); font-size: 12px; }
+    .validation-message { min-height: 16px; margin: 0; color: var(--deep); font-size: 11px; }
+
+    @keyframes sound-wave { to { transform: scaleY(1); } }
+    @keyframes wave-ring { 0% { transform: scale(.9); opacity: .8; } 100% { transform: scale(1.14); opacity: 0; } }
+    @keyframes orbit-spin { to { transform: rotate(360deg); } }
+    @keyframes reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+
+    @media (max-width: 1240px) {
+      .screen-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 920px) {
+      :root { --gutter: 24px; }
+      .screen-grid { grid-template-columns: 1fr; }
+      .phone { max-width: 390px; }
+      .prototype-section { padding-top: 34px; }
+    }
+    @media (max-width: 480px) {
+      :root { --gutter: 18px; }
+      .section { padding-block: 30px 48px; }
+      .canvas-heading { margin-bottom: 25px; }
+      .canvas-heading h1 { font-size: 31px; }
+      .lead { font-size: 14px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="svg-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="icon-wallet" viewBox="0 0 24 24">
+      <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H19a1 1 0 0 1 1 1v2H6.5A2.5 2.5 0 0 0 4 9.5v9A2.5 2.5 0 0 0 6.5 21H19a1 1 0 0 0 1-1v-2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M4 9.5A2.5 2.5 0 0 1 6.5 7H21v10H6.5A2.5 2.5 0 0 1 4 14.5v-5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+      <path d="M16 12h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+      <circle cx="16" cy="12" r="1" fill="currentColor"/>
+    </symbol>
+    <symbol id="icon-mic" viewBox="0 0 24 24">
+      <rect x="9" y="3" width="6" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24">
+      <circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-bell" viewBox="0 0 24 24">
+      <path d="M18 9a6 6 0 0 0-12 0c0 7-2.5 7-2.5 9h17C20.5 16 18 16 18 9ZM10 21h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-wifi" viewBox="0 0 24 24">
+      <path d="M3 9a14 14 0 0 1 18 0M6.5 12.5a8.5 8.5 0 0 1 11 0M10 16a3.2 3.2 0 0 1 4 0M12 20h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-battery" viewBox="0 0 24 24">
+      <rect x="2" y="6" width="18" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M22 10v4M5 9h11v6H5z" fill="currentColor"/>
+    </symbol>
+    <symbol id="icon-trend" viewBox="0 0 24 24">
+      <path d="m4 16 6-6 4 4 6-7M14 7h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-usdc" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M15 8.5c-.7-.8-1.7-1.2-3-1.2-1.8 0-3 .9-3 2.2 0 3.5 6 1.5 6 5 0 1.3-1.2 2.2-3 2.2-1.3 0-2.4-.5-3.2-1.4M12 5.5v13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-eth" viewBox="0 0 24 24">
+      <path d="m12 2 7 10-7 4-7-4 7-10Z" fill="currentColor" opacity=".78"/>
+      <path d="m12 18 7-5-7 9-7-9 7 5Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="icon-sol" viewBox="0 0 24 24">
+      <path d="M6 5h14l-3 3H3l3-3ZM6 10.5h14l-3 3H3l3-3ZM6 16h14l-3 3H3l3-3Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="icon-send" viewBox="0 0 24 24">
+      <path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-receive" viewBox="0 0 24 24">
+      <path d="M12 5v14m6-6-6 6-6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-swap" viewBox="0 0 24 24">
+      <path d="M7 7h13l-3-3m3 3-3 3M17 17H4l3 3m-3-3 3-3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24">
+      <path d="M12 3 20 6v5c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10V6l8-3Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+      <path d="m8.5 12 2.2 2.2 4.8-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24">
+      <path d="m9 18 6-6-6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24">
+      <path d="m5 12 4 4L19 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7"/>
+      <path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+    </symbol>
+  </svg>
+
+  <main id="content">
+    <section class="section prototype-section" data-od-id="luckgnome-prototype">
+      <div class="container stack">
+        <header class="canvas-heading">
+          <p class="eyebrow" data-od-id="prototype-eyebrow">LITTLE WALLET · PROTOTIPO PARA IPHONE</p>
+          <h1 data-od-id="prototype-heading">Tu cartera, hablando.</h1>
+          <p class="lead" data-od-id="prototype-intro">Consulta, envía y cambia activos con una frase sencilla.</p>
+        </header>
+
+        <div class="screen-grid grid-4" data-od-id="screen-preview-grid">
+          <article class="device-figure feature" data-od-id="voice-screen">
+            <div class="screen-label"><span class="meta">01</span><h2 data-device-label>Voz</h2></div>
+            <div class="phone" data-instance="left" data-current="voice" data-voice-state="idle">
+              <div class="phone-screen">
+                <div class="status-bar"><span>9:41</span><span class="dynamic-island"></span><span class="status-icons"><svg aria-hidden="true"><use href="#icon-wifi"/></svg><svg class="battery" aria-hidden="true"><use href="#icon-battery"/></svg></span></div>
+                <div class="screen-scroll" data-screen-content></div>
+                <nav class="bottom-nav" aria-label="Navegación principal">
+                  <button class="nav-item" type="button" data-route="wallet" data-ui-key="nav-wallet" aria-pressed="false" aria-label="Abrir Cartera"><svg aria-hidden="true"><use href="#icon-wallet"/></svg><span>Cartera</span></button>
+                  <div class="nav-voice-wrap"><button class="nav-voice" type="button" data-route="voice" data-ui-key="nav-voice" aria-label="Abrir Voz"><svg aria-hidden="true"><use href="#icon-mic"/></svg></button><span class="nav-voice-label">Voz</span></div>
+                  <button class="nav-item" type="button" data-route="profile" data-ui-key="nav-profile" aria-pressed="false" aria-label="Abrir Perfil"><svg aria-hidden="true"><use href="#icon-user"/></svg><span>Perfil</span></button>
+                </nav>
+                <div class="phone-sheet" hidden></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="device-figure feature" data-od-id="wallet-screen">
+            <div class="screen-label"><span class="meta">02</span><h2 data-device-label>Cartera</h2></div>
+            <div class="phone" data-instance="center" data-current="wallet" data-voice-state="idle">
+              <div class="phone-screen">
+                <div class="status-bar"><span>9:41</span><span class="dynamic-island"></span><span class="status-icons"><svg aria-hidden="true"><use href="#icon-wifi"/></svg><svg class="battery" aria-hidden="true"><use href="#icon-battery"/></svg></span></div>
+                <div class="screen-scroll" data-screen-content></div>
+                <nav class="bottom-nav" aria-label="Navegación principal">
+                  <button class="nav-item" type="button" data-route="wallet" data-ui-key="nav-wallet" aria-pressed="true" aria-label="Abrir Cartera"><svg aria-hidden="true"><use href="#icon-wallet"/></svg><span>Cartera</span></button>
+                  <div class="nav-voice-wrap"><button class="nav-voice" type="button" data-route="voice" data-ui-key="nav-voice" aria-label="Abrir Voz"><svg aria-hidden="true"><use href="#icon-mic"/></svg></button><span class="nav-voice-label">Voz</span></div>
+                  <button class="nav-item" type="button" data-route="profile" data-ui-key="nav-profile" aria-pressed="false" aria-label="Abrir Perfil"><svg aria-hidden="true"><use href="#icon-user"/></svg><span>Perfil</span></button>
+                </nav>
+                <div class="phone-sheet" hidden></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="device-figure feature" data-od-id="profile-screen">
+            <div class="screen-label"><span class="meta">03</span><h2 data-device-label>Perfil</h2></div>
+            <div class="phone" data-instance="right" data-current="profile" data-voice-state="idle">
+              <div class="phone-screen">
+                <div class="status-bar"><span>9:41</span><span class="dynamic-island"></span><span class="status-icons"><svg aria-hidden="true"><use href="#icon-wifi"/></svg><svg class="battery" aria-hidden="true"><use href="#icon-battery"/></svg></span></div>
+                <div class="screen-scroll" data-screen-content></div>
+                <nav class="bottom-nav" aria-label="Navegación principal">
+                  <button class="nav-item" type="button" data-route="wallet" data-ui-key="nav-wallet" aria-pressed="false" aria-label="Abrir Cartera"><svg aria-hidden="true"><use href="#icon-wallet"/></svg><span>Cartera</span></button>
+                  <div class="nav-voice-wrap"><button class="nav-voice" type="button" data-route="voice" data-ui-key="nav-voice" aria-label="Abrir Voz"><svg aria-hidden="true"><use href="#icon-mic"/></svg></button><span class="nav-voice-label">Voz</span></div>
+                  <button class="nav-item" type="button" data-route="profile" data-ui-key="nav-profile" aria-pressed="true" aria-label="Abrir Perfil"><svg aria-hidden="true"><use href="#icon-user"/></svg><span>Perfil</span></button>
+                </nav>
+                <div class="phone-sheet" hidden></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="device-figure feature" data-od-id="contacts-screen">
+            <div class="screen-label"><span class="meta">04</span><h2 data-device-label>Contactos</h2></div>
+            <div class="phone" data-instance="contacts" data-current="contacts" data-voice-state="idle">
+              <div class="phone-screen">
+                <div class="status-bar"><span>9:41</span><span class="dynamic-island"></span><span class="status-icons"><svg aria-hidden="true"><use href="#icon-wifi"/></svg><svg class="battery" aria-hidden="true"><use href="#icon-battery"/></svg></span></div>
+                <div class="screen-scroll" data-screen-content></div>
+                <nav class="bottom-nav" aria-label="Navegación principal">
+                  <button class="nav-item" type="button" data-route="wallet" data-ui-key="nav-wallet" aria-pressed="false" aria-label="Abrir Cartera"><svg aria-hidden="true"><use href="#icon-wallet"/></svg><span>Cartera</span></button>
+                  <div class="nav-voice-wrap"><button class="nav-voice" type="button" data-route="voice" data-ui-key="nav-voice" aria-label="Abrir Voz"><svg aria-hidden="true"><use href="#icon-mic"/></svg></button><span class="nav-voice-label">Voz</span></div>
+                  <button class="nav-item" type="button" data-route="profile" data-ui-key="nav-profile" aria-pressed="true" aria-label="Abrir Perfil"><svg aria-hidden="true"><use href="#icon-user"/></svg><span>Perfil</span></button>
+                </nav>
+                <div class="phone-sheet" hidden></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <template data-view-template="voice">
+      <div class="voice-view">
+        <header class="app-topbar">
+          <button class="icon-button" type="button" data-action="notifications" data-ui-key="notifications" aria-label="Ver notificaciones"><svg aria-hidden="true"><use href="#icon-bell"/></svg></button>
+        </header>
+        <div class="voice-intro">
+          <h2 class="voice-question" data-ui-key="voice-question">¿Qué quieres hacer?</h2>
+          <p class="voice-instruction" data-ui-key="voice-instruction">Toca la imagen y empieza a hablar.</p>
+        </div>
+        <div class="voice-stage">
+          <div class="gnome-orbit">
+            <div class="voice-waves" aria-hidden="true"><span class="voice-wave-cluster"><i></i><i></i><i></i></span><span class="voice-wave-cluster"><i></i><i></i><i></i></span></div>
+            <button class="gnome-trigger" type="button" data-action="voice-toggle" data-ui-key="gnome-voice-control" aria-label="Tocar para empezar a hablar"><img class="gnome-mark" data-gnome-state alt="" width="1254" height="1254" /></button>
+          </div>
+          <p class="voice-state-label" data-ui-key="voice-state">Listo cuando tú quieras</p>
+          <p class="voice-helper" data-ui-key="voice-helper">Puedes pedir tu saldo, revisar movimientos o preparar un envío.</p>
+        </div>
+        <p class="voice-transcript" data-ui-key="voice-transcript" aria-live="polite"></p>
+        <div class="voice-suggestions" aria-label="Prueba una petición">
+          <button class="suggestion-chip" type="button" data-action="voice-suggest" data-command="Enviar dinero" data-ui-key="suggest-send">Enviar dinero</button>
+          <button class="suggestion-chip" type="button" data-action="voice-suggest" data-command="Consultar saldo" data-ui-key="suggest-balance">Consultar saldo</button>
+          <button class="suggestion-chip" type="button" data-action="voice-suggest" data-command="Últimos movimientos" data-ui-key="suggest-activity">Últimos movimientos</button>
+        </div>
+        <div class="voice-result" data-ui-key="voice-result" hidden aria-live="polite"></div>
+      </div>
+    </template>
+
+    <template data-view-template="wallet">
+      <div class="wallet-view">
+        <header class="app-topbar">
+          <button class="icon-button" type="button" data-action="notifications" data-ui-key="notifications" aria-label="Ver notificaciones"><svg aria-hidden="true"><use href="#icon-bell"/></svg></button>
+        </header>
+        <div class="wallet-heading">
+          <h2 class="page-title" data-ui-key="wallet-title">Mi cartera</h2>
+        </div>
+        <section class="balance-card" aria-label="Saldo total">
+          <p class="balance-label">Saldo total</p>
+          <p class="balance-amount num">$12.845,32</p>
+          <p class="balance-trend"><svg aria-hidden="true"><use href="#icon-trend"/></svg>+2,4 % esta semana</p>
+        </section>
+        <div class="wallet-actions">
+          <button class="btn btn-primary" type="button" data-action="send" data-ui-key="send-action"><svg width="17" height="17" aria-hidden="true"><use href="#icon-send"/></svg>Enviar</button>
+          <button class="btn btn-secondary" type="button" data-action="receive" data-ui-key="receive-action"><svg width="17" height="17" aria-hidden="true"><use href="#icon-receive"/></svg>Recibir</button>
+        </div>
+        <div class="secondary-actions">
+          <button class="secondary-action" type="button" data-action="swap" data-ui-key="swap-action">Cambiar activos</button>
+          <button class="secondary-action" type="button" data-action="add-funds" data-ui-key="add-funds-action">Añadir fondos</button>
+        </div>
+        <section>
+          <div class="section-heading"><h3 data-ui-key="assets-heading">Tus activos</h3><span class="meta">3</span></div>
+          <p class="section-note">Cantidades de token y variaciones individuales pendientes de sincronizar.</p>
+          <div class="asset-list">
+            <button class="asset-row" type="button" data-action="asset-detail" data-asset="USDC" data-value="$5.420,00" data-ui-key="asset-usdc">
+              <span class="token-icon"><svg aria-hidden="true"><use href="#icon-usdc"/></svg></span>
+              <span class="asset-copy"><span class="asset-name">USD Coin</span><span class="asset-symbol">USDC · Cantidad no indicada</span></span>
+              <span class="asset-value"><strong class="num">$5.420,00</strong><small>Variación —</small></span>
+            </button>
+            <button class="asset-row" type="button" data-action="asset-detail" data-asset="ETH" data-value="$4.830,22" data-ui-key="asset-eth">
+              <span class="token-icon eth"><svg aria-hidden="true"><use href="#icon-eth"/></svg></span>
+              <span class="asset-copy"><span class="asset-name">Ethereum</span><span class="asset-symbol">ETH · Cantidad no indicada</span></span>
+              <span class="asset-value"><strong class="num">$4.830,22</strong><small>Variación —</small></span>
+            </button>
+            <button class="asset-row" type="button" data-action="asset-detail" data-asset="SOL" data-value="$2.595,10" data-ui-key="asset-sol">
+              <span class="token-icon sol"><svg aria-hidden="true"><use href="#icon-sol"/></svg></span>
+              <span class="asset-copy"><span class="asset-name">Solana</span><span class="asset-symbol">SOL · Cantidad no indicada</span></span>
+              <span class="asset-value"><strong class="num">$2.595,10</strong><small>Variación —</small></span>
+            </button>
+          </div>
+        </section>
+        <section>
+          <div class="section-heading"><h3 data-ui-key="activity-heading">Actividad reciente</h3></div>
+          <div class="activity-list">
+            <div class="activity-row" data-ui-key="activity-send"><span class="activity-icon"><svg aria-hidden="true"><use href="#icon-send"/></svg></span><span class="activity-copy"><span class="activity-title">Envío a Lucas</span><span class="activity-detail">20 USDC</span></span></div>
+            <div class="activity-row" data-ui-key="activity-receive"><span class="activity-icon"><svg aria-hidden="true"><use href="#icon-receive"/></svg></span><span class="activity-copy"><span class="activity-title">Recepción</span><span class="activity-detail">0,2 ETH</span></span></div>
+            <div class="activity-row" data-ui-key="activity-swap"><span class="activity-icon"><svg aria-hidden="true"><use href="#icon-swap"/></svg></span><span class="activity-copy"><span class="activity-title">Cambio de activos</span><span class="activity-detail">USDC → SOL</span></span></div>
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <template data-view-template="profile">
+      <div class="profile-view">
+        <header class="app-topbar">
+          <button class="icon-button" type="button" data-action="notifications" data-ui-key="notifications" aria-label="Ver notificaciones"><svg aria-hidden="true"><use href="#icon-bell"/></svg></button>
+        </header>
+        <div class="profile-heading"><h2 class="page-title" data-ui-key="profile-title">Perfil</h2></div>
+        <section class="profile-card" aria-label="Datos de la cuenta">
+          <div class="avatar" aria-hidden="true">R</div>
+          <div>
+            <p class="profile-name">Ramiro</p>
+            <p class="wallet-address">0x71A...9F21</p>
+            <span class="verified-badge"><svg aria-hidden="true"><use href="#icon-shield"/></svg>Cuenta verificada</span>
+          </div>
+        </section>
+
+        <section class="profile-group">
+          <h3 class="profile-group-title">Cuenta</h3>
+          <div class="settings-list">
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Información personal" data-ui-key="personal-info"><span>Información personal</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Carteras" data-ui-key="wallets"><span>Carteras</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Contactos" data-ui-key="contacts"><span>Contactos</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+          </div>
+        </section>
+
+        <section class="profile-group">
+          <h3 class="profile-group-title">Seguridad</h3>
+          <div class="settings-list">
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Ajustes de seguridad" data-ui-key="security"><span>Ajustes de seguridad</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Recuperación" data-ui-key="recovery"><span>Recuperación</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Permisos de gasto" data-ui-key="spending"><span>Permisos de gasto</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Dispositivos conectados" data-ui-key="devices"><span>Dispositivos conectados</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+          </div>
+        </section>
+
+        <section class="profile-group">
+          <h3 class="profile-group-title">Preferencias</h3>
+          <div class="settings-list">
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Moneda" data-ui-key="currency"><span>Moneda</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Idioma" data-ui-key="language"><span>Idioma</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Notificaciones" data-ui-key="notifications-setting"><span>Notificaciones</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+          </div>
+        </section>
+
+        <section class="profile-group">
+          <h3 class="profile-group-title">LuckGnome</h3>
+          <div class="settings-list">
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Preferencias de voz" data-ui-key="voice-preferences"><span>Preferencias de voz</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Confirmaciones de operaciones" data-ui-key="confirmations"><span>Confirmaciones de operaciones</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+            <button class="setting-row" type="button" data-action="profile-setting" data-setting="Permisos de IA" data-ui-key="ai-permissions"><span>Permisos de IA</span><svg aria-hidden="true"><use href="#icon-chevron"/></svg></button>
+          </div>
+        </section>
+      </div>
+    </template>
+
+    <template data-view-template="contacts">
+      <div class="contacts-view">
+        <header class="app-topbar contacts-topbar">
+          <button class="icon-button" type="button" data-route="profile" data-ui-key="contacts-back" aria-label="Volver al perfil"><svg aria-hidden="true" style="transform:rotate(180deg)"><use href="#icon-chevron"/></svg></button>
+          <h2 class="page-title" data-ui-key="contacts-title">Contactos</h2>
+          <button class="icon-button" type="button" data-action="add-contact" data-ui-key="add-contact" aria-label="Añadir contacto"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        </header>
+        <p class="contacts-description" data-ui-key="contacts-description">Busca a quién enviar y prepara la operación en un toque.</p>
+        <label class="contacts-search" data-od-id="contacts-search-field">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.1 4.1"/></svg>
+          <input type="search" data-contacts-search data-ui-key="contacts-search" aria-label="Buscar contactos" placeholder="Buscar contactos" autocomplete="off" />
+        </label>
+        <section class="contacts-list-section" aria-labelledby="contacts-list-title">
+          <div class="row-between"><h3 class="contacts-section-title" id="contacts-list-title" data-ui-key="contacts-list-title">Contactos de ejemplo</h3><span class="meta" data-contacts-count>3 personas</span></div>
+          <div class="contact-list" data-contact-list>
+            <button class="contact-row" type="button" data-action="contact-select" data-recipient="Lucas" data-amount="20" data-search="lucas" data-ui-key="contact-lucas">
+              <span class="contact-avatar" aria-hidden="true">L</span><span class="contact-copy"><span class="contact-name">Lucas</span><span class="contact-detail">Último envío · 20 USDC</span></span><svg aria-hidden="true"><use href="#icon-chevron"/></svg>
+            </button>
+            <button class="contact-row" type="button" data-action="contact-select" data-recipient="Sofía" data-search="sofia" data-ui-key="contact-sofia">
+              <span class="contact-avatar" aria-hidden="true">S</span><span class="contact-copy"><span class="contact-name">Sofía</span><span class="contact-detail">Contacto de ejemplo</span></span><svg aria-hidden="true"><use href="#icon-chevron"/></svg>
+            </button>
+            <button class="contact-row" type="button" data-action="contact-select" data-recipient="Mateo" data-search="mateo" data-ui-key="contact-mateo">
+              <span class="contact-avatar" aria-hidden="true">M</span><span class="contact-copy"><span class="contact-name">Mateo</span><span class="contact-detail">Contacto de ejemplo</span></span><svg aria-hidden="true"><use href="#icon-chevron"/></svg>
+            </button>
+          </div>
+          <p class="contacts-empty" data-contacts-empty hidden>No hay contactos con ese nombre.</p>
+        </section>
+      </div>
+    </template>
+  </main>
+
+  <script>
+    (() => {
+          const labels = { voice: "Voz", wallet: "Cartera", profile: "Perfil", contacts: "Contactos" };
+          const recognizers = new WeakMap();
+          const voiceDemoTimers = new WeakMap();
+          const mascotStateImages = {"idle":"image-1.png","listening":"image-1.png","speaking":"image-1.png","thinking":"image-1.png","responding":"image-1.png"};
+
+          function setMascotState(phone, state) {
+            const mascot = phone.querySelector("[data-gnome-state]");
+            if (mascot && mascotStateImages[state]) mascot.src = mascotStateImages[state];
+          }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, character => ({
+          "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        })[character]);
+      }
+
+      function assignUiIds(root, prefix) {
+        root.querySelectorAll("[data-ui-key]").forEach(element => {
+          element.dataset.odId = `${prefix}-${element.dataset.uiKey}`;
+        });
+      }
+
+      function updateNavigation(phone, view) {
+        const selectedRoute = view === "contacts" ? "profile" : view;
+        phone.querySelectorAll("[data-route]").forEach(button => {
+          const selected = button.dataset.route === selectedRoute;
+          if (button.classList.contains("nav-item")) button.setAttribute("aria-pressed", String(selected));
+          else if (selected) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        });
+      }
+
+          function stopRecognition(phone) {
+            const timers = voiceDemoTimers.get(phone) || [];
+            timers.forEach(timer => window.clearTimeout(timer));
+            voiceDemoTimers.delete(phone);
+            const recognizer = recognizers.get(phone);
+            if (!recognizer) return;
+            try { recognizer.stop(); } catch (_) {}
+            recognizers.delete(phone);
+          }
+
+          function runVoiceDemo(phone) {
+            const timers = [];
+            timers.push(window.setTimeout(() => {
+              if (phone.dataset.current !== "voice" || phone.dataset.voiceState !== "listening") return;
+              phone.dataset.voiceState = "speaking";
+              setMascotState(phone, "speaking");
+              phone.querySelector(".voice-question").textContent = "Te estoy escuchando";
+              phone.querySelector(".voice-instruction").textContent = "La demostración capta una petición.";
+              phone.querySelector(".voice-state-label").textContent = "Escuchando";
+              phone.querySelector(".voice-helper").textContent = "Ahora verás cómo se prepara la respuesta.";
+              const transcript = phone.querySelector(".voice-transcript");
+              transcript.style.display = "block";
+              transcript.textContent = "«Consultar mi saldo»";
+            }, 900));
+            timers.push(window.setTimeout(() => {
+              if (phone.dataset.current === "voice" && phone.dataset.voiceState === "speaking") {
+                processCommand(phone, "Consultar saldo");
+              }
+            }, 2100));
+            voiceDemoTimers.set(phone, timers);
+          }
+
+      function filterContacts(view) {
+        const search = view.querySelector("[data-contacts-search]");
+        const query = search.value.trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-ES");
+        let matches = 0;
+        view.querySelectorAll(".contact-row").forEach(row => {
+          const visible = row.dataset.search.includes(query);
+          row.hidden = !visible;
+          if (visible) matches += 1;
+        });
+        view.querySelector("[data-contacts-empty]").hidden = matches > 0;
+        view.querySelector("[data-contacts-count]").textContent = `${matches} ${matches === 1 ? "persona" : "personas"}`;
+      }
+
+      function renderView(phone, view) {
+        stopRecognition(phone);
+        phone.querySelector(".phone-sheet").hidden = true;
+        phone.dataset.current = view;
+        phone.dataset.voiceState = "idle";
+        const content = phone.querySelector("[data-screen-content]");
+        const template = document.querySelector(`[data-view-template="${view}"]`);
+        content.replaceChildren(template.content.cloneNode(true));
+        setMascotState(phone, "idle");
+        assignUiIds(content, phone.dataset.instance);
+        updateNavigation(phone, view);
+        phone.closest(".device-figure").querySelector("[data-device-label]").textContent = labels[view];
+      }
+
+      function setVoiceState(phone, state, question, instruction, status, helper) {
+        phone.dataset.voiceState = state;
+        setMascotState(phone, state);
+        const content = phone.querySelector("[data-screen-content]");
+        const questionNode = content.querySelector(".voice-question");
+        if (!questionNode) return;
+        questionNode.textContent = question;
+        content.querySelector(".voice-instruction").textContent = instruction;
+        content.querySelector(".voice-state-label").textContent = status;
+        content.querySelector(".voice-helper").textContent = helper;
+      }
+
+          function showVoiceResult(phone, title, message, actionLabel, action, amount, recipient) {
+            const result = phone.querySelector(".voice-result");
+            result.hidden = false;
+            result.replaceChildren();
+            const heading = document.createElement("h3");
+            heading.textContent = title;
+            const description = document.createElement("p");
+            description.textContent = message;
+            result.append(heading, description);
+            if (actionLabel) {
+              const button = document.createElement("button");
+              button.className = "btn btn-secondary";
+              button.type = "button";
+              button.dataset.action = action;
+              button.dataset.amount = amount || "";
+              button.dataset.recipient = recipient || "";
+              button.textContent = actionLabel;
+              result.append(button);
+            }
+            assignUiIds(result, phone.dataset.instance);
+          }
+
+      function processCommand(phone, command) {
+        stopRecognition(phone);
+        phone.dataset.voiceCommand = command;
+        const transcript = phone.querySelector(".voice-transcript");
+        transcript.style.display = "block";
+        transcript.textContent = `«${command}»`;
+        const result = phone.querySelector(".voice-result");
+        result.hidden = true;
+        setVoiceState(phone, "thinking", "Pensando…", "Estoy preparando una respuesta sencilla.", "Un momento", "No se realizará ninguna operación sin que la revises.");
+        window.setTimeout(() => {
+          if (phone.dataset.current !== "voice") return;
+          phone.dataset.voiceState = "responding";
+          setMascotState(phone, "responding");
+          phone.querySelector(".voice-question").textContent = "Esto es lo que he encontrado";
+          phone.querySelector(".voice-instruction").textContent = "Revísalo con calma antes de continuar.";
+          phone.querySelector(".voice-state-label").textContent = "Respuesta lista";
+          phone.querySelector(".voice-helper").textContent = "Las operaciones necesitan tu confirmación.";
+          const normalized = command.toLocaleLowerCase("es-ES");
+
+          if (/enviar|send/.test(normalized)) {
+            const amountMatch = normalized.match(/(\d+(?:[.,]\d+)?)\s*(usdc|eth|sol)?/i);
+            const recipientMatch = normalized.match(/\ba\s+([a-záéíóúñ]+)/i);
+            const amount = amountMatch && amountMatch[1] ? amountMatch[1].replace(",", ".") : "";
+            const recipient = recipientMatch ? recipientMatch[1] : "";
+            if (amount && recipient) {
+              showVoiceResult(phone, "Envío preparado para revisar", `Enviar ${amount} ${amountMatch[2] || "USDC"} a ${recipient}. Esta vista previa no mueve fondos.`, "Revisar envío", "voice-send", amount, recipient);
+            } else {
+              showVoiceResult(phone, "¿A quién y cuánto?", "Dime el destinatario y la cantidad. Después podrás revisar la operación.");
+            }
+          } else if (/cambiar|cambio|swap|canje/.test(normalized)) {
+            showVoiceResult(phone, "Cambio listo para revisar", "La muestra incluye USDC y ETH. El cambio no se ejecutará desde esta vista.", "Revisar cambio", "swap");
+          } else if (/gast|semana|spent/.test(normalized)) {
+            showVoiceResult(phone, "Desglose semanal", "No hay datos de gasto semanal disponibles en esta muestra.");
+          } else if (/activo|saldo|balance|cartera/.test(normalized)) {
+            showVoiceResult(phone, "Tu cartera", "Saldo total: $12.845,32. Activos: USDC $5.420,00 · ETH $4.830,22 · SOL $2.595,10.");
+          } else if (/movimiento|actividad|recent/.test(normalized)) {
+            showVoiceResult(phone, "Últimos movimientos", "Envío de 20 USDC a Lucas · recepción de 0,2 ETH · cambio de USDC a SOL.");
+          } else {
+            showVoiceResult(phone, "Puedo ayudarte con tu cartera", "Prueba a consultar el saldo, ver tus movimientos o preparar un envío para revisarlo.");
+          }
+        }, 780);
+      }
+
+      function activateVoice(phone) {
+        if (phone.dataset.current !== "voice") return;
+        const current = phone.dataset.voiceState;
+        if (current === "listening" || current === "speaking") {
+          stopRecognition(phone);
+          setVoiceState(phone, "idle", "¿Qué quieres hacer?", "Toca la imagen y empieza a hablar.", "Listo cuando tú quieras", "También puedes probar una sugerencia.");
+          const transcript = phone.querySelector(".voice-transcript");
+          transcript.style.display = "none";
+          transcript.textContent = "";
+          return;
+        }
+
+        stopRecognition(phone);
+        phone.querySelector(".voice-result").hidden = true;
+        setVoiceState(phone, "listening", "Escuchando…", "Habla con naturalidad, te estoy escuchando.", "Escuchando", "Pulsa de nuevo para detener la escucha.");
+        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!Recognition) {
+          phone.querySelector(".voice-helper").textContent = "Sin micrófono disponible: mira la animación de prueba.";
+          runVoiceDemo(phone);
+          return;
+        }
+
+            const recognizer = new Recognition();
+            recognizer.lang = "es-ES";
+            recognizer.interimResults = true;
+            recognizer.maxAlternatives = 1;
+            recognizers.set(phone, recognizer);
+            recognizer.onresult = event => {
+              let finalPhrase = "";
+              let interimPhrase = "";
+              for (let index = event.resultIndex; index < event.results.length; index += 1) {
+                const result = event.results[index];
+                const phrase = result[0]?.transcript || "";
+                if (result.isFinal) finalPhrase += phrase;
+                else interimPhrase += phrase;
+              }
+              if (interimPhrase.trim()) {
+                phone.dataset.voiceState = "speaking";
+                setMascotState(phone, "speaking");
+                const transcript = phone.querySelector(".voice-transcript");
+                transcript.style.display = "block";
+                transcript.textContent = `«${interimPhrase.trim()}»`;
+                phone.querySelector(".voice-state-label").textContent = "Te escucho…";
+              }
+              if (finalPhrase.trim()) processCommand(phone, finalPhrase.trim());
+            };
+        recognizer.onerror = () => {
+          if (recognizers.get(phone) !== recognizer || (phone.dataset.voiceState !== "listening" && phone.dataset.voiceState !== "speaking")) return;
+          stopRecognition(phone);
+          setVoiceState(phone, "listening", "Escuchando…", "Habla con naturalidad, te estoy escuchando.", "Escuchando", "Sin acceso al micrófono: mira la animación de prueba.");
+          runVoiceDemo(phone);
+        };
+            recognizer.onend = () => {
+              if (recognizers.get(phone) !== recognizer) return;
+              recognizers.delete(phone);
+              if (phone.dataset.voiceState === "listening" || phone.dataset.voiceState === "speaking") {
+                setVoiceState(phone, "idle", "¿Qué quieres hacer?", "Toca la imagen y empieza a hablar.", "Listo cuando tú quieras", "No he captado ninguna frase. Puedes intentarlo de nuevo.");
+                const transcript = phone.querySelector(".voice-transcript");
+                transcript.style.display = "none";
+                transcript.textContent = "";
+              }
+            };
+        try { recognizer.start(); } catch (_) {
+          stopRecognition(phone);
+          setVoiceState(phone, "listening", "Escuchando…", "Habla con naturalidad, te estoy escuchando.", "Escuchando", "No se pudo iniciar el micrófono: mira la animación de prueba.");
+          runVoiceDemo(phone);
+        }
+      }
+
+          function appendSanitizedMarkup(parent, markup) {
+            const parsed = new DOMParser().parseFromString(markup, "text/html");
+            const allowedTags = new Set(["P", "DIV", "STRONG", "BUTTON", "LABEL", "INPUT", "SELECT", "OPTION"]);
+            const allowedAttributes = new Set(["aria-live", "class", "data-action", "type", "name", "value", "autocomplete", "min", "step", "inputmode"]);
+
+            function copyNode(source) {
+              if (source.nodeType === Node.TEXT_NODE) return document.createTextNode(source.textContent || "");
+              if (source.nodeType !== Node.ELEMENT_NODE || !allowedTags.has(source.tagName)) return null;
+              const safeNode = document.createElement(source.tagName.toLowerCase());
+              for (const attribute of source.attributes) {
+                if (allowedAttributes.has(attribute.name)) safeNode.setAttribute(attribute.name, attribute.value);
+              }
+              source.childNodes.forEach(child => {
+                const safeChild = copyNode(child);
+                if (safeChild) safeNode.append(safeChild);
+              });
+              return safeNode;
+            }
+
+            parsed.body.childNodes.forEach(source => {
+              const safeNode = copyNode(source);
+              if (safeNode) parent.append(safeNode);
+            });
+          }
+
+          function openSheet(phone, title, markup) {
+            const sheet = phone.querySelector(".phone-sheet");
+            const panel = document.createElement("section");
+            panel.className = "sheet-panel";
+            panel.setAttribute("role", "dialog");
+            panel.setAttribute("aria-modal", "true");
+            const header = document.createElement("div");
+            header.className = "sheet-top";
+            const heading = document.createElement("h2");
+            heading.className = "sheet-title";
+            heading.textContent = title;
+            const closeButton = document.createElement("button");
+            closeButton.className = "sheet-close";
+            closeButton.type = "button";
+            closeButton.dataset.action = "close-sheet";
+            closeButton.setAttribute("aria-label", "Cerrar");
+            closeButton.textContent = "×";
+            header.append(heading, closeButton);
+            panel.append(header);
+            appendSanitizedMarkup(panel, markup);
+            sheet.replaceChildren(panel);
+            sheet.hidden = false;
+            assignUiIds(sheet, phone.dataset.instance);
+            sheet.querySelector("button")?.focus();
+          }
+
+      function openSendSheet(phone, amount = "20", recipient = "Lucas") {
+        openSheet(phone, "Enviar dinero", `
+          <p class="sheet-copy">Prepara la operación y revisa los datos antes de continuar.</p>
+          <div class="sheet-form">
+            <label>Destinatario<input name="recipient" type="text" value="${escapeHtml(recipient)}" autocomplete="off" /></label>
+            <label>Cantidad<input name="amount" type="number" min="0" step="any" value="${escapeHtml(amount)}" inputmode="decimal" /></label>
+            <label>Activo<select name="asset"><option>USDC</option><option>ETH</option><option>SOL</option></select></label>
+            <p class="validation-message" aria-live="polite"></p>
+          </div>
+          <button class="btn btn-primary" type="button" data-action="review-send">Revisar envío</button>`);
+      }
+
+      function openSwapSheet(phone) {
+        openSheet(phone, "Cambiar activos", `
+          <p class="sheet-copy">Una muestra de cómo revisarías un cambio antes de confirmarlo.</p>
+          <div class="sheet-form">
+            <label>Entregas<input name="swap-from" value="50 USDC" /></label>
+            <label>Recibes<select name="swap-to"><option>ETH</option><option>SOL</option></select></label>
+          </div>
+          <button class="btn btn-primary" type="button" data-action="review-swap">Revisar cambio</button>`);
+      }
+
+      function handleAction(phone, button) {
+        const action = button.dataset.action;
+        if (action === "voice-toggle") return activateVoice(phone);
+        if (action === "voice-suggest") return processCommand(phone, button.dataset.command);
+        if (action === "contact-select") return openSendSheet(phone, button.dataset.amount || "", button.dataset.recipient || "");
+        if (action === "add-contact") return openSheet(phone, "Añadir contacto", `<p class="sheet-copy">Guarda un nombre y una dirección para preparar futuros envíos.</p><div class="sheet-form"><label>Nombre<input name="contact-name" type="text" autocomplete="name" /></label><label>Dirección de cartera<input name="contact-address" type="text" autocomplete="off" /></label><p class="validation-message" aria-live="polite"></p></div><button class="btn btn-primary" type="button" data-action="save-contact">Guardar contacto</button>`);
+        if (action === "save-contact") {
+          const sheet = phone.querySelector(".phone-sheet");
+          const name = sheet.querySelector('[name="contact-name"]').value.trim();
+          const address = sheet.querySelector('[name="contact-address"]').value.trim();
+          const message = sheet.querySelector(".validation-message");
+          if (!name || !address) {
+            message.textContent = "Completa el nombre y la dirección de cartera.";
+            return;
+          }
+          const row = document.createElement("button");
+          row.type = "button";
+          row.className = "contact-row";
+          row.dataset.action = "contact-select";
+          row.dataset.recipient = name;
+          row.dataset.search = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es-ES");
+          row.dataset.odId = `${phone.dataset.instance}-contact-${row.dataset.search.replace(/[^a-z0-9]+/g, "-")}`;
+          const avatar = document.createElement("span");
+          avatar.className = "contact-avatar";
+          avatar.setAttribute("aria-hidden", "true");
+          avatar.textContent = name.slice(0, 1).toLocaleUpperCase("es-ES");
+          const copy = document.createElement("span");
+          copy.className = "contact-copy";
+          const nameNode = document.createElement("span");
+          nameNode.className = "contact-name";
+          nameNode.textContent = name;
+          const detail = document.createElement("span");
+          detail.className = "contact-detail";
+          detail.textContent = "Contacto guardado";
+          copy.append(nameNode, detail);
+          const chevron = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          chevron.setAttribute("aria-hidden", "true");
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", "m9 18 6-6-6-6");
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", "currentColor");
+          path.setAttribute("stroke-width", "1.8");
+          path.setAttribute("stroke-linecap", "round");
+          path.setAttribute("stroke-linejoin", "round");
+          chevron.append(path);
+          row.append(avatar, copy, chevron);
+          phone.querySelector("[data-contact-list]").append(row);
+          filterContacts(phone.querySelector(".contacts-view"));
+          sheet.hidden = true;
+          return;
+        }
+        if (action === "notifications") return openSheet(phone, "Notificaciones", '<p class="sheet-copy">Aquí verás avisos importantes de tu cartera.</p><div class="sheet-message"><strong>Todo al día</strong><p>No hay avisos nuevos en esta vista de demostración.</p></div><button class="btn btn-secondary" type="button" data-action="close-sheet">Cerrar</button>');
+        if (action === "send") return openSendSheet(phone, button.dataset.amount || "20", button.dataset.recipient || "Lucas");
+        if (action === "voice-send") return openSendSheet(phone, button.dataset.amount, button.dataset.recipient);
+        if (action === "receive") return openSheet(phone, "Recibir fondos", '<p class="sheet-copy">Dirección de ejemplo; no la uses para enviar fondos.</p><div class="sheet-message"><strong>0x71A...9F21</strong><p>La dirección completa no está disponible en esta muestra.</p></div><button class="btn btn-secondary" type="button" data-action="copy-address">Copiar dirección de muestra</button>');
+        if (action === "copy-address") {
+          const copyButton = button;
+          const address = "0x71A...9F21";
+          if (navigator.clipboard?.writeText) navigator.clipboard.writeText(address).catch(() => {});
+          copyButton.textContent = "Dirección de muestra copiada";
+          return;
+        }
+        if (action === "swap") return openSwapSheet(phone);
+        if (action === "review-swap") return openSheet(phone, "Cambio para revisar", '<div class="sheet-message"><strong>50 USDC → ETH</strong><p>Vista previa de demostración. No se ha ejecutado ningún cambio.</p></div><button class="btn btn-secondary" type="button" data-action="close-sheet">Entendido</button>');
+        if (action === "add-funds") return openSheet(phone, "Añadir fondos", '<p class="sheet-copy">Elige cómo quieres añadir fondos a tu cartera.</p><div class="sheet-message"><strong>Transferencia bancaria</strong><p>Esta opción estará disponible en una versión conectada.</p></div><button class="btn btn-secondary" type="button" data-action="close-sheet">Cerrar</button>');
+        if (action === "review-send") {
+          const form = phone.querySelector(".phone-sheet");
+          const recipient = form.querySelector('[name="recipient"]').value.trim();
+          const amount = Number(form.querySelector('[name="amount"]').value);
+          const asset = form.querySelector('[name="asset"]').value;
+          if (!recipient || !Number.isFinite(amount) || amount <= 0) {
+            form.querySelector(".validation-message").textContent = "Introduce un destinatario y una cantidad válida.";
+            return;
+          }
+          return openSheet(phone, "Revisa el envío", `<div class="sheet-message"><strong>${escapeHtml(amount)} ${escapeHtml(asset)} para ${escapeHtml(recipient)}</strong><p>Vista previa de demostración. No se ha realizado ningún envío.</p></div><button class="btn btn-secondary" type="button" data-action="close-sheet">Entendido</button>`);
+        }
+        if (action === "asset-detail") return openSheet(phone, button.dataset.asset, `<div class="sheet-message"><strong>${escapeHtml(button.dataset.value)}</strong><p>La cantidad del token y su variación individual no están disponibles en esta muestra.</p></div><button class="btn btn-secondary" type="button" data-action="close-sheet">Cerrar</button>`);
+        if (action === "profile-setting") {
+          const setting = button.dataset.setting;
+          if (setting === "Contactos") return renderView(phone, "contacts");
+          const descriptions = {
+            "Información personal": "Consulta y actualiza los datos de tu cuenta.",
+            "Carteras": "Gestiona las carteras vinculadas a tu cuenta.",
+            "Contactos": "Revisa tus contactos guardados para enviar fondos.",
+            "Ajustes de seguridad": "Administra el acceso y las protecciones de la cuenta.",
+            "Recuperación": "Configura opciones para recuperar el acceso a tu cartera.",
+            "Permisos de gasto": "Revisa los permisos antes de autorizar operaciones.",
+            "Dispositivos conectados": "Consulta los dispositivos con acceso a tu cuenta.",
+            "Moneda": "Elige cómo se muestran los importes.",
+            "Idioma": "El idioma actual de esta muestra es español.",
+            "Notificaciones": "Elige qué avisos quieres recibir.",
+            "Preferencias de voz": "Configura cómo interactúas hablando con LuckGnome.",
+            "Confirmaciones de operaciones": "Las operaciones deben revisarse antes de continuar.",
+            "Permisos de IA": "Controla qué tareas puede preparar LuckGnome."
+          };
+          return openSheet(phone, setting, `<p class="sheet-copy">${escapeHtml(descriptions[setting] || "Ajustes de tu cuenta.")}</p><button class="btn btn-secondary" type="button" data-action="close-sheet">Cerrar</button>`);
+        }
+        if (action === "close-sheet") {
+          phone.querySelector(".phone-sheet").hidden = true;
+          return;
+        }
+      }
+
+      document.querySelectorAll(".phone").forEach(phone => {
+        renderView(phone, phone.dataset.current);
+      });
+
+      document.addEventListener("input", event => {
+        const search = event.target.closest("[data-contacts-search]");
+        if (!search) return;
+        filterContacts(search.closest(".contacts-view"));
+      });
+
+      document.addEventListener("click", event => {
+        const routeButton = event.target.closest("[data-route]");
+        const actionButton = event.target.closest("[data-action]");
+        const phone = event.target.closest(".phone");
+        if (!phone) return;
+
+        if (routeButton) {
+          const destination = routeButton.dataset.route;
+          if (destination !== phone.dataset.current) renderView(phone, destination);
+          return;
+        }
+        if (actionButton) handleAction(phone, actionButton);
+      });
+    })();
+  </script>
+</body>
+</html>
