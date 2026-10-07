@@ -58,6 +58,21 @@ function voiceLabel(state: LiveVoiceState): string {
   }
 }
 
+function lgOrbitState(phase: string): "idle" | "listening" | "speaking" | "thinking" {
+  if (phase === "listening" || phase === "muted") return "listening";
+  if (phase === "speaking") return "speaking";
+  if (
+    phase === "thinking" ||
+    phase === "connecting" ||
+    phase === "binding" ||
+    phase === "request_waiting" ||
+    phase === "reconnecting"
+  ) {
+    return "thinking";
+  }
+  return "idle";
+}
+
 function avatarState(
   state: LiveVoiceState,
 ): "listo" | "escuchando" | "pensando" | "esperando_confirmacion" | "no_entendi" {
@@ -105,39 +120,44 @@ export function AgentScreen(props: AgentScreenProps) {
         <span className="mt-1 block">Hablame.</span>
       </h1>
       <div className="relative mt-3 flex shrink-0 flex-col items-center">
-        <button
-          type="button"
-          className={`agent-stage press agent-stage--${props.voiceState.phase} relative flex size-[clamp(7.5rem,25dvh,12rem)] items-center justify-center rounded-full focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 disabled:cursor-wait disabled:opacity-80`}
-          data-live-phase={props.voiceState.phase}
-          aria-label={buttonLabel}
-          aria-pressed={avatarIsPressed}
-          aria-busy={["connecting", "binding", "thinking", "reconnecting"].includes(
-            props.voiceState.phase,
-          )}
-          onClick={props.onAvatarPress}
-          disabled={avatarDisabled}
-        >
-          <AgenteAvatar
-            estado={avatarState(props.voiceState)}
-            livePhase={props.voiceState.phase}
-            size={192}
-          />
-          {props.isNative && props.isRecording ? (
-            <div className="sound-waves" aria-hidden="true">
+        {/*
+          LuckGnome structure: the avatar lives inside the dual-ring orbit with
+          state-driven wave rings. Nana palette + Nani mascot are preserved.
+        */}
+        <div className="lg-orbit" data-voice-state={lgOrbitState(props.voiceState.phase)}>
+          <div className="lg-voice-waves" aria-hidden="true">
+            <span className="lg-voice-wave-cluster">
               <i />
               <i />
               <i />
+            </span>
+            <span className="lg-voice-wave-cluster">
               <i />
               <i />
-            </div>
-          ) : null}
-        </button>
-        <div className="mt-2 flex items-center gap-2">
-          <span
-            className="rounded-full bg-secondary px-4 py-2 text-sm font-bold text-secondary-foreground"
-            role="status"
-            aria-live="polite"
+              <i />
+            </span>
+          </div>
+          <button
+            type="button"
+            className={`agent-stage press agent-stage--${props.voiceState.phase} relative z-[2] flex size-[62%] items-center justify-center overflow-hidden rounded-full p-0 focus-visible:ring-4 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-80`}
+            data-live-phase={props.voiceState.phase}
+            aria-label={buttonLabel}
+            aria-pressed={avatarIsPressed}
+            aria-busy={["connecting", "binding", "thinking", "reconnecting"].includes(
+              props.voiceState.phase,
+            )}
+            onClick={props.onAvatarPress}
+            disabled={avatarDisabled}
           >
+            <AgenteAvatar
+              estado={avatarState(props.voiceState)}
+              livePhase={props.voiceState.phase}
+              size={192}
+            />
+          </button>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="text-sm font-bold text-brand-ink" role="status" aria-live="polite">
             {props.isNative && props.isRecording
               ? "Te estoy escuchando"
               : voiceLabel(props.voiceState)}
