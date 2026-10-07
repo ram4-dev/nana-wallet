@@ -5,7 +5,7 @@ import { Bell, RefreshCw, Wallet } from "lucide-react";
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
-import { api, getErrorMessage, queryKeys } from "@/lib/api";
+import { api, getErrorMessage, isPrivyIdentityProvider, queryKeys } from "@/lib/api";
 import { formatUsdcBalance } from "@/lib/usdc-format";
 import { ARC_TESTNET_CHAIN_ID } from "@/lib/api-types";
 import { useNotificationsFeed } from "@/features/notifications/useNotificationsFeed";
@@ -33,6 +33,14 @@ const WalletLifecycle = lazy(() =>
 const DelegatedGrantsSection = lazy(() =>
   import("@/features/wallet/DelegatedGrantsSection").then((module) => ({
     default: module.DelegatedGrantsSection,
+  })),
+);
+
+// Privy-only: the Solana embedded-wallet setup imports Privy Solana hooks and
+// must never load in demo mode or before identity mode is known.
+const SolanaWalletSetup = lazy(() =>
+  import("@/features/wallet/SolanaWalletSetup").then((module) => ({
+    default: module.SolanaWalletSetup,
   })),
 );
 
@@ -240,6 +248,7 @@ function MiPlataPage() {
       <Suspense
         fallback={<p className="mt-6 text-sm text-muted-foreground">Cargando autorizaciones…</p>}
       >
+        {isPrivyIdentityProvider() ? <SolanaWalletSetup userId={userId} /> : null}
         <DelegatedGrantsSection userId={userId} />
       </Suspense>
 
