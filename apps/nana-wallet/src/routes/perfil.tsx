@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useLogout } from "@privy-io/react-auth";
-import { LogOut } from "lucide-react";
+import { Bell, ChevronRight, LogOut } from "lucide-react";
 import { useState } from "react";
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
@@ -117,15 +117,46 @@ function PerfilPage() {
           {displayName ? displayName.charAt(0).toLocaleUpperCase("es-AR") : "N"}
         </div>
         <div className="min-w-0 flex-1">
-          <h1 className="text-lg font-extrabold">Tu perfil</h1>
           <p
-            className="mt-1 break-words text-base font-bold"
+            className="mt-0.5 break-words text-base font-bold"
             {...(displayName ? {} : { "data-testid": "profile-name-absent" })}
           >
             {displayName ?? "Todavía no tenemos tu nombre"}
           </p>
+          <span className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-brand-ink">
+            <Bell className="size-3" aria-hidden="true" />
+            Cuenta verificada
+          </span>
         </div>
         {isPrivyEnabled ? <LogoutButton /> : null}
+      </section>
+
+      <section className="mt-6">
+        <h2 className="lg-group-title">Tu plata</h2>
+        <div className="lg-settings-list">
+          <Link to="/mi-plata" className="lg-setting-row press">
+            <span>Billetera</span>
+            <ChevronRight aria-hidden="true" />
+          </Link>
+          <Link to="/notificaciones" className="lg-setting-row press">
+            <span>Notificaciones</span>
+            <ChevronRight aria-hidden="true" />
+          </Link>
+        </div>
+      </section>
+
+      <section className="mt-5">
+        <h2 className="lg-group-title">Preferencias</h2>
+        <div className="lg-settings-list">
+          <Link to="/mi-plata" className="lg-setting-row press">
+            <span>Destinatarios de confianza</span>
+            <ChevronRight aria-hidden="true" />
+          </Link>
+          <Link to="/mi-plata" className="lg-setting-row press">
+            <span>Permisos de pago</span>
+            <ChevronRight aria-hidden="true" />
+          </Link>
+        </div>
       </section>
     </main>
   );
