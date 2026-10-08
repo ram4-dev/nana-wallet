@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   avatarAction,
+  GREETING_WINDOW_MS,
   reduceLiveVoice,
   type LiveVoiceEvent,
   type LiveVoiceState,
@@ -84,6 +85,22 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
   }, [client, notifyTypedFallback, state]);
 
   useEffect(() => {
+    // The opening greeting turn owns a bounded window: if Nani never starts
+    // speaking, the deadline hands the turn back to a normal listening state
+    // instead of leaving the home stuck on the opening copy.
+    if (state.phase !== "thinking" || state.openingTurn !== true) return;
+    const deadlineAt = state.greetingDeadlineAt;
+    if (deadlineAt === undefined) return;
+    const remaining = Math.max(0, deadlineAt - Date.now());
+    const timer = window.setTimeout(() => {
+      const current = stateRef.current;
+      if (current.phase !== "thinking" || current.openingTurn !== true) return;
+      dispatch({ type: "GREETING_WINDOW_EXPIRED" });
+    }, remaining);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+
+  useEffect(() => {
     const pause = () => {
       const current = stateRef.current;
       if (
@@ -119,7 +136,7 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
       const connection = await client.connect();
       if (connection.conversationId) options.onConversationBound?.(connection.conversationId);
       dispatch({ type: "ROOM_CONNECTED" });
-      dispatch({ type: "BINDING_ACCEPTED" });
+      dispatch({ type: "BINDING_ACCEPTED", now: Date.now(), greetingWindowMs: GREETING_WINDOW_MS });
       await client.setMicrophoneEnabled(true);
     } catch (error) {
       console.error("Live voice start failed", error);

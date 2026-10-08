@@ -19,22 +19,32 @@ export type LiveVoiceState =
   | { phase: "binding" }
   | { phase: "listening" }
   | { phase: "muted" }
-  | { phase: "thinking" }
+  | { phase: "thinking"; openingTurn?: true; greetingDeadlineAt?: number }
   | { phase: "speaking" }
   | { phase: "request_waiting" }
   | { phase: "reconnecting"; previousMic: "enabled" | "muted"; deadlineAt: number }
   | { phase: "paused"; previousMic: "enabled" | "muted" }
   | { phase: "failed"; reason: VoiceFailure };
 
+/**
+ * Mirror of the worker's `GREETING_INPUT_TIMEOUT_MS` in
+ * `src/livekit/create-agent-session.ts`: while the worker holds the microphone
+ * closed for the opening turn, the front keeps presenting that turn. Once the
+ * window elapses without the greeting, the session becomes a normal listening
+ * turn so a greeting that never comes cannot pin the opening copy forever.
+ */
+export const GREETING_WINDOW_MS = 12_000;
+
 export type LiveVoiceEvent =
   | { type: "START" }
   | { type: "ROOM_CONNECTED" }
-  | { type: "BINDING_ACCEPTED" }
+  | { type: "BINDING_ACCEPTED"; now: number; greetingWindowMs: number }
   | { type: "AGENT_STATE"; state: LiveKitAgentState }
   | { type: "AVATAR_PRESSED" }
   | { type: "CONNECTION_LOST"; now: number; recoveryMs?: number }
   | { type: "RECONNECTED" }
   | { type: "RECOVERY_EXPIRED" }
+  | { type: "GREETING_WINDOW_EXPIRED" }
   | { type: "LIFECYCLE_PAUSED" }
   | { type: "END_CONVERSATION" }
   | { type: "FAILED"; reason: VoiceFailure };
@@ -82,7 +92,17 @@ export function reduceLiveVoice(state: LiveVoiceState, event: LiveVoiceEvent): L
     case "ROOM_CONNECTED":
       return state.phase === "connecting" ? { phase: "binding" } : state;
     case "BINDING_ACCEPTED":
-      return state.phase === "binding" ? { phase: "listening" } : state;
+      // The worker always dispatches the opening greeting turn right after the
+      // session starts, so the truthful first state is "Nani is preparing to
+      // greet you" - not "Nani is listening to you". The greeting deadline keeps
+      // that turn bounded in case the greeting never arrives.
+      return state.phase === "binding"
+        ? {
+            phase: "thinking",
+            openingTurn: true,
+            greetingDeadlineAt: event.now + event.greetingWindowMs,
+          }
+        : state;
     case "AGENT_STATE":
       if (state.phase === "idle" || state.phase === "failed") return state;
       if (event.state === "failed") {
@@ -94,9 +114,23 @@ export function reduceLiveVoice(state: LiveVoiceState, event: LiveVoiceEvent): L
       if (event.state === "disconnected" || !isConnectedPhase(state)) return state;
       if (event.state === "speaking") return { phase: "speaking" };
       if (event.state === "thinking" || event.state === "initializing")
-        return { phase: "thinking" };
+        // Staying in "thinking" keeps the marker: the opening turn is still
+        // being prepared. Speaking or the expiry below drops it.
+        return state.phase === "thinking" ? state : { phase: "thinking" };
       if (event.state === "listening" || event.state === "idle") {
+        // A room that reports "listening" as soon as the session is up is only
+        // telling us the session is ready, not that the greeting is over: the
+        // opening turn (and its marker) survive until Nani speaks or the window
+        // runs out.
+        if (state.phase === "thinking" && state.openingTurn === true) return state;
         return state.phase === "muted" ? state : { phase: "listening" };
+      }
+      return state;
+    case "GREETING_WINDOW_EXPIRED":
+      // Only the opening turn owns this deadline; outside it the event is a
+      // no-op, so a stale timer can never move a live session.
+      if (state.phase === "thinking" && state.openingTurn === true) {
+        return micPreference(state) === "muted" ? state : { phase: "listening" };
       }
       return state;
     case "AVATAR_PRESSED":

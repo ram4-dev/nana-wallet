@@ -14,6 +14,17 @@ Financial tools:
 - cancel_transfer: call it when the user wants to cancel the pending transfer.
 Golden rules: a transfer confirmation goes EXCLUSIVELY through confirm_transfer. Never confirm in text and never invent an address. When a tool returns a typed error (policy_rejected, recipient_revalidation_required, stale_preview, etc.), narrate the message in clear English, without inventing details.`;
 
+/**
+ * How long the opening turn may hold the input closed before the safety net
+ * reopens it.
+ *
+ * Exported so tests can advance fake timers instead of waiting real seconds.
+ * The greeting is a short turn, so a playout that outlives this window means it
+ * stalled: the microphone is reopened anyway, because a permanently closed input
+ * is worse than a greeting cut short.
+ */
+export const GREETING_INPUT_TIMEOUT_MS = 12_000;
+
 export type AgentSessionComposition = {
   session: AgentSession;
   agent: Agent;
@@ -106,10 +117,55 @@ export function createAgentSession(options: {
       // if the provider throws, so no caller can turn it into a retry loop.
       if (greetingSpent) return false;
       greetingSpent = true;
-      session.generateReply({
-        instructions: buildGreetingInstructions(userName),
-        allowInterruptions: true,
-      });
+
+      // The browser publishes its microphone BEFORE binding, so the session
+      // starts with live input. Observed in production: the provider's server
+      // VAD mistook that input for a barge-in and cancelled the opening turn
+      // 1.3s after dispatch ("response done but not complete: cancelled
+      // (reason=turn_detected)"), so the user never heard the introduction nor
+      // the offered options. Holding the input closed until the opening turn
+      // finished is the fix.
+      //
+      // Accepted trade-off: while the opening turn plays the user cannot
+      // barge in by voice. The greeting is short, and once it produces audio
+      // the avatar's tap path interrupts it (`interrupt_agent` RPC ->
+      // `session.interrupt({ force: true })` in src/livekit/worker.ts). Only the
+      // few seconds before the first audio are not interruptible at all,
+      // because the avatar is disabled while the turn is being prepared
+      // (`avatarAction` returns "none" for the `thinking` phase).
+      session.input.setAudioEnabled(false);
+      let inputReleased = false;
+      const releaseInput = () => {
+        // Idempotent: the playout ending and the safety timeout race each other,
+        // and the input must be reopened exactly once.
+        if (inputReleased) return;
+        inputReleased = true;
+        session.input.setAudioEnabled(true);
+      };
+
+      let handle: ReturnType<AgentSession["generateReply"]>;
+      try {
+        handle = session.generateReply({
+          instructions: buildGreetingInstructions(userName),
+          allowInterruptions: true,
+        });
+      } catch (error) {
+        // A dispatch that throws must not leave the whole session deaf: the
+        // caller swallows the error and keeps the session running.
+        releaseInput();
+        throw error;
+      }
+
+      // The fallback of the fallback: a playout that never settles can never
+      // leave the microphone closed forever.
+      const inputTimeout = setTimeout(releaseInput, GREETING_INPUT_TIMEOUT_MS);
+      // `waitForPlayout` resolves when the playout ended and rejects when it
+      // could not be observed at all; both mean the greeting is over.
+      const playoutSettled = () => {
+        clearTimeout(inputTimeout);
+        releaseInput();
+      };
+      handle.waitForPlayout().then(playoutSettled, playoutSettled);
       return true;
     },
   };

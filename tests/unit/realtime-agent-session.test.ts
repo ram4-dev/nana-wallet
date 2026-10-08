@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 const h = vi.hoisted(() => {
   type MockGenerateReplyOptions = {
@@ -6,13 +6,38 @@ const h = vi.hoisted(() => {
     allowInterruptions?: unknown;
   };
 
+  /**
+   * A playout the test controls: `waitForPlayout` must be awaitable (the safety
+   * timeout only matters while the playout is still pending) and rejectable (a
+   * playout the framework could not observe must not hold the input closed).
+   */
+  function createDeferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
   class MockAgentSession {
     options: Record<string, unknown>;
     generateReplyCalls: MockGenerateReplyOptions[] = [];
     sayCalls: string[] = [];
+    /** Records WHEN the input was toggled relative to the greeting dispatch. */
+    callOrder: string[] = [];
+    /** The breathing room of the opening turn, controlled by each test. */
+    playout = createDeferred<void>();
+    input: { setAudioEnabled: Mock<(enabled: boolean) => void> };
     static instances: MockAgentSession[] = [];
     constructor(options: Record<string, unknown>) {
       this.options = options;
+      this.input = {
+        setAudioEnabled: vi.fn((enabled: boolean) => {
+          this.callOrder.push(enabled ? "input:open" : "input:close");
+        }),
+      };
       MockAgentSession.instances.push(this);
     }
     on() {
@@ -29,10 +54,12 @@ const h = vi.hoisted(() => {
       return { waitForPlayout: async () => undefined, interrupted: false };
     }
     generateReply(options?: MockGenerateReplyOptions) {
+      this.callOrder.push("generateReply");
       this.generateReplyCalls.push(options ?? {});
-      // Mirrors the real SpeechHandle: `waitForPlayout` resolves even on error
-      // (the failure is exposed through `exception()`), so it never rejects.
-      return { waitForPlayout: async () => undefined, interrupted: false };
+      // Mirrors the real SpeechHandle: `waitForPlayout` settles when the turn is
+      // over — resolved after a full playout, rejected when it could not be
+      // observed at all.
+      return { waitForPlayout: () => this.playout.promise, interrupted: false };
     }
   }
 
@@ -99,6 +126,7 @@ vi.mock("@livekit/agents-plugin-openai", () => ({
 }));
 
 import {
+  GREETING_INPUT_TIMEOUT_MS,
   buildGreetingInstructions,
   createAgentSession,
 } from "../../src/livekit/create-agent-session.js";
@@ -317,5 +345,133 @@ describe("OpenAI realtime agent session composition", () => {
 
     expect(() => speakGreeting()).toThrow("AgentSession is not running");
     expect(speakGreeting()).toBe(false);
+  });
+
+  it("closes the microphone BEFORE dispatching the opening turn", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const { speakGreeting } = createAgentSession({ tools: [] });
+    const composed = h.MockAgentSession.instances[0];
+
+    expect(speakGreeting()).toBe(true);
+
+    // Order, not just presence: with the microphone live the provider's server
+    // VAD cancelled the greeting 1.3s after dispatch, so the input MUST be
+    // closed before the turn is generated.
+    expect(composed.callOrder).toEqual(["input:close", "generateReply"]);
+    expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(1);
+    expect(composed.input.setAudioEnabled).toHaveBeenNthCalledWith(1, false);
+  });
+
+  it("reopens the microphone once the opening turn played out", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const { speakGreeting } = createAgentSession({ tools: [] });
+    const composed = h.MockAgentSession.instances[0];
+    speakGreeting();
+
+    // While the turn is still playing out the user cannot be heard.
+    await Promise.resolve();
+    expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(1);
+
+    composed.playout.resolve();
+
+    await vi.waitFor(() => {
+      expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(2);
+    });
+    expect(composed.input.setAudioEnabled).toHaveBeenNthCalledWith(2, true);
+  });
+
+  it("reopens the microphone from the safety timeout when the playout never ends", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.OPENAI_API_KEY = "test-key";
+
+      const { speakGreeting } = createAgentSession({ tools: [] });
+      const composed = h.MockAgentSession.instances[0];
+      expect(speakGreeting()).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(GREETING_INPUT_TIMEOUT_MS - 1);
+      // A stalled playout may hold the input for a while, never forever.
+      expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(2);
+      expect(composed.input.setAudioEnabled).toHaveBeenNthCalledWith(2, true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reopens the microphone when the playout rejects", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const { speakGreeting } = createAgentSession({ tools: [] });
+    const composed = h.MockAgentSession.instances[0];
+    speakGreeting();
+
+    composed.playout.reject(new Error("playout could not be observed"));
+
+    await vi.waitFor(() => {
+      expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(2);
+    });
+    expect(composed.input.setAudioEnabled).toHaveBeenNthCalledWith(2, true);
+  });
+
+  it("reopens the microphone exactly once when the playout and the timeout race", async () => {
+    vi.useFakeTimers();
+    try {
+      process.env.OPENAI_API_KEY = "test-key";
+
+      const { speakGreeting } = createAgentSession({ tools: [] });
+      const composed = h.MockAgentSession.instances[0];
+      speakGreeting();
+
+      // The playout wins the race...
+      composed.playout.resolve();
+      await vi.advanceTimersByTimeAsync(GREETING_INPUT_TIMEOUT_MS);
+
+      // ...and the late safety timeout must not toggle the input a third time.
+      expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(2);
+      expect(composed.input.setAudioEnabled).toHaveBeenNthCalledWith(2, true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never leaves the session deaf when the dispatch itself throws", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const { speakGreeting } = createAgentSession({ tools: [] });
+    const composed = h.MockAgentSession.instances[0];
+    composed.generateReply = () => {
+      throw new Error("AgentSession is not running");
+    };
+
+    expect(() => speakGreeting()).toThrow("AgentSession is not running");
+    // A failed dispatch must not leave the microphone closed for the rest of the
+    // session: the caller swallows the error and keeps the session alive.
+    expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(2);
+    expect(composed.input.setAudioEnabled).toHaveBeenNthCalledWith(2, true);
+  });
+
+  it("keeps the gated opening turn at-most-once and still interruptible", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    const { speakGreeting } = createAgentSession({ tools: [] });
+    const composed = h.MockAgentSession.instances[0];
+    expect(speakGreeting()).toBe(true);
+
+    // A reconnect/resume of the same started session must not re-close the
+    // input nor re-dispatch the greeting.
+    expect(speakGreeting()).toBe(false);
+    expect(composed.generateReplyCalls).toHaveLength(1);
+    expect(composed.generateReplyCalls[0].allowInterruptions).toBe(true);
+    expect(composed.input.setAudioEnabled).toHaveBeenCalledTimes(1);
+    expect(composed.input.setAudioEnabled).toHaveBeenNthCalledWith(1, false);
+
+    // The user's own tap stays available while the input is held: it interrupts
+    // through the RPC path, not through the microphone.
+    composed.playout.resolve();
   });
 });

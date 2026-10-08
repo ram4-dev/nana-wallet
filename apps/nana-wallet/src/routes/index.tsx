@@ -287,6 +287,9 @@ function AgentePage() {
 
   const livePhase = liveVoice.state.phase;
   const liveSessionActive = livePhase !== "idle" && livePhase !== "failed";
+  // The worker dispatches the opening greeting turn at session start, so a
+  // "thinking" phase carrying the marker means Nani is greeting, not answering.
+  const openingTurn = liveVoice.state.phase === "thinking" && liveVoice.state.openingTurn === true;
   const isAgentWorking =
     isSessionActionPending ||
     conversation.state?.activity === "working" ||
@@ -327,15 +330,19 @@ function AgentePage() {
                     ? "Tu solicitud está esperando"
                     : livePhase === "failed"
                       ? liveVoice.state.reason.message
-                      : isAgentWorking
-                        ? "Estoy resolviéndolo"
-                        : turn?.status === "confirmation_required"
-                          ? "Esperando que revises"
-                          : turn?.status === "error"
-                            ? "No te entendí bien"
-                            : turn
-                              ? "Estoy listo para ayudarte"
-                              : null;
+                      : livePhase === "thinking"
+                        ? openingTurn
+                          ? "Nani te está saludando…"
+                          : "Nani está pensando…"
+                        : isAgentWorking
+                          ? "Estoy resolviéndolo"
+                          : turn?.status === "confirmation_required"
+                            ? "Esperando que revises"
+                            : turn?.status === "error"
+                              ? "No te entendí bien"
+                              : turn
+                                ? "Estoy listo para ayudarte"
+                                : null;
   const controls = getSessionControlState({
     isAgentWorking,
     isConfirmationPending,
