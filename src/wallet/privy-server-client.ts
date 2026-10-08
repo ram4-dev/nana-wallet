@@ -1,5 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import { APIError, PrivyAPIError, PrivyClient } from "@privy-io/node";
+import {
+  signerAuthorizationContext,
+  type PayloadSigner,
+} from "./signer/index.js";
 
 /**
  * PEW-014: trusted server-side Privy boundary built on the official
@@ -16,8 +20,11 @@ import { APIError, PrivyAPIError, PrivyClient } from "@privy-io/node";
  *  - typed provider-error surfacing.
  *
  * Security rules:
- *  - The app secret and the authorization private key are never logged and
- *    never embedded in a thrown `PrivyServerError` message.
+ *  - The app secret is never logged and never embedded in a thrown
+ *    `PrivyServerError` message.
+ *  - S2c: this boundary never holds the authorization private key either. It
+ *    signs through the injected `PayloadSigner` port (the local signing
+ *    sidecar), so no code path here reads the key from the environment.
  *  - The SDK client is injectable so contract tests can exercise the exact
  *    behaviour against the narrow SDK surface without a live call.
  *  - A provider failure surfaces a typed `PrivyServerError` carrying the HTTP
@@ -27,12 +34,16 @@ import { APIError, PrivyAPIError, PrivyClient } from "@privy-io/node";
 export type PrivyChainType = "ethereum" | "solana";
 
 /**
- * Narrow structural port over the official SDK surface this boundary uses.
- * The real `PrivyClient` is adapted into it in `createDefaultClient`; tests
- * inject a fake implementing only this surface.
+ * S2c: the authorization context this boundary sends on a signed mutation.
+ *
+ * Only the SDK's `sign_fns` seam is modelled: the SDK formats and canonicalizes
+ * the request payload itself and hands the bytes to each sign function. The
+ * key-bearing seams (`authorization_private_keys`, `user_jwts`, raw
+ * `signatures`) are deliberately absent, because no private key is ever held
+ * or accepted by this process — signing is delegated to the local sidecar.
  */
 export type PrivyAuthorizationContext = {
-  authorization_private_keys?: string[];
+  sign_fns?: Array<(payload: Uint8Array) => Promise<string>>;
 };
 
 /** A single policy id (and optional contract shape) returned by the provider. */
@@ -142,8 +153,14 @@ export type PrivyServerClientConfig = {
   /** Injected official SDK client (tests); defaults to a real `PrivyClient`. */
   client?: PrivySdkClient;
   requestTimeoutMs?: number;
-  /** PKCS#8 base64 P-256 authorization private key for signed wallet mutations. */
-  authorizationPrivateKey?: string;
+  /**
+   * S2c: the signing port used to authorize signed wallet mutations. In
+   * deployments this is the local signing-sidecar client
+   * (`createWorkerPayloadSigner`); the authorization private key lives only in
+   * the sidecar process and never enters this one. When omitted the client
+   * stays fully usable for reads and fails closed on every signed mutation.
+   */
+  authorizationSigner?: PayloadSigner;
 };
 
 export class PrivyServerError extends Error {
@@ -229,7 +246,7 @@ function providerCodeOf(body: unknown): string | null {
 export class PrivyServerClient {
   private readonly sdk: PrivySdkClient;
   private readonly requestTimeoutMs: number;
-  private readonly authorizationPrivateKey?: string;
+  private readonly authorizationSigner?: PayloadSigner;
 
   public constructor(config: PrivyServerClientConfig) {
     if (!config.appId)
@@ -240,7 +257,7 @@ export class PrivyServerClient {
     if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
       throw new Error("Privy server client request timeout must be positive.");
     }
-    this.authorizationPrivateKey = config.authorizationPrivateKey;
+    this.authorizationSigner = config.authorizationSigner;
     this.sdk = config.client ?? this.createDefaultClient(config);
   }
 
@@ -273,9 +290,16 @@ export class PrivyServerClient {
     }) as unknown as PrivySdkClient;
   }
 
-  /** Whether this client can authorize signed wallet mutations. */
-  public hasAuthorizationPrivateKey(): boolean {
-    return Boolean(this.authorizationPrivateKey);
+  /**
+   * S2c: whether this client can authorize signed wallet mutations.
+   *
+   * Truthful by construction: it reports whether a signing port was injected,
+   * never whether some ambient credential happens to exist. With no signer
+   * configured it is `false`, so the policy runtime keeps reporting
+   * `unavailable` instead of attempting an unsigned mutation.
+   */
+  public canSignAuthorizations(): boolean {
+    return Boolean(this.authorizationSigner);
   }
 
   /**
@@ -305,9 +329,14 @@ export class PrivyServerClient {
     }
   }
 
+  /**
+   * S2c: the SDK authorization context for a signed mutation, built from the
+   * injected signing port. `undefined` when no signer is configured, which is
+   * what every signed call site treats as "fail closed".
+   */
   private authorizationContext(): PrivyAuthorizationContext | undefined {
-    return this.authorizationPrivateKey
-      ? { authorization_private_keys: [this.authorizationPrivateKey] }
+    return this.authorizationSigner
+      ? signerAuthorizationContext(this.authorizationSigner)
       : undefined;
   }
 
@@ -441,7 +470,7 @@ export class PrivyServerClient {
       throw new PrivyServerError(
         503,
         null,
-        "Privy signer policy attachment requires an authorization private key.",
+        "Privy signer policy attachment requires a configured authorization signer.",
       );
     }
     const wallet = await this.getWallet(walletId);
@@ -531,8 +560,8 @@ export class PrivyServerClient {
 
   /**
    * Replaces the composed policy rules with the exact given union and returns
-   * the updated record for readback. Signed through the SDK when an
-   * authorization private key is configured.
+   * the updated record for readback. Signed through the SDK's `sign_fns` seam
+   * when an authorization signer is configured.
    */
   public async patchPolicy(
     policyId: string,

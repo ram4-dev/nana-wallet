@@ -232,19 +232,19 @@ export class LivePrivyWalletApiClient implements PrivyWalletApiClient {
   private readonly appId: string;
   private readonly appSecret: string;
   private readonly verificationKey: string;
-  private readonly authorizationPrivateKey: string;
 
   public constructor(environment: NodeJS.ProcessEnv = process.env) {
     const appId = environment.PRIVY_APP_ID?.trim();
     const appSecret = environment.PRIVY_APP_SECRET?.trim();
     const verificationKey = environment.PRIVY_VERIFICATION_KEY?.trim();
-    const authorizationPrivateKey =
-      environment.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim();
+    // The authorization private key is deliberately NOT read here. Nothing in
+    // this client signs: every method fails closed, and the signing path lives
+    // behind the local sidecar (src/wallet/signer/), which is the only process
+    // that may hold that credential.
     const missing = [
       ["PRIVY_APP_ID", appId],
       ["PRIVY_APP_SECRET", appSecret],
       ["PRIVY_VERIFICATION_KEY", verificationKey],
-      ["PRIVY_AUTHORIZATION_PRIVATE_KEY", authorizationPrivateKey],
     ]
       .filter(([, value]) => !value)
       .map(([name]) => name as string);
@@ -252,7 +252,6 @@ export class LivePrivyWalletApiClient implements PrivyWalletApiClient {
     this.appId = appId!;
     this.appSecret = appSecret!;
     this.verificationKey = verificationKey!;
-    this.authorizationPrivateKey = authorizationPrivateKey!;
   }
 
   private failClosed(method: string): never {

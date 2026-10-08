@@ -134,6 +134,35 @@ describe("worker wallet path authorization context", () => {
     expect(provider).not.toContain("PRIVY_AUTHORIZATION_PRIVATE_KEY");
   });
 
+  it("keeps the HTTP API and the server boundary free of the authorization key read", () => {
+    // S2c: the HTTP API process no longer holds the authorization private key
+    // either. It builds the sidecar signer from PRIVY_SIGNER_URL/TOKEN and the
+    // Privy server boundary signs through that port instead of a key string.
+    for (const relativePath of [
+      "src/server.ts",
+      "src/wallet/privy-server-client.ts",
+      "src/runtime/dependencies.ts",
+      "src/wallet/grants/privy-policy-runtime.ts",
+    ]) {
+      expect(repoFile(relativePath), relativePath).not.toContain(
+        "PRIVY_AUTHORIZATION_PRIVATE_KEY",
+      );
+    }
+
+    // The HTTP API entry wires the sidecar signer into the Privy client.
+    const server = repoFile("src/server.ts");
+    expect(server).toContain("createWorkerPayloadSigner(process.env)");
+    expect(server).toContain("authorizationSigner");
+
+    // The key read stays owned exclusively by the sidecar entrypoint + loader.
+    expect(repoFile("src/wallet/signer/server.ts")).toContain(
+      "PRIVY_AUTHORIZATION_PRIVATE_KEY",
+    );
+    expect(repoFile("src/wallet/signer/key-signer.ts")).toContain(
+      "PRIVY_AUTHORIZATION_PRIVATE_KEY",
+    );
+  });
+
   it("signs one real SDK authorization through the sidecar with the key unset", async () => {
     const savedKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
     delete process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;

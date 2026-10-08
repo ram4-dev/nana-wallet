@@ -147,7 +147,7 @@ function makeDeps(
     { signer_id: SIGNER_ID, override_policy_ids: ["policy-1"] },
   ];
   const server = {
-    hasAuthorizationPrivateKey: vi.fn().mockReturnValue(true),
+    canSignAuthorizations: vi.fn().mockReturnValue(true),
     createPolicy: vi.fn().mockResolvedValue({ id: "policy-new" }),
     getPolicy: vi
       .fn()
@@ -539,6 +539,19 @@ describe("createGrantPolicySyncService wiring (task 2.3, RED)", () => {
       privyServer: {},
     });
     expect(withoutQuorum.kind).toBe("unavailable");
+  });
+
+  it("keeps the unavailable stub when the server client cannot sign", async () => {
+    const mod = await loadModule();
+    // S2c: the gate is driven by the injected signer, so a server client that
+    // reports it cannot sign must NEVER be treated as available — the gate
+    // stays honest instead of degrading to always-true.
+    const signerless = mod.createGrantPolicySyncService({
+      database: {},
+      privyServer: { canSignAuthorizations: () => false },
+      quorumId: "quorum-1",
+    });
+    expect(signerless.kind).toBe("unavailable");
   });
 
   it("returns the runtime service when Privy + canonical signer config are available", async () => {

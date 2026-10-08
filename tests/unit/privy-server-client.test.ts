@@ -9,6 +9,7 @@ import {
   type PrivyWalletPage,
   type PrivyWalletRecord,
 } from "../../src/wallet/privy-server-client.js";
+import type { PayloadSigner } from "../../src/wallet/signer/port.js";
 
 /**
  * Contract tests for the server-side Privy boundary. The SDK owns transport,
@@ -314,23 +315,27 @@ describe("PrivyServerClient (official SDK boundary)", () => {
     expect(update).toHaveBeenCalledWith("pol_abc", { rules });
   });
 
-  it("patchPolicy delegates authorization signing to the SDK when a key is configured", async () => {
+  it("patchPolicy signs through the injected signer's sign_fns, never a private key", async () => {
     const update = vi.fn(async () => ({ id: "pol_abc" }));
+    const signer: PayloadSigner = async () => "signature";
     const client = new PrivyServerClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
-      authorizationPrivateKey: "test-p256-private-key",
+      authorizationSigner: signer,
       client: sdkClient({ policies: { update } }),
     });
 
     await client.patchPolicy("pol_abc", []);
     const [, params] = update.mock.calls[0] as unknown as [
       string,
-      { authorization_context?: unknown },
+      { authorization_context?: { sign_fns?: unknown[] } },
     ];
-    expect(params.authorization_context).toEqual({
-      authorization_private_keys: ["test-p256-private-key"],
-    });
+    // S2c: the boundary delegates signing to the injected port; the key-bearing
+    // `authorization_private_keys` seam is never used.
+    expect(params.authorization_context).toEqual({ sign_fns: [signer] });
+    expect(params.authorization_context).not.toHaveProperty(
+      "authorization_private_keys",
+    );
   });
 
   it("surfaces a typed PrivyServerError with status + provider code but NEVER the secret", async () => {
@@ -379,8 +384,13 @@ describe("PrivyServerClient (official SDK boundary)", () => {
     expect((error as PrivyServerError).message).not.toContain("short-secret");
   });
 
-  it("never leaks the authorization private key when a signed mutation fails", async () => {
-    const authorizationPrivateKey = "test-p256-private-key";
+  it("never leaks the app secret or the sidecar signing material when a signed mutation fails", async () => {
+    // S2c: the boundary no longer holds the private key at all, and the signer
+    // is an opaque closure it never inspects. Both the app secret and the
+    // sidecar token carried by that closure must stay out of every surfaced
+    // message.
+    const sidecarToken = "sidecar-token-must-never-leak";
+    const authorizationSigner: PayloadSigner = async () => sidecarToken;
     const get = vi.fn(async () =>
       walletRecord("wallet-9", {
         additional_signers: [{ signer_id: "signer-1" }],
@@ -397,7 +407,7 @@ describe("PrivyServerClient (official SDK boundary)", () => {
     const client = new PrivyServerClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
-      authorizationPrivateKey,
+      authorizationSigner,
       client: sdkClient({ wallets: { get, update } }),
     });
 
@@ -407,9 +417,8 @@ describe("PrivyServerClient (official SDK boundary)", () => {
     expect(error).toBeInstanceOf(PrivyServerError);
     expect((error as PrivyServerError).status).toBe(500);
     expect((error as PrivyServerError).providerCode).toBe("provider_fault");
-    expect((error as PrivyServerError).message).not.toContain(
-      authorizationPrivateKey,
-    );
+    expect((error as PrivyServerError).message).not.toContain(sidecarToken);
+    expect((error as PrivyServerError).message).not.toContain(APP_SECRET);
   });
 
   it("bounds the real SDK request with the configured timeout", async () => {
@@ -469,10 +478,11 @@ describe("PrivyServerClient canonical signer policy attachment", () => {
       .mockResolvedValueOnce(before)
       .mockResolvedValueOnce(after);
     const update = vi.fn(async () => after);
+    const signer: PayloadSigner = async () => "signature";
     const client = new PrivyServerClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
-      authorizationPrivateKey: "test-p256-private-key",
+      authorizationSigner: signer,
       client: sdkClient({ wallets: { get, update } }),
     });
 
@@ -485,14 +495,12 @@ describe("PrivyServerClient canonical signer policy attachment", () => {
       string,
       {
         additional_signers?: unknown;
-        authorization_context?: { authorization_private_keys?: string[] };
+        authorization_context?: { sign_fns?: unknown[] };
       },
     ];
     expect(walletId).toBe("wallet-9");
     expect(params.additional_signers).toEqual(after.additional_signers);
-    expect(params.authorization_context).toEqual({
-      authorization_private_keys: ["test-p256-private-key"],
-    });
+    expect(params.authorization_context).toEqual({ sign_fns: [signer] });
   });
 
   it("refuses to overwrite another policy already attached to the canonical signer", async () => {
@@ -507,7 +515,7 @@ describe("PrivyServerClient canonical signer policy attachment", () => {
     const client = new PrivyServerClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
-      authorizationPrivateKey: "test-p256-private-key",
+      authorizationSigner: async () => "signature",
       client: sdkClient({ wallets: { get, update } }),
     });
 
@@ -518,7 +526,7 @@ describe("PrivyServerClient canonical signer policy attachment", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("requires an authorization private key before any signed mutation", async () => {
+  it("requires a configured signer before any signed mutation", async () => {
     const get = vi.fn(async () => walletRecord("wallet-9"));
     const update = vi.fn(async () => walletRecord("wallet-9"));
     const client = new PrivyServerClient({
@@ -535,19 +543,19 @@ describe("PrivyServerClient canonical signer policy attachment", () => {
   });
 
   it("reports whether the client can authorize signed mutations", () => {
-    const withoutKey = new PrivyServerClient({
+    const withoutSigner = new PrivyServerClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
       client: sdkClient(),
     });
-    const withKey = new PrivyServerClient({
+    const withSigner = new PrivyServerClient({
       appId: APP_ID,
       appSecret: APP_SECRET,
-      authorizationPrivateKey: "test-p256-private-key",
+      authorizationSigner: async () => "signature",
       client: sdkClient(),
     });
-    expect(withoutKey.hasAuthorizationPrivateKey()).toBe(false);
-    expect(withKey.hasAuthorizationPrivateKey()).toBe(true);
+    expect(withoutSigner.canSignAuthorizations()).toBe(false);
+    expect(withSigner.canSignAuthorizations()).toBe(true);
   });
 
   it("exposes the signer policy ids and signer id accessors", () => {

@@ -73,6 +73,7 @@ import { createGrantGate } from "./conversations/grant-gate.js";
 import { createGrantPolicySyncService } from "./wallet/grants/privy-policy-runtime.js";
 import { readPrivyServerConfig } from "./config/privy-server.js";
 import { PrivyServerClient } from "./wallet/privy-server-client.js";
+import { createWorkerPayloadSigner } from "./wallet/signer/index.js";
 import { createPrivyWalletHealthProvider } from "./wallet/privy-user-provider.js";
 import type { FastifyRequest } from "fastify";
 
@@ -168,6 +169,14 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
   const privyServerConfig = database
     ? readPrivyServerConfig(process.env)
     : undefined;
+  // S2c: this HTTP API process no longer holds the Privy authorization private
+  // key. Like the voice worker since S2a, it signs authorization-bearing
+  // mutations through the local signing sidecar (src/wallet/signer/), built
+  // here from PRIVY_SIGNER_URL + PRIVY_SIGNER_TOKEN. When that configuration is
+  // absent there is no signer: reads (list/get wallets, get policy) keep
+  // working, and every signed mutation fails closed — exactly the previous
+  // behaviour when no key was configured.
+  const authorizationSigner = createWorkerPayloadSigner(process.env);
   const privyServer =
     options.privyServer ??
     (privyServerConfig
@@ -175,14 +184,7 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
           appId: privyServerConfig.appId,
           appSecret: privyServerConfig.appSecret,
           baseUrl: privyServerConfig.baseUrl,
-          // S2a boundary: the VOICE WORKER moved to the local signing sidecar
-          // (src/wallet/signer/, wired in src/runtime/dependencies.ts). This
-          // HTTP API process still signs enrollment/grant-policy mutations with
-          // the key it holds, because PrivyServerClient derives its
-          // authorization context from that key string; migrating it to
-          // `sign_fns` is a follow-up slice.
-          authorizationPrivateKey:
-            process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim() || undefined,
+          ...(authorizationSigner ? { authorizationSigner } : {}),
         })
       : undefined);
   const walletForUser = database

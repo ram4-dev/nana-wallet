@@ -190,14 +190,14 @@ export function createGrantPolicySyncService(input: {
   if (
     !input.privyServer ||
     !input.quorumId ||
-    !input.privyServer.hasAuthorizationPrivateKey()
+    !input.privyServer.canSignAuthorizations()
   ) {
     return {
       kind: "unavailable",
       service: new PrivyPolicySyncService(
         input.database,
         createUnavailableGrantPolicyProvisioner(
-          "Privy Solana policy provisioning is unavailable without server credentials and the canonical authorization quorum.",
+          "Privy Solana policy provisioning is unavailable without a configured authorization signer and the canonical authorization quorum.",
         ),
       ),
     };
