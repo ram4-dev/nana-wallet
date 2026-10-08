@@ -1,0 +1,28 @@
+schema: sdd-state/v1
+change: privy-multi-user-foundation
+artifact_store: openspec
+delivery_strategy: chained
+chain_strategy: stacked-to-main
+updated_at: 2026-09-09
+phases:
+  init: completed
+  explore: completed
+  propose: completed
+  spec: completed
+  design: completed
+  tasks: completed
+  apply: in_progress
+  verify: in_progress
+  archive: completed
+next_recommended: verify_user_isolation_and_runtime_integration
+revision: 2026-09-08-r3-implementation
+dependent_change: privy-embedded-wallets
+open_decisions: []
+verification_gaps:
+  - existing_privy_phone_channel_unverified
+implementation_authorized: true
+authorization_note: >-
+  user explicitly authorized implementation on 2026-09-08;
+  supersedes the earlier implementation_authorized false gate
+archived_at: 2026-10-08
+archived_report: archive-report.md

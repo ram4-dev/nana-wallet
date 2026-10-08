@@ -1,0 +1,32 @@
+schema: sdd-state/v1
+change: delegated-grant-core
+artifact_store: openspec
+delivery_strategy: exception-ok
+updated_at: 2026-10-04
+phases:
+  init: completed
+  explore: completed
+  propose: completed
+  spec: completed
+  design: completed
+  tasks: completed
+  apply: completed
+  verify: in_progress
+  archive: completed
+notes: >
+  Slice 1 of the approved plan at
+  .agent-workflow/tasks/financial-assistant-development/01-propuesta-plan.md
+  (G0 approved 2026-10-03). User decisions bound: D-2 embedded wallets (one
+  per user), D-3 authenticated HTTP grant channel (never voice), D-4 hybrid
+  Privy policies + Postgres ledger (session keys discarded, evidence in
+  06-research-d4-privy-solana.md), D-6 one wallet, D-7 multi-execution within
+  cap/rolling window (ratifiable before Slice 3). Gate G4 (provider Solana
+  devnet support, verified dated primary sources) satisfied by the D-4
+  research.
+  PR review on 2026-10-04 found production route registration and UI mounting
+  gaps plus provider-policy, audit, idempotency, and expiry enforcement issues.
+  Remediation is in progress on the PR branch. Hermes owns current PR test
+  execution; verification/archive remain open until independent review and test
+  evidence are recorded.
+archived_at: 2026-10-08
+archived_report: archive-report.md

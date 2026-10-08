@@ -1,0 +1,16 @@
+schema: sdd-state/v1
+change: docker-real-wallet-start
+artifact_store: openspec
+updated_at: 2026-10-08
+phases:
+  init: completed
+  explore: completed
+  propose: completed
+  spec: completed
+  design: completed
+  tasks: completed
+  apply: completed
+  verify: completed
+  archive: completed
+archived_at: 2026-10-08
+archived_report: archive-report.md

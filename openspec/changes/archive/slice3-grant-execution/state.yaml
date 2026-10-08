@@ -1,0 +1,121 @@
+schema: sdd-state/v1
+change: slice3-grant-execution
+artifact_store: openspec
+delivery_strategy: exception-ok
+updated_at: 2026-10-05
+phases:
+  init: completed
+  explore: completed
+  propose: completed
+  spec: completed
+  design: completed
+  tasks: completed
+  apply: completed
+  verify: completed
+  archive: completed
+notes: >
+  Slice 3 of the approved plan at
+  .agent-workflow/tasks/financial-assistant-development/01-propuesta-plan.md.
+  Wire the Slice 1 grant engine into the conversation execution path: a transfer
+  fully covered by an already-active, non-expired, policy-ready grant executes
+  without the second explicit confirmation; everything else degrades closed to
+  preview + explicit confirmation. Q1-Q4 are orchestrator-selected conservative
+  design resolutions within the Ramiro-approved slice scope (execute only when
+  fully covered; fail closed otherwise), revisable at the design gate. Key
+  steers bound into design: eligibility restricted to authenticated original
+  user turn/transcript with explicit transfer intent binding exact amount and
+  resolved recipient (model-produced tool calls keep explicit confirmation this
+  slice; Slice 4 keeps voice-confirmation UX); coverage bound to the original
+  request timestamp so later grants never auto-execute older pending previews;
+  claimConsumption sole atomic authority with structural no-consumedInWindow
+  pre-filter; fail-closed units conversion via provider listTokens decimals;
+  deterministic least-privilege candidate selection with next-candidate claim
+  fallback; idempotency key grant-exec:{userId}:{attemptId} from the persisted
+  preview attempt; covered path reuses the existing `sent` turn-result shape
+  (zero contract delta expected; mirror obligation = no-op assertion). D-2/
+  D-3/D-4/D-7 preserved; no provider signing/submission/finality changes; no
+  LiveKit tool surface changes. PR stacked on
+  origin/slice2-provider-solana-devnet
+  (Slice 2 PR #2 unmerged), merge order Slice 1 -> 2 -> 3. Strict TDD mandated
+  by the user despite config strict_tdd: false (RED first, npm test +
+  npm run typecheck; DB suites must actually run with pgvector compose up).
+  400-line budget risk High resolved by recorded size exception
+  (delivery_strategy: exception-ok). Design gate SATISFIED by Ramiro's explicit
+  no-more-approvals standing instruction and this slice scope authorization
+  (sequential 2->3->4->5, same SDD/TDD/worktree/PR flow); apply proceeds after
+  the parent's bounded artifact consistency review; Hermes PR testing and
+  review remain required post-PR delivery gates.
+  AMENDMENT (2026-10-05, planning only, uncommitted): binding user decision
+  makes grant budget claims RESERVATIONS released with compensating audit on
+  definitive non-dispatch (provider not_dispatched) or preflight rejection
+  (policy/recipient) inside runFinancialTransfer — which enters with the
+  attempt ALREADY broadcasting under the winner's persisted claim_id — via
+  the EXACT-OWNER compare-and-set broadcasting -> cancelled (id + status +
+  claim_id all match) plus ledger release + released audit in the SAME
+  user-scoped transaction under the per-grant advisory lock; a lost/absent
+  CAS, absent row, already-cancelled status, or ambiguous ownership NEVER
+  releases standalone (retention); no previewed -> cancelled path exists —
+  and retained for every
+  dispatched/uncertain state (broadcasting/submitted/uncertain/confirmed/
+  reverted/receipt_invalid) or when a concurrent attempt winner's ownership
+  cannot be distinguished from an in-flight dispatch (losing the attempt
+  transition alone is NOT proof of no dispatch; the loser retains, never
+  releases) — spec requirement "Reserved budget release on definitive
+  no-dispatch" (12 scenarios), design AD-6/AD-10, tasks Phase 8.1-8.6,
+  migration 012 + Supabase 20260901001100 (additive, forced RLS unchanged).
+  Retry contract (NO re-activation, rejected version-token design): the
+  settlement cancels the attempt and releases the budget in the SAME atomic
+  transaction (all three effects commit together or all roll back — no
+  partial commits); a released key is permanently retired and its replay
+  fails closed (never consumed, never broadcasts); retry requires a FRESH
+  persisted previewId (fresh key and reservation). Atomic settlement (final
+  review blockers): ONE user-scoped transaction does the attempt CAS + ledger
+  release + released audit under the per-grant advisory lock;
+  claimPendingTransfer
+  winner result RETURNS the persisted claim_id token and settle CASes the
+  exact attempt row broadcasting->cancelled WHERE id/status/claim_id match,
+  releasing the exact grant/idempotency claim in the same transaction; lost
+  CAS or ambiguous/absent ownership retains; releasePendingTransferClaim
+  broadcasting->previewed reset REPLACED (released attempt never re-opened);
+  pre-broadcast rejection settles from the SAME owned broadcasting state via the
+  same exact-owner broadcasting->cancelled CAS + release/audit in the same
+  transaction (no previewed->cancelled path exists). Both window sums
+  (claim total +
+  consumedInWindow) explicitly REWRITTEN to unreleased grant_claim_ledger
+  rows (explicit query change, not additive). Also planned: HIGH PR #3
+  remediation restoring the Solana fail-closed previewId guard (missing/blank
+  previewId => not_dispatched before getRecentBlockhash/signAndSend, no
+  timestamp fallback, retry identity preserved for retained outcomes) — spec
+  requirement "Persisted preview identity guards provider dispatch" (2
+  scenarios), design AD-11, tasks Phase 8.7; E2E verification per AGENTS.md
+  as Phase 8.8. Scenario count reconciled to 61 (baseline was 47 at git
+  HEAD, not 45): 12 reservation-release scenarios incl. the atomic
+  settlement/claim_id CAS acceptance set. No implementation yet: all Phase 8
+  work is RED-first and
+  unimplemented.
+  PHASE 8 GREEN (2026-10-05, commit 4fe4cf2): migration 012 + Supabase
+  20260901001100 applied; tx-only releaseReservationInTransaction; released
+  key replay fails closed; BOTH window sums rewritten to unreleased
+  grant_claim_ledger rows; atomic settleGrantReservation (one
+  withUserTransaction, per-grant advisory lock, exact-owner CAS
+  broadcasting->cancelled by id+status+claim_id, ledger release, released
+  audit, all-or-nothing rollback proven by injected failures at all three
+  effect boundaries with DB re-reads); claimPendingTransfer winner returns
+  persisted claimId (repository contract + PG RETURNING); service settle
+  wiring replaces the legacy broadcasting->previewed reset on preflight
+  rejection and not_dispatched only (delegated-grant identity required,
+  fail closed otherwise; uncertain/submitted retain); clearPendingTransfer
+  after not_dispatched settle so retries need a fresh preview; server.ts
+  wires settle. Solana provider fail-closed previewId guard restored
+  (AD-11/HIGH PR #3) with RED-first unit tests (14/14). Focused suites:
+  grant-claim-release 11/11, delegated grants 28/28, unit 84 files 659
+  passed, E2E grant-gate 3/3, lint/typecheck/build clean. Full integration
+  190 passed; the 10 failures are the documented baseline
+  (api-contacts/contacts-cross-user timeouts, users-db sentinel missing
+  DEMO_USER_ID, api-conversation-service/api-conversations/api-me/
+  api-voice-auth fail only in the full parallel run and pass isolated) —
+  none touch the grant/release paths. Tasks 7.2/7.3 recorded; all Phase 8
+  tasks complete.
+---
+archived_at: 2026-10-08
+archived_report: archive-report.md
