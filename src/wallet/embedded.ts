@@ -989,7 +989,7 @@ export class EmbeddedWalletService {
     } else {
           const created = isSolanaWallet
             ? await this.privyServer!.createPolicy(
-                `nana-signer-grant-${wallet.address}`,
+                `nana-${wallet.address.slice(-10)}`,
                 buildSolanaEnrollmentRules({
                   recipients,
                   maxLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
@@ -997,7 +997,7 @@ export class EmbeddedWalletService {
                 { chainType: "solana" },
               )
             : await this.privyServer.createPolicy(
-                `nana-signer-grant-${wallet.address}`,
+                `nana-${wallet.address.slice(-10)}`,
                 buildEnrollmentPolicyRules({ recipients }),
               );
       policyId = created.id;

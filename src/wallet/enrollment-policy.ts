@@ -44,7 +44,7 @@ export const ENROLLMENT_CHAIN_ID = ARC_TESTNET_CHAIN_ID;
 export const AGGREGATION_BLOCK_REASON =
   "provider per-wallet aggregation scope unproven (group_by only supports request fields; wallet identity not documented)";
 
-export type EnrollmentPolicyRule = {
+export type EnrollmentPolicyCondition = {
   field_source: "ethereum_transaction" | "ethereum_calldata";
   field: string;
   operator: string;
@@ -58,12 +58,18 @@ export type EnrollmentPolicyRule = {
 };
 
 /**
- * Builds the single ALLOW rule set for a signer enrollment.
- *
- * `recipients` is the explicit allowlist; every other field is pinned to the
- * Arc Testnet USDC envelope (chain 5042002, USDC ERC-20, zero native value,
- * transfer(recipient, amount) calldata, amount <= 10 USDC atomic6, gas ceiling).
+ * Current Privy policy-rule shape (verified live 2026-10-07): a rule is
+ * { name, method, action, conditions[] } — the old flat rule list
+ * ({field_source, field, operator, value} at the rule top level) is rejected
+ * with invalid_policy_format. Rule names are capped at 50 characters.
  */
+export type EnrollmentPolicyRule = {
+  name: string;
+  method: "eth_signTransaction";
+  action: "ALLOW";
+  conditions: EnrollmentPolicyCondition[];
+};
+
 export function buildEnrollmentPolicyRules(input: {
   recipients: string[];
 }): EnrollmentPolicyRule[] {
@@ -72,7 +78,7 @@ export function buildEnrollmentPolicyRules(input: {
       "buildEnrollmentPolicyRules: at least one recipient is required.",
     );
   }
-  const transferAbi: NonNullable<EnrollmentPolicyRule["abi"]> = [
+  const transferAbi: NonNullable<EnrollmentPolicyCondition["abi"]> = [
     {
       type: "function",
       name: "transfer",
@@ -85,42 +91,44 @@ export function buildEnrollmentPolicyRules(input: {
   ];
   return [
     {
-      field_source: "ethereum_transaction",
-      field: "chain_id",
-      operator: "eq",
-      value: ENROLLMENT_CHAIN_ID,
+      name: "Arc USDC transfer allowlist",
+      method: "eth_signTransaction",
+      action: "ALLOW",
+      conditions: [
+        {
+          field_source: "ethereum_transaction",
+          field: "chain_id",
+          operator: "eq",
+          value: String(ENROLLMENT_CHAIN_ID),
+        },
+        {
+          field_source: "ethereum_transaction",
+          field: "to",
+          operator: "eq",
+          value: ENROLLMENT_USDC_CONTRACT,
+        },
+        {
+          field_source: "ethereum_transaction",
+          field: "value",
+          operator: "eq",
+          value: "0",
+        },
+        {
+          field_source: "ethereum_calldata",
+          field: "transfer._amount",
+          operator: "lte",
+          value: "10000000", // 10 USDC at 6 decimals, atomic units
+          abi: transferAbi,
+        },
+        {
+          field_source: "ethereum_calldata",
+          field: "transfer._to",
+          operator: "in",
+          value: input.recipients,
+          abi: transferAbi,
+        },
+      ],
     },
-    {
-      field_source: "ethereum_transaction",
-      field: "to",
-      operator: "eq",
-      value: ENROLLMENT_USDC_CONTRACT,
-    },
-    {
-      field_source: "ethereum_transaction",
-      field: "value",
-      operator: "eq",
-      value: "0",
-    },
-    {
-      field_source: "ethereum_calldata",
-      field: "transfer._amount",
-      operator: "lte",
-      value: "10000000", // 10 USDC at 6 decimals, atomic units
-      abi: transferAbi,
-    },
-    {
-      field_source: "ethereum_calldata",
-      field: "transfer._to",
-      operator: "in_condition_set",
-      value: input.recipients,
-      abi: transferAbi,
-    },
-    {
-      field_source: "ethereum_transaction",
-      field: "gas",
-      operator: "lte",
-      value: ENROLLMENT_GAS_CEILING,
-    },
+
   ];
 }
