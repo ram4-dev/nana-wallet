@@ -62,47 +62,102 @@ function greetingFirstBulletWithName(userName: string): string {
 }
 
 /**
+ * Where {@link buildGreetingBalanceSection} is substituted into the template. It
+ * is a marker of the SOURCE string only: the built instruction is what reaches
+ * the model, and it never carries the placeholder.
+ */
+const GREETING_SALDO_PLACEHOLDER = "{{saldo}}";
+
+/**
+ * Bullet 2 hands the balance to the `<saldo>` section, which owns the TWO ways
+ * this bullet can be said — with an amount the server read, or without one. A
+ * single home for the rule keeps the two variants from drifting apart.
+ */
+const GREETING_SECOND_BULLET =
+  "2. Say the balance, exactly as the <saldo> section above instructs, and nothing beyond it. That section is the only place the balance text comes from: do not read it yourself and do not add an amount of your own.";
+
+/**
+ * The `<saldo>` section: what this turn says about the balance.
+ *
+ * With an amount, the server's words are quoted verbatim, because the server is
+ * the only thing that read the wallet: the model never fetches, invents, rounds
+ * or asks about a figure here. Without one, the turn says so and moves on. Both
+ * variants forbid reading the balance in this turn, because the tool call that
+ * used to happen here is exactly what split the welcome into two generations and
+ * made the user hear two greetings.
+ */
+export function buildGreetingBalanceSection(spokenBalance?: string): string {
+  if (spokenBalance) {
+    return `<saldo>
+The server ALREADY read the user's balance and hands you the exact words to say: \u00ab${spokenBalance}\u00bb. Say them verbatim, the network included: those are the server's words. That is the ONLY amount you mention — never invent, estimate or round another figure, never ask which wallet or network, and never read a balance from anywhere else. Any network at zero was already left out, so nothing else is worth saying.
+</saldo>`;
+  }
+  return `<saldo>
+The balance cannot be read right now: say the balance is not available at this moment and keep going. Never try to read it yourself.
+</saldo>`;
+}
+
+/**
  * Instruction for the session's opening turn, appended to
  * `NANI_REALTIME_INSTRUCTIONS` for that turn only.
  *
  * It is an instruction and not a fixed sentence on purpose: the greeting has to
- * read the REAL balance, so the model must call `get_balance` itself. A hardcoded
- * string could only invent a figure.
+ * SPEAK the user's real balance, which the server reads before dispatching the
+ * turn. The model is handed those words through the `<saldo>` section — it never
+ * fetches the balance itself, because a tool call in the middle of this turn
+ * splits it into two generations and the user hears two greetings.
  */
 const NANI_GREETING_INSTRUCTIONS = `<turno_de_apertura>
-The user has NOT spoken yet and is waiting for you, so YOU speak first. Nobody asked you anything: this is a welcome, not an answer.
+The user has NOT spoken yet and is waiting for you, so YOU speak first. Nobody asked you anything: this is a welcome, not an answer, and it is ONE single turn generated once.
 <primera_palabra>
-Your very first spoken word is the greeting itself. NEVER open with a filler, an acknowledgement or an announcement of any kind: not 'perfecto', 'dale', 'bueno', 'ok', 'listo', 'ahora', 'un momento', 'te cuento', 'dejame', not 'voy a', 'voy a revisar', 'voy a chequear' and nothing similar. NEVER say you are going to check, look up, search or ask for anything: say the content directly. Tool calls are silent — calling get_balance is something you do, never something you announce or narrate before, during or after.
+Your very first spoken word is the greeting itself. NEVER open with a filler, an acknowledgement or an announcement of any kind: not 'perfecto', 'dale', 'bueno', 'ok', 'listo', 'ahora', 'un momento', 'te cuento', 'dejame', not 'voy a', 'voy a revisar', 'voy a chequear' and nothing similar. NEVER say you are going to check, look up, search or ask for anything: say the content directly. Tool calls are silent, and this turn makes NO tool call at all: never announce, narrate or promise one before, during or after your introduction.
 </primera_palabra>
+${GREETING_SALDO_PLACEHOLDER}
 <orden_obligatorio>
 Now, in Rioplatense Spanish (voseo), warm and brief, cover ALL THREE parts of this one turn, in this exact order:
 ${GREETING_FIRST_BULLET_NO_NAME}
-2. Call the get_balance tool with NO arguments and read aloud the available balance it returns, following the get_balance rules above. This welcome is the ONE exception to reading only what was asked: here nobody asked, so read the balance the user actually has money in, and silently ignore any network whose balance is at zero (a zero balance is not worth saying). If every network is at zero, say the wallet is empty. NEVER invent, estimate or round a figure, and never ask which wallet or network: if the tool or a network fails, say the balance is temporarily unavailable right now and keep going.
+${GREETING_SECOND_BULLET}
 3. Close by offering exactly these three next steps, in this order: "ver mi saldo", "hacer una transferencia", "ver mis últimos movimientos". Never offer a swap or any other action: those three are all you can do.
 </orden_obligatorio>
+<sin_herramientas>
+This turn makes NO tool call AT ALL. The balance is already known to you (it is in the <saldo> section), so calling get_balance here is FORBIDDEN. A tool call would split this welcome into two generations and the user would hear two greetings. Never call get_balance, never say you are calling it, and never narrate a lookup.
+</sin_herramientas>
 <continuidad>
-Part 2 happens in the middle of this same turn: when get_balance returns its result you keep talking in the same turn, you do not close it. The balance is not the end of the turn.
+This is ONE single spoken generation, from your introduction to the last offered option: after the introduction you keep talking, without stopping for anything, and the balance is not the end of the turn.
 </continuidad>
+<una_sola_vez>
+You greet exactly once. Your verbatim introduction already starts with 'Hola', so NO later sentence of this turn — and no later turn — may open with 'hola', 'buen día' or 'buenas'. This welcome is a fresh greeting for THIS session: never comment on, acknowledge or refer back to a previous greeting. After the introduction you never greet again: you go straight to the balance and to the three options.
+</una_sola_vez>
 <cierre>
 Part 3 is mandatory: a welcome that reads the balance and stops without offering the three options is an incomplete turn. Only after saying all three parts, stop and listen.
 </cierre>
 <prohibiciones>
-Never mention tools, providers, networks or internal states.
+Never mention tools, providers or internal states. The only network you may name is the one carried by the server's own balance words in the <saldo> section; never discuss networks beyond that.
 </prohibiciones>
 </turno_de_apertura>`;
 
 /**
- * Builds the instruction of the opening turn, personalized when a name is known.
+ * Builds the instruction of the opening turn, personalized when a name is known
+ * and given the balance the server already read.
  *
  * The name is interpolated verbatim, and only inside bullet 1: every other
- * bullet, the three offered options and the closing rules stay byte-identical to
- * the anonymous version, so personalizing the greeting can never change what the
- * opening turn promises. `userName` is expected to be a name that already passed
- * {@link sanitizeDisplayName} — {@link createAgentSession} owns that gate.
+ * bullet, the balance section, the three offered options and the closing rules
+ * stay byte-identical to the anonymous version, so personalizing the greeting can
+ * never change what the opening turn promises. `userName` is expected to be a
+ * name that already passed {@link sanitizeDisplayName} — {@link createAgentSession}
+ * owns that gate — and `spokenBalance`, when present, is the server's own wording
+ * for the amount to say.
  */
-export function buildGreetingInstructions(userName?: string): string {
-  if (!userName) return NANI_GREETING_INSTRUCTIONS;
-  return NANI_GREETING_INSTRUCTIONS.replace(
+export function buildGreetingInstructions(
+  userName?: string,
+  spokenBalance?: string,
+): string {
+  const withBalance = NANI_GREETING_INSTRUCTIONS.replace(
+    GREETING_SALDO_PLACEHOLDER,
+    buildGreetingBalanceSection(spokenBalance),
+  );
+  if (!userName) return withBalance;
+  return withBalance.replace(
     GREETING_FIRST_BULLET_NO_NAME,
     greetingFirstBulletWithName(userName),
   );
@@ -111,6 +166,13 @@ export function buildGreetingInstructions(userName?: string): string {
 export function createAgentSession(options: {
   tools: ToolContextLike;
   userName?: string;
+  /**
+   * The balance the worker already read, in its own words (see
+   * `readGreetingBalance`). It is the ONLY amount the opening turn may speak, and
+   * the reason the turn needs no tool call: absent means the server could not read
+   * a balance, and the turn says so.
+   */
+  spokenBalance?: string;
 }): AgentSessionComposition {
   // The name lands inside the model's instructions, so it is re-sanitized here
   // even though the voice binding already sanitized it: a value that cannot be a
@@ -172,7 +234,10 @@ export function createAgentSession(options: {
       let handle: ReturnType<AgentSession["generateReply"]>;
       try {
         handle = session.generateReply({
-          instructions: buildGreetingInstructions(userName),
+          instructions: buildGreetingInstructions(
+            userName,
+            options.spokenBalance,
+          ),
           allowInterruptions: true,
         });
       } catch (error) {

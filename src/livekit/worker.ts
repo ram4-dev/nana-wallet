@@ -20,7 +20,7 @@ import { createWalletConversationService } from "../conversations/service.js";
 import { getWalletAgentConfig } from "../agent/instructions.js";
 import { getConfiguredRecipientMemoryService } from "../memory/runtime.js";
 import { createAgentSession } from "./create-agent-session.js";
-import { prepareVoiceGreeting } from "./greeting-context.js";
+import { prepareVoiceGreeting, readGreetingBalance } from "./greeting-context.js";
 import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
@@ -178,6 +178,16 @@ async function runJob(
             binding.userId,
           )
         : dependencies.wallet;
+      // The welcome speaks a balance it cannot fetch for itself: a tool call in the
+      // middle of the opening turn splits it into two generations and the user hears
+      // two greetings. The worker reads the one amount worth saying BEFORE the turn
+      // is dispatched and hands the model the ready words. Best effort by design —
+      // `readGreetingBalance` never throws, and an unread balance still greets.
+      const greetingBalance = await readGreetingBalance({
+        wallet,
+        token: getWalletAgentConfig().token,
+        language: "es",
+      });
       // REVIEW FIX V3 (voice path): the voice service is built per binding so its
       // recipient memory runtime scopes to `binding.sub` — never the demo tenant.
       // It shares the repository, wallet, and financialTasks with the worker so all
@@ -214,6 +224,7 @@ async function runJob(
       const created = createAgentSession({
         tools,
         ...(greeting.userName ? { userName: greeting.userName } : {}),
+        ...(greetingBalance ? { spokenBalance: greetingBalance } : {}),
       });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (

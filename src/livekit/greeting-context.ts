@@ -1,5 +1,9 @@
+import { formatBalanceForAgent } from "../agent/balance-format.js";
+import { getWalletAgentConfig } from "../agent/instructions.js";
+import type { ConversationLanguage } from "../conversations/language.js";
 import type { ConversationRepository } from "../conversations/repository.js";
 import type { DatabaseClient } from "../db/client.js";
+import type { WalletProvider } from "../wallet/provider.js";
 
 export type VoiceGreetingDependencies = {
   database: DatabaseClient;
@@ -110,4 +114,86 @@ export async function prepareVoiceGreeting(
   }
 
   return userName ? { userName } : {};
+}
+
+/**
+ * Is this the amount we are about to speak actually zero?
+ *
+ * The comparison runs on the PRESENTED amount, because that is what the user
+ * would hear: a provider value that rounds down to `0.00` is silence either way.
+ * A value that is not a finite number is NOT zero, so it is never skipped — an
+ * unreadable presentation is not a balance of nothing.
+ */
+function isZeroPresentedAmount(presented: string): boolean {
+  const amount = Number(presented);
+  return Number.isFinite(amount) && amount === 0;
+}
+
+/**
+ * Phrase a spoken amount with the network it was read from, e.g.
+ * `diez USDC en arc-testnet`. The amount itself is already in words: this only
+ * adds where it lives.
+ */
+function withNetwork(
+  spoken: string,
+  network: string,
+  language: ConversationLanguage,
+): string {
+  return language === "es"
+    ? `${spoken} en ${network}`
+    : `${spoken} in ${network}`;
+}
+
+/**
+ * Reads the ONE amount the proactive welcome is allowed to speak.
+ *
+ * The opening turn must be a single generation, so it cannot call a tool to learn
+ * the balance: a tool call splits it in two and the user hears two greetings. The
+ * server reads the balance BEFORE dispatching the greeting and hands the model the
+ * ready-to-speak words.
+ *
+ * Returns the first funded network's amount phrased with its network, or
+ * `undefined` when no network is funded or readable. A network whose presented
+ * amount is zero is skipped (a zero balance is not worth speaking) and every
+ * network is read in its own guard, so a failing network never hides a funded one.
+ * Best effort like the rest of this module: this never throws.
+ */
+export async function readGreetingBalance(input: {
+  wallet: WalletProvider;
+  token: string;
+  language: ConversationLanguage;
+}): Promise<string | undefined> {
+  // The balance query carries the wallet name every provider method takes; the
+  // same default the balance tool uses keeps this read and `get_balance` reading
+  // the same wallet.
+  const walletName = getWalletAgentConfig().wallet;
+  let networks: Awaited<ReturnType<WalletProvider["listNetworks"]>>;
+  try {
+    networks = await input.wallet.listNetworks();
+  } catch {
+    // Best effort: a wallet that cannot list its networks has no amount to speak.
+    return undefined;
+  }
+  if (!Array.isArray(networks)) return undefined;
+
+  for (const { network } of networks) {
+    try {
+      const balance = await input.wallet.getBalance({
+        network,
+        token: input.token,
+        wallet: walletName,
+      });
+      const presentation = formatBalanceForAgent({
+        balance: balance.balance,
+        token: balance.token ?? input.token,
+        language: input.language,
+      });
+      if (isZeroPresentedAmount(presentation.balance)) continue;
+      return withNetwork(presentation.balanceSpoken, network, input.language);
+    } catch {
+      // Best effort: one unreadable network must not stop the next one, and a
+      // failing network is never the end of the greeting.
+    }
+  }
+  return undefined;
 }
