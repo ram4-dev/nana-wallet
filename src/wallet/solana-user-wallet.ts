@@ -15,13 +15,24 @@ import {
   SOLANA_DEVNET_RPC_URL,
   solanaDevnetRpc,
   privySignAndSendFromEnvironment,
+  type SolanaRpc,
 } from "./solana-devnet-provider.js";
 import { Connection } from "@solana/web3.js";
+import type { PayloadSigner } from "./signer/index.js";
 
 export type SolanaUserWalletResolverInput = {
   database: DatabaseClient;
   privy: PrivyServerClient;
   environment?: NodeJS.ProcessEnv;
+  /**
+   * S2a/S4: the worker's sidecar-backed authorization signer. The dispatch
+   * client signs every Privy wallet RPC through this port; when it is absent the
+   * resolver falls back to the sidecar configuration in `environment`, so the
+   * authorization key is never read by the worker process either way.
+   */
+  authorizationSigner?: PayloadSigner;
+  /** Read-only RPC surface; injected in tests so no live devnet read happens. */
+  rpc?: SolanaRpc;
 };
 
 function isEligibleSolanaWallet(wallet: PrivyWalletRecord): boolean {
@@ -130,12 +141,15 @@ export function createSolanaWalletForUser(
     return new SolanaDevnetProvider(
       { walletId: wallet.id, senderAddress },
       {
-        rpc: solanaDevnetRpc(
-          new Connection(SOLANA_DEVNET_RPC_URL, "confirmed"),
-          async () => senderAddress,
-        ),
+        rpc:
+          input.rpc ??
+          solanaDevnetRpc(
+            new Connection(SOLANA_DEVNET_RPC_URL, "confirmed"),
+            async () => senderAddress,
+          ),
         signAndSend: privySignAndSendFromEnvironment(
           input.environment ?? process.env,
+          input.authorizationSigner,
         ),
       },
     );

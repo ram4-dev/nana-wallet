@@ -1,7 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
-import { InternalServerError } from "@privy-io/node";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createPublicKey, verify } from "node:crypto";
+import {
+  InternalServerError,
+  formatRequestForAuthorizationSignature,
+  generateP256KeyPair,
+} from "@privy-io/node";
 import type { DatabaseClient } from "../../src/db/client.js";
-import { SOLANA_DEVNET_NETWORK } from "../../src/wallet/solana-devnet-provider.js";
+import {
+  SOLANA_DEVNET_CAIP2,
+  SOLANA_DEVNET_NETWORK,
+  type SolanaRpc,
+} from "../../src/wallet/solana-devnet-provider.js";
 import {
   PrivyServerClient,
   type PrivySdkClient,
@@ -10,6 +21,12 @@ import {
 } from "../../src/wallet/privy-server-client.js";
 import { PrivyWalletRuntimeError } from "../../src/wallet/privy-user-provider.js";
 import { createSolanaWalletForUser } from "../../src/wallet/solana-user-wallet.js";
+import { createWorkerPayloadSigner } from "../../src/wallet/signer/client.js";
+import { createKeyPayloadSigner } from "../../src/wallet/signer/key-signer.js";
+import {
+  startSigningSidecar,
+  type SigningSidecar,
+} from "../../src/wallet/signer/server.js";
 
 const USER = "11111111-1111-4111-8111-111111111111";
 const PRIVY_DID = "did:privy:user-solana";
@@ -18,11 +35,15 @@ const LOCAL_UUID = "33333333-3333-4333-8333-333333333333";
 const BOUND_ADDRESS = "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq";
 const OTHER_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 
-/** Construction environment for the injectable Privy dispatch seam. */
+/**
+ * Construction environment for the injectable Privy dispatch seam. The
+ * authorization key here is a deliberate DECOY: since S4 the worker signs
+ * through the local sidecar, so this variable must never be consumed.
+ */
 const TEST_ENVIRONMENT = {
   PRIVY_APP_ID: "app-test",
   PRIVY_APP_SECRET: "secret-test",
-  PRIVY_AUTHORIZATION_PRIVATE_KEY: "authorization-key-test",
+  PRIVY_AUTHORIZATION_PRIVATE_KEY: "a-key-the-worker-must-never-use",
 };
 
 type QueryLog = { readonly sql: string; readonly params: readonly unknown[] };
@@ -102,6 +123,9 @@ function makeResolverFixture(fixture: {
   wallets: readonly WalletRow[];
   privyWallets?: readonly PrivyWalletRecord[];
   privyStatus?: number;
+  environment?: NodeJS.ProcessEnv;
+  authorizationSigner?: ReturnType<typeof createWorkerPayloadSigner>;
+  rpc?: SolanaRpc;
 }) {
   const queries: QueryLog[] = [];
   const database = {
@@ -166,7 +190,11 @@ function makeResolverFixture(fixture: {
         }),
       } as unknown as PrivySdkClient,
     }),
-    environment: TEST_ENVIRONMENT,
+    environment: fixture.environment ?? TEST_ENVIRONMENT,
+    ...(fixture.authorizationSigner
+      ? { authorizationSigner: fixture.authorizationSigner }
+      : {}),
+    ...(fixture.rpc ? { rpc: fixture.rpc } : {}),
   });
 
   return { resolve, queries, listMock };
@@ -360,5 +388,213 @@ describe("per-user Solana wallet resolver (ADR-3)", () => {
         (error as PrivyWalletRuntimeError).code,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S4: the worker's per-user Solana dispatch runs through the official SDK and
+// is authorized by the LOCAL SIGNING SIDECAR. The authorization key in the
+// environment is a decoy: it is not, and must never become, a signing path.
+// ---------------------------------------------------------------------------
+
+const SIDECAR_TOKEN = "user-wallet-path-token-0123456789abcdef";
+const DISPATCH_SIGNATURE =
+  "5ZzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWMAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const RECIPIENT = OTHER_ADDRESS;
+
+const TRANSFER = {
+  network: SOLANA_DEVNET_NETWORK,
+  wallet: USER,
+  token: "SOL",
+  to: RECIPIENT,
+  amount: "0.5",
+  previewId: "preview-solana-1",
+} as const;
+
+/** Read-only RPC double: the dispatch path never submits to RPC itself. */
+function solanaRpcDouble(): SolanaRpc {
+  return {
+    getBalance: vi.fn().mockResolvedValue(2_000_000_000n),
+    getSignatureStatuses: vi.fn().mockResolvedValue(null),
+    getSignaturesForAddress: vi.fn().mockResolvedValue([]),
+    getRecentBlockhash: vi
+      .fn()
+      .mockResolvedValue("4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq"),
+    getFeeForTransferMessage: vi.fn().mockResolvedValue(5_000n),
+  };
+}
+
+type RecordedPrivyRequest = {
+  method: string;
+  path: string;
+  host: string;
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+};
+
+/** Minimal stand-in for the Privy API: records the request, answers the RPC. */
+async function startFakePrivyApi(): Promise<{
+  url: string;
+  requests: RecordedPrivyRequest[];
+  close(): Promise<void>;
+}> {
+  const requests: RecordedPrivyRequest[] = [];
+  const server = createServer((request, response) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      requests.push({
+        method: request.method ?? "",
+        path: request.url ?? "",
+        host: request.headers.host ?? "",
+        headers: Object.fromEntries(
+          Object.entries(request.headers).map(([name, value]) => [
+            name,
+            Array.isArray(value) ? value.join(",") : String(value ?? ""),
+          ]),
+        ),
+        body: JSON.parse(Buffer.concat(chunks).toString("utf8") || "null") as Record<
+          string,
+          unknown
+        >,
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          method: "signAndSendTransaction",
+          data: {
+            caip2: SOLANA_DEVNET_CAIP2,
+            hash: DISPATCH_SIGNATURE,
+            transaction_id: "privy-tx-solana-1",
+          },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+  };
+}
+
+describe("per-user Solana dispatch through the SDK and the signing sidecar (S4)", () => {
+  let sidecar: SigningSidecar | undefined;
+  let api: Awaited<ReturnType<typeof startFakePrivyApi>> | undefined;
+
+  afterEach(async () => {
+    await sidecar?.close();
+    sidecar = undefined;
+    await api?.close();
+    api = undefined;
+  });
+
+  it("authorizes the SDK dispatch with the sidecar key, never the environment key", async () => {
+    const keyPair = await generateP256KeyPair();
+    sidecar = await startSigningSidecar({
+      signer: createKeyPayloadSigner(keyPair.privateKey),
+      token: SIDECAR_TOKEN,
+      port: 0,
+    });
+    api = await startFakePrivyApi();
+    const signer = createWorkerPayloadSigner({
+      PRIVY_SIGNER_URL: sidecar.url,
+      PRIVY_SIGNER_TOKEN: SIDECAR_TOKEN,
+    });
+
+    const { resolve } = makeResolverFixture({
+      wallets: [walletRow()],
+      privyWallets: [solanaWalletRecord(PRIVY_WALLET_ID, BOUND_ADDRESS)],
+      environment: {
+        ...TEST_ENVIRONMENT,
+        PRIVY_API_BASE_URL: `${api.url}/v1`,
+      },
+      authorizationSigner: signer,
+      rpc: solanaRpcDouble(),
+    });
+    const provider = await resolve(USER);
+
+    const outcome = await provider.broadcastTransfer({ ...TRANSFER });
+
+    expect(outcome.kind).toBe("submitted");
+    if (outcome.kind === "submitted") {
+      expect(outcome.transaction.transactionHash).toBe(DISPATCH_SIGNATURE);
+    }
+    expect(api.requests).toHaveLength(1);
+    const request = api.requests[0]!;
+    expect(request.path).toBe(`/v1/wallets/${PRIVY_WALLET_ID}/rpc`);
+    expect(request.body).toMatchObject({
+      method: "signAndSendTransaction",
+      chain_type: "solana",
+      caip2: SOLANA_DEVNET_CAIP2,
+      reference_id: "preview-solana-1",
+    });
+    expect(request.headers["privy-idempotency-key"]).toBe("preview-solana-1");
+    // The dispatched transaction is the provider-built legacy transfer, base64:
+    // the worker never submits to Solana RPC directly.
+    const params = request.body.params as {
+      transaction: string;
+      encoding: string;
+    };
+    expect(params.encoding).toBe("base64");
+    expect(Buffer.from(params.transaction, "base64").length).toBeGreaterThan(0);
+
+    // The sidecar's key authorized that request: the signature verifies
+    // against the SDK's own formatting, and the decoy env key was never used.
+    const payload = formatRequestForAuthorizationSignature({
+      version: 1,
+      method: "POST",
+      url: `http://${request.host}${request.path}`,
+      body: request.body,
+      headers: {
+        "privy-app-id": "app-test",
+        "privy-idempotency-key": "preview-solana-1",
+        "privy-request-expiry": request.headers["privy-request-expiry"]!,
+      },
+    });
+    const publicKey = createPublicKey({
+      key: Buffer.from(keyPair.publicKey, "base64"),
+      format: "der",
+      type: "spki",
+    });
+    expect(
+      verify(
+        "sha256",
+        payload,
+        { key: publicKey, dsaEncoding: "der" },
+        Buffer.from(
+          request.headers["privy-authorization-signature"]!,
+          "base64",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("fails closed without a sidecar: the environment key is not a signing path", async () => {
+    api = await startFakePrivyApi();
+    const { resolve } = makeResolverFixture({
+      wallets: [walletRow()],
+      privyWallets: [solanaWalletRecord(PRIVY_WALLET_ID, BOUND_ADDRESS)],
+      environment: {
+        ...TEST_ENVIRONMENT,
+        PRIVY_API_BASE_URL: `${api.url}/v1`,
+      },
+      rpc: solanaRpcDouble(),
+    });
+    const provider = await resolve(USER);
+
+    const outcome = await provider.broadcastTransfer({ ...TRANSFER });
+
+    // No sidecar, no dispatch: the outcome stays ambiguous (reconcilable,
+    // never blindly retried) and the decoy key never reached Privy.
+    expect(outcome.kind).toBe("uncertain");
+    expect(api.requests).toHaveLength(0);
   });
 });

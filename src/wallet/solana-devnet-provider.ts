@@ -4,7 +4,16 @@ import {
   SystemProgram,
   Transaction,
 } from "@solana/web3.js";
+import { APIError, PrivyClient, type AuthorizationContext } from "@privy-io/node";
 import type { TransferPreview } from "../contracts/http.js";
+import { DEFAULT_PRIVY_API_BASE_URL } from "../config/privy-server.js";
+import {
+  SIGNER_TOKEN_ENV,
+  SIGNER_URL_ENV,
+  createWorkerPayloadSigner,
+  signerAuthorizationContext,
+  type PayloadSigner,
+} from "./signer/index.js";
 import type {
   BroadcastOutcome,
   FinalityOutcome,
@@ -705,13 +714,23 @@ export function solanaDevnetRpc(
 }
 
 /**
- * Live Privy signAndSend adapter built from environment configuration. Uses
- * the existing authorization-signature transport seam
- * (privy-transaction-transport.ts) so every wallet RPC call carries the
- * required `privy-authorization-signature` header.
+ * Live Privy signAndSend adapter built from environment configuration.
+ *
+ * The official `@privy-io/node` SDK owns the wallet-RPC transport: the request
+ * url and body, the `privy-app-id` / `privy-idempotency-key` /
+ * `privy-request-expiry` headers, the basic-auth pair, the request expiry and
+ * the authorization signature. This module owns only the mapping between the
+ * provider's dispatch contract and the SDK call.
+ *
+ * The authorization signature is produced by the local signing sidecar port
+ * (`signerAuthorizationContext`), which is the ONLY signing path: no code path
+ * in this process reads the authorization private key, and the environment
+ * variable that used to carry it is never referenced here (the source scan in
+ * `tests/unit/solana-devnet-provider.test.ts` pins that).
  */
 export function privySignAndSendFromEnvironment(
   environment: NodeJS.ProcessEnv = process.env,
+  signer?: PayloadSigner,
 ): SolanaSignAndSendClient {
   // ADR-3: boot must not require Privy credentials when identity is resolved
   // per user; validation and client construction are deferred to first use so
@@ -719,7 +738,10 @@ export function privySignAndSendFromEnvironment(
   let client: SolanaSignAndSendClient | undefined;
   return {
     async signAndSend(walletId, caip2, base64Tx, referenceId) {
-      client ??= createPrivySignAndSendClientFromEnvironment(environment);
+      client ??= createPrivySignAndSendClientFromEnvironment(
+        environment,
+        signer,
+      );
       return client.signAndSend(walletId, caip2, base64Tx, referenceId);
     },
   };
@@ -727,131 +749,170 @@ export function privySignAndSendFromEnvironment(
 
 function createPrivySignAndSendClientFromEnvironment(
   environment: NodeJS.ProcessEnv,
+  signer?: PayloadSigner,
 ): SolanaSignAndSendClient {
   const appId = environment.PRIVY_APP_ID?.trim();
   const appSecret = environment.PRIVY_APP_SECRET?.trim();
-  const authKey = environment.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim();
-  if (!appId || !appSecret || !authKey) {
+  // The worker reaches the sidecar through its url + shared token; the key
+  // itself lives in the sidecar process only.
+  const payloadSigner = signer ?? createWorkerPayloadSigner(environment);
+  if (!appId || !appSecret || !payloadSigner) {
     throw new SolanaDevnetConfigError(
-      "Solana devnet dispatch requires PRIVY_APP_ID, PRIVY_APP_SECRET, and PRIVY_AUTHORIZATION_PRIVATE_KEY.",
+      `Solana devnet dispatch requires PRIVY_APP_ID, PRIVY_APP_SECRET and a configured local signing sidecar (${SIGNER_URL_ENV}/${SIGNER_TOKEN_ENV}).`,
     );
   }
   return createPrivySignAndSendClient({
     appId,
     appSecret,
-    authorizationPrivateKey: authKey,
+    authorizationContext: signerAuthorizationContext(payloadSigner),
+    ...(environment.PRIVY_API_BASE_URL?.trim()
+      ? { baseUrl: environment.PRIVY_API_BASE_URL.trim() }
+      : {}),
   });
 }
+
+/**
+ * The input this client passes to the SDK's `signAndSendTransaction`. It is the
+ * SDK's own contract — including `idempotency_key`, which replaces the manual
+ * `privy-idempotency-key` header, and `authorization_context`, which replaces
+ * the manual P-256 signature.
+ */
+export type PrivySolanaRpcInput = {
+  caip2: string;
+  transaction: string | Uint8Array;
+  reference_id?: string;
+  idempotency_key?: string;
+  authorization_context?: AuthorizationContext;
+};
+
+/** Data the SDK returns for `signAndSendTransaction` (see the SDK resources). */
+export type PrivySolanaRpcResponseData = {
+  hash: string;
+  reference_id?: string | null;
+  signed_transaction?: string;
+  transaction_id?: string;
+};
+
+/**
+ * Narrow structural port over the official SDK surface this client is allowed
+ * to use. The real `PrivyClient` satisfies it at runtime; tests inject a fake
+ * implementing only this surface, so the client cannot grow a second,
+ * hand-rolled transport without breaking them.
+ */
+export type PrivySolanaSdkClient = {
+  wallets(): {
+    solana(): {
+      signAndSendTransaction(
+        walletId: string,
+        input: PrivySolanaRpcInput,
+      ): Promise<PrivySolanaRpcResponseData>;
+    };
+  };
+};
 
 export type PrivySignAndSendConfig = {
   appId: string;
   appSecret: string;
-  authorizationPrivateKey: string;
+  /**
+   * Built by `signerAuthorizationContext(payloadSigner)`: the SDK formats the
+   * request and hands the bytes to the sidecar-backed sign function.
+   */
+  authorizationContext: AuthorizationContext;
+  /** Legacy `.../v1` server base URL; normalised before the SDK sees it. */
   baseUrl?: string;
-  fetch?: typeof fetch;
+  /** Injected official SDK client (tests); defaults to a real `PrivyClient`. */
+  client?: PrivySolanaSdkClient;
 };
 
 /**
- * Creates the Privy wallet-RPC signAndSend client. The dispatch shape is
- * asserted by tests: method `signAndSendTransaction`, devnet CAIP-2, base64
- * transaction, unique reference_id, and the authorization-signature header.
+ * Creates the Privy signAndSend client on top of the official SDK. The SDK —
+ * not this function — builds the request, signs it through the injected
+ * authorization context, applies the idempotency key and expiry, and performs
+ * the fetch; this function only maps the provider's dispatch contract onto
+ * `wallets().solana().signAndSendTransaction` and maps the response back.
+ *
+ * Reconciliation: `findByReference` is deliberately NOT implemented here. The
+ * SDK exposes no lookup by reference id — its actions resource is
+ * `actions.get(actionId, { wallet_id })` (no reference filter), and the wallet
+ * transaction listing carries no `reference_id` — so an SDK-backed lookup could
+ * only attribute an unrelated transaction to the reference. Without it,
+ * `reconcileBroadcast` keeps an unresolved reference uncertain and NEVER
+ * re-broadcasts, which is the fail-closed behaviour the repo requires.
  */
 export function createPrivySignAndSendClient(
   config: PrivySignAndSendConfig,
 ): SolanaSignAndSendClient {
-  const baseUrl = (config.baseUrl ?? "https://api.privy.io/v1").replace(
-    /\/$/u,
-    "",
-  );
-  const doFetch = config.fetch ?? fetch;
+  const sdk = config.client ?? createPrivySolanaSdkClient(config);
   return {
     async signAndSend(walletId, caip2, base64Transaction, referenceId) {
-      const body = {
-        method: "signAndSendTransaction",
-        caip2,
-        params: { transaction: base64Transaction, encoding: "base64" },
-        reference_id: referenceId,
-      };
-      // Mirror privy-transaction-transport.ts: the authorization signature
-      // covers the EXACT request url + signed headers + body; Basic auth
-      // carries appId:appSecret; the auth-signature header carries P-256.
-      const url = `${baseUrl}/wallets/${encodeURIComponent(walletId)}/rpc`;
-      const requestExpiry = String(Date.now() + 60_000);
-      const signedHeaders = {
-        "privy-app-id": config.appId,
-        "privy-idempotency-key": referenceId,
-        "privy-request-expiry": requestExpiry,
-      };
-      const authorizationSignature = await privyAuthorizationSignature(
-        config,
-        url,
-        signedHeaders,
-        body,
-      );
-      const response = await doFetch(url, {
-        method: "POST",
-        headers: {
-          ...signedHeaders,
-          "Content-Type": "application/json",
-          Authorization: `Basic ${Buffer.from(
-            `${config.appId}:${config.appSecret}`,
-          ).toString("base64")}`,
-          "privy-authorization-signature": authorizationSignature,
-        },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        const status = response.status;
-        // Policy denial is a definitive rejection; other errors are ambiguous.
-        const detail = await response.text().catch(() => "");
-        const error = new Error(
-          `Privy wallet RPC failed (${status}): ${detail.slice(0, 200)}`,
-        );
-        if (status === 403)
-          (error as { definitive?: boolean }).definitive = true;
-        throw error;
+      let response: PrivySolanaRpcResponseData;
+      try {
+        response = await sdk.wallets().solana().signAndSendTransaction(walletId, {
+          caip2,
+          transaction: base64Transaction,
+          reference_id: referenceId,
+          // The provider's persisted preview id is BOTH the reference and the
+          // idempotency key: unique per dispatch, and a replay of the same
+          // reference is answered from Privy's idempotency record instead of
+          // being dispatched a second time.
+          idempotency_key: referenceId,
+          authorization_context: config.authorizationContext,
+        });
+      } catch (error) {
+        throw asDispatchFailure(error);
       }
-      const parsed = (await response.json()) as {
-        data?: {
-          hash?: string;
-          transaction_id?: string;
-          signed_transaction?: string;
-        };
-      };
+      // The SDK contract types `hash` as a string; a response that violates it
+      // degrades to an empty hash — the provider then reports the dispatch as
+      // uncertain instead of inventing a signature.
+      const data = (response ?? {}) as Partial<PrivySolanaRpcResponseData>;
       return {
-        hash: parsed.data?.hash ?? "",
-        signedTransaction: parsed.data?.signed_transaction,
-        id: parsed.data?.transaction_id,
+        hash: typeof data.hash === "string" ? data.hash : "",
+        signedTransaction: data.signed_transaction,
+        id: data.transaction_id,
       };
     },
   };
 }
 
-async function privyAuthorizationSignature(
+/**
+ * A policy denial (403) is a definitive, pre-dispatch rejection: nothing left
+ * our process, so the caller may report `not_dispatched`. Every other failure —
+ * transport, timeout, 5xx — stays ambiguous so reconciliation, never an
+ * in-flight retry, governs the next step.
+ */
+function asDispatchFailure(error: unknown): unknown {
+  if (error instanceof APIError && error.status === 403) {
+    const denial = new Error("Privy denied the Solana dispatch by policy.");
+    (denial as { definitive?: boolean }).definitive = true;
+    return denial;
+  }
+  return error;
+}
+
+/**
+ * Builds the real SDK client. The legacy base URL convention carries a
+ * trailing `/v1` that the SDK already appends per request, so it is stripped
+ * once here (config normalisation, not transport).
+ */
+function createPrivySolanaSdkClient(
   config: PrivySignAndSendConfig,
-  url: string,
-  signedHeaders: Record<string, string>,
-  body: unknown,
-): Promise<string> {
-  // Same authorization-signer seam as privy-transaction-transport.ts:
-  // privyNodeAuthorizationSigner wraps @privy-io/node's
-  // generateAuthorizationSignature (RFC 8785 + P-256) over the exact
-  // request url, signed headers, and body.
-  const { privyNodeAuthorizationSigner } = await import(
-    "./privy-transaction-transport.js"
+): PrivySolanaSdkClient {
+  const legacyBaseUrl = (config.baseUrl ?? DEFAULT_PRIVY_API_BASE_URL).replace(
+    /\/+$/u,
+    "",
   );
-  return privyNodeAuthorizationSigner({
-    input: {
-      version: 1,
-      url,
-      method: "POST",
-      headers: {
-        "privy-app-id": signedHeaders["privy-app-id"],
-        "privy-idempotency-key": signedHeaders["privy-idempotency-key"],
-        "privy-request-expiry": signedHeaders["privy-request-expiry"],
-      },
-      body: body as never,
-    },
-    authorizationPrivateKey: config.authorizationPrivateKey,
-  });
+  const apiUrl = legacyBaseUrl.endsWith("/v1")
+    ? legacyBaseUrl.slice(0, -"/v1".length)
+    : legacyBaseUrl;
+  return new PrivyClient({
+    appId: config.appId,
+    appSecret: config.appSecret,
+    apiUrl,
+    // One bounded attempt, exactly like the transport this replaced: an
+    // ambiguous failure must surface to reconciliation, never be retried in
+    // flight on the caller's behalf.
+    maxRetries: 0,
+    // SAFETY: the official client satisfies this narrow port at runtime; the
+    // port only narrows the surface this client may call.
+  }) as unknown as PrivySolanaSdkClient;
 }

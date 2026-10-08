@@ -134,6 +134,9 @@ export function createConfiguredWalletForUser(
     database,
     privy: privyServer,
     environment,
+    // S4: the same sidecar-backed signer the EVM path uses signs the Solana
+    // dispatch; the worker process holds no authorization key.
+    ...(authorizationSigner ? { authorizationSigner } : {}),
   });
   return async (userId, chainFamily) => {
     const requestedChain =
