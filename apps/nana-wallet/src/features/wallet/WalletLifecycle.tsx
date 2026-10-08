@@ -498,6 +498,8 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
                 </p>
                 <PrivySignerEnrollment
                   walletAddress={preparation.walletAddress}
+                  quorumId={preparation.quorumId}
+                  policyId={preparation.policyId}
                   busy={isActivating}
                   onEnrolled={() => handlePrivyComplete()}
                   onError={(message) => setPermissionMessage(message)}

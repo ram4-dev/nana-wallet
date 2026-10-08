@@ -1,39 +1,51 @@
 import { Loader2, ShieldCheck } from "lucide-react";
 import { useState } from "react";
-import { useHeadlessDelegatedActions } from "@privy-io/react-auth";
+import { useSigners } from "@privy-io/react-auth";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
 /**
- * Solana consent enrollment (task 2.7): the user-authenticated half of Solana
- * signer enrollment. Rendered ONLY inside the Privy tree (privy mode) and
- * lazy-loaded so bundles outside PrivyProvider never import it.
+ * Payment-permission signer consent (TEE-compatible). Rendered ONLY inside the
+ * Privy tree (privy mode) and lazy-loaded so bundles outside PrivyProvider
+ * never import it.
  *
- * Consent goes through Privy's chain-aware `delegateWallet` action with the
- * wallet address and `chainType: 'solana'`. The browser supplies NO signer
- * identity, quorum ids, or policy ids: Privy provisions the new signer server
- * side and the backend `complete` read-back is what proves the exact signer +
- * policy binding before persisting the canonical id.
+ * This app runs TEE-execution wallets, so the on-device `delegateWallet`
+ * action is NOT supported (Privy errors with a migration hint). The
+ * TEE-compatible path is `useSigners().addSigners`, attaching the app's key
+ * quorum as a server-side signer with the enrollment policy attached:
+ *
+ *   signers: [{ signerId: quorumId, policyIds: [policyId] }]
+ *
+ * The browser supplies NO signer identity beyond the quorum id the backend
+ * already disclosed in `prepare`; the backend `complete` read-back is what
+ * proves the exact signer + policy binding before persisting the canonical id.
  */
 export function PrivySignerEnrollment({
   walletAddress,
+  quorumId,
+  policyId,
   busy,
   onEnrolled,
   onError,
 }: {
   walletAddress: string;
+  quorumId: string;
+  policyId: string;
   busy: boolean;
   onEnrolled: () => void | Promise<void>;
   onError: (message: string) => void;
 }) {
-  const { delegateWallet } = useHeadlessDelegatedActions();
+  const { addSigners } = useSigners();
   const [consenting, setConsenting] = useState(false);
 
   async function handleConsent() {
     setConsenting(true);
     try {
-      await delegateWallet({ address: walletAddress, chainType: "solana" });
+      await addSigners({
+        address: walletAddress,
+        signers: [{ signerId: quorumId, policyIds: [policyId] }],
+      });
       toast.success("Confirmaste la autorización en Privy.");
       await onEnrolled();
     } catch (error) {
