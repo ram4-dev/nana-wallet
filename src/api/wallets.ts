@@ -32,7 +32,7 @@ import {
   type EmbeddedWalletService,
 } from "../wallet/embedded.js";
 import { PrivyIdentityError } from "../auth/privy-identity.js";
-import { TransferRejectedError } from "../wallet/transfer-pipeline.js";
+import { TransferRejectedError } from "../wallet/transfer-errors.js";
 import type { WalletBalancesService } from "../wallet/balances.js";
 
 export type WalletsRouteDependencies = {
