@@ -1,4 +1,9 @@
 import type { DatabaseClient } from "../db/client.js";
+import type { AuthorizationContext } from "@privy-io/node";
+import {
+  signerAuthorizationContext,
+  type PayloadSigner,
+} from "./signer/index.js";
 import type {
   BroadcastOutcome,
   FinalityOutcome,
@@ -224,12 +229,17 @@ export function createPrivyWalletHealthProvider(
  * Resolves a fresh provider for the authenticated user. Privy's server-side
  * user filter is the ownership boundary; a ready local binding is used only to
  * select one wallet when Privy returns more than one eligible EVM wallet.
+ *
+ * `authorizationSigner` (S2a) is the worker's local signing-sidecar client. The
+ * provider builds the Privy authorization context from it, so this wallet path
+ * never requires the authorization private key in-process.
  */
 export function createPrivyWalletForUserResolver(input: {
   database: DatabaseClient;
   privy: PrivyServerClient;
   rpcUrl?: string;
   rpc?: PrivyWalletRpc;
+  authorizationSigner?: PayloadSigner;
 }): WalletForUser {
   return async (userId) => {
     const selection = await readUserWalletSelection(input.database, userId);
@@ -250,6 +260,9 @@ export function createPrivyWalletForUserResolver(input: {
     return new PrivyUserWalletProvider(selected, {
       rpcUrl: input.rpcUrl,
       rpc: input.rpc,
+      ...(input.authorizationSigner
+        ? { authorizationSigner: input.authorizationSigner }
+        : {}),
     });
   };
 }
@@ -348,11 +361,24 @@ export class PrivyUserWalletProvider implements WalletProvider {
   public readonly id = "privy-user";
   public readonly mode = "live" as const;
 
+  /**
+   * S2a: the key-free Privy authorization context (SDK `sign_fns`) for this
+   * wallet's signing path, built from the injected local-sidecar signer. It is
+   * `undefined` when no signer is configured, and the key never enters this
+   * process. The transfer calls that consume it are S2b; until they are wired,
+   * `previewTransfer`/`broadcastTransfer`/`waitForFinality` stay fail-closed.
+   */
+  public readonly authorizationContext: AuthorizationContext | undefined;
+
   private readonly rpc: PrivyWalletRpc;
 
   public constructor(
     private readonly wallet: Pick<PrivyWalletRecord, "id" | "address">,
-    options: { rpcUrl?: string; rpc?: PrivyWalletRpc } = {},
+    options: {
+      rpcUrl?: string;
+      rpc?: PrivyWalletRpc;
+      authorizationSigner?: PayloadSigner;
+    } = {},
   ) {
     if (!EVM_ADDRESS.test(wallet.address)) {
       throw new PrivyWalletRuntimeError(
@@ -364,6 +390,9 @@ export class PrivyUserWalletProvider implements WalletProvider {
     this.rpc =
       options.rpc ??
       ((method, params = []) => privyArcRpcCall(rpcUrl, method, params));
+    this.authorizationContext = options.authorizationSigner
+      ? signerAuthorizationContext(options.authorizationSigner)
+      : undefined;
   }
 
   public async health(): Promise<WalletProviderHealth> {

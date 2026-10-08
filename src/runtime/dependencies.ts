@@ -55,6 +55,10 @@ import {
   type WalletForUser,
 } from "../wallet/privy-user-provider.js";
 import { createSolanaWalletForUser } from "../wallet/solana-user-wallet.js";
+import {
+  createWorkerPayloadSigner,
+  type PayloadSigner,
+} from "../wallet/signer/index.js";
 
 export type CoreDependencies = {
   wallet: WalletProvider;
@@ -106,6 +110,7 @@ export function createConfiguredWalletForUser(
   database: DatabaseClient,
   environment: NodeJS.ProcessEnv = process.env,
   injectedPrivyServer?: PrivyServerClient,
+  authorizationSigner?: PayloadSigner,
 ): WalletForUser | undefined {
   if (readIdentityProviderMode(environment) !== "privy") return undefined;
   const config = readPrivyServerConfig(environment);
@@ -123,6 +128,7 @@ export function createConfiguredWalletForUser(
     database,
     privy: privyServer,
     rpcUrl: environment.ARC_TESTNET_RPC_URL?.trim() || undefined,
+    ...(authorizationSigner ? { authorizationSigner } : {}),
   });
   const solanaWalletForUser = createSolanaWalletForUser({
     database,
@@ -231,19 +237,25 @@ export function createWorkerDependencies(
   const conversations = new PostgresConversationRepository(database);
   const core = createCoreDependencies(environment);
   const privyServerConfig = readPrivyServerConfig(environment);
+  // S2a: the worker no longer reads the authorization private key from the
+  // environment. It signs Privy authorizations through the local signing
+  // sidecar (src/wallet/signer/), whose client it builds here from
+  // PRIVY_SIGNER_URL + PRIVY_SIGNER_TOKEN. Without that configuration the
+  // worker has no signing path at all — exactly the previous fail-closed
+  // behaviour. The key itself is read only by the sidecar entrypoint.
+  const authorizationSigner = createWorkerPayloadSigner(environment);
   const privyServer = privyServerConfig
     ? new PrivyServerClient({
         appId: privyServerConfig.appId,
         appSecret: privyServerConfig.appSecret,
         baseUrl: privyServerConfig.baseUrl,
-        authorizationPrivateKey:
-          environment.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim() || undefined,
       })
     : undefined;
   const walletForUser = createConfiguredWalletForUser(
     database,
     environment,
     privyServer,
+    authorizationSigner,
   );
   const grantCreator = createGrantCreator(
     database,

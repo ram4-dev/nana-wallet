@@ -15,6 +15,7 @@ import {
   createPrivyWalletForUserResolver,
   walletChainFamilyForNetwork,
 } from "../../src/wallet/privy-user-provider.js";
+import type { PayloadSigner } from "../../src/wallet/signer/port.js";
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
@@ -308,5 +309,62 @@ describe("Privy per-user wallet runtime", () => {
     await expect(provider.broadcastTransfer(request)).resolves.toMatchObject({
       kind: "not_dispatched",
     });
+  });
+
+  // S2a: the worker wallet path builds the Privy authorization context from the
+  // local signing sidecar instead of a private key held by this process.
+  it("builds the authorization context from the injected signer, never from a key", async () => {
+    const signer: PayloadSigner = async () => "signature";
+    const provider = new PrivyUserWalletProvider(
+      { id: "wallet-a", address: ADDRESS_A },
+      { authorizationSigner: signer },
+    );
+
+    expect(provider.authorizationContext).toEqual({ sign_fns: [signer] });
+    expect(provider.authorizationContext?.sign_fns).toHaveLength(1);
+    expect(
+      (provider.authorizationContext as { authorization_private_keys?: unknown })
+        .authorization_private_keys,
+    ).toBeUndefined();
+  });
+
+  it("stays fail-closed without a signer even when the key variable is set", () => {
+    const savedKey = process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
+    process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY = "a-key-this-process-must-not-use";
+    try {
+      const provider = new PrivyUserWalletProvider({
+        id: "wallet-a",
+        address: ADDRESS_A,
+      });
+      expect(provider.authorizationContext).toBeUndefined();
+    } finally {
+      if (savedKey === undefined) delete process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY;
+      else process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY = savedKey;
+    }
+  });
+
+  it("threads the signer through the per-user resolver into the provider context", async () => {
+    const signer: PayloadSigner = async () => "signature";
+    const database = databaseFixture({
+      [USER_A]: {
+        privy_did: "did:privy:user-a",
+        provider_wallet_id: "wallet-a",
+        address: ADDRESS_A,
+      },
+    });
+    const resolve = createPrivyWalletForUserResolver({
+      database,
+      privy: privyFixture({
+        "did:privy:user-a": [wallet("wallet-a", ADDRESS_A)],
+      }),
+      rpc: vi.fn(),
+      authorizationSigner: signer,
+    });
+
+    const provider = (await resolve(
+      USER_A,
+      "ethereum",
+    )) as PrivyUserWalletProvider;
+    expect(provider.authorizationContext).toEqual({ sign_fns: [signer] });
   });
 });

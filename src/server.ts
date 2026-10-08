@@ -175,6 +175,12 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
           appId: privyServerConfig.appId,
           appSecret: privyServerConfig.appSecret,
           baseUrl: privyServerConfig.baseUrl,
+          // S2a boundary: the VOICE WORKER moved to the local signing sidecar
+          // (src/wallet/signer/, wired in src/runtime/dependencies.ts). This
+          // HTTP API process still signs enrollment/grant-policy mutations with
+          // the key it holds, because PrivyServerClient derives its
+          // authorization context from that key string; migrating it to
+          // `sign_fns` is a follow-up slice.
           authorizationPrivateKey:
             process.env.PRIVY_AUTHORIZATION_PRIVATE_KEY?.trim() || undefined,
         })

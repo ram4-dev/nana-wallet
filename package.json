@@ -15,6 +15,7 @@
     "start": "node dist/server.js",
     "livekit:dev": "tsx src/livekit/worker.ts dev",
     "livekit:start": "node dist/livekit/worker.js start",
+    "signer:serve": "tsx src/wallet/signer/server.ts",
     "lint": "eslint src tests --max-warnings=0",
     "test:simulation": "vitest run tests/simulation",
     "test:retention": "vitest run tests/integration/livekit-retention.test.ts",
