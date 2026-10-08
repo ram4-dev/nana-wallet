@@ -128,7 +128,6 @@ vi.mock("@livekit/agents-plugin-openai", () => ({
 import {
   GREETING_INPUT_TIMEOUT_MS,
   GREETING_OFFERS_SENTENCE,
-  buildGreetingBalanceSection,
   buildGreetingInstructions,
   createAgentSession,
 } from "../../src/livekit/create-agent-session.js";
@@ -146,13 +145,10 @@ const OFFERED_ACTIONS = [
 ];
 
 /**
- * Bullet 2 of the opening turn says the balance the SERVER already read, so it is
+ * Bullet 2 of the opening turn is the verbatim closing offer sentence, so it is
  * the anchor for every "only bullet 1 changed" comparison.
  */
-const SECOND_BULLET_ANCHOR = "2. Say the balance";
-
-/** What the worker hands the greeting after reading the balance itself. */
-const SPOKEN_BALANCE = "diez USDC en arc-testnet";
+const SECOND_BULLET_ANCHOR = "2. Close by saying this sentence";
 
 describe("OpenAI realtime agent session composition", () => {
   beforeEach(() => {
@@ -233,16 +229,19 @@ describe("OpenAI realtime agent session composition", () => {
     expect(opening).toContain("Nani");
     // Live failure #4: the turn used to call get_balance in the middle of the
     // welcome, which split it into TWO generations and made the user hear two
-    // greetings. The server reads the balance before dispatching the turn, so the
-    // call is forbidden here and the tool name only appears as the prohibition.
+    // greetings. This turn reports no balance at all and must not fetch one, so
+    // the call is forbidden here and the tool name only appears as the prohibition.
     expect(opening).toContain("get_balance");
     expect(opening).toMatch(/no tool call/iu);
-    // The balance words carry the network, so the prohibitions may not forbid
-    // naming networks outright: that contradicted the <saldo> section.
-    expect(opening).not.toMatch(/Never mention tools, providers, networks/iu);
-    expect(opening).toMatch(/only network you may name/iu);
     expect(opening).toMatch(/calling get_balance here is forbidden/iu);
     expect(opening).not.toContain("Call the get_balance tool");
+    // The welcome speaks no balance whatsoever: no dedicated section, no amount,
+    // and no instruction to say, read or report one.
+    expect(opening).not.toContain("<saldo>");
+    expect(opening).not.toContain("</saldo>");
+    expect(opening).not.toMatch(
+      /say the balance|read (aloud )?the balance|balance it returns/iu,
+    );
     expect(opening).not.toMatch(/\$\s*\d/u);
     expect(opening).not.toMatch(/(?:USDC|USDT|USD|dólares|dolares)/iu);
     // Concrete next steps in the product's own words, now as a fixed closing
@@ -250,6 +249,17 @@ describe("OpenAI realtime agent session composition", () => {
     // lead-in and the whole list are one verbatim sentence.
     expect(opening).toContain(GREETING_OFFERS_SENTENCE);
     expect(opening).toMatch(/do not reword the sentence/iu);
+    // Live, the lead-in was paraphrased once ("Puedo ayudarte con" instead of
+    // "Te puedo ayudar con"). The opening words are anchored and the observed
+    // paraphrases are named, so the product copy is not left to the model's style.
+    expect(opening).toMatch(/STARTS with these exact words/iu);
+    for (const paraphrase of [
+      "Puedo ayudarte con",
+      "Puedo ayudarte a",
+      "Te puedo ayudar a",
+    ]) {
+      expect(opening).toContain(`not '${paraphrase}'`);
+    }
     for (const action of OFFERED_ACTIONS) {
       expect(GREETING_OFFERS_SENTENCE).toContain(action);
     }
@@ -271,40 +281,37 @@ describe("OpenAI realtime agent session composition", () => {
     // Live failure #2: the turn greeted, read the balance and never offered the
     // options. Because nobody asked anything, the base get_balance rule ("read
     // aloud ONLY the balance the user asked about") reads as "one balance and
-    // done". The opening turn has to own that exception and say that the tool
-    // call sits in the middle of the turn, not at its end.
+    // done", so the opening turn owns the exception outright and demands the whole
+    // welcome in one generation.
     expect(opening).toMatch(/nobody asked/iu);
-    expect(opening).toMatch(/not the end of the turn/iu);
-    expect(opening).toMatch(/all three parts/iu);
+    expect(opening).toMatch(
+      /ONE single spoken generation, from your introduction to the last offered option/iu,
+    );
+    expect(opening).toMatch(/BOTH parts/iu);
     // Live failure #3: she greeted but never said who she is. "Introduce
     // yourself" left the wording to the model, so the sentence has to be given
     // verbatim - the same trick the three options already use.
     expect(opening).toContain("say this sentence, verbatim");
     expect(opening).toContain("Hola, soy Nani, tu asistente financiera");
     // Sectioned prompt: each rule has one home the model can follow, instead of
-    // a wall of prose where an earlier rule wins by being read first. The balance
-    // gets its own section because it is the one part the server, not the model,
-    // supplies.
+    // a wall of prose where an earlier rule wins by being read first.
     for (const section of [
       "<turno_de_apertura>",
       "<primera_palabra>",
-      "<saldo>",
-      "</saldo>",
       "<orden_obligatorio>",
       "<sin_herramientas>",
       "<continuidad>",
       "<una_sola_vez>",
       "<cierre>",
+      "<prohibiciones>",
       "</turno_de_apertura>",
     ]) {
       expect(opening).toContain(section);
     }
-    // The section builder is a substitution, never a marker the model could read.
-    expect(opening).not.toContain("{{saldo}}");
     // Interruptible: the opening turn must never trap the user.
     expect(calls[0].allowInterruptions).toBe(true);
     // Generated by the agent, never a fixed sentence: a fixed string could only
-    // invent the balance the greeting is supposed to read.
+    // greet without the name the session knows.
     expect(composed.sayCalls).toHaveLength(0);
     // The persona speaks the product's user-facing language...
     const persona = String(h.MockAgent.instances[0].options.instructions);
@@ -388,100 +395,6 @@ describe("OpenAI realtime agent session composition", () => {
     expect(opening).toContain(GREETING_OFFERS_SENTENCE);
   });
 
-  it("speaks the amount the server already read, verbatim, and forbids inventing another", () => {
-    process.env.OPENAI_API_KEY = "test-key";
-
-    const { speakGreeting } = createAgentSession({
-      tools: [],
-      userName: "Ana",
-      spokenBalance: SPOKEN_BALANCE,
-    });
-    const composed = h.MockAgentSession.instances[0];
-    expect(speakGreeting()).toBe(true);
-
-    const opening = String(
-      h.MockAgentSession.instances[0].generateReplyCalls[0].instructions,
-    );
-    // The server read this figure, so the turn only has to say it.
-    expect(opening).toContain(SPOKEN_BALANCE);
-    expect(opening).toMatch(/never invent, estimate or round/iu);
-    expect(opening).toMatch(/never ask which wallet or network/iu);
-    // The tool call that used to fetch the balance is forbidden now: it is what
-    // split the welcome in two.
-    expect(opening).toMatch(/calling get_balance here is forbidden/iu);
-    expect(opening).not.toContain("Call the get_balance tool");
-    // A welcome is ONE amount, and a network at zero is not worth saying: the
-    // server already left zero networks out before handing over these words.
-    expect(opening).toMatch(/at zero/iu);
-    expect(opening).toContain(GREETING_OFFERS_SENTENCE);
-    // The name is the only quoted datum left; the options live inside the fixed
-    // closing sentence now.
-    expect(opening.match(/"([^"]+)"/gu)).toEqual(['"Ana"']);
-    expect(opening).toContain("say this sentence, verbatim");
-    expect(opening).toContain("Hola NOMBRE, soy Nani, tu asistente financiera");
-    // Greeted exactly once: the verbatim introduction already says "Hola", so no
-    // later sentence may open with a greeting of its own.
-    expect(opening).toMatch(/greet exactly once/iu);
-    expect(opening).toContain("'hola'");
-    expect(opening).toContain("'buen día'");
-    expect(opening).toContain("'buenas'");
-    expect(opening).toMatch(/previous greeting/iu);
-    expect(opening).not.toContain("{{saldo}}");
-    // The balance did not touch the microphone gate: it is still closed before
-    // the turn and reopened by the playout.
-    expect(composed.callOrder).toEqual(["input:close", "generateReply"]);
-    // At-most-once per session, balance or no balance.
-    expect(speakGreeting()).toBe(false);
-  });
-
-  it("keeps ONE balance section with the two variants, and neither reads the balance", () => {
-    const funded = buildGreetingBalanceSection(SPOKEN_BALANCE);
-    const unread = buildGreetingBalanceSection();
-
-    expect(funded).toContain(SPOKEN_BALANCE);
-    expect(funded).toMatch(/never invent, estimate or round/iu);
-    expect(funded).toMatch(/at zero/iu);
-    expect(unread).not.toContain(SPOKEN_BALANCE);
-    expect(unread).toMatch(/cannot be read right now/iu);
-    // An absent OR empty amount is the unread variant: an empty pair of words is
-    // never quoted as the user's balance.
-    expect(buildGreetingBalanceSection(undefined)).toBe(unread);
-    expect(buildGreetingBalanceSection("")).toBe(unread);
-    // One section, one shape, and in no variant is the turn told to fetch it.
-    for (const section of [funded, unread]) {
-      expect(section).toMatch(/^<saldo>/u);
-      expect(section).toMatch(/<\/saldo>$/u);
-      expect(section).not.toContain("Call the get_balance tool");
-    }
-  });
-
-  it("tells the model the balance is unavailable when the server could not read one", () => {
-    process.env.OPENAI_API_KEY = "test-key";
-
-    const { speakGreeting } = createAgentSession({ tools: [] });
-    expect(speakGreeting()).toBe(true);
-
-    const opening = String(
-      h.MockAgentSession.instances[0].generateReplyCalls[0].instructions,
-    );
-    expect(opening).toMatch(/balance cannot be read right now/iu);
-    expect(opening).toMatch(/keep going/iu);
-    // The bullet that says the balance must not claim the server read a value
-    // when the <saldo> section just said it could not be read: the two variants
-    // contradicted each other.
-    expect(opening).not.toMatch(/server already read/iu);
-    expect(opening).toContain("exactly as the <saldo> section above instructs");
-    // An unread balance is still no reason to reach for the tool, and the absent
-    // value is never rendered as one.
-    expect(opening).toContain("get_balance");
-    expect(opening).not.toContain("Call the get_balance tool");
-    expect(opening).not.toContain("undefined");
-    expect(opening).toContain(GREETING_OFFERS_SENTENCE);
-    expect(buildGreetingInstructions(undefined, undefined)).toBe(
-      buildGreetingInstructions(),
-    );
-  });
-
   it("changes only the first bullet when a name is available", () => {
     const named = buildGreetingInstructions("Ana María");
     const anonymous = buildGreetingInstructions();
@@ -490,27 +403,12 @@ describe("OpenAI realtime agent session composition", () => {
       '1. Introduce yourself: say this sentence, verbatim: «Hola NOMBRE, soy Nani, tu asistente financiera.»',
     );
 
-    // Everything after bullet 1 — the balance section, the tool rules, the three
-    // offered options and the closing rules — stays byte-identical.
+    // Everything after bullet 1 — the closing offer sentence, the tool rules and
+    // the closing rules — stays byte-identical.
     const tail = (text: string) => text.slice(text.indexOf(SECOND_BULLET_ANCHOR));
     expect(tail(named)).toBe(tail(anonymous));
     expect(tail(named)).toContain(GREETING_OFFERS_SENTENCE);
     expect(tail(named)).toMatch(/never offer a swap/iu);
-
-    // A spoken balance is not personalization either: the <saldo> section changes
-    // for every session, named or not, and never drops what the opening owes.
-    const namedWithBalance = buildGreetingInstructions("Ana María", SPOKEN_BALANCE);
-    const anonymousWithBalance = buildGreetingInstructions(undefined, SPOKEN_BALANCE);
-    const saldoSection = (text: string) =>
-      text.slice(
-        text.indexOf("<saldo>"),
-        text.indexOf("</saldo>") + "</saldo>".length,
-      );
-    expect(saldoSection(namedWithBalance)).toBe(saldoSection(anonymousWithBalance));
-    expect(saldoSection(anonymousWithBalance)).toContain(SPOKEN_BALANCE);
-    expect(tail(namedWithBalance)).toBe(tail(anonymousWithBalance));
-    // And the amount only ever comes from the server's words.
-    expect(saldoSection(buildGreetingInstructions())).not.toContain(SPOKEN_BALANCE);
   });
 
   it("greets exactly once per session, and again for a new session", () => {
