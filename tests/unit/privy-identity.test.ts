@@ -32,11 +32,12 @@ async function signToken(
     aud?: string | string[];
     sub?: string;
     exp?: number;
+    iat?: number;
   } = {},
 ): Promise<string> {
   const builder = new SignJWT({}).setProtectedHeader({ alg: "ES256" });
   if (claims.sub !== undefined) builder.setSubject(claims.sub);
-  builder.setIssuedAt(Math.floor(Date.now() / 1000) - 5);
+  builder.setIssuedAt(claims.iat ?? Math.floor(Date.now() / 1000) - 5);
   builder.setIssuer(claims.iss ?? "privy.io");
   builder.setAudience(claims.aud ?? APP_ID);
   if (claims.exp !== undefined) {
@@ -79,6 +80,15 @@ describe("Privy identity provider (PMU-002)", () => {
       requestWithAuth(validToken),
     );
     expect(identity.userId).toBe(RESOLVED_UUID);
+  });
+
+  it("surfaces the verified token's issued-at for the session floor", async () => {
+    const iat = Math.floor(Date.now() / 1000) - 42;
+    const token = await signToken(app.privateKey, { sub: USER_DID, iat });
+    const identity = await provider(app.publicKeyPem).resolve(
+      requestWithAuth(token),
+    );
+    expect(identity.issuedAt).toEqual(new Date(iat * 1000));
   });
 
   it("rejects a missing bearer token", async () => {
@@ -160,7 +170,7 @@ describe("Privy app verification key rotation", () => {
   it("accepts either trusted signing key from the same configured app", async () => {
     const verifier = provider(app.publicKeyPem + "\n" + other.publicKeyPem);
     for (const key of [app.privateKey, other.privateKey]) {
-      await expect(verifier.resolve(requestWithAuth(await signToken(key, { sub: USER_DID })))).resolves.toEqual({userId: RESOLVED_UUID});
+      await expect(verifier.resolve(requestWithAuth(await signToken(key, { sub: USER_DID })))).resolves.toMatchObject({userId: RESOLVED_UUID});
     }
   });
   it("rejects unknown keys and still enforces audience and expiry with a bundle", async () => {

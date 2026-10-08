@@ -29,6 +29,12 @@ import {
   PrivyIdentityProvider,
   readPrivyVerificationInputs,
 } from "./auth/privy-identity.js";
+import {
+  createSessionFloorIdentity,
+  createSessionFloorStore,
+  registerAuthRoutes,
+  type SessionFloorStore,
+} from "./api/auth.js";
 import { registerMeRoutes } from "./api/me.js";
 import {
   registerContactsRoutes,
@@ -133,6 +139,10 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
   // PMU-001: build the sole identity provider from configuration.
   let identity: RequestIdentityProvider;
   let database: DatabaseClient | undefined;
+  // Session floor (server-side session invalidation): durable per-user revoke
+  // instant. Set by POST /v1/auth/logout and enforced on every authenticated
+  // request through the identity decorator below.
+  let sessionFloors: SessionFloorStore | undefined;
   if (identityProviderMode === "privy") {
     const { appId, verificationKeyPem } = readPrivyVerificationInputs(
       process.env,
@@ -142,25 +152,34 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
     // PMU-024: identity-only rollout — a funded singleton provider is already
     // rejected at config-read time (readApiProcessConfig).
     database = createConfiguredDatabaseClient();
-    identity = new PrivyIdentityProvider({
-      appId,
-      verificationKeyPem,
-      resolvePrivyDid: (did, displayName) =>
-        database!
-          .query<{ id: string }>(
-            "SELECT users_ensure_for_privy_did($1, $2) AS id",
-            [did, displayName ?? null],
-          )
-          .then((result) => {
-            const row = result.rows[0];
-            if (!row)
-              throw new Error("users_ensure_for_privy_did returned no id");
-            return row.id;
-          }),
-    });
+    sessionFloors = createSessionFloorStore(database);
+    // The provider stays a pure offline verifier; the session floor is layered
+    // on top so a logged-out user's still-valid token stops being accepted.
+    identity = createSessionFloorIdentity(
+      new PrivyIdentityProvider({
+        appId,
+        verificationKeyPem,
+        resolvePrivyDid: (did, displayName) =>
+          database!
+            .query<{ id: string }>(
+              "SELECT users_ensure_for_privy_did($1, $2) AS id",
+              [did, displayName ?? null],
+            )
+            .then((result) => {
+              const row = result.rows[0];
+              if (!row)
+                throw new Error("users_ensure_for_privy_did returned no id");
+              return row.id;
+            }),
+      }),
+      sessionFloors,
+    );
   } else {
     identity = new DemoIdentityProvider(config.demoUserId ?? "");
-    if (config.databaseUrl) database = createConfiguredDatabaseClient();
+    if (config.databaseUrl) {
+      database = createConfiguredDatabaseClient();
+      sessionFloors = createSessionFloorStore(database);
+    }
   }
 
   const resolveUserId = async (request: FastifyRequest): Promise<string> =>
@@ -297,6 +316,11 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
 
     // PMU-007: identity-only bootstrap.
     app.register(registerMeRoutes, { resolveUserId, database });
+
+    // Session floor: authenticated logout that revokes the caller's tokens.
+    if (sessionFloors) {
+      app.register(registerAuthRoutes, { resolveUserId, floors: sessionFloors });
+    }
 
     // Slice 5: authenticated notifications feed/read surface.
     app.register(registerNotificationsFeedRoutes, {

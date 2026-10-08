@@ -647,6 +647,11 @@ export const api = {
 
   getMe: () => request<MeResponse>("/v1/me"),
 
+  // Server-side session invalidation (session floor): revokes every access
+  // token of the caller issued before now. Call it BEFORE the local session is
+  // cleared, while the access token is still valid.
+  logout: () => request<void>("/v1/auth/logout", jsonRequest("POST", {})),
+
   speak: (text: string) => speak(text),
 };
 

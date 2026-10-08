@@ -56,6 +56,17 @@ function LogoutButton() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   async function handleLogout() {
+    // Server-side session invalidation first, while the access token is still
+    // valid: it revokes this user's tokens (session floor). A failure must not
+    // block the local logout, but it must not be swallowed either — report it
+    // the way background failures are reported elsewhere (console.error).
+    if (isPrivyEnabled) {
+      try {
+        await api.logout();
+      } catch (error) {
+        console.error("Backend logout (session floor) failed", error);
+      }
+    }
     // WP-013: session reset aborts in-flight requests and clears the cache
     // before navigating away, so nothing of this user survives.
     resetSession();

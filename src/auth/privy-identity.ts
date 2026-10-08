@@ -68,9 +68,11 @@ export class PrivyIdentityProvider {
     }
   }
 
-  public async resolve(request: FastifyRequest): Promise<{ userId: string }> {
+  public async resolve(
+    request: FastifyRequest,
+  ): Promise<{ userId: string; issuedAt: Date | undefined }> {
     const token = extractBearerToken(request);
-    let payload: { sub?: string; name?: string };
+    let payload: { sub?: string; name?: string; iat?: number };
     try {
       const result = await Promise.any(this.verificationKeys.map((key) => jwtVerify(token, key, {
         algorithms: ["ES256"],
@@ -79,7 +81,7 @@ export class PrivyIdentityProvider {
         // exp is mandatory (PMU-002): reject tokens without expiry.
         requiredClaims: ["iss", "aud", "sub", "exp"],
       })));
-      payload = result.payload as { sub?: string; name?: string };
+      payload = result.payload as { sub?: string; name?: string; iat?: number };
     } catch {
       throw new PrivyIdentityError(
         "unauthenticated",
@@ -94,7 +96,12 @@ export class PrivyIdentityProvider {
       );
     }
     const userId = await this.config.resolvePrivyDid(sub, payload.name);
-    return { userId };
+    // Surface the verified issued-at so the session floor can compare it. The
+    // provider stays a pure offline verifier (no DB access): the floor lives
+    // outside it, in a decorator that reads users.session_floor_at.
+    const issuedAt =
+      typeof payload.iat === "number" ? new Date(payload.iat * 1000) : undefined;
+    return { userId, issuedAt };
   }
 }
 

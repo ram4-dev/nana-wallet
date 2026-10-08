@@ -316,6 +316,24 @@ describe("bearer token plumbing (PMU-016/017)", () => {
   });
 });
 
+describe("server-side logout (session floor)", () => {
+  it("POSTs to /v1/auth/logout so the backend can revoke the session", async () => {
+    // The client clears its own session, but the access token stays valid until
+    // its exp unless the backend is told. This call is what raises the session
+    // floor, so its method and path are part of the contract.
+    setApiTokenSource({ getToken: async () => "token-a" });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.logout();
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toContain("/v1/auth/logout");
+    expect(init?.method).toBe("POST");
+    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer token-a");
+  });
+});
+
 describe("wallet lifecycle API", () => {
   const user = "22222222-2222-4222-8222-222222222222";
   const currentWallet = {
