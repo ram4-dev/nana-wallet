@@ -3,23 +3,23 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  useHeadlessDelegatedActions: vi.fn(),
+  useSigners: vi.fn(),
 }));
 
 vi.mock("@privy-io/react-auth", () => ({
-  useHeadlessDelegatedActions: mocks.useHeadlessDelegatedActions,
+  useSigners: mocks.useSigners,
 }));
 
 import { PrivySignerEnrollment } from "./PrivySignerEnrollment";
 
-describe("PrivySignerEnrollment (Solana consent via delegateWallet)", () => {
+describe("PrivySignerEnrollment (TEE-compatible addSigners)", () => {
   beforeEach(() => {
-    mocks.useHeadlessDelegatedActions.mockReset();
+    mocks.useSigners.mockReset();
   });
 
-  it("invokes delegateWallet with the wallet address and chainType solana, sending no signer/quorum/policy identifiers", async () => {
-    const delegateWallet = vi.fn().mockResolvedValue(undefined);
-    mocks.useHeadlessDelegatedActions.mockReturnValue({ delegateWallet });
+  it("attaches the app key quorum as a server-side signer with the enrollment policy", async () => {
+    const addSigners = vi.fn().mockResolvedValue({ user: { id: "did" } });
+    mocks.useSigners.mockReturnValue({ addSigners });
 
     const onEnrolled = vi.fn().mockResolvedValue(undefined);
     const onError = vi.fn();
@@ -27,7 +27,9 @@ describe("PrivySignerEnrollment (Solana consent via delegateWallet)", () => {
 
     render(
       <PrivySignerEnrollment
-        walletAddress="9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+        walletAddress="0x5770353D56e4a7cBAa078CD46248e75431c7514f"
+        quorumId="np33q4k0i44p3g4kr2na0u9y"
+        policyId="u94to62itemodu5kon7ubwmy"
         busy={false}
         onEnrolled={onEnrolled}
         onError={onError}
@@ -36,24 +38,25 @@ describe("PrivySignerEnrollment (Solana consent via delegateWallet)", () => {
 
     await user.click(screen.getByRole("button", { name: /autorizar firmante/i }));
 
-    await waitFor(() => expect(delegateWallet).toHaveBeenCalledTimes(1));
-    // The documented chain-aware call shape: exact args and NOTHING else —
-    // the browser never supplies signer identity, quorum ids, or policy ids.
-    expect(delegateWallet).toHaveBeenCalledWith({
-      address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-      chainType: "solana",
+    await waitFor(() => expect(addSigners).toHaveBeenCalledTimes(1));
+    // TEE path: the key quorum is the server-side signer, carrying the
+    // enrollment policy. No on-device delegateWallet call.
+    expect(addSigners).toHaveBeenCalledWith({
+      address: "0x5770353D56e4a7cBAa078CD46248e75431c7514f",
+      signers: [
+        {
+          signerId: "np33q4k0i44p3g4kr2na0u9y",
+          policyIds: ["u94to62itemodu5kon7ubwmy"],
+        },
+      ],
     });
-    expect(Object.keys(delegateWallet.mock.calls[0]![0] as object).sort()).toEqual([
-      "address",
-      "chainType",
-    ]);
     await waitFor(() => expect(onEnrolled).toHaveBeenCalledTimes(1));
     expect(onError).not.toHaveBeenCalled();
   });
 
-  it("surfaces a delegation failure through onError and does not report enrollment", async () => {
-    const delegateWallet = vi.fn().mockRejectedValue(new Error("User rejected delegation"));
-    mocks.useHeadlessDelegatedActions.mockReturnValue({ delegateWallet });
+  it("surfaces a consent failure through onError and does not report enrollment", async () => {
+    const addSigners = vi.fn().mockRejectedValue(new Error("User rejected the request"));
+    mocks.useSigners.mockReturnValue({ addSigners });
 
     const onEnrolled = vi.fn().mockResolvedValue(undefined);
     const onError = vi.fn();
@@ -61,7 +64,9 @@ describe("PrivySignerEnrollment (Solana consent via delegateWallet)", () => {
 
     render(
       <PrivySignerEnrollment
-        walletAddress="9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+        walletAddress="0x5770353D56e4a7cBAa078CD46248e75431c7514f"
+        quorumId="q-1"
+        policyId="p-1"
         busy={false}
         onEnrolled={onEnrolled}
         onError={onError}
@@ -71,7 +76,7 @@ describe("PrivySignerEnrollment (Solana consent via delegateWallet)", () => {
     await user.click(screen.getByRole("button", { name: /autorizar firmante/i }));
 
     await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
-    expect(onError).toHaveBeenCalledWith("User rejected delegation");
+    expect(onError).toHaveBeenCalledWith("User rejected the request");
     expect(onEnrolled).not.toHaveBeenCalled();
   });
 });
