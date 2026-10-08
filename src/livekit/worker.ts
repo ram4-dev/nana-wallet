@@ -251,6 +251,19 @@ async function runJob(
         room: ctx.room,
         record: false,
       });
+      // S1 proactive onboarding: Nani opens the session before the user speaks.
+      // Best effort on purpose — a greeting that cannot be dispatched must never
+      // break the bind/start path, the preview read-back, the decision gate or the
+      // financial-task subscription. `speakGreeting` is at-most-once per session,
+      // so no reconnect/resume of this session can re-greet.
+      try {
+        created.speakGreeting();
+      } catch (error) {
+        console.error(
+          "[live-voice] proactive greeting failed:",
+          error instanceof Error ? error.message : error,
+        );
+      }
       agentParticipant.registerRpcMethod("interrupt_agent", async () => {
         await created.session?.interrupt({ force: true });
         return JSON.stringify({ ok: true });
