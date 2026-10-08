@@ -105,6 +105,22 @@ describe("process-specific configuration", () => {
     ).toMatchObject({ identityProvider: "privy" });
   });
 
+  it("accepts the per-user-bound solana-devnet provider in privy mode (PMU-024)", () => {
+    // The guard exists to keep a FUNDED SINGLETON out of privy mode. Solana
+    // devnet signs through a per-user wallet binding, so it has no singleton
+    // sender identity and fails closed on its own. This must stay in sync with
+    // `readPrivyServerConfig`, which already allows it: an API that refuses to
+    // boot on a configuration the rest of the stack supports is unusable.
+    expect(
+      readApiProcessConfig({
+        IDENTITY_PROVIDER: "privy",
+        PRIVY_APP_ID: "app",
+        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
+        WDK_TOOLS_SOURCE: "solana-devnet",
+      }),
+    ).toMatchObject({ identityProvider: "privy" });
+  });
+
   it("rejects an invalid API binding key", () => {
     expect(() =>
       readApiProcessConfig({

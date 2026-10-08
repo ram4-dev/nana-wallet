@@ -7,18 +7,29 @@
  *   - per-transfer lamport ceiling via Transfer.lamports
  *   - static expiry via `system` current_unix_timestamp (lt)
  *
+ * Rule shape (verified live against the Privy API): a rule is FLAT —
+ * `{ name, method, action, conditions[] }`, exactly like the EVM builder in
+ * src/wallet/enrollment-policy.ts. The older
+ * `{ action, resource: { method, chain }, conditions }` wrapper is REJECTED
+ * with 400 invalid_policy_format:
+ *   Required at "rules[0].name"; Required at "rules[0].method";
+ *   Unrecognized key(s) in object: 'resource'
+ *
+ * CHAIN SCOPING: Solana conditions carry NO chain/cluster field — only EVM
+ * rules have `chain_id`. A Solana rule therefore cannot scope a cluster, and
+ * there is deliberately no `chain` on the rule. Devnet scoping comes from the
+ * wallet and the provider configuration, NOT from the policy.
+ *
  * These shapes are pinned by tests/unit/grants-policy-provisioner.test.ts
  * (task 1.11) and verified against Privy's documented Solana examples.
  */
 
 export type SolanaEnrollmentRule = {
+  name: string;
+  method: "signAndSendTransaction";
   action: "ALLOW";
-  resource: { method: "signAndSendTransaction"; chain: string };
   conditions: Array<Record<string, unknown>>;
 };
-
-/** Devnet CAIP-2 for Solana (matches the provider's network). */
-const SOLANA_DEVNET_CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
 /**
  * Builds the single ALLOW rule for a Solana signer enrollment: recipient
@@ -37,11 +48,9 @@ export function buildSolanaEnrollmentRules(input: {
   }
   return [
     {
+      name: "Solana transfer allowlist",
+      method: "signAndSendTransaction",
       action: "ALLOW",
-      resource: {
-        method: "signAndSendTransaction",
-        chain: SOLANA_DEVNET_CAIP2,
-      },
       conditions: [
         {
           field_source: "solana_system_program_instruction",

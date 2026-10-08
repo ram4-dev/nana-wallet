@@ -388,7 +388,7 @@ describe("runtime grant policy provisioner (task 2.3, RED)", () => {
     expiresAt: 1_792_000_000,
   };
 
-  it("accepts the stored Solana ledger chain and keeps the devnet CAIP-2 resource exact", async () => {
+  it("accepts the stored Solana ledger chain and emits the flat Solana rule shape (no chain field)", async () => {
     const mod = await loadModule();
     const deps = makeDeps({
       signerRows: [{ signer_id: SIGNER_ID, override_policy_ids: [] }],
@@ -411,17 +411,34 @@ describe("runtime grant policy provisioner (task 2.3, RED)", () => {
       }),
     ).resolves.toBeUndefined();
 
-    // The composed policy resource stays fixed to the devnet CAIP-2 chain:
-    // the ledger family NEVER leaks into the Privy rule resource.
-    const [, patched] = deps.server.patchPolicy.mock.calls.at(-1) ?? [];
+    // Rules are flat — `{ name, method, action, conditions[] }`. Solana
+    // conditions carry no chain or cluster field (only EVM has `chain_id`),
+    // so the ledger family can never leak into a rule and devnet scoping comes
+    // from the wallet + provider config, not the policy.
+    const [, patched] = deps.server.patchPolicy.mock.calls[0] ?? [];
     const rules = patched as Array<{
-      resource: { method: string; chain: string };
+      name: string;
+      method: string;
+      action: string;
+      conditions: Array<Record<string, unknown>>;
     }>;
     expect(rules).toBeDefined();
+    expect(rules.length).toBeGreaterThan(0);
     for (const rule of rules) {
-      expect(rule.resource.chain).toBe(
-        "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
-      );
+      expect(typeof rule.name).toBe("string");
+      expect(rule.name).not.toBe("");
+      expect(rule.method).toBe("signAndSendTransaction");
+      expect(rule.action).toBe("ALLOW");
+      expect(rule).not.toHaveProperty("resource");
+      expect(Object.keys(rule).sort()).toEqual([
+        "action",
+        "conditions",
+        "method",
+        "name",
+      ]);
+      for (const condition of rule.conditions) {
+        expect(condition).not.toHaveProperty("chain_id");
+      }
     }
   });
 

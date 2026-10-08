@@ -7,6 +7,13 @@
  * There is deliberately NO cumulative-window rule: Privy has no rolling
  * cumulative cap, so the grants ledger stays the sole cumulative authority.
  *
+ * Rule shape (verified live against the Privy API): FLAT
+ * `{ name, method, action, conditions[] }` — a `resource: { method, chain }`
+ * wrapper and any extra `metadata` key are rejected with 400
+ * invalid_policy_format. Solana conditions carry no chain/cluster field (only
+ * EVM has `chain_id`), so devnet scoping comes from the wallet + provider
+ * config, NOT the policy.
+ *
  * Lifecycle (fail-closed, readback-verified):
  *   1. Attach: signer readback; if the signer has no policy, create one and
  *      attach it via `additional_signers` as a complete-list mutation that
@@ -34,10 +41,10 @@ export type GrantPolicyInput = {
 };
 
 export type GrantPolicyRule = {
+  name: string;
+  method: "signAndSendTransaction";
   action: "ALLOW";
-  resource: { method: "signAndSendTransaction"; chain: string };
   conditions: Array<Record<string, unknown>>;
-  metadata: { grantId: string };
 };
 
 export type PrivyPolicyAdminClient = {
@@ -91,21 +98,32 @@ export type RevokePolicyRulesResult = {
   error?: string;
 };
 
-/** Devnet CAIP-2 for Solana (matches the provider's network). */
-const SOLANA_DEVNET_CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
-
 /**
  * Compose conditioned ALLOW rules, one per grant. Per-grant isolation survives
  * composition: each rule is scoped to its own recipient allowlist, per-transfer
- * ceiling, and static expiry. No cumulative-window rule is ever fabricated —
- * the ledger is the sole cumulative authority.
+ * ceiling, and static expiry, and carries a grant-derived name. No
+ * cumulative-window rule is ever fabricated — the ledger is the sole cumulative
+ * authority.
+ *
+ * Shape (verified live against the Privy API): a rule is FLAT —
+ * `{ name, method, action, conditions[] }`, exactly like the EVM builder in
+ * src/wallet/enrollment-policy.ts. Privy rejects both the older
+ * `resource: { method, chain }` wrapper and any extra `metadata` key with
+ * 400 invalid_policy_format (Unrecognized key(s) in object). Rule names are
+ * capped at 50 characters.
+ *
+ * CHAIN SCOPING: Solana conditions carry NO chain/cluster field — only EVM
+ * rules have `chain_id`. A Solana rule therefore cannot scope a cluster, and
+ * there is deliberately no `chain` on the rule. Devnet scoping comes from the
+ * wallet and the provider configuration, NOT from the policy.
  */
 export function composeGrantRules(
   grants: GrantPolicyInput[],
 ): GrantPolicyRule[] {
   return grants.map((grant) => ({
+    name: `solana-grant-${grant.grantId}`.slice(0, 50),
+    method: "signAndSendTransaction",
     action: "ALLOW",
-    resource: { method: "signAndSendTransaction", chain: SOLANA_DEVNET_CAIP2 },
     conditions: [
       {
         field_source: "solana_system_program_instruction",
@@ -126,7 +144,6 @@ export function composeGrantRules(
         value: grant.expiresAt,
       },
     ],
-    metadata: { grantId: grant.grantId },
   }));
 }
 

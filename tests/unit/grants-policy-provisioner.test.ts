@@ -399,17 +399,41 @@ describe("privy policy sync expiry passthrough (ADR-2, RED)", () => {
 });
 
 describe("Solana policy DSL exact shape (task 1.11, RED)", () => {
-  /** Exact Privy Solana policy shape documented for the system program. */
-  it("uses the exact Solana field sources: Transfer.to in, Transfer.lamports lte, method signAndSendTransaction", () => {
+  /**
+   * Exact Privy Solana policy shape, matching the EVM builder in
+   * src/wallet/enrollment-policy.ts and verified live against the Privy API:
+   * a rule is FLAT — `{ name, method, action, conditions[] }`. The former
+   * `{ action, resource: { method, chain }, conditions }` wrapper is rejected
+   * with 400 invalid_policy_format:
+   *   Required at "rules[0].name"; Required at "rules[0].method";
+   *   Unrecognized key(s) in object: 'resource'
+   */
+  it("uses the exact flat Solana shape: named ALLOW rule, hoisted method, Transfer.to in, Transfer.lamports lte", () => {
     const rules = composeGrantRules([GRANT_A]);
     expect(rules).toHaveLength(1);
     const rule = rules[0] as unknown as {
-      resource: { method: string; chain: string };
+      name?: unknown;
+      method?: unknown;
+      action?: unknown;
       conditions: Array<Record<string, unknown>>;
     };
-    // Method must be the Solana sign-and-send path on the devnet chain.
-    expect(rule.resource.method).toBe("signAndSendTransaction");
-    expect(rule.resource.chain).toBe("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
+    // Privy requires a named rule and a top-level method; the `resource`
+    // wrapper is rejected outright.
+    expect(typeof rule.name).toBe("string");
+    expect(rule.name).not.toBe("");
+    // Rule names are capped at 50 characters by Privy.
+    expect((rule.name as string).length).toBeLessThanOrEqual(50);
+    expect(rule.method).toBe("signAndSendTransaction");
+    expect(rule.action).toBe("ALLOW");
+    expect(rule).not.toHaveProperty("resource");
+    // Exact accepted key set: an extra `metadata` key is ALSO rejected by
+    // Privy with "Unrecognized key(s) in object: 'metadata'".
+    expect(Object.keys(rule).sort()).toEqual([
+      "action",
+      "conditions",
+      "method",
+      "name",
+    ]);
     const conditions = rule.conditions;
     expect(conditions).toHaveLength(3);
 

@@ -85,16 +85,24 @@ export function readIdentityProviderMode(
  * PMU-024: until the per-user wallet change replaces the shared singleton, the
  * identity foundation must not serve financial operations from a funded/live
  * singleton provider in privy mode. Fixture stays available for preview.
+ *
+ * `solana-devnet` is the one exception, and it is not a singleton: its signing
+ * path resolves a per-user wallet binding, so the singleton provider has no
+ * sender identity and fails closed. `readPrivyServerConfig` already allows it
+ * for that reason; this guard must accept exactly the same set, otherwise the
+ * API refuses to boot on a configuration the rest of the stack supports.
  */
+const PER_USER_BOUND_SOURCES = new Set(["fixture", "solana-devnet"]);
+
 function rejectFundedSingletonInPrivyMode(
   environment: NodeJS.ProcessEnv,
   identityProvider: IdentityProviderMode,
 ): void {
   if (identityProvider !== "privy") return;
   const source = environment.WDK_TOOLS_SOURCE?.trim() || "fixture";
-  if (source !== "fixture") {
+  if (!PER_USER_BOUND_SOURCES.has(source)) {
     throw new Error(
-      `WDK_TOOLS_SOURCE=${source} is not allowed with IDENTITY_PROVIDER=privy: the identity foundation must not start with a funded singleton wallet provider. Use 'fixture' until the per-user wallet change ships.`,
+      `WDK_TOOLS_SOURCE=${source} is not allowed with IDENTITY_PROVIDER=privy: the identity foundation must not start with a funded singleton wallet provider. Use 'fixture' or the per-user-bound 'solana-devnet' provider.`,
     );
   }
 }
