@@ -52,17 +52,10 @@ const PERMISSION_STATE_LABELS: Record<PermissionState, string> = {
   unavailable: "Permiso de pagos no disponible",
 };
 
-/** The documented provider aggregate-overshoot limitation. Shown, never hidden. */
-const OVERSHOOT_CAVEAT =
-  "El proveedor no descuenta de forma atómica: pagos concurrentes podrían exceder momentáneamente el tope por hora.";
-
 /**
  * USER DECISION (2026-09-09): payments are enabled with the per-transfer cap;
  * the rolling 50 USDC/hour aggregate is a PENDING FEATURE — shown, never hidden.
  */
-const HOURLY_LIMIT_PENDING =
-  "El límite de 50 USDC por hora todavía no está activo en el proveedor. Sí están activos el tope por transferencia (10 USDC), la lista de destinatarios autorizados y el tope de gas. Lo vas a ver como pendiente hasta que se pruebe la configuración por wallet.";
-
 const toneClasses: Record<WalletStateTone, string> = {
   neutral: "bg-secondary text-secondary-foreground",
   ok: "bg-success-surface text-success-surface-foreground",
@@ -421,20 +414,6 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
                 </dd>
               </div>
             </dl>
-
-            {permission.aggregateOvershootCaveat ? (
-              <p className="mt-4 rounded-2xl border border-border bg-card p-4 text-sm leading-snug text-muted-foreground">
-                {OVERSHOOT_CAVEAT}
-              </p>
-            ) : null}
-            {permission.aggregationReady === false ? (
-              <p
-                className="mt-4 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm leading-snug text-amber-900"
-                role="status"
-              >
-                {HOURLY_LIMIT_PENDING}
-              </p>
-            ) : null}
 
             {permission.recipients.length > 0 ? (
               <div className="mt-4">
