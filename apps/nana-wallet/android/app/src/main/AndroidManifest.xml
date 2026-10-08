@@ -40,4 +40,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Capacitor's WebView AUDIO_CAPTURE grant requests this normal permission
+         alongside RECORD_AUDIO; without it the whole request is denied and
+         getUserMedia fails inside the WebView. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 </manifest>
