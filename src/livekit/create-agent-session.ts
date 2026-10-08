@@ -41,7 +41,7 @@ export type AgentSessionComposition = {
  * read the REAL balance, so the model must call `get_balance` itself. A hardcoded
  * string could only invent a figure.
  */
-export const NANI_GREETING_INSTRUCTIONS = `Session opening turn: the user has NOT spoken yet and is waiting for you, so YOU speak first.
+const NANI_GREETING_INSTRUCTIONS = `Session opening turn: the user has NOT spoken yet and is waiting for you, so YOU speak first.
 Do it now, in Rioplatense Spanish (voseo), warm and brief, in this exact order:
 1. Introduce yourself: you are Nani, the assistant of the user's wallet.
 2. Call the get_balance tool with NO arguments and read aloud the available balance it returns, following the get_balance rules above. NEVER invent, estimate or round a figure, and never ask which wallet or network: if the tool or a network fails, say the balance is temporarily unavailable right now and keep going.
