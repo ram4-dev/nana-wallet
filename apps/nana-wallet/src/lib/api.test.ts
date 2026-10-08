@@ -352,6 +352,46 @@ describe("wallet lifecycle API", () => {
     expect(String(input).endsWith("/v1/wallets/current")).toBe(true);
   });
 
+  it("requests the Solana chain on the current wallet read", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ ok: true, data: currentWallet }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getCurrentWallet({ chain: "solana" });
+
+    const [input] = fetchMock.mock.calls[0] ?? [];
+    expect(String(input).endsWith("/v1/wallets/current?chain=solana")).toBe(true);
+  });
+
+  it("requests the Solana chain on the permission read", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(jsonResponse({ ok: true, data: activeGrant }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getCurrentWalletPermission({ chain: "solana" });
+
+    const [input] = fetchMock.mock.calls[0] ?? [];
+    expect(String(input).endsWith("/v1/wallets/current/permission?chain=solana")).toBe(true);
+  });
+
+  it("scopes the revoke body to the requested chain", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse({
+        ok: true,
+        data: { userId: user, state: "revoked" as const, remote: "revoked" as const },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.revokeWalletPermission({ chain: "solana" });
+
+    const [input, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(input).endsWith("/v1/wallets/current/permission/revoke")).toBe(true);
+    expect(JSON.parse(String(init?.body))).toEqual({ chain: "solana" });
+  });
+
   it("syncs the wallet with POST /v1/wallets/sync and returns readiness", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({

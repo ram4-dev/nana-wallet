@@ -320,6 +320,13 @@ export type WalletSyncResponse = {
 /** PEW-013: permission lifecycle is separate from login and payment confirmation. */
 export type PermissionState = "pending" | "active" | "revoking" | "revoked" | "unavailable";
 
+/**
+ * Chain selector for the wallet/permission surface. Mirrors the backend
+ * `walletChainFamilySchema`; when omitted the backend keeps the legacy `arc`
+ * behaviour. Only `arc` and `solana` are valid.
+ */
+export type WalletChainFamily = "arc" | "solana";
+
 export type WalletPermissionResponse = {
   userId: string;
   state: PermissionState;
@@ -341,6 +348,8 @@ export type WalletActivationResponse = WalletPermissionResponse;
 
 export type ActivateWalletPermissionInput = {
   recipients: string[];
+  // Optional chain selector; absent means the legacy `arc` wallet.
+  chain?: WalletChainFamily;
 };
 
 /** PEW-014: signer enrollment prepare posts the explicit recipient allowlist. */
@@ -363,6 +372,8 @@ export type EnrollmentPreparationResponse = {
 
 export type EnrollmentCompleteInput = {
   walletId: string;
+  // Optional chain guard; when present the wallet must belong to this chain.
+  chain?: WalletChainFamily;
 };
 
 export type EnrollmentCompleteResponse = {
@@ -381,6 +392,11 @@ export type WalletRevokeResponse = {
   userId: string;
   state: PermissionState;
   remote: "revoked" | "unavailable";
+};
+
+/** Optional chain selector for the revoke mutation; absent keeps `arc`. */
+export type WalletRevokeInput = {
+  chain?: WalletChainFamily;
 };
 
 // wallet-profile (WP-004/WP-005): duplicated manually from the backend

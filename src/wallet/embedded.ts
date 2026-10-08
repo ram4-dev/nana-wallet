@@ -29,6 +29,7 @@ import {
 } from "./privy-server-client.js";
 import type {
   PermissionState,
+  WalletChainFamily,
   WalletReadinessState,
 } from "../contracts/http.js";
 
@@ -277,6 +278,10 @@ const WALLET_COLUMNS =
   "id, user_id, provider, provider_wallet_id, chain_family, address, state, verified_at";
 const GRANT_COLUMNS =
   "id, user_id, wallet_id, provider_policy_id, provider_signer_id, policy_hash, allowlisted_recipients, per_transfer_atomic6, per_transfer_lamports, rolling_total_atomic6, rolling_window_seconds, gas_ceiling, state";
+/** Same columns alias-qualified for the signer_grants -> user_wallets join. */
+const GRANT_COLUMNS_ALIASED = GRANT_COLUMNS.split(", ")
+  .map((column) => `g.${column}`)
+  .join(", ");
 
 function iso(value: string | Date | null): string | null {
   if (value === null) return null;
@@ -338,13 +343,14 @@ export class EmbeddedWalletService {
       private async currentWalletRow(
         userId: string,
         client: Queryable,
+        chainFamily: WalletChainFamily = "arc",
       ): Promise<WalletRow | undefined> {
         const result = await client.query<WalletRow>(
           `SELECT ${WALLET_COLUMNS} FROM user_wallets
-           WHERE user_id = $1 AND chain_family = 'arc'
+           WHERE user_id = $1 AND chain_family = $2
            ORDER BY (state = 'ready') DESC, updated_at DESC
            LIMIT 1`,
-          [userId],
+          [userId, chainFamily],
         );
         return result.rows[0];
       }
@@ -403,9 +409,12 @@ export class EmbeddedWalletService {
       }
 
   /** PEW-005: identity is separate from wallet readiness. */
-  public async getCurrentWallet(userId: string): Promise<CurrentWallet> {
+  public async getCurrentWallet(
+    userId: string,
+    chainFamily: WalletChainFamily = "arc",
+  ): Promise<CurrentWallet> {
     const row = await this.database.withUserTransaction(userId, (client) =>
-      this.currentWalletRow(userId, client),
+      this.currentWalletRow(userId, client, chainFamily),
     );
     if (!row) {
       return {
@@ -413,7 +422,7 @@ export class EmbeddedWalletService {
         id: "",
         state: "unprovisioned",
         address: "",
-        chainFamily: "arc",
+        chainFamily,
         provider: "privy",
         verifiedAt: null,
       };
@@ -809,13 +818,16 @@ export class EmbeddedWalletService {
     userId: string,
     walletId: string,
     input: GrantInput,
+    chainFamily: WalletChainFamily = "arc",
   ): Promise<PermissionSummary> {
     if (this.usesUnverifiedLivePolicy()) {
       throw new WalletUnavailableError(
         "Privy permission activation requires verified user enrollment and policy read-back.",
       );
     }
-    validateGrantInput(input);
+    if (chainFamily === "solana") validateSolanaGrantInput(input);
+    else validateGrantInput(input);
+    const isSolanaWallet = chainFamily === "solana";
     const grant = await this.database.withUserTransaction(
       userId,
       async (client) => {
@@ -827,8 +839,8 @@ export class EmbeddedWalletService {
           throw new WalletNotFoundError("No ready wallet for this grant.");
         const inserted = await client.query<GrantRow>(
           `INSERT INTO signer_grants
-           (user_id, wallet_id, policy_hash, allowlisted_recipients, per_transfer_atomic6, rolling_total_atomic6, rolling_window_seconds, gas_ceiling, state)
-         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, 'pending')
+           (user_id, wallet_id, policy_hash, allowlisted_recipients, per_transfer_atomic6, per_transfer_lamports, rolling_total_atomic6, rolling_window_seconds, gas_ceiling, state)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, 'pending')
          RETURNING ${GRANT_COLUMNS}`,
           [
             userId,
@@ -836,6 +848,7 @@ export class EmbeddedWalletService {
             deterministicPolicyHash(input),
             JSON.stringify(input.recipients),
             input.perTransferAtomic6,
+            isSolanaWallet ? input.perTransferAtomic6 : null,
             input.rollingTotalAtomic6,
             input.rollingWindowSeconds,
             input.gasCeiling,
@@ -882,8 +895,9 @@ export class EmbeddedWalletService {
   public async activatePermission(
     userId: string,
     recipients: string[],
+    chainFamily: WalletChainFamily = "arc",
   ): Promise<PermissionSummary> {
-    const wallet = await this.getCurrentWallet(userId);
+    const wallet = await this.getCurrentWallet(userId, chainFamily);
     if (wallet.state !== "ready") {
       throw new WalletNotFoundError(
         `Wallet is not ready (state: ${wallet.state}).`,
@@ -894,7 +908,12 @@ export class EmbeddedWalletService {
         "Privy permission activation requires verified user enrollment and policy read-back.",
       );
     }
-    return this.createGrant(userId, wallet.id, defaultGrantInput(recipients));
+    return this.createGrant(
+      userId,
+      wallet.id,
+      defaultGrantInput(recipients),
+      chainFamily,
+    );
   }
 
   /**
@@ -1054,6 +1073,7 @@ export class EmbeddedWalletService {
   public async completePermission(
     userId: string,
     walletId: string,
+    chainFamily?: WalletChainFamily,
   ): Promise<EnrollmentVerification> {
     if (!this.privyServer) {
       throw new WalletUnavailableError(
@@ -1081,10 +1101,17 @@ export class EmbeddedWalletService {
     const walletRow = await this.database.withUserTransaction(
       userId,
       async (client) => {
-        const result = await client.query<WalletRow>(
-          `SELECT ${WALLET_COLUMNS} FROM user_wallets WHERE id = $1 AND user_id = $2`,
-          [walletId, userId],
-        );
+        // Optional chain guard: when the caller names a chain, the wallet must
+        // belong to it. Absent selector keeps the legacy wallet-id-only lookup.
+        const result = chainFamily
+          ? await client.query<WalletRow>(
+              `SELECT ${WALLET_COLUMNS} FROM user_wallets WHERE id = $1 AND user_id = $2 AND chain_family = $3`,
+              [walletId, userId, chainFamily],
+            )
+          : await client.query<WalletRow>(
+              `SELECT ${WALLET_COLUMNS} FROM user_wallets WHERE id = $1 AND user_id = $2`,
+              [walletId, userId],
+            );
         return result.rows[0];
       },
     );
@@ -1541,17 +1568,27 @@ export class EmbeddedWalletService {
     });
   }
 
-  /** PEW-007: read-only grant summary with readable USDC limits; never credentials/bytes. */
-  public async getPermission(userId: string): Promise<PermissionSummary> {
+  /**
+   * PEW-007: read-only grant summary with readable USDC limits; never credentials/bytes.
+   *
+   * Chain-scoped: the grant is joined to its wallet so a read for one chain can
+   * never surface (or later revoke) the grant of another. `signer_grants` has no
+   * chain column, so the chain lives on `user_wallets.chain_family`.
+   */
+  public async getPermission(
+    userId: string,
+    chainFamily: WalletChainFamily = "arc",
+  ): Promise<PermissionSummary> {
     const row = await this.database.withUserTransaction(
       userId,
       async (client) => {
         const result = await client.query<GrantRow>(
-          `SELECT ${GRANT_COLUMNS} FROM signer_grants
-         WHERE user_id = $1
-         ORDER BY (state = 'active') DESC, updated_at DESC
+          `SELECT ${GRANT_COLUMNS_ALIASED} FROM signer_grants g
+         JOIN user_wallets w ON w.id = g.wallet_id AND w.user_id = g.user_id
+         WHERE g.user_id = $1 AND w.chain_family = $2
+         ORDER BY (g.state = 'active') DESC, g.updated_at DESC
          LIMIT 1`,
-          [userId],
+          [userId, chainFamily],
         );
         return result.rows[0];
       },
@@ -1564,14 +1601,24 @@ export class EmbeddedWalletService {
     return summary;
   }
 
-  /** PEW-013: revoke moves active -> revoking -> revoked; provider-unavailable stays 'revoking'. */
-  public async revokePermission(userId: string): Promise<RevokeResult> {
+  /**
+   * PEW-013: revoke moves active -> revoking -> revoked; provider-unavailable stays 'revoking'.
+   * Chain-scoped like getPermission: a revoke for one chain never mutates the
+   * other chain's grant (that would be a wrong-wallet mutation).
+   */
+  public async revokePermission(
+    userId: string,
+    chainFamily: WalletChainFamily = "arc",
+  ): Promise<RevokeResult> {
     const grant = await this.database.withUserTransaction(
       userId,
       async (client) => {
         const result = await client.query<GrantRow>(
-          `SELECT ${GRANT_COLUMNS} FROM signer_grants WHERE user_id = $1 AND state = 'active' ORDER BY updated_at DESC LIMIT 1`,
-          [userId],
+          `SELECT ${GRANT_COLUMNS_ALIASED} FROM signer_grants g
+           JOIN user_wallets w ON w.id = g.wallet_id AND w.user_id = g.user_id
+           WHERE g.user_id = $1 AND w.chain_family = $2 AND g.state = 'active'
+           ORDER BY g.updated_at DESC LIMIT 1`,
+          [userId, chainFamily],
         );
         return result.rows[0];
       },

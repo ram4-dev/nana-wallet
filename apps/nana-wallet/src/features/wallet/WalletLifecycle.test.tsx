@@ -9,6 +9,9 @@ const mocks = vi.hoisted(() => ({
   getCurrentWalletPermission: vi.fn(),
   getContacts: vi.fn(),
   prepareWalletPermission: vi.fn(),
+  completeWalletPermission: vi.fn(),
+  revokeWalletPermission: vi.fn(),
+  activateWalletPermission: vi.fn(),
   isPrivyIdentityProvider: vi.fn(),
 }));
 
@@ -18,6 +21,9 @@ vi.mock("@/lib/api", () => ({
     getCurrentWalletPermission: mocks.getCurrentWalletPermission,
     getContacts: mocks.getContacts,
     prepareWalletPermission: mocks.prepareWalletPermission,
+    completeWalletPermission: mocks.completeWalletPermission,
+    revokeWalletPermission: mocks.revokeWalletPermission,
+    activateWalletPermission: mocks.activateWalletPermission,
     syncWallet: vi.fn(),
   },
   getErrorMessage: (error: unknown) => String(error),
@@ -36,7 +42,13 @@ vi.mock("./AddTrustedRecipient", () => ({
 }));
 
 vi.mock("./PrivySignerEnrollment", () => ({
-  PrivySignerEnrollment: () => <div data-testid="signer-enrollment" />,
+  // Exposes the consent trigger so the completion step (server read-back) can
+  // be exercised: the real component calls onEnrolled after Privy consent.
+  PrivySignerEnrollment: ({ onEnrolled }: { onEnrolled: () => void | Promise<void> }) => (
+    <button type="button" data-testid="signer-enrollment" onClick={() => void onEnrolled()}>
+      consentir
+    </button>
+  ),
 }));
 
 vi.mock("./PrivyWalletSync", () => ({
@@ -53,6 +65,16 @@ const readyWallet: CurrentWalletResponse = {
   chainFamily: "arc",
   provider: "privy",
 };
+
+const readySolanaWallet: CurrentWalletResponse = {
+  userId: "user-1",
+  state: "ready",
+  address: "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq",
+  chainFamily: "solana",
+  provider: "privy",
+};
+
+const SOL_RECIPIENT = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 
 const permissionWithoutGrant: WalletPermissionResponse = {
   userId: "user-1",
@@ -155,5 +177,114 @@ describe("WalletLifecycle activation entry", () => {
 
     expect(await screen.findByText(/al menos un destinatario de confianza/i)).toBeInTheDocument();
     expect(mocks.prepareWalletPermission).not.toHaveBeenCalled();
+  });
+
+  it("drives the flow at the Solana wallet and Solana grant for a privy user", async () => {
+    mocks.isPrivyIdentityProvider.mockReturnValue(true);
+    mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
+
+    render(
+      <Wrapper>
+        <WalletLifecycle userId="user-1" />
+      </Wrapper>,
+    );
+
+    await screen.findByRole("button", { name: /activar permiso de pagos/i });
+    expect(mocks.getCurrentWallet).toHaveBeenCalledWith({ chain: "solana" });
+    expect(mocks.getCurrentWalletPermission).toHaveBeenCalledWith({ chain: "solana" });
+  });
+
+  it("shows the activation path for a privy user with a ready Solana wallet and no Solana grant", async () => {
+    mocks.isPrivyIdentityProvider.mockReturnValue(true);
+    mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
+    mocks.getCurrentWalletPermission.mockResolvedValue(permissionWithoutGrant);
+
+    render(
+      <Wrapper>
+        <WalletLifecycle userId="user-1" />
+      </Wrapper>,
+    );
+
+    expect(await screen.findByRole("button", { name: /activar permiso de pagos/i })).toBeEnabled();
+  });
+
+  it("completes Solana enrollment scoped to the solana chain", async () => {
+    mocks.isPrivyIdentityProvider.mockReturnValue(true);
+    mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
+    mocks.getContacts.mockResolvedValue([
+      {
+        id: "c1",
+        alias: "Sol",
+        address: SOL_RECIPIENT,
+        network: null,
+        createdAt: "2026-10-06T00:00:00.000Z",
+        expectedVersion: 1,
+      },
+    ]);
+    mocks.prepareWalletPermission.mockResolvedValue({
+      walletId: "sol-wallet-1",
+      walletAddress: readySolanaWallet.address,
+      perTransferUsdc: "",
+      perTransferSol: "0.01",
+    });
+    mocks.completeWalletPermission.mockResolvedValue({ verified: true, state: "active" });
+
+    render(
+      <Wrapper>
+        <WalletLifecycle userId="user-1" />
+      </Wrapper>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /activar permiso de pagos/i }));
+    await user.click(await screen.findByTestId("signer-enrollment"));
+
+    await waitFor(() =>
+      expect(mocks.completeWalletPermission).toHaveBeenCalledWith({
+        walletId: "sol-wallet-1",
+        chain: "solana",
+      }),
+    );
+  });
+
+  it("revokes the Solana grant scoped to the solana chain", async () => {
+    mocks.isPrivyIdentityProvider.mockReturnValue(true);
+    mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
+    mocks.getCurrentWalletPermission.mockResolvedValue({
+      ...permissionWithoutGrant,
+      state: "active",
+      perTransferSol: "0.01",
+      rollingWindowSeconds: 3600,
+      recipients: [SOL_RECIPIENT],
+      aggregateOvershootCaveat: false,
+    });
+    mocks.revokeWalletPermission.mockResolvedValue({ remote: "revoked" });
+
+    render(
+      <Wrapper>
+        <WalletLifecycle userId="user-1" />
+      </Wrapper>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /revocar permiso/i }));
+
+    await waitFor(() =>
+      expect(mocks.revokeWalletPermission).toHaveBeenCalledWith({ chain: "solana" }),
+    );
+  });
+
+  it("keeps the arc chain for the legacy demo (non-privy) flow", async () => {
+    mocks.isPrivyIdentityProvider.mockReturnValue(false);
+
+    render(
+      <Wrapper>
+        <WalletLifecycle userId="user-1" />
+      </Wrapper>,
+    );
+
+    await screen.findByRole("button", { name: /activar permiso de pagos/i });
+    expect(mocks.getCurrentWallet).toHaveBeenCalledWith({ chain: "arc" });
+    expect(mocks.getCurrentWalletPermission).toHaveBeenCalledWith({ chain: "arc" });
   });
 });

@@ -7,13 +7,16 @@ import {
   enrollmentCompleteResponseSchema,
   enrollmentPrepareInputSchema,
   enrollmentPreparationResponseSchema,
+  walletChainFamilySchema,
   walletPermissionResponseSchema,
+  walletRevokeInputSchema,
   walletRevokeResponseSchema,
   walletSyncResponseSchema,
   type BalancesData,
   type CurrentWalletResponse,
   type EnrollmentCompleteResponse,
   type EnrollmentPreparationResponse,
+  type WalletChainFamily,
   type WalletPermissionResponse,
   type WalletRevokeResponse,
   type WalletSyncResponse,
@@ -47,6 +50,25 @@ export type WalletApiError = {
 type WalletReply = {
   code(status: number): { send(payload: WalletApiError): void };
 };
+
+/**
+ * Reads the optional `chain` query selector. Absent keeps the legacy `arc`
+ * default; an unsupported value is a 422 DATOS_INVALIDOS (never a 500).
+ */
+function chainFromQuery(query: unknown):
+  | { ok: true; chain: WalletChainFamily | undefined }
+  | { ok: false; message: string } {
+  const raw = (query as { chain?: unknown } | undefined)?.chain;
+  if (raw === undefined) return { ok: true, chain: undefined };
+  const parsed = walletChainFamilySchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: "Cadena inválida: solo se acepta 'arc' o 'solana'.",
+    };
+  }
+  return { ok: true, chain: parsed.data };
+}
 
 function errorReply(reply: WalletReply, error: unknown): WalletApiError {
   // Identity failures map to 401 via the server-wide handler, never 500.
@@ -116,12 +138,23 @@ export async function registerWalletsRoutes(
   app.get(
     "/v1/wallets/current",
     async (
-      request,
+      request: FastifyRequest<{ Querystring: unknown }>,
       reply,
     ): Promise<{ ok: true; data: CurrentWalletResponse } | WalletApiError> => {
+      const chain = chainFromQuery(request.query);
+      if (!chain.ok) {
+        reply.code(422);
+        return {
+          ok: false,
+          error: { code: "DATOS_INVALIDOS", message: chain.message },
+        };
+      }
       try {
         const userId = await dependencies.resolveUserId(request);
-        const wallet = await dependencies.wallet.getCurrentWallet(userId);
+        const wallet = await dependencies.wallet.getCurrentWallet(
+          userId,
+          chain.chain,
+        );
         return { ok: true, data: currentWalletResponseSchema.parse(wallet) };
       } catch (error) {
         return errorReply(reply, error);
@@ -148,14 +181,25 @@ export async function registerWalletsRoutes(
   app.get(
     "/v1/wallets/current/permission",
     async (
-      request,
+      request: FastifyRequest<{ Querystring: unknown }>,
       reply,
     ): Promise<
       { ok: true; data: WalletPermissionResponse } | WalletApiError
     > => {
+      const chain = chainFromQuery(request.query);
+      if (!chain.ok) {
+        reply.code(422);
+        return {
+          ok: false,
+          error: { code: "DATOS_INVALIDOS", message: chain.message },
+        };
+      }
       try {
         const userId = await dependencies.resolveUserId(request);
-        const permission = await dependencies.wallet.getPermission(userId);
+        const permission = await dependencies.wallet.getPermission(
+          userId,
+          chain.chain,
+        );
         return {
           ok: true,
           data: walletPermissionResponseSchema.parse(permission),
@@ -192,6 +236,7 @@ export async function registerWalletsRoutes(
         const permission = await dependencies.wallet.activatePermission(
           userId,
           parsed.data.recipients,
+          parsed.data.chain,
         );
         return {
           ok: true,
@@ -263,6 +308,7 @@ export async function registerWalletsRoutes(
         const verification = await dependencies.wallet.completePermission(
           userId,
           parsed.data.walletId,
+          parsed.data.chain,
         );
         return {
           ok: true,
@@ -277,12 +323,23 @@ export async function registerWalletsRoutes(
   app.post(
     "/v1/wallets/current/permission/revoke",
     async (
-      request,
+      request: FastifyRequest<{ Body: unknown }>,
       reply,
     ): Promise<{ ok: true; data: WalletRevokeResponse } | WalletApiError> => {
+      const parsed = walletRevokeInputSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        reply.code(422);
+        return {
+          ok: false,
+          error: { code: "DATOS_INVALIDOS", message: parsed.error.message },
+        };
+      }
       try {
         const userId = await dependencies.resolveUserId(request);
-        const result = await dependencies.wallet.revokePermission(userId);
+        const result = await dependencies.wallet.revokePermission(
+          userId,
+          parsed.data.chain,
+        );
         return { ok: true, data: walletRevokeResponseSchema.parse(result) };
       } catch (error) {
         return errorReply(reply, error);

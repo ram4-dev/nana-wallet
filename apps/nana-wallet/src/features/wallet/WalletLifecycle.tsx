@@ -9,6 +9,7 @@ import { AddTrustedRecipient } from "./AddTrustedRecipient";
 import type {
   EnrollmentPreparationResponse,
   PermissionState,
+  WalletChainFamily,
   WalletPermissionResponse,
   WalletReadinessState,
 } from "@/lib/api-types";
@@ -128,6 +129,16 @@ function RoutePendingInline() {
   return <p className="mt-4 text-base text-muted-foreground">Preparando la autorización…</p>;
 }
 
+/**
+ * The payment-authorization flow is Solana-directed: the panel reads and mutates
+ * the Solana wallet/grant for the Privy signer-consent flow (the only flow that
+ * can enroll the app signer). The legacy demo identity keeps the Arc default so
+ * its fixture wallet stays reachable. This is an internal default, never a
+ * user-facing chain picker.
+ */
+const SOLANA_CHAIN: WalletChainFamily = "solana";
+const ARC_CHAIN: WalletChainFamily = "arc";
+
 export function WalletLifecycle({ userId }: { userId: string | undefined }) {
   const queryClient = useQueryClient();
   const enabled = Boolean(userId);
@@ -138,14 +149,18 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
   const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
   const [preparation, setPreparation] = useState<EnrollmentPreparationResponse | null>(null);
 
+  // Privy signer consent is the Solana enrollment flow; the demo identity keeps
+  // its legacy Arc fixture wallet.
+  const chainTarget: WalletChainFamily = privy ? SOLANA_CHAIN : ARC_CHAIN;
+
   const walletQuery = useQuery({
     queryKey: queryKeys.currentWallet(userId),
-    queryFn: api.getCurrentWallet,
+    queryFn: () => api.getCurrentWallet({ chain: chainTarget }),
     enabled,
   });
   const permissionQuery = useQuery({
     queryKey: queryKeys.walletPermission(userId),
-    queryFn: api.getCurrentWalletPermission,
+    queryFn: () => api.getCurrentWalletPermission({ chain: chainTarget }),
     enabled,
   });
   // Activation uses the user's explicitly saved contacts as the allowlist
@@ -209,6 +224,10 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     setIsActivating(true);
     setPermissionMessage(null);
     try {
+      // The allowlist is assembled from the user's saved contacts. Solana
+      // enrollment therefore needs at least one Solana-format contact: with an
+      // EVM-only contact list `prepare` cannot produce a Solana policy (the
+      // recipient format decides the chain, and one permission binds one chain).
       const allowlist = (contactsQuery.data ?? []).map((contact) => contact.address);
       if (allowlist.length === 0) {
         setPermissionMessage(
@@ -230,10 +249,10 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
       // Demo path (unchanged): explicit activation with server read-back. The
       // client cannot assert enrollment succeeded; a failed read-back surfaces
       // as an error, never as "active".
-      await api.activateWalletPermission({ recipients: allowlist });
+      await api.activateWalletPermission({ recipients: allowlist, chain: chainTarget });
       const refreshed = await queryClient.fetchQuery({
         queryKey: queryKeys.walletPermission(userId),
-        queryFn: api.getCurrentWalletPermission,
+        queryFn: () => api.getCurrentWalletPermission({ chain: chainTarget }),
       });
       if (refreshed.state !== "active") {
         setPermissionMessage(
@@ -260,6 +279,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     try {
       const result = await api.completeWalletPermission({
         walletId: preparation.walletId,
+        chain: chainTarget,
       });
       if (result.verified && result.permission) {
         setPreparation(null);
@@ -284,7 +304,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     setIsRevoking(true);
     setPermissionMessage(null);
     try {
-      const result = await api.revokeWalletPermission();
+      const result = await api.revokeWalletPermission({ chain: chainTarget });
       if (result.remote === "revoked") {
         toast.success("Revocaste el permiso de pagos.");
       } else {

@@ -344,6 +344,14 @@ export const permissionStateSchema = z.enum([
 ]);
 export type PermissionState = z.infer<typeof permissionStateSchema>;
 
+/**
+ * Chain selector for the wallet/permission surface. OPTIONAL everywhere it is
+ * accepted: an absent selector preserves the legacy `arc` behaviour, and only
+ * these two families are valid (anything else is a 422, never a 500).
+ */
+export const walletChainFamilySchema = z.enum(["arc", "solana"]);
+export type WalletChainFamily = z.infer<typeof walletChainFamilySchema>;
+
 export const walletPermissionResponseSchema = z.object({
   userId: z.string().uuid(),
   state: permissionStateSchema,
@@ -373,6 +381,8 @@ export type WalletRevokeResponse = z.infer<typeof walletRevokeResponseSchema>;
 export const activateWalletPermissionInputSchema = z.object({
   // Explicit recipient allowlist (PEW-007/Q3): the user authorizes exactly these.
   recipients: z.array(z.string().trim().min(1)).min(1),
+  // Optional chain selector; absent means the legacy `arc` wallet.
+  chain: walletChainFamilySchema.optional(),
 });
 export type ActivateWalletPermissionInput = z.infer<
   typeof activateWalletPermissionInputSchema
@@ -405,10 +415,21 @@ export type EnrollmentPreparationResponse = z.infer<
 
 export const enrollmentCompleteInputSchema = z.object({
   walletId: z.string().uuid(),
+  // Optional consistency guard: when present, the wallet must belong to it.
+  chain: walletChainFamilySchema.optional(),
 });
 export type EnrollmentCompleteInput = z.infer<
   typeof enrollmentCompleteInputSchema
 >;
+
+/**
+ * Revoke input. The body is optional (existing callers post `{}` or nothing);
+ * the selector scopes the revoke to one chain family, defaulting to `arc`.
+ */
+export const walletRevokeInputSchema = z.object({
+  chain: walletChainFamilySchema.optional(),
+});
+export type WalletRevokeInput = z.infer<typeof walletRevokeInputSchema>;
 
 export const enrollmentCompleteResponseSchema = z.object({
   verified: z.boolean(),

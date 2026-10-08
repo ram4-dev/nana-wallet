@@ -31,7 +31,9 @@ import type {
   ListDelegatedGrantsResponse,
   RevokeDelegatedGrantResponse,
   WalletPermissionResponse,
+  WalletRevokeInput,
   WalletRevokeResponse,
+  WalletChainFamily,
   WalletSummary,
   WalletBalanceResponse,
   WalletHistoryResponse,
@@ -358,6 +360,11 @@ function jsonRequest(method: "POST" | "PATCH" | "DELETE", body?: unknown): Reque
   };
 }
 
+/** Appends the optional chain selector as a query param (absent keeps the API default). */
+function withChain(path: string, chain?: WalletChainFamily): string {
+  return chain ? `${path}?chain=${encodeURIComponent(chain)}` : path;
+}
+
 export const api = {
   getWalletSummary: async (): Promise<WalletSummary> => {
     if (!isPrivyIdentityProvider()) {
@@ -421,8 +428,10 @@ export const api = {
 
   // PEW-005/007/013: wallet lifecycle + permission surface. Readiness is
   // separate from permission readiness; these call the authenticated,
-  // user-scoped /v1/wallets endpoints.
-  getCurrentWallet: () => request<CurrentWalletResponse>("/v1/wallets/current"),
+  // user-scoped /v1/wallets endpoints. The optional `chain` selector scopes the
+  // read/mutation to one chain family; absent keeps the legacy `arc` wallet.
+  getCurrentWallet: (options: { chain?: WalletChainFamily } = {}) =>
+    request<CurrentWalletResponse>(withChain("/v1/wallets/current", options.chain)),
 
   getNotifications: () => request<NotificationFeedItem[]>("/v1/notifications"),
 
@@ -481,11 +490,14 @@ export const api = {
 
   syncWallet: () => request<WalletSyncResponse>("/v1/wallets/sync", jsonRequest("POST", {})),
 
-  getCurrentWalletPermission: () =>
-    request<WalletPermissionResponse>("/v1/wallets/current/permission"),
+  getCurrentWalletPermission: (options: { chain?: WalletChainFamily } = {}) =>
+    request<WalletPermissionResponse>(withChain("/v1/wallets/current/permission", options.chain)),
 
-  revokeWalletPermission: () =>
-    request<WalletRevokeResponse>("/v1/wallets/current/permission/revoke", jsonRequest("POST", {})),
+  revokeWalletPermission: (input: WalletRevokeInput = {}) =>
+    request<WalletRevokeResponse>(
+      "/v1/wallets/current/permission/revoke",
+      jsonRequest("POST", input),
+    ),
 
   // PEW-013: explicit activation request. The SERVER reads back the effective
   // provider policy before marking active; the client cannot assert enrollment
