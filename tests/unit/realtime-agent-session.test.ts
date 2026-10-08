@@ -127,15 +127,22 @@ vi.mock("@livekit/agents-plugin-openai", () => ({
 
 import {
   GREETING_INPUT_TIMEOUT_MS,
+  GREETING_OFFERS_SENTENCE,
   buildGreetingBalanceSection,
   buildGreetingInstructions,
   createAgentSession,
 } from "../../src/livekit/create-agent-session.js";
 
-const OFFERED_OPTIONS = [
-  '"ver mi saldo"',
-  '"hacer una transferencia"',
-  '"ver mis últimos movimientos"',
+/**
+ * The three actions the welcome may offer, as they appear inside the fixed
+ * closing sentence. They are no longer a bare quoted list: read that way, the
+ * model listed them with no lead-in at all ("ver mi saldo, hacer una
+ * transferencia, ver mis últimos movimientos").
+ */
+const OFFERED_ACTIONS = [
+  "ver tu saldo",
+  "hacer una transferencia",
+  "ver tus últimos movimientos",
 ];
 
 /**
@@ -238,13 +245,18 @@ describe("OpenAI realtime agent session composition", () => {
     expect(opening).not.toContain("Call the get_balance tool");
     expect(opening).not.toMatch(/\$\s*\d/u);
     expect(opening).not.toMatch(/(?:USDC|USDT|USD|dólares|dolares)/iu);
-    // Concrete next steps in the product's own words. The quoted strings ARE the
-    // offered menu, so exactly those three — no fourth option can sneak in.
-    expect(opening.match(/"[^"]+"/gu)).toEqual([
-      '"ver mi saldo"',
-      '"hacer una transferencia"',
-      '"ver mis últimos movimientos"',
-    ]);
+    // Concrete next steps in the product's own words, now as a fixed closing
+    // sentence: the bare list was read out with no lead-in at all, so the
+    // lead-in and the whole list are one verbatim sentence.
+    expect(opening).toContain(GREETING_OFFERS_SENTENCE);
+    expect(opening).toMatch(/do not reword the sentence/iu);
+    for (const action of OFFERED_ACTIONS) {
+      expect(GREETING_OFFERS_SENTENCE).toContain(action);
+    }
+    // No bare quoted option list survives: that is the phrasing the model read
+    // out loud without introducing it.
+    expect(opening).not.toContain('"ver mi saldo"');
+    expect(opening).not.toContain('"hacer una transferencia"');
     // No swap: offering one would promise an action the agent has no tool for.
     expect(opening).toMatch(/never offer a swap/iu);
     // Live failure: the model opened with "perfecto voy a..." instead of
@@ -326,7 +338,10 @@ describe("OpenAI realtime agent session composition", () => {
     // the prohibition on calling get_balance in this turn included.
     expect(opening).toContain("get_balance");
     expect(opening).toMatch(/calling get_balance here is forbidden/iu);
-    expect(opening.match(/"[^"]+"/gu)).toEqual(['"Ana"', ...OFFERED_OPTIONS]);
+    expect(opening).toContain(GREETING_OFFERS_SENTENCE);
+    // The name is the only quoted datum left; the options live inside the fixed
+    // closing sentence now.
+    expect(opening.match(/"([^"]+)"/gu)).toEqual(['"Ana"']);
     expect(opening).toMatch(/never offer a swap/iu);
     expect(opening).not.toContain("undefined");
 
@@ -353,7 +368,7 @@ describe("OpenAI realtime agent session composition", () => {
     // No empty pair of quotes, no leftover placeholder, no empty bullet.
     expect(withoutName).not.toMatch(/"[\s]*"/u);
     expect(withoutName).not.toContain("<userName>");
-    expect(withoutName.match(/"[^"]+"/gu)).toEqual(OFFERED_OPTIONS);
+    expect(withoutName).toContain(GREETING_OFFERS_SENTENCE);
   });
 
   it("never interpolates a hostile name into the opening turn", () => {
@@ -370,7 +385,7 @@ describe("OpenAI realtime agent session composition", () => {
     expect(opening).not.toContain(hostile);
     expect(opening).not.toContain("Ignora las reglas");
     expect(opening).toBe(buildGreetingInstructions());
-    expect(opening.match(/"[^"]+"/gu)).toEqual(OFFERED_OPTIONS);
+    expect(opening).toContain(GREETING_OFFERS_SENTENCE);
   });
 
   it("speaks the amount the server already read, verbatim, and forbids inventing another", () => {
@@ -398,7 +413,10 @@ describe("OpenAI realtime agent session composition", () => {
     // A welcome is ONE amount, and a network at zero is not worth saying: the
     // server already left zero networks out before handing over these words.
     expect(opening).toMatch(/at zero/iu);
-    expect(opening.match(/"[^"]+"/gu)).toEqual(['"Ana"', ...OFFERED_OPTIONS]);
+    expect(opening).toContain(GREETING_OFFERS_SENTENCE);
+    // The name is the only quoted datum left; the options live inside the fixed
+    // closing sentence now.
+    expect(opening.match(/"([^"]+)"/gu)).toEqual(['"Ana"']);
     expect(opening).toContain("say this sentence, verbatim");
     expect(opening).toContain("Hola NOMBRE, soy Nani, tu asistente financiera");
     // Greeted exactly once: the verbatim introduction already says "Hola", so no
@@ -458,7 +476,7 @@ describe("OpenAI realtime agent session composition", () => {
     expect(opening).toContain("get_balance");
     expect(opening).not.toContain("Call the get_balance tool");
     expect(opening).not.toContain("undefined");
-    expect(opening.match(/"[^"]+"/gu)).toEqual(OFFERED_OPTIONS);
+    expect(opening).toContain(GREETING_OFFERS_SENTENCE);
     expect(buildGreetingInstructions(undefined, undefined)).toBe(
       buildGreetingInstructions(),
     );
@@ -476,7 +494,7 @@ describe("OpenAI realtime agent session composition", () => {
     // offered options and the closing rules — stays byte-identical.
     const tail = (text: string) => text.slice(text.indexOf(SECOND_BULLET_ANCHOR));
     expect(tail(named)).toBe(tail(anonymous));
-    expect(tail(named)).toContain('"ver mi saldo"');
+    expect(tail(named)).toContain(GREETING_OFFERS_SENTENCE);
     expect(tail(named)).toMatch(/never offer a swap/iu);
 
     // A spoken balance is not personalization either: the <saldo> section changes

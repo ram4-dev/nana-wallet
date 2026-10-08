@@ -77,6 +77,26 @@ const GREETING_SECOND_BULLET =
   "2. Say the balance, exactly as the <saldo> section above instructs, and nothing beyond it. That section is the only place the balance text comes from: do not read it yourself and do not add an amount of your own.";
 
 /**
+ * The verbatim closing sentence of the welcome.
+ *
+ * The offered actions used to be a bare quoted list, and the model read them
+ * out exactly that way — "ver mi saldo, hacer una transferencia, ver mis últimos
+ * movimientos" — with no lead-in at all. Read live, that sounded like an
+ * unfinished list rather than an offer. Fixed as a sentence, the same treatment
+ * that finally made the introduction land verbatim, the lead-in stops depending
+ * on how the model decides to introduce a list.
+ *
+ * The pronouns are the user's ("ver tu saldo"), because Nani is the one
+ * speaking: the list is what SHE can do for the user, not what the user does
+ * for herself.
+ */
+export const GREETING_OFFERS_SENTENCE =
+  "Te puedo ayudar con: ver tu saldo, hacer una transferencia o ver tus últimos movimientos. ¿Qué querés hacer?";
+
+const GREETING_THIRD_BULLET =
+  `3. Close by saying this sentence, verbatim: \u00ab${GREETING_OFFERS_SENTENCE}\u00bb Say these three actions and no others: never offer a swap or any other action, those three are all you can do. Do not reword the sentence, do not drop the opening lead-in 'Te puedo ayudar con:' and do not add an action of your own.`;
+
+/**
  * The `<saldo>` section: what this turn says about the balance.
  *
  * With an amount, the server's words are quoted verbatim, because the server is
@@ -117,7 +137,7 @@ ${GREETING_SALDO_PLACEHOLDER}
 Now, in Rioplatense Spanish (voseo), warm and brief, cover ALL THREE parts of this one turn, in this exact order:
 ${GREETING_FIRST_BULLET_NO_NAME}
 ${GREETING_SECOND_BULLET}
-3. Close by offering exactly these three next steps, in this order: "ver mi saldo", "hacer una transferencia", "ver mis últimos movimientos". Never offer a swap or any other action: those three are all you can do.
+${GREETING_THIRD_BULLET}
 </orden_obligatorio>
 <sin_herramientas>
 This turn makes NO tool call AT ALL. The balance is already known to you (it is in the <saldo> section), so calling get_balance here is FORBIDDEN. A tool call would split this welcome into two generations and the user would hear two greetings. Never call get_balance, never say you are calling it, and never narrate a lookup.
