@@ -20,6 +20,7 @@ import { createWalletConversationService } from "../conversations/service.js";
 import { getWalletAgentConfig } from "../agent/instructions.js";
 import { getConfiguredRecipientMemoryService } from "../memory/runtime.js";
 import { createAgentSession } from "./create-agent-session.js";
+import { prepareVoiceGreeting } from "./greeting-context.js";
 import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
@@ -162,6 +163,14 @@ async function runJob(
   const gate = createRoomConversationGate({
     conversation: roomConversation,
     startSession: async (binding) => {
+      // S1/H1/H2: the proactive opening turn addresses the user by name, and the
+      // conversation speaks the persona's language from its first word. Best
+      // effort by design — `prepareVoiceGreeting` never throws, so a greeting that
+      // cannot be prepared must never break the bind/start path.
+      const greeting = await prepareVoiceGreeting(dependencies, {
+        userId: binding.userId,
+        conversationId: binding.conversationId,
+      });
       const memoryService = getConfiguredRecipientMemoryService();
       const wallet = dependencies.walletForUser
         ? bindLiveKitWalletForUser(
@@ -202,7 +211,10 @@ async function runJob(
           return { interrupted: speech.interrupted };
         },
       });
-      const created = createAgentSession({ tools });
+      const created = createAgentSession({
+        tools,
+        ...(greeting.userName ? { userName: greeting.userName } : {}),
+      });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (
           !event ||
