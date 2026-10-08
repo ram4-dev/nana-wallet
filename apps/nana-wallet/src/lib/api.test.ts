@@ -36,18 +36,6 @@ afterEach(() => {
 });
 
 describe("conversation API", () => {
-  it("keeps transcription separate from conversation turns", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(jsonResponse({ ok: true, data: { transcript: "Hola" } })),
-    );
-    await expect(
-      api.transcribeAgentAudio({ audioBase64: "YQ==", mimeType: "audio/webm" }),
-    ).resolves.toEqual({ transcript: "Hola" });
-  });
-
   it("creates one conversation for concurrent first turns", async () => {
     let conversationId: string | null = null;
     const fetchMock = vi.fn<typeof fetch>(async (input) =>

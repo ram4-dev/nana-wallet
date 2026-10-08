@@ -13,7 +13,13 @@ function readStoredMuted(): boolean {
   }
 }
 
-/** Reads agent replies aloud through ElevenLabs TTS, with a persisted mute toggle. */
+/**
+ * @deprecated The recorded voice transport is retired: the live screen greets
+ * and speaks through the LiveKit room, so nothing calls this hook anymore. It
+ * survives, together with the `api.speak` helper, only until both are removed.
+ *
+ * Reads agent replies aloud through ElevenLabs TTS, with a persisted mute toggle.
+ */
 export function useVoicePlayback() {
   const [isMuted, setIsMuted] = useState(readStoredMuted);
   const audioRef = useRef<HTMLAudioElement | null>(null);

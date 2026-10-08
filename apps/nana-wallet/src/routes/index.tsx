@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Send, Volume2, VolumeX } from "lucide-react";
+import { Send } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Capacitor } from "@capacitor/core";
 
 import { AgenteAvatar } from "@/components/agente/AgenteAvatar";
 import { RouteError, RoutePending } from "@/components/RouteStates";
@@ -17,11 +16,10 @@ import {
   UNKNOWN_CONVERSATION_OUTCOME_MESSAGE,
 } from "@/lib/session-action-lock";
 import { classifySessionSubmission, getSessionControlState } from "@/lib/session-resolution";
-import { useVoicePlayback } from "@/lib/use-voice-playback";
+import { AgentAudioUnlock } from "@/features/agent/AgentAudioUnlock";
 import { useLiveVoiceSession } from "@/features/agent/useLiveVoiceSession";
 import { useConversationState } from "@/features/agent/useConversationState";
 import { createLiveKitWebClient } from "@/features/agent/voice/livekit-web-client";
-import { createRecordedVoiceClient } from "@/features/agent/voice/recorded-voice-client";
 import type { LiveVoiceEvent } from "@/features/agent/voice/live-voice-reducer";
 import { useNotificationsFeed } from "@/features/notifications/useNotificationsFeed";
 
@@ -48,22 +46,7 @@ export const Route = createFileRoute("/")({
   component: AgentePage,
 });
 
-const MAX_RECORDING_MS = 20_000;
-
-function readBlobAsBase64(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      resolve(result.split(",")[1] ?? "");
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
-}
-
 function AgentePage() {
-  const isNative = Capacitor.isNativePlatform();
   const queryClient = useQueryClient();
   const notifications = useNotificationsFeed();
   const [text, setText] = useState("");
@@ -80,15 +63,6 @@ function AgentePage() {
   const [areSessionActionsLocked, setAreSessionActionsLocked] = useState(false);
   const [isEndingLive, setIsEndingLive] = useState(false);
   const [showEndLiveAcknowledgement, setShowEndLiveAcknowledgement] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [isPreparingAudio, setIsPreparingAudio] = useState(false);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const recordingTimeoutRef = useRef<number | null>(null);
-  const startRecordingRef = useRef<() => Promise<void>>(async () => undefined);
-  const stopRecordingRef = useRef<() => void>(() => undefined);
-  const { isMuted, toggleMuted, speak: speakReply } = useVoicePlayback();
   const liveDispatchRef = useRef<(event: LiveVoiceEvent) => void>(() => undefined);
   const conversationRevisionRef = useRef<(revision: number) => void>(() => undefined);
   const conversationRefreshRef = useRef<() => Promise<void>>(async () => undefined);
@@ -96,46 +70,43 @@ function AgentePage() {
     conversationIdRef.current = id;
     setConversationId(id);
   });
+  // Every platform — browser and packaged WebView — speaks through LiveKit. There
+  // is no recorded-voice transport for the native shell to fall back to.
   const voiceClient = useMemo(
     () =>
-      isNative
-        ? createRecordedVoiceClient({
-            start: () => startRecordingRef.current(),
-            stop: async () => stopRecordingRef.current(),
-          })
-        : createLiveKitWebClient({
-            getConversationId: () => conversationIdRef.current,
-            onConversationBound: (id) => {
-              conversationIdRef.current = id;
-              setConversationId(id);
-            },
-            onAgentState: (state) => {
-              const accepted = [
-                "connecting",
-                "initializing",
-                "idle",
-                "listening",
-                "thinking",
-                "speaking",
-                "failed",
-              ] as const;
-              if (accepted.includes(state as (typeof accepted)[number])) {
-                liveDispatchRef.current({
-                  type: "AGENT_STATE",
-                  state: state as (typeof accepted)[number],
-                });
-              }
-            },
-            onRevision: (revision) => conversationRevisionRef.current(revision),
-            onConnectionLost: () =>
-              liveDispatchRef.current({ type: "CONNECTION_LOST", now: Date.now() }),
-            onReconnected: () => {
-              void conversationRefreshRef.current().finally(() => {
-                liveDispatchRef.current({ type: "RECONNECTED" });
-              });
-            },
-          }),
-    [isNative],
+      createLiveKitWebClient({
+        getConversationId: () => conversationIdRef.current,
+        onConversationBound: (id) => {
+          conversationIdRef.current = id;
+          setConversationId(id);
+        },
+        onAgentState: (state) => {
+          const accepted = [
+            "connecting",
+            "initializing",
+            "idle",
+            "listening",
+            "thinking",
+            "speaking",
+            "failed",
+          ] as const;
+          if (accepted.includes(state as (typeof accepted)[number])) {
+            liveDispatchRef.current({
+              type: "AGENT_STATE",
+              state: state as (typeof accepted)[number],
+            });
+          }
+        },
+        onRevision: (revision) => conversationRevisionRef.current(revision),
+        onConnectionLost: () =>
+          liveDispatchRef.current({ type: "CONNECTION_LOST", now: Date.now() }),
+        onReconnected: () => {
+          void conversationRefreshRef.current().finally(() => {
+            liveDispatchRef.current({ type: "RECONNECTED" });
+          });
+        },
+      }),
+    [],
   );
   const liveVoice = useLiveVoiceSession(voiceClient, {
     onConversationBound: (id) => {
@@ -159,21 +130,6 @@ function AgentePage() {
           setConversationId(nextConversationId);
         },
       ),
-    [],
-  );
-
-  useEffect(
-    () => () => {
-      const recorder = recorderRef.current;
-      if (recorder && recorder.state !== "inactive") {
-        recorder.onstop = null;
-        recorder.stop();
-      }
-      if (recordingTimeoutRef.current !== null) {
-        window.clearTimeout(recordingTimeoutRef.current);
-      }
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-    },
     [],
   );
 
@@ -240,7 +196,6 @@ function AgentePage() {
         setTurn(nextTurn);
         setMessage(nextTurn.status === "error" ? nextTurn.message : null);
         if (nextTurn.status === "sent") refreshMoneyQueries();
-        void speakReply(nextTurn.message);
       } catch (error) {
         if (kind === "resolution" && shouldLockAfterConversationResolution(error, "thrown")) {
           lockUnknownOutcome();
@@ -278,98 +233,6 @@ function AgentePage() {
     setLastTranscript(null);
     submitSessionText(cleanText);
   }
-
-  async function startRecording() {
-    if (isSessionActionPending || areSessionActionsLocked || sessionActionLockRef.current) {
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      setMessage("Este teléfono no pudo abrir el micrófono. Podés escribirme abajo.");
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      const preferredMimeType = MediaRecorder.isTypeSupported("audio/webm")
-        ? "audio/webm"
-        : MediaRecorder.isTypeSupported("audio/mp4")
-          ? "audio/mp4"
-          : "";
-      const recorder = new MediaRecorder(
-        stream,
-        preferredMimeType ? { mimeType: preferredMimeType } : undefined,
-      );
-      audioChunksRef.current = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        if (recordingTimeoutRef.current !== null) {
-          window.clearTimeout(recordingTimeoutRef.current);
-          recordingTimeoutRef.current = null;
-        }
-        const mimeType = recorder.mimeType || preferredMimeType || "audio/mp4";
-        const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        stream.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
-        recorderRef.current = null;
-        setIsRecording(false);
-
-        if (blob.size === 0) {
-          setMessage("No llegué a escuchar nada. Tocá a Nani y probá de nuevo.");
-          return;
-        }
-
-        setIsPreparingAudio(true);
-        void readBlobAsBase64(blob)
-          .then((audioBase64) => api.transcribeAgentAudio({ audioBase64, mimeType }))
-          .then(({ transcript }) => {
-            const cleanTranscript = transcript.trim();
-            if (!cleanTranscript) {
-              setMessage("No llegué a entenderte. Tocá a Nani y probá de nuevo.");
-              return;
-            }
-            setLastTranscript(cleanTranscript);
-            submitSessionText(cleanTranscript);
-          })
-          .catch((error) => setMessage(getErrorMessage(error)))
-          .finally(() => setIsPreparingAudio(false));
-      };
-      recorderRef.current = recorder;
-      recorder.start();
-      recordingTimeoutRef.current = window.setTimeout(() => {
-        if (recorder.state !== "inactive") recorder.stop();
-      }, MAX_RECORDING_MS);
-      setIsRecording(true);
-      if (!confirmationPendingRef.current) setTurn(null);
-      setLastTranscript(null);
-      setMessage(null);
-    } catch {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      setMessage("No pude usar el micrófono. Revisá el permiso o escribime abajo.");
-    }
-  }
-
-  function handleMicrophone() {
-    if (isRecording) {
-      stopRecording();
-      return;
-    }
-    void startRecording();
-  }
-
-  function stopRecording() {
-    if (recordingTimeoutRef.current !== null) {
-      window.clearTimeout(recordingTimeoutRef.current);
-      recordingTimeoutRef.current = null;
-    }
-    if (recorderRef.current?.state !== "inactive") recorderRef.current?.stop();
-  }
-
-  startRecordingRef.current = startRecording;
-  stopRecordingRef.current = stopRecording;
 
   function rejectProposal() {
     if (!conversation.state?.pendingTransfer) {
@@ -423,9 +286,8 @@ function AgentePage() {
   }
 
   const livePhase = liveVoice.state.phase;
-  const liveSessionActive = !isNative && livePhase !== "idle" && livePhase !== "failed";
+  const liveSessionActive = livePhase !== "idle" && livePhase !== "failed";
   const isAgentWorking =
-    isPreparingAudio ||
     isSessionActionPending ||
     conversation.state?.activity === "working" ||
     conversation.state?.activity === "verifying" ||
@@ -433,57 +295,51 @@ function AgentePage() {
     livePhase === "binding" ||
     livePhase === "thinking";
   const agentState =
-    !isNative && livePhase === "listening"
+    livePhase === "listening"
       ? "escuchando"
-      : !isNative && livePhase === "speaking"
+      : livePhase === "speaking"
         ? "listo"
-        : !isNative &&
-            (livePhase === "reconnecting" || livePhase === "failed" || livePhase === "thinking")
+        : livePhase === "reconnecting" || livePhase === "failed" || livePhase === "thinking"
           ? "pensando"
-          : isRecording
-            ? "escuchando"
-            : isAgentWorking
-              ? "pensando"
-              : turn?.status === "confirmation_required"
-                ? "esperando_confirmacion"
-                : turn?.status === "error"
-                  ? "no_entendi"
-                  : "listo";
+          : isAgentWorking
+            ? "pensando"
+            : turn?.status === "confirmation_required"
+              ? "esperando_confirmacion"
+              : turn?.status === "error"
+                ? "no_entendi"
+                : "listo";
   const agentStatus =
-    !isNative && livePhase === "connecting"
+    livePhase === "connecting"
       ? "Conectando con Nani"
-      : !isNative && livePhase === "binding"
+      : livePhase === "binding"
         ? "Preparando la conversación"
-        : !isNative && livePhase === "listening"
+        : livePhase === "listening"
           ? "Te estoy escuchando"
-          : !isNative && livePhase === "muted"
+          : livePhase === "muted"
             ? "Micrófono pausado"
-            : !isNative && livePhase === "speaking"
+            : livePhase === "speaking"
               ? "Nani está hablando"
-              : !isNative && livePhase === "reconnecting"
+              : livePhase === "reconnecting"
                 ? "Reconectando"
-                : !isNative && livePhase === "paused"
+                : livePhase === "paused"
                   ? "Sesión pausada. Tocá para continuar"
-                  : !isNative && livePhase === "request_waiting"
+                  : livePhase === "request_waiting"
                     ? "Tu solicitud está esperando"
-                    : !isNative && livePhase === "failed"
+                    : livePhase === "failed"
                       ? liveVoice.state.reason.message
-                      : isRecording
-                        ? "Te estoy escuchando"
-                        : isAgentWorking
-                          ? "Estoy resolviéndolo"
-                          : turn?.status === "confirmation_required"
-                            ? "Esperando que revises"
-                            : turn?.status === "error"
-                              ? "No te entendí bien"
-                              : turn
-                                ? "Estoy listo para ayudarte"
-                                : null;
+                      : isAgentWorking
+                        ? "Estoy resolviéndolo"
+                        : turn?.status === "confirmation_required"
+                          ? "Esperando que revises"
+                          : turn?.status === "error"
+                            ? "No te entendí bien"
+                            : turn
+                              ? "Estoy listo para ayudarte"
+                              : null;
   const controls = getSessionControlState({
     isAgentWorking,
     isConfirmationPending,
     areSessionActionsLocked,
-    isRecording,
   });
   const textDisabled = controls.textDisabled || liveSessionActive;
   const canonicalPreview = conversation.state?.pendingTransfer;
@@ -510,39 +366,24 @@ function AgentePage() {
         <button
           type="button"
           className={`agent-stage press agent-stage--${livePhase} relative flex size-[clamp(7.5rem,25dvh,12rem)] items-center justify-center rounded-full focus-visible:ring-4 focus-visible:ring-ring focus-visible:ring-offset-4 disabled:cursor-wait disabled:opacity-80 ${
-            isRecording || livePhase === "listening" ? "listening" : ""
+            livePhase === "listening" ? "listening" : ""
           }`}
           data-live-phase={livePhase}
           aria-label={
-            isNative
-              ? isRecording
-                ? "Terminar de hablar con Nani"
-                : "Hablar con Nani"
-              : livePhase === "speaking"
-                ? "Interrumpir a Nani"
-                : (agentStatus ?? "Hablar con Nani")
+            livePhase === "speaking" ? "Interrumpir a Nani" : (agentStatus ?? "Hablar con Nani")
           }
           aria-busy={["connecting", "binding", "thinking", "reconnecting"].includes(livePhase)}
-          aria-pressed={isNative ? isRecording : livePhase === "listening"}
-          onClick={isNative ? handleMicrophone : () => void liveVoice.handleAvatarPress()}
-          disabled={
-            isNative
-              ? !isRecording && controls.microphoneDisabled
-              : ["connecting", "binding", "reconnecting", "thinking", "request_waiting"].includes(
-                  livePhase,
-                )
-          }
+          aria-pressed={livePhase === "listening"}
+          onClick={() => void liveVoice.handleAvatarPress()}
+          disabled={[
+            "connecting",
+            "binding",
+            "reconnecting",
+            "thinking",
+            "request_waiting",
+          ].includes(livePhase)}
         >
           <AgenteAvatar estado={agentState} livePhase={livePhase} size={192} />
-          {isNative && isRecording ? (
-            <div className="sound-waves" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-            </div>
-          ) : null}
         </button>
 
         <div className="mt-2 flex items-center gap-2">
@@ -551,20 +392,8 @@ function AgentePage() {
               {agentStatus}
             </span>
           ) : null}
-          {isNative ? (
-            <Button
-              type="button"
-              variant="ghost"
-              className="press size-11 shrink-0 rounded-full text-muted-foreground"
-              aria-label={isMuted ? "Activar la voz de Nani" : "Silenciar la voz de Nani"}
-              aria-pressed={isMuted}
-              onClick={toggleMuted}
-            >
-              {isMuted ? <VolumeX className="size-5" /> : <Volume2 className="size-5" />}
-            </Button>
-          ) : null}
         </div>
-        {!isNative && liveSessionActive && !showEndLiveAcknowledgement ? (
+        {liveSessionActive && !showEndLiveAcknowledgement ? (
           <Button
             type="button"
             variant="ghost"
@@ -577,7 +406,13 @@ function AgentePage() {
         ) : null}
       </div>
 
-      {!isNative && liveSessionActive && showEndLiveAcknowledgement ? (
+      <AgentAudioUnlock
+        blocked={liveSessionActive && liveVoice.audioBlocked}
+        intro={liveVoice.agentTranscript}
+        onUnlock={() => void liveVoice.unlockAudio()}
+      />
+
+      {liveSessionActive && showEndLiveAcknowledgement ? (
         <section
           className="mt-3 w-full rounded-2xl border border-warning bg-warning-surface p-4 text-warning-surface-foreground"
           role="alertdialog"
@@ -610,15 +445,6 @@ function AgentePage() {
             </Button>
           </div>
         </section>
-      ) : null}
-
-      {isNative && isRecording ? (
-        <p
-          className="mt-3 shrink-0 rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border px-4 py-3 text-center text-base font-bold"
-          role="status"
-        >
-          Hablá y tocá a Nani al terminar. Se envía sola a los 20 segundos.
-        </p>
       ) : null}
 
       <div

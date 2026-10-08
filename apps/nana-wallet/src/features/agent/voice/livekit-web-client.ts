@@ -4,7 +4,9 @@ import {
   RoomEvent,
   TokenSource,
   Track,
+  type Participant,
   type RemoteParticipant,
+  type TranscriptionSegment,
 } from "livekit-client";
 
 import { api } from "@/lib/api";
@@ -105,6 +107,50 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
   // Server-owned room name (set by the local token source; the frontend never derives it).
   let roomName: string | undefined;
   const attachedAudio = new Set<HTMLMediaElement>();
+  // Nani's own words, kept in the order the room transcribed them, so a browser
+  // that blocks audio can still show the opening turn in writing.
+  const agentSegments = new Map<string, string>();
+  let latestAgentTranscript = "";
+  const audioPlaybackListeners = new Set<(blocked: boolean) => void>();
+  const transcriptListeners = new Set<(text: string) => void>();
+
+  function isAudioBlocked() {
+    return room ? !room.canPlaybackAudio : false;
+  }
+
+  function notifyAudioPlayback() {
+    const blocked = isAudioBlocked();
+    for (const listener of audioPlaybackListeners) listener(blocked);
+  }
+
+  function notifyTranscript() {
+    latestAgentTranscript = [...agentSegments.values()].join(" ").trim();
+    for (const listener of transcriptListeners) listener(latestAgentTranscript);
+  }
+
+  function resetAgentTranscript() {
+    if (!agentSegments.size && !latestAgentTranscript) return;
+    agentSegments.clear();
+    latestAgentTranscript = "";
+    for (const listener of transcriptListeners) listener("");
+  }
+
+  const handleTranscriptionReceived = (
+    segments: TranscriptionSegment[],
+    participant?: Participant,
+  ) => {
+    // The room also transcribes the user's own microphone: only Nani's voice is
+    // the opening turn the user is missing while audio is blocked.
+    if (!participant || participant.identity !== agentIdentity) return;
+    let receivedFinalSegment = false;
+    for (const segment of segments) {
+      if (!segment.final) continue;
+      if (agentSegments.get(segment.id) === segment.text) continue;
+      agentSegments.set(segment.id, segment.text);
+      receivedFinalSegment = true;
+    }
+    if (receivedFinalSegment) notifyTranscript();
+  };
 
   const handleTrackSubscribed = (track: { kind: Track.Kind; attach: () => HTMLMediaElement }) => {
     if (track.kind !== Track.Kind.Audio) return;
@@ -128,6 +174,7 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
   }
 
   async function connect() {
+    resetAgentTranscript();
     const config = readSourceConfig(options);
     const participantIdentity = await resolveParticipantIdentity(config, options);
     const binding = await api.createLiveVoiceBinding(options.getConversationId?.() ?? undefined);
@@ -151,6 +198,8 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
     room = options.room ?? new Room({ adaptiveStream: true, dynacast: true });
     manuallyDisconnected = false;
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);
+    room.on(RoomEvent.AudioPlaybackStatusChanged, () => notifyAudioPlayback());
+    room.on(RoomEvent.TranscriptionReceived, handleTranscriptionReceived);
     room.on(RoomEvent.TrackUnsubscribed, handleTrackUnsubscribed);
     room.on(RoomEvent.Reconnecting, () => {
       if (reconnecting) return;
@@ -266,6 +315,21 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
       stopAgentAudio();
       await room?.disconnect();
       room = undefined;
+      notifyAudioPlayback();
+    },
+    canPlaybackAudio: isAudioBlocked,
+    startAudio: async () => {
+      await room?.startAudio();
+    },
+    watchAudioPlayback: (listener) => {
+      audioPlaybackListeners.add(listener);
+      listener(isAudioBlocked());
+      return () => audioPlaybackListeners.delete(listener);
+    },
+    watchAgentTranscript: (listener) => {
+      transcriptListeners.add(listener);
+      if (latestAgentTranscript) listener(latestAgentTranscript);
+      return () => transcriptListeners.delete(listener);
     },
   };
 }

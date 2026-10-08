@@ -27,6 +27,8 @@ vi.mock("livekit-client", () => ({
     DataReceived: "data_received",
     ParticipantAttributesChanged: "participant_attributes_changed",
     ParticipantConnected: "participant_connected",
+    AudioPlaybackStatusChanged: "audio_playback_changed",
+    TranscriptionReceived: "transcription_received",
   },
   MediaDeviceFailure: {
     getFailure: () => null,
@@ -59,6 +61,8 @@ function createFakeRoom() {
     off: vi.fn(),
     connect: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
+    canPlaybackAudio: true,
+    startAudio: vi.fn().mockResolvedValue(undefined),
     localParticipant: {
       setMicrophoneEnabled: vi.fn().mockResolvedValue(true),
       performRpc: vi
@@ -73,6 +77,14 @@ function createFakeRoom() {
 
 function setEnv(key: string, value: string | undefined) {
   vi.stubEnv(key, value as never);
+}
+
+/** Reads back a room event handler the client registered through `room.on`. */
+function handlerFor(room: Room, event: string) {
+  const on = room.on as unknown as { mock: { calls: unknown[][] } };
+  const call = on.mock.calls.find(([name]) => name === event);
+  if (!call) throw new Error(`the client did not listen to ${event}`);
+  return call[1] as (...args: unknown[]) => void;
 }
 
 const savedEnv: Record<string, string | undefined> = {};
@@ -238,6 +250,82 @@ describe("livekit web client token source", () => {
     );
 
     expect(fakeRoom.connect).not.toHaveBeenCalled();
+  });
+
+  it("reports blocked playback, unlocks it, and forwards only Nani's final transcriptions", async () => {
+    setEnv("VITE_LIVEKIT_TOKEN_SOURCE", undefined);
+    const participantToken = tokenWithIdentity(PARTICIPANT_IDENTITY);
+    mocks.fetchVoiceRoomToken.mockResolvedValue({
+      serverUrl: SERVER_URL,
+      participantToken,
+      roomName: `nani-${CONVERSATION_ID}`,
+    });
+    const fakeRoom = createFakeRoom();
+    const client = createLiveKitWebClient({ room: fakeRoom });
+
+    // Subscribing before the room exists reports an unblocked browser.
+    const audioStatus: boolean[] = [];
+    const transcripts: string[] = [];
+    client.watchAudioPlayback((blocked) => audioStatus.push(blocked));
+    client.watchAgentTranscript((text) => transcripts.push(text));
+    expect(audioStatus).toEqual([false]);
+    expect(transcripts).toEqual([]);
+
+    await client.connect();
+
+    const audioPlaybackChanged = handlerFor(fakeRoom, "audio_playback_changed");
+    const transcriptionReceived = handlerFor(fakeRoom, "transcription_received");
+
+    (fakeRoom as unknown as { canPlaybackAudio: boolean }).canPlaybackAudio = false;
+    audioPlaybackChanged();
+    expect(audioStatus).toEqual([false, true]);
+
+    // A partial segment is not an utterance yet.
+    transcriptionReceived([{ id: "segment-1", text: "Hola, soy Nani.", final: false }], {
+      identity: "nani-agent",
+    });
+    expect(transcripts).toEqual([]);
+
+    transcriptionReceived([{ id: "segment-1", text: "Hola, soy Nani.", final: true }], {
+      identity: "nani-agent",
+    });
+    transcriptionReceived([{ id: "segment-2", text: "Tenés 12 USDC disponibles.", final: true }], {
+      identity: "nani-agent",
+    });
+    expect(transcripts.at(-1)).toBe("Hola, soy Nani. Tenés 12 USDC disponibles.");
+
+    // The user's own words are never shown as Nani's opening.
+    transcriptionReceived([{ id: "segment-3", text: "hola", final: true }], {
+      identity: PARTICIPANT_IDENTITY,
+    });
+    expect(transcripts.at(-1)).toBe("Hola, soy Nani. Tenés 12 USDC disponibles.");
+
+    await client.startAudio();
+    expect(fakeRoom.startAudio).toHaveBeenCalledOnce();
+  });
+
+  it("clears Nani's words when a new room binds so no stale opening survives", async () => {
+    setEnv("VITE_LIVEKIT_TOKEN_SOURCE", undefined);
+    const participantToken = tokenWithIdentity(PARTICIPANT_IDENTITY);
+    mocks.fetchVoiceRoomToken.mockResolvedValue({
+      serverUrl: SERVER_URL,
+      participantToken,
+      roomName: `nani-${CONVERSATION_ID}`,
+    });
+    const fakeRoom = createFakeRoom();
+    const client = createLiveKitWebClient({ room: fakeRoom });
+    const transcripts: string[] = [];
+    client.watchAgentTranscript((text) => transcripts.push(text));
+
+    await client.connect();
+    handlerFor(fakeRoom, "transcription_received")(
+      [{ id: "segment-1", text: "Hola, soy Nani.", final: true }],
+      { identity: "nani-agent" },
+    );
+    expect(transcripts.at(-1)).toBe("Hola, soy Nani.");
+
+    await client.connect();
+    expect(transcripts.at(-1)).toBe("");
   });
 
   it("accepts a legacy identity claim as a fallback to sub", async () => {

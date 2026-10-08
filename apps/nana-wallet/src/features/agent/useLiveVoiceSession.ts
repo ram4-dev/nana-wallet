@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import {
   avatarAction,
@@ -19,10 +19,25 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
     (current: LiveVoiceState, event: LiveVoiceEvent) => reduceLiveVoice(current, event),
     { phase: "idle" },
   );
+  // Playback permission and what Nani already said live outside the session
+  // phase: a blocked browser keeps the session live and visible.
+  const [audioBlocked, setAudioBlocked] = useState(false);
+  const [agentTranscript, setAgentTranscript] = useState<string | null>(null);
   const stateRef = useRef(state);
   const previousStateRef = useRef(state);
   const fallbackNotifiedRef = useRef(false);
   stateRef.current = state;
+
+  useEffect(() => {
+    const stopWatchingAudio = client.watchAudioPlayback(setAudioBlocked);
+    const stopWatchingTranscript = client.watchAgentTranscript((text) => {
+      setAgentTranscript(text.trim() ? text : null);
+    });
+    return () => {
+      stopWatchingAudio();
+      stopWatchingTranscript();
+    };
+  }, [client]);
 
   const notifyTypedFallback = useCallback(
     (reason: VoiceFailure) => {
@@ -161,5 +176,43 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
     }
   }, [client]);
 
-  return { state, handleAvatarPress, endConversation, dispatch };
+  const unlockAudio = useCallback(async () => {
+    try {
+      await client.startAudio();
+    } catch {
+      // A rejected unlock leaves the written opening turn and its control on
+      // screen instead of failing silently.
+    }
+    setAudioBlocked(!client.canPlaybackAudio());
+  }, [client]);
+
+  // Opening the app must greet the user before any tap. The session starts on
+  // mount when the document is visible, and again when the page returns to the
+  // foreground while still idle. A session the lifecycle paused keeps waiting
+  // for an explicit tap, so auto-start never fights pause/resume/reconnect.
+  const startRef = useRef(start);
+  startRef.current = start;
+  useEffect(() => {
+    const autoStartIfIdle = () => {
+      if (document.visibilityState !== "visible") return;
+      if (stateRef.current.phase !== "idle") return;
+      void startRef.current();
+    };
+    autoStartIfIdle();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") autoStartIfIdle();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
+  return {
+    state,
+    handleAvatarPress,
+    endConversation,
+    dispatch,
+    audioBlocked,
+    agentTranscript,
+    unlockAudio,
+  };
 }

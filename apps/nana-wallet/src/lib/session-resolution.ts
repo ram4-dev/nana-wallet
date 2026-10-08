@@ -30,11 +30,10 @@ export function getSessionControlState(input: {
   isAgentWorking: boolean;
   isConfirmationPending: boolean;
   areSessionActionsLocked: boolean;
-  isRecording: boolean;
 }) {
   return {
     microphoneDisabled: input.isAgentWorking || input.areSessionActionsLocked,
-    textDisabled: input.isAgentWorking || input.areSessionActionsLocked || input.isRecording,
+    textDisabled: input.isAgentWorking || input.areSessionActionsLocked,
   };
 }
 

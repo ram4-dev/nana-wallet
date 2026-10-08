@@ -1,7 +1,5 @@
 import type {
   AgendaEvent,
-  AgentAudioTranscription,
-  AgentAudioTranscriptionInput,
   ApiEnvelope,
   Bill,
   BillPaymentIntentInput,
@@ -570,9 +568,6 @@ export const api = {
       idempotencyKey,
     ),
 
-  transcribeAgentAudio: (input: AgentAudioTranscriptionInput) =>
-    request<AgentAudioTranscription>("/v1/agent/transcribe", jsonRequest("POST", input)),
-
   createConversation: () =>
     rawConversationRequest<CreateConversationResponse>(
       "/v1/conversations",
@@ -643,6 +638,11 @@ export const api = {
   speak: (text: string) => speak(text),
 };
 
+/**
+ * @deprecated Only the retired recorded transport reaches this helper; live
+ * voice speaks through the LiveKit room. It survives until use-voice-playback
+ * and this helper are removed together.
+ */
 async function speak(text: string): Promise<Blob> {
   const response = await authedFetch("/v1/voice/speak", {
     method: "POST",

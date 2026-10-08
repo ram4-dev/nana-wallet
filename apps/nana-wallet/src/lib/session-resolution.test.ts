@@ -66,7 +66,6 @@ describe("session text resolution", () => {
         isAgentWorking: false,
         isConfirmationPending: true,
         areSessionActionsLocked: false,
-        isRecording: false,
       }),
     ).toEqual({ microphoneDisabled: false, textDisabled: false });
 
@@ -75,7 +74,6 @@ describe("session text resolution", () => {
         isAgentWorking: false,
         isConfirmationPending: true,
         areSessionActionsLocked: true,
-        isRecording: false,
       }),
     ).toEqual({ microphoneDisabled: true, textDisabled: true });
   });
