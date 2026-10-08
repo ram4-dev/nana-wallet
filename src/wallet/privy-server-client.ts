@@ -1,47 +1,38 @@
-import type { EnrollmentPolicyRule } from "./enrollment-policy.js";
-import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import {
-  generateAuthorizationSignature,
-  type WalletApiRequestSignatureInput,
-} from "@privy-io/node";
+import { APIError, PrivyAPIError, PrivyClient } from "@privy-io/node";
 
 /**
- * PEW-014: real Privy server-API HTTP client (contract-exact, injectable fetch).
+ * PEW-014: trusted server-side Privy boundary built on the official
+ * `@privy-io/node` SDK.
  *
- * This is the trusted server-side boundary for owner-verified wallet sync and
- * user-authenticated signer enrollment. It is deliberately NOT the same object as
- * the fixture/live `PrivyWalletApiClient`: every request here reaches the actual
- * Privy HTTP API with `privy-app-id` + `Authorization: Basic(base64(appId:appSecret))`.
+ * The SDK owns the transport: base URL, retries, request signing
+ * (`privy-authorization-signature`), request expiry (`privy-request-expiry`),
+ * idempotency and cursor pagination. This class owns only the business rules
+ * that are ours to enforce:
+ *  - owner-verified wallet discovery through the SDK's authenticated user
+ *    filter,
+ *  - the fail-closed pagination cap,
+ *  - the exactly-one canonical signer policy attachment,
+ *  - typed provider-error surfacing.
  *
  * Security rules:
- *  - The app secret is only ever used to build the Basic header; it is never
- *    logged and never appears in a thrown `PrivyServerError` message.
- *  - The fetch implementation is injectable so contract-exact tests can assert
- *    method/url/headers without any live call.
- *  - A non-2xx response surfaces a typed `PrivyServerError` carrying the HTTP
- *    status and (when present) the provider API code — never the secret.
+ *  - The app secret and the authorization private key are never logged and
+ *    never embedded in a thrown `PrivyServerError` message.
+ *  - The SDK client is injectable so contract tests can exercise the exact
+ *    behaviour against the narrow SDK surface without a live call.
+ *  - A provider failure surfaces a typed `PrivyServerError` carrying the HTTP
+ *    status and provider code — never the secret.
  */
-
-export type PrivyFetch = (
-  url: string,
-  init: RequestInit,
-) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
 export type PrivyChainType = "ethereum" | "solana";
 
-export type PrivyServerClientConfig = {
-  appId: string;
-  appSecret: string;
-  baseUrl?: string;
-  fetch?: PrivyFetch;
-  requestTimeoutMs?: number;
-  /** PKCS#8 base64 P-256 authorization private key for signed wallet mutations. */
-  authorizationPrivateKey?: string;
-  authorizationSigner?: (input: {
-    input: WalletApiRequestSignatureInput;
-    authorizationPrivateKey: string;
-  }) => string | Promise<string>;
+/**
+ * Narrow structural port over the official SDK surface this boundary uses.
+ * The real `PrivyClient` is adapted into it in `createDefaultClient`; tests
+ * inject a fake implementing only this surface.
+ */
+export type PrivyAuthorizationContext = {
+  authorization_private_keys?: string[];
 };
 
 /** A single policy id (and optional contract shape) returned by the provider. */
@@ -52,12 +43,18 @@ export type PrivyPolicyRecord = {
 
 /**
  * Cross-chain Privy policy rule payload. `Record<string, unknown>` keeps the
- * HTTP client agnostic: both the Ethereum `EnrollmentPolicyRule` and the
+ * SDK boundary agnostic: both the Ethereum `EnrollmentPolicyRule` and the
  * composed Solana `GrantPolicyRule` are structurally assignable (implicit
  * index signatures on type aliases), while each API-specific builder stays
  * responsible for its exact DSL schema.
  */
 export type PrivyPolicyRule = Record<string, unknown>;
+
+export type PrivyWalletSigner = {
+  signer_id: string;
+  override_policy_ids?: string[];
+  [key: string]: unknown;
+};
 
 export type PrivyWalletRecord = {
   id: string;
@@ -73,10 +70,80 @@ export type PrivyWalletRecord = {
   [key: string]: unknown;
 };
 
-export type PrivyWalletSigner = {
-  signer_id: string;
-  override_policy_ids?: string[];
+/** One page of the SDK's cursor pagination (`for await`/`getNextPage`). */
+export type PrivyWalletPage = {
+  readonly data: readonly PrivyWalletRecord[];
+  hasNextPage(): boolean;
+  getNextPage(): Promise<PrivyWalletPage>;
+};
+
+export type PrivySdkWallet = {
+  id: string;
+  address: string;
+  chain_type: string;
+  policy_ids: string[];
+  owner_id: string | null;
+  additional_signers: PrivyWalletSigner[];
+  archived_at?: number | null;
   [key: string]: unknown;
+};
+
+export type PrivySdkPolicy = {
+  id: string;
+  rules?: unknown[];
+  [key: string]: unknown;
+};
+
+export interface PrivySdkWallets {
+  list(params: {
+    user_id: string;
+    chain_type: PrivyChainType;
+    limit?: number;
+    cursor?: string;
+  }): Promise<PrivyWalletPage>;
+  get(walletId: string): Promise<PrivySdkWallet>;
+  update(
+    walletId: string,
+    params: {
+      additional_signers?: PrivyWalletSigner[];
+      authorization_context?: PrivyAuthorizationContext;
+    },
+  ): Promise<PrivySdkWallet>;
+}
+
+export interface PrivySdkPolicies {
+  create(params: {
+    version: "1.0";
+    name: string;
+    chain_type: PrivyChainType;
+    rules: PrivyPolicyRule[];
+    idempotency_key?: string;
+  }): Promise<PrivySdkPolicy>;
+  get(policyId: string): Promise<PrivySdkPolicy>;
+  update(
+    policyId: string,
+    params: {
+      rules: PrivyPolicyRule[];
+      authorization_context?: PrivyAuthorizationContext;
+    },
+  ): Promise<PrivySdkPolicy>;
+}
+
+export interface PrivySdkClient {
+  wallets(): PrivySdkWallets;
+  policies(): PrivySdkPolicies;
+}
+
+export type PrivyServerClientConfig = {
+  appId: string;
+  appSecret: string;
+  /** Legacy `.../v1` server base URL; normalised before the SDK sees it. */
+  baseUrl?: string;
+  /** Injected official SDK client (tests); defaults to a real `PrivyClient`. */
+  client?: PrivySdkClient;
+  requestTimeoutMs?: number;
+  /** PKCS#8 base64 P-256 authorization private key for signed wallet mutations. */
+  authorizationPrivateKey?: string;
 };
 
 export class PrivyServerError extends Error {
@@ -89,6 +156,17 @@ export class PrivyServerError extends Error {
     this.name = "PrivyServerError";
   }
 }
+
+/**
+ * Hard fail-closed pagination cap: at `limit: 100` a wallet list may span at
+ * most 100 pages (10 000 wallets). A provider that keeps returning a next
+ * cursor past the cap is treated as a broken/unbounded listing and rejected
+ * with a 502 instead of looping forever.
+ */
+const MAX_WALLET_LIST_PAGES = 100;
+const WALLET_LIST_PAGE_SIZE = 100;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+const DEFAULT_BASE_URL = "https://api.privy.io/v1";
 
 /** Extracts the documented policy override attached to an additional signer. */
 function policyIdsOf(signer: PrivyWalletSigner): string[] {
@@ -114,37 +192,85 @@ function isWalletRecord(value: unknown): value is PrivyWalletRecord {
   );
 }
 
+/** Widens a validated SDK wallet into the boundary's record shape verbatim. */
+function toWalletRecord(wallet: PrivySdkWallet): PrivyWalletRecord {
+  return {
+    ...wallet,
+    id: wallet.id,
+    address: wallet.address,
+    chain_type: wallet.chain_type,
+    policy_ids: Array.isArray(wallet.policy_ids) ? wallet.policy_ids : [],
+    owner_id: wallet.owner_id ?? null,
+    additional_signers: Array.isArray(wallet.additional_signers)
+      ? wallet.additional_signers
+      : [],
+    archived_at: wallet.archived_at ?? null,
+  };
+}
+
+function toPolicyRecord(policy: PrivySdkPolicy): PrivyPolicyRecord {
+  return { ...policy, id: policy.id };
+}
+
+/**
+ * Reads the provider error code from the SDK's parsed error body, tolerating
+ * both the documented `{ error }` and the legacy `{ code }` shapes. Only a
+ * non-empty string is ever surfaced.
+ */
+function providerCodeOf(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as { error?: unknown; code?: unknown };
+  for (const candidate of [record.error, record.code]) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  }
+  return null;
+}
+
 export class PrivyServerClient {
-  private readonly appId: string;
-  private readonly appSecret: string;
-  private readonly baseUrl: string;
-  private readonly doFetch: PrivyFetch;
+  private readonly sdk: PrivySdkClient;
   private readonly requestTimeoutMs: number;
   private readonly authorizationPrivateKey?: string;
-  private readonly authorizationSigner: NonNullable<
-    PrivyServerClientConfig["authorizationSigner"]
-  >;
 
   public constructor(config: PrivyServerClientConfig) {
     if (!config.appId)
       throw new Error("Privy server client requires PRIVY_APP_ID.");
     if (!config.appSecret)
       throw new Error("Privy server client requires PRIVY_APP_SECRET.");
-    this.appId = config.appId;
-    this.appSecret = config.appSecret;
-    this.baseUrl = (config.baseUrl ?? "https://api.privy.io/v1").replace(
-      /\/$/u,
-      "",
-    );
-    this.doFetch = config.fetch ?? ((url, init) => fetch(url, init));
-    this.requestTimeoutMs = config.requestTimeoutMs ?? 10_000;
-    this.authorizationPrivateKey = config.authorizationPrivateKey;
-    this.authorizationSigner =
-      config.authorizationSigner ??
-      ((input) => generateAuthorizationSignature(input));
+    this.requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
       throw new Error("Privy server client request timeout must be positive.");
     }
+    this.authorizationPrivateKey = config.authorizationPrivateKey;
+    this.sdk = config.client ?? this.createDefaultClient(config);
+  }
+
+  /**
+   * Builds the real SDK client. The legacy base URL convention carries a
+   * trailing `/v1` that the SDK already appends per request, so it is stripped
+   * once here (config normalisation, not transport). The request timeout is
+   * forwarded to keep a single bounded attempt, matching the previous
+   * non-retrying transport.
+   */
+  private createDefaultClient(
+    config: PrivyServerClientConfig,
+  ): PrivySdkClient {
+    const legacyBaseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(
+      /\/+$/u,
+      "",
+    );
+    const apiUrl = legacyBaseUrl.endsWith("/v1")
+      ? legacyBaseUrl.slice(0, -"/v1".length)
+      : legacyBaseUrl;
+    return new PrivyClient({
+      appId: config.appId,
+      appSecret: config.appSecret,
+      apiUrl,
+      timeout: this.requestTimeoutMs,
+      maxRetries: 0,
+      // The official client satisfies this narrow port at runtime; the port
+      // widens only the opaque policy-rule/signer payloads passed through
+      // verbatim, which the SDK validates server-side.
+    }) as unknown as PrivySdkClient;
   }
 
   /** Whether this client can authorize signed wallet mutations. */
@@ -152,173 +278,94 @@ export class PrivyServerClient {
     return Boolean(this.authorizationPrivateKey);
   }
 
-  private headers(): Record<string, string> {
-    const basic = Buffer.from(`${this.appId}:${this.appSecret}`).toString(
-      "base64",
-    );
-    return {
-      "privy-app-id": this.appId,
-      Authorization: `Basic ${basic}`,
-      "Content-Type": "application/json",
-    };
-  }
-
-  private async request<T>(
-    method: "GET" | "POST" | "PATCH",
-    path: string,
-    body?: unknown,
-  ): Promise<T | unknown> {
-    const url = `${this.baseUrl}${path}`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-    const init: RequestInit = {
-      method,
-      headers: this.headers(),
-      signal: controller.signal,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    };
+  /**
+   * Runs one SDK operation, mapping provider failures into the typed boundary
+   * error. Non-provider errors (programming errors) propagate untouched.
+   */
+  private async call<T>(operation: () => Promise<T>): Promise<T> {
     try {
-      const response = await this.doFetch(url, init);
-      if (!response.ok) {
-        let code: string | null = null;
-        try {
-          const parsed = (await response.json()) as {
-            error?: string;
-            code?: string;
-          };
-          code = parsed.error ?? parsed.code ?? null;
-        } catch {
-          // Non-JSON error body: preserve only the status.
-        }
+      return await operation();
+    } catch (error) {
+      if (error instanceof APIError) {
+        const status = typeof error.status === "number" ? error.status : 502;
         throw new PrivyServerError(
-          response.status,
-          code,
-          `Privy API request failed (${response.status}).`,
+          status,
+          providerCodeOf(error.error),
+          `Privy API request failed (${status}).`,
         );
       }
-      return await response.json();
-    } finally {
-      clearTimeout(timeout);
+      if (error instanceof PrivyAPIError) {
+        throw new PrivyServerError(
+          502,
+          null,
+          "Privy API request failed (502).",
+        );
+      }
+      throw error;
     }
   }
 
-  private async signedWalletPatch(
-    walletId: string,
-    body: unknown,
-  ): Promise<unknown> {
-    const authorizationPrivateKey = this.authorizationPrivateKey;
-    if (!authorizationPrivateKey) {
-      throw new PrivyServerError(
-        503,
-        null,
-        "Privy signer policy attachment requires an authorization private key.",
-      );
-    }
-    const url = `${this.baseUrl}/wallets/${encodeURIComponent(walletId)}`;
-    const signedHeaders = {
-      "privy-app-id": this.appId,
-      "privy-idempotency-key": randomUUID(),
-      "privy-request-expiry": String(Date.now() + 60_000),
-    };
-    const signature = await this.authorizationSigner({
-      input: {
-        version: 1,
-        method: "PATCH",
-        url,
-        body,
-        headers: signedHeaders,
-      },
-      authorizationPrivateKey,
-    });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
-    try {
-      const response = await this.doFetch(url, {
-        method: "PATCH",
-        headers: {
-          ...this.headers(),
-          ...signedHeaders,
-          "privy-authorization-signature": signature,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        let code: string | null = null;
-        try {
-          const parsed = (await response.json()) as {
-            error?: string;
-            code?: string;
-          };
-          code = parsed.error ?? parsed.code ?? null;
-        } catch {
-          // Preserve only status when the provider error is not JSON.
-        }
-        throw new PrivyServerError(
-          response.status,
-          code,
-          `Privy API request failed (${response.status}).`,
-        );
-      }
-      return await response.json();
-    } finally {
-      clearTimeout(timeout);
-    }
+  private authorizationContext(): PrivyAuthorizationContext | undefined {
+    return this.authorizationPrivateKey
+      ? { authorization_private_keys: [this.authorizationPrivateKey] }
+      : undefined;
   }
 
   /**
-   * Lists every active Ethereum wallet attributed to a Privy user. Ownership is
-   * established by Privy's authenticated `user_id` filter; `owner_id` is a key
-   * quorum id and must never be compared with the user's DID.
+   * Lists active wallets of one chain attributed to a Privy user. Ownership is
+   * established by the SDK's authenticated `user_id` filter; `owner_id` is a
+   * key quorum id and must never be compared with the user's DID. The
+   * fail-closed cap prevents an unbounded provider cursor from looping.
    */
-  public async listWalletsForUser(
+  private async listWallets(
     privyDid: string,
+    chainType: PrivyChainType,
   ): Promise<PrivyWalletRecord[]> {
     if (!privyDid.trim()) {
       throw new Error("Privy wallet discovery requires a user id.");
     }
 
     const wallets: PrivyWalletRecord[] = [];
-    let cursor: string | undefined;
-    const seenCursors = new Set<string>();
-
-    for (let page = 0; page < 100; page += 1) {
-      const params = new URLSearchParams({
+    let page = await this.call(() =>
+      this.sdk.wallets().list({
         user_id: privyDid,
-        chain_type: "ethereum",
-        limit: "100",
-      });
-      if (cursor) params.set("cursor", cursor);
-      const parsed = (await this.request(
-        "GET",
-        `/wallets?${params.toString()}`,
-      )) as { data?: unknown; next_cursor?: unknown };
-      if (!Array.isArray(parsed.data) || !parsed.data.every(isWalletRecord)) {
+        chain_type: chainType,
+        limit: WALLET_LIST_PAGE_SIZE,
+      }),
+    );
+
+    for (let pageIndex = 0; ; pageIndex += 1) {
+      if (!Array.isArray(page.data) || !page.data.every(isWalletRecord)) {
         throw new PrivyServerError(
           502,
           null,
           "Wallet list returned an invalid response.",
         );
       }
-      wallets.push(
-        ...parsed.data.filter(
-          (wallet) =>
-            wallet.chain_type === "ethereum" && wallet.archived_at == null,
-        ),
-      );
+      for (const wallet of page.data) {
+        if (wallet.chain_type === chainType && wallet.archived_at == null) {
+          wallets.push(toWalletRecord(wallet));
+        }
+      }
 
-      if (typeof parsed.next_cursor !== "string" || !parsed.next_cursor) break;
-      if (seenCursors.has(parsed.next_cursor)) {
+      if (!page.hasNextPage()) return wallets;
+      if (pageIndex + 1 >= MAX_WALLET_LIST_PAGES) {
         throw new PrivyServerError(
           502,
           null,
-          "Wallet list returned a repeated cursor.",
+          "Wallet list exceeded the maximum page count.",
         );
       }
-      seenCursors.add(parsed.next_cursor);
-      cursor = parsed.next_cursor;
+      const current = page;
+      page = await this.call(() => current.getNextPage());
     }
-    return wallets;
+  }
+
+  /** Lists every active Ethereum wallet attributed to a Privy user. */
+  public async listWalletsForUser(
+    privyDid: string,
+  ): Promise<PrivyWalletRecord[]> {
+    return this.listWallets(privyDid, "ethereum");
   }
 
   /** Compatibility alias retained for callers while the ownership contract is corrected. */
@@ -330,63 +377,14 @@ export class PrivyServerClient {
 
   /**
    * List wallets for a user restricted to one chain type (e.g. "solana"),
-   * using Privy's trusted user_id filter plus the chain_type query parameter.
-   * Only non-archived wallets of the requested chain are returned.
+   * using Privy's trusted user_id filter plus the chain_type parameter. Only
+   * non-archived wallets of the requested chain are returned.
    */
   public async listWalletsForChain(
     privyDid: string,
     chainType: PrivyChainType,
   ): Promise<PrivyWalletRecord[]> {
-    if (!privyDid.trim()) {
-      throw new Error("Privy wallet discovery requires a user id.");
-    }
-
-    const wallets: PrivyWalletRecord[] = [];
-    let cursor: string | undefined;
-    const seenCursors = new Set<string>();
-
-    for (let page = 0; page < 100; page += 1) {
-      const params = new URLSearchParams({
-        user_id: privyDid,
-        chain_type: chainType,
-        limit: "100",
-      });
-      if (cursor) params.set("cursor", cursor);
-      const parsed = (await this.request(
-        "GET",
-        `/wallets?${params.toString()}`,
-      )) as { data?: unknown; next_cursor?: unknown };
-      if (!Array.isArray(parsed.data) || !parsed.data.every(isWalletRecord)) {
-        throw new PrivyServerError(
-          502,
-          null,
-          "Wallet list returned an invalid response.",
-        );
-      }
-      wallets.push(
-        ...parsed.data.filter(
-          (wallet) =>
-            wallet.chain_type === chainType && wallet.archived_at == null,
-        ),
-      );
-
-      if (typeof parsed.next_cursor !== "string" || !parsed.next_cursor)
-        return wallets;
-      if (seenCursors.has(parsed.next_cursor)) {
-        throw new PrivyServerError(
-          502,
-          null,
-          "Wallet list pagination returned a repeated cursor.",
-        );
-      }
-      seenCursors.add(parsed.next_cursor);
-      cursor = parsed.next_cursor;
-    }
-    throw new PrivyServerError(
-      502,
-      null,
-      "Wallet list exceeded the maximum page count.",
-    );
+    return this.listWallets(privyDid, chainType);
   }
 
   /**
@@ -412,35 +410,34 @@ export class PrivyServerClient {
   }
 
   /**
-   * GET /v1/wallets/:id — single wallet readback used to prove owner + attached
-   * signer policy before activation.
+   * Single wallet readback used to prove owner + attached signer policy before
+   * activation.
    */
   public async getWallet(walletId: string): Promise<PrivyWalletRecord> {
-    const parsed = (await this.request(
-      "GET",
-      `/wallets/${encodeURIComponent(walletId)}`,
-    )) as PrivyWalletRecord;
-    if (!parsed || typeof parsed.id !== "string") {
+    const wallet = await this.call(() => this.sdk.wallets().get(walletId));
+    if (!wallet || typeof wallet.id !== "string") {
       throw new PrivyServerError(
         404,
         null,
         "Wallet readback returned no wallet id.",
       );
     }
-    return parsed;
+    return toWalletRecord(wallet);
   }
 
   /**
    * Attach one policy to the exact canonical additional signer. The wallet
-   * PATCH is a complete-list mutation, so every sibling signer is copied
-   * verbatim and the result is read back and compared before success.
+   * update is a complete-list mutation, so every sibling signer is copied
+   * verbatim and the result is read back and compared before success. The SDK
+   * owns the authorization signature for this signed mutation.
    */
   public async addPolicyToSigner(
     walletId: string,
     signerId: string,
     policyId: string,
   ): Promise<void> {
-    if (!this.authorizationPrivateKey) {
+    const authorizationContext = this.authorizationContext();
+    if (!authorizationContext) {
       throw new PrivyServerError(
         503,
         null,
@@ -472,9 +469,12 @@ export class PrivyServerClient {
         ? { ...signer, override_policy_ids: [policyId] }
         : signer,
     );
-    await this.signedWalletPatch(walletId, {
-      additional_signers: expectedSigners,
-    });
+    await this.call(() =>
+      this.sdk.wallets().update(walletId, {
+        additional_signers: expectedSigners,
+        authorization_context: authorizationContext,
+      }),
+    );
     const readback = await this.getWallet(walletId);
     if (
       readback.id !== walletId ||
@@ -489,68 +489,70 @@ export class PrivyServerClient {
   }
 
   /**
-   * POST /v1/policies — creates a policy named `name` holding every rule.
-   * Returns { id }. `chainType` defaults to "ethereum"; pass
-   * `{ chainType: "solana" }` to serialize the Solana policy chain type.
+   * Creates a policy named `name` holding every rule. Returns `{ id }`.
+   * `chainType` defaults to "ethereum"; pass `{ chainType: "solana" }` to
+   * serialize the Solana policy chain type.
    */
   public async createPolicy(
     name: string,
     rules: PrivyPolicyRule[],
     options: { chainType?: PrivyChainType } = {},
   ): Promise<{ id: string }> {
-    const parsed = (await this.request("POST", "/policies", {
-      version: "1.0",
-      name,
-      chain_type: options.chainType ?? "ethereum",
-      rules,
-    })) as { id: string };
-    if (!parsed?.id) {
+    const policy = await this.call(() =>
+      this.sdk.policies().create({
+        version: "1.0",
+        name,
+        chain_type: options.chainType ?? "ethereum",
+        rules,
+      }),
+    );
+    if (!policy?.id) {
       throw new PrivyServerError(
         500,
         null,
         "Policy creation returned no policy id.",
       );
     }
-    return { id: parsed.id };
+    return { id: policy.id };
   }
 
-  /** GET /v1/policies/:id — policy readback (complete-readback verification). */
+  /** Policy readback (complete-readback verification). */
   public async getPolicy(policyId: string): Promise<PrivyPolicyRecord> {
-    const parsed = (await this.request(
-      "GET",
-      `/policies/${encodeURIComponent(policyId)}`,
-    )) as PrivyPolicyRecord;
-    if (!parsed || typeof parsed.id !== "string") {
+    const policy = await this.call(() => this.sdk.policies().get(policyId));
+    if (!policy || typeof policy.id !== "string") {
       throw new PrivyServerError(
         404,
         null,
         "Policy readback returned no policy id.",
       );
     }
-    return parsed;
+    return toPolicyRecord(policy);
   }
 
   /**
-   * PATCH /v1/policies/:id — replaces the composed policy rules with the
-   * exact given union and returns the updated record for readback.
+   * Replaces the composed policy rules with the exact given union and returns
+   * the updated record for readback. Signed through the SDK when an
+   * authorization private key is configured.
    */
   public async patchPolicy(
     policyId: string,
     rules: PrivyPolicyRule[],
   ): Promise<PrivyPolicyRecord> {
-    const parsed = (await this.request(
-      "PATCH",
-      `/policies/${encodeURIComponent(policyId)}`,
-      { rules },
-    )) as PrivyPolicyRecord;
-    if (!parsed || typeof parsed.id !== "string") {
+    const authorizationContext = this.authorizationContext();
+    const policy = await this.call(() =>
+      this.sdk.policies().update(policyId, {
+        rules,
+        ...(authorizationContext ? { authorization_context: authorizationContext } : {}),
+      }),
+    );
+    if (!policy || typeof policy.id !== "string") {
       throw new PrivyServerError(
         500,
         null,
         "Policy patch returned no policy id.",
       );
     }
-    return parsed;
+    return toPolicyRecord(policy);
   }
 
   /** Convenience accessors for readback inspection (tolerant of casing). */

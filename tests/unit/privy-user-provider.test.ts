@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { DatabaseClient } from "../../src/db/client.js";
-import { PrivyServerClient } from "../../src/wallet/privy-server-client.js";
+import {
+  PrivyServerClient,
+  type PrivySdkClient,
+  type PrivyWalletPage,
+  type PrivyWalletRecord,
+} from "../../src/wallet/privy-server-client.js";
 import {
   PRIVY_ARC_CHAIN_ID,
   PRIVY_ARC_USDC,
@@ -50,20 +55,27 @@ function databaseFixture(
   } as unknown as DatabaseClient;
 }
 
+function listPage(records: readonly PrivyWalletRecord[]): PrivyWalletPage {
+  return {
+    data: [...records],
+    hasNextPage: () => false,
+    getNextPage: async () => listPage([]),
+  };
+}
+
 function privyFixture(
   walletsByDid: Record<string, ReturnType<typeof wallet>[]>,
 ) {
+  const list = vi.fn(async ({ user_id }: { user_id: string }) =>
+    listPage(walletsByDid[user_id] ?? []),
+  );
   return new PrivyServerClient({
     appId: "app-test",
     appSecret: "secret-test",
-    fetch: vi.fn(async (url) => {
-      const did = new URL(url).searchParams.get("user_id") ?? "";
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ data: walletsByDid[did] ?? [] }),
-      };
-    }),
+    client: {
+      wallets: () => ({ list, get: vi.fn(), update: vi.fn() }),
+      policies: () => ({ create: vi.fn(), get: vi.fn(), update: vi.fn() }),
+    } as unknown as PrivySdkClient,
   });
 }
 

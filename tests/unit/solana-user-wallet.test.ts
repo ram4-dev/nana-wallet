@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { InternalServerError } from "@privy-io/node";
 import type { DatabaseClient } from "../../src/db/client.js";
 import { SOLANA_DEVNET_NETWORK } from "../../src/wallet/solana-devnet-provider.js";
 import {
   PrivyServerClient,
-  type PrivyFetch,
+  type PrivySdkClient,
+  type PrivyWalletPage,
   type PrivyWalletRecord,
 } from "../../src/wallet/privy-server-client.js";
 import { PrivyWalletRuntimeError } from "../../src/wallet/privy-user-provider.js";
@@ -61,14 +63,11 @@ function solanaWalletRecord(id: string, address: string): PrivyWalletRecord {
   };
 }
 
-function mockResponse(
-  body: unknown,
-  status = 200,
-): { ok: boolean; status: number; json: () => Promise<unknown> } {
+function listPage(records: readonly PrivyWalletRecord[]): PrivyWalletPage {
   return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(body),
+    data: [...records],
+    hasNextPage: () => false,
+    getNextPage: async () => listPage([]),
   };
 }
 
@@ -135,29 +134,42 @@ function makeResolverFixture(fixture: {
     },
   } as unknown as DatabaseClient;
 
-  const fetchMock = vi.fn<PrivyFetch>(async (url) => {
-    if (fixture.privyStatus && fixture.privyStatus >= 400) {
-      return mockResponse({ error: "internal_error" }, fixture.privyStatus);
-    }
-    const requestedChain = new URL(String(url)).searchParams.get("chain_type");
-    return mockResponse({
-      data: (fixture.privyWallets ?? []).filter(
-        (wallet) => wallet.chain_type === requestedChain,
-      ),
-    });
-  });
+  const listMock = vi.fn(
+    async ({ chain_type }: { user_id: string; chain_type: string }) => {
+      if (fixture.privyStatus && fixture.privyStatus >= 400) {
+        throw new InternalServerError(
+          fixture.privyStatus,
+          { error: "internal_error" },
+          undefined,
+          new Headers(),
+        );
+      }
+      return listPage(
+        (fixture.privyWallets ?? []).filter(
+          (wallet) => wallet.chain_type === chain_type,
+        ),
+      );
+    },
+  );
 
   const resolve = createSolanaWalletForUser({
     database,
     privy: new PrivyServerClient({
       appId: "app-test",
       appSecret: "secret-test",
-      fetch: fetchMock,
+      client: {
+        wallets: () => ({ list: listMock, get: vi.fn(), update: vi.fn() }),
+        policies: () => ({
+          create: vi.fn(),
+          get: vi.fn(),
+          update: vi.fn(),
+        }),
+      } as unknown as PrivySdkClient,
     }),
     environment: TEST_ENVIRONMENT,
   });
 
-  return { resolve, queries, fetchMock };
+  return { resolve, queries, listMock };
 }
 
 function readinessQuery(queries: readonly QueryLog[]): QueryLog {
@@ -172,13 +184,14 @@ function readinessQuery(queries: readonly QueryLog[]): QueryLog {
   return found as QueryLog;
 }
 
-function privyListUrl(
-  fetchMock: { mock: { calls: unknown[][] } },
+/** The exact `list` parameters the boundary asked the SDK for. */
+function privyListCall(
+  listMock: { mock: { calls: unknown[][] } },
   index = 0,
-): URL {
-  const call = fetchMock.mock.calls[index];
+): { user_id: string; chain_type: string; limit: number } {
+  const call = listMock.mock.calls[index];
   expect(call, `Privy wallet list call #${index} must happen`).toBeDefined();
-  return new URL(String(call?.[0]));
+  return call?.[0] as { user_id: string; chain_type: string; limit: number };
 }
 
 async function senderAddressOf(
@@ -193,7 +206,7 @@ async function senderAddressOf(
 
 describe("per-user Solana wallet resolver (ADR-3)", () => {
   it("reads only ready Solana bindings for the authenticated user and ignores stale rows", async () => {
-    const { resolve, queries, fetchMock } = makeResolverFixture({
+    const { resolve, queries, listMock } = makeResolverFixture({
       wallets: [
         // Newest row is stale: a DESC read must not let it displace the ready row.
         walletRow({
@@ -215,13 +228,13 @@ describe("per-user Solana wallet resolver (ADR-3)", () => {
     expect(readiness.params).toContain(USER);
 
     expect(await senderAddressOf(provider)).toBe(BOUND_ADDRESS);
-    expect(privyListUrl(fetchMock).searchParams.get("chain_type")).toBe(
+    expect(privyListCall(listMock).chain_type).toBe(
       "solana",
     );
   });
 
   it("fails with wallet_not_ready when the user has no Solana binding at all", async () => {
-    const { resolve, fetchMock } = makeResolverFixture({
+    const { resolve, listMock } = makeResolverFixture({
       wallets: [],
       privyWallets: [solanaWalletRecord(PRIVY_WALLET_ID, BOUND_ADDRESS)],
     });
@@ -230,11 +243,11 @@ describe("per-user Solana wallet resolver (ADR-3)", () => {
       name: "PrivyWalletRuntimeError",
       code: "wallet_not_ready",
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
   });
 
   it("fails with wallet_not_ready when every Solana binding is stale (non-ready)", async () => {
-    const { resolve, fetchMock } = makeResolverFixture({
+    const { resolve, listMock } = makeResolverFixture({
       wallets: [
         walletRow({ state: "recovery_required" }),
         walletRow({
@@ -249,11 +262,11 @@ describe("per-user Solana wallet resolver (ADR-3)", () => {
       name: "PrivyWalletRuntimeError",
       code: "wallet_not_ready",
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
   });
 
   it("fails with wallet_config_error when more than one ready binding exists", async () => {
-    const { resolve, fetchMock } = makeResolverFixture({
+    const { resolve, listMock } = makeResolverFixture({
       wallets: [
         walletRow(),
         walletRow({
@@ -272,7 +285,7 @@ describe("per-user Solana wallet resolver (ADR-3)", () => {
       name: "PrivyWalletRuntimeError",
       code: "wallet_config_error",
     });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(listMock).not.toHaveBeenCalled();
   });
 
   it("binds by user_wallets.provider_wallet_id, never the local UUID primary key", async () => {
@@ -317,7 +330,7 @@ describe("per-user Solana wallet resolver (ADR-3)", () => {
   });
 
   it("maps a Privy wallet listing failure to wallet_unavailable", async () => {
-    const { resolve, fetchMock } = makeResolverFixture({
+    const { resolve, listMock } = makeResolverFixture({
       wallets: [walletRow()],
       privyStatus: 500,
     });
@@ -327,10 +340,9 @@ describe("per-user Solana wallet resolver (ADR-3)", () => {
       code: "wallet_unavailable",
     });
 
-    const listUrl = privyListUrl(fetchMock);
-    expect(listUrl.pathname).toBe("/v1/wallets");
-    expect(listUrl.searchParams.get("user_id")).toBe(PRIVY_DID);
-    expect(listUrl.searchParams.get("chain_type")).toBe("solana");
+    const listCall = privyListCall(listMock);
+    expect(listCall.user_id).toBe(PRIVY_DID);
+    expect(listCall.chain_type).toBe("solana");
   });
 
   it("never substitutes a fallback sender address when the binding has no address", async () => {

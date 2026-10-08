@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID, generateKeyPairSync } from "node:crypto";
+import { InternalServerError } from "@privy-io/node";
 import { buildServer } from "../../src/server.js";
 import {
   createDatabaseClient,
@@ -13,7 +14,9 @@ import {
 import { createPrivyWalletApiClient } from "../../src/wallet/privy-client.js";
 import {
   PrivyServerClient,
-  type PrivyFetch,
+  type PrivySdkClient,
+  type PrivySdkWallets,
+  type PrivyWalletPage,
   type PrivyWalletRecord,
   type PrivyWalletSigner,
 } from "../../src/wallet/privy-server-client.js";
@@ -61,25 +64,21 @@ function enrollWallet(
   };
 }
 
-function mockResponse(
-  body: unknown,
-  status = 200,
-): {
-  ok: boolean;
-  status: number;
-  json: () => Promise<unknown>;
-} {
+function listPage(records: readonly PrivyWalletRecord[]): PrivyWalletPage {
   return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(body),
+    data: [...records],
+    hasNextPage: () => false,
+    getNextPage: async () => listPage([]),
   };
 }
 
+type ListCall = { user_id: string; chain_type: string };
+
 /**
- * Builds a server client backed by an injected fetch that dispatches on URL. The
- * wallet list and the single-wallet read-back are configurable so each scenario
- * can prove the contract without a live Privy call.
+ * Builds a server client backed by an injected fake SDK client. The wallet
+ * list (per chain) and the provider policy create are configurable so each
+ * scenario can prove the contract without a live Privy call. `listCalls`
+ * records the exact query the boundary handed the SDK.
  */
 function mockServerClient(options: {
   policyId?: string;
@@ -90,38 +89,49 @@ function mockServerClient(options: {
   solanaLists?: PrivyWalletRecord[][];
   solanaListStatuses?: number[];
   onSolanaList?: () => Promise<void>;
-}): { client: PrivyServerClient; fetchMock: ReturnType<typeof vi.fn> } {
+}): {
+  client: PrivyServerClient;
+  listCalls: ListCall[];
+  createPolicy: ReturnType<typeof vi.fn>;
+} {
   let listCall = 0;
   let solanaListCall = 0;
-  const fetchMock = vi.fn<PrivyFetch>(async (url) => {
-    const method = url.startsWith(`${BASE}/policies`) ? "POST" : "GET";
-    if (method === "POST") {
-      return mockResponse({ id: options.policyId ?? "pol_1" });
+  const listCalls: ListCall[] = [];
+  const list = async (params: { user_id: string; chain_type: string }) => {
+    listCalls.push({ user_id: params.user_id, chain_type: params.chain_type });
+    const isSolana = params.chain_type === "solana";
+    const call = isSolana ? solanaListCall++ : listCall++;
+    const status = isSolana
+      ? (options.solanaListStatuses?.[call] ?? 200)
+      : (options.listStatuses?.[call] ?? 200);
+    const configured = isSolana
+      ? (options.solanaLists?.[call] ?? options.solanaList ?? options.list ?? [])
+      : (options.lists?.[call] ?? options.list ?? []);
+    if (isSolana) await options.onSolanaList?.();
+    if (status >= 400) {
+      throw new InternalServerError(
+        status,
+        { error: "wallet_provider_unavailable" },
+        undefined,
+        new Headers(),
+      );
     }
-    if (url.includes("/wallets?user_id=")) {
-      const chainType = new URL(url).searchParams.get("chain_type");
-      const isSolana = chainType === "solana";
-      const call = isSolana ? solanaListCall++ : listCall++;
-      const status = isSolana
-        ? (options.solanaListStatuses?.[call] ?? 200)
-        : (options.listStatuses?.[call] ?? 200);
-      const configured = isSolana
-        ? (options.solanaLists?.[call] ?? options.solanaList ?? options.list ?? [])
-        : (options.lists?.[call] ?? options.list ?? []);
-      if (isSolana) await options.onSolanaList?.();
-      return status >= 400
-        ? mockResponse({ error: "wallet_provider_unavailable" }, status)
-        : mockResponse({ data: configured });
-    }
-    return mockResponse({ error: "not_found" }, 404);
-  });
+    return listPage(configured);
+  };
+  const unused = async () => {
+    throw new Error("single-wallet SDK surface is unused in this scenario");
+  };
+  const createPolicy = vi.fn(async () => ({ id: options.policyId ?? "pol_1" }));
+  const wallets: PrivySdkWallets = { list, get: unused, update: unused };
   const client = new PrivyServerClient({
     appId: APP_ID,
     appSecret: APP_SECRET,
-    baseUrl: BASE,
-    fetch: fetchMock,
+    client: {
+      wallets: () => wallets,
+      policies: () => ({ create: createPolicy, get: unused, update: unused }),
+    } as unknown as PrivySdkClient,
   });
-  return { client, fetchMock };
+  return { client, listCalls, createPolicy };
 }
 
 suite(
@@ -273,8 +283,8 @@ suite(
       const userId = await provisionUser(database, did);
       const wallet = enrollWallet("pol_ignored");
       let callCount = 0;
-      let activeFetches = 0;
-      let maxActiveFetches = 0;
+      let activeLists = 0;
+      let maxActiveLists = 0;
       let markFirstStarted!: () => void;
       let markSecondStarted!: () => void;
       let rejectFirst!: (reason: Error) => void;
@@ -284,36 +294,36 @@ suite(
       const secondStarted = new Promise<void>((resolve) => {
         markSecondStarted = resolve;
       });
-      const fetchMock = vi.fn<PrivyFetch>(async (url) => {
-        if (!url.includes("/wallets?user_id="))
-          return mockResponse({ error: "not_found" }, 404);
-
+      const list = async (): Promise<PrivyWalletPage> => {
         callCount += 1;
-        activeFetches += 1;
-        maxActiveFetches = Math.max(maxActiveFetches, activeFetches);
+        activeLists += 1;
+        maxActiveLists = Math.max(maxActiveLists, activeLists);
         if (callCount === 1) {
           markFirstStarted();
           try {
-            return await new Promise<ReturnType<typeof mockResponse>>(
-              (_resolve, reject) => {
-                rejectFirst = reject;
-              },
-            );
+            return await new Promise<PrivyWalletPage>((_resolve, reject) => {
+              rejectFirst = reject;
+            });
           } finally {
-            activeFetches -= 1;
+            activeLists -= 1;
           }
         }
 
         markSecondStarted();
-        activeFetches -= 1;
-        return mockResponse({ data: [wallet] });
-      });
+        activeLists -= 1;
+        return listPage([wallet]);
+      };
+      const unused = async () => {
+        throw new Error("single-wallet SDK surface is unused");
+      };
       const client = new PrivyServerClient({
         appId: APP_ID,
         appSecret: APP_SECRET,
-        baseUrl: BASE,
-        fetch: fetchMock,
         requestTimeoutMs: 1_000,
+        client: {
+          wallets: () => ({ list, get: unused, update: unused }),
+          policies: () => ({ create: unused, get: unused, update: unused }),
+        } as unknown as PrivySdkClient,
       });
       const service = new EmbeddedWalletService(
         database,
@@ -344,7 +354,7 @@ suite(
         address: wallet.address,
       });
       expect(secondStartedBeforeRelease).toBe(false);
-      expect(maxActiveFetches).toBe(1);
+      expect(maxActiveLists).toBe(1);
     });
 
     it("atomically replaces a stale ready binding when Privy attributes a new wallet", {
@@ -422,7 +432,7 @@ suite(
     }, async () => {
       const did = `did:privy:prep-${randomUUID()}`;
       const userId = await provisionUser(database, did);
-      const { client, fetchMock } = mockServerClient({
+      const { client, createPolicy } = mockServerClient({
         list: [enrollWallet("pol_enroll_1")],
       });
       const service = new EmbeddedWalletService(
@@ -441,12 +451,7 @@ suite(
       expect(prep.policyId).toBe("pol_1");
       expect(prep.aggregationReady).toBe(false);
       expect(prep.aggregateBlockReason).toMatch(/group_by/u);
-      expect(
-        fetchMock.mock.calls.some(
-          ([url, init]) =>
-            String(url).endsWith("/policies") && init.method === "POST",
-        ),
-      ).toBe(true);
+      expect(createPolicy).toHaveBeenCalledTimes(1);
       const rows = await database.query<{ state: string }>(
         "SELECT state FROM signer_grants WHERE user_id = $1 LIMIT 1",
         [userId],
@@ -1344,20 +1349,16 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
 
   /**
    * Asserts the client listed wallets through Privy's authenticated
-   * user_id filter restricted to chain_type=solana. Parse each captured
-   * request URL as URLSearchParams so the assertion exercises the exact
-   * query contract, not a substring coincidence.
+   * user_id filter restricted to chain_type=solana, by inspecting the exact
+   * parameters the boundary handed to the SDK.
    */
   function expectSolanaListingCall(
-    fetchMock: { mock: { calls: unknown[][] } },
+    listCalls: readonly ListCall[],
     did: string,
   ): void {
-    const solanaListings = fetchMock.mock.calls.filter(([url]) => {
-      const params = new URL(String(url), BASE).searchParams;
-      return (
-        params.get("user_id") === did && params.get("chain_type") === "solana"
-      );
-    });
+    const solanaListings = listCalls.filter(
+      (call) => call.user_id === did && call.chain_type === "solana",
+    );
     expect(solanaListings.length).toBeGreaterThan(0);
   }
 
@@ -1370,7 +1371,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
       "solana",
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
-    const { client, fetchMock } = mockServerClient({ list: [wallet] });
+    const { client, listCalls } = mockServerClient({ list: [wallet] });
     const service = new EmbeddedWalletService(
       database,
       createPrivyWalletApiClient(process.env, {}),
@@ -1382,7 +1383,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     expect(result.created).toBe(true);
     // Discovery must list ONLY the authenticated user's wallets restricted
     // to the solana chain (user_id + chain_type query contract).
-    expectSolanaListingCall(fetchMock, did);
+    expectSolanaListingCall(listCalls, did);
     const rows = await database.query<{
       id: string;
       provider_wallet_id: string;
@@ -1428,7 +1429,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
   }, async () => {
     const did = `did:privy:sol-sync-multi-${randomUUID()}`;
     const userId = await provisionUser(database, did);
-    const { client, fetchMock } = mockServerClient({
+    const { client, listCalls } = mockServerClient({
       list: [
         privyWallet("solana", "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"),
         privyWallet("solana", "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq"),
@@ -1445,7 +1446,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     expect(result.state).toBe("conflict");
     // The conflicting discovery still goes through the authenticated
     // solana-restricted listing.
-    expectSolanaListingCall(fetchMock, did);
+    expectSolanaListingCall(listCalls, did);
     expect(await solanaReadyRowCount(userId)).toBe("0");
   });
 
@@ -1498,7 +1499,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
   }, async () => {
     const did = `did:privy:sol-sync-zero-${randomUUID()}`;
     const userId = await provisionUser(database, did);
-    const { client, fetchMock } = mockServerClient({
+    const { client, listCalls } = mockServerClient({
       list: [
         privyWallet("ethereum", "0x1111111111111111111111111111111111111111"),
       ],
@@ -1517,7 +1518,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     expect(result.state).toBe("ready");
     // The authenticated listing must still target the solana chain so the
     // empty result is authoritative, not an accidental ethereum-only read.
-    expectSolanaListingCall(fetchMock, did);
+    expectSolanaListingCall(listCalls, did);
     expect(result.created).toBe(true);
     const arcRows = await database.query<{ count: string }>(
       "SELECT count(*)::text AS count FROM user_wallets WHERE user_id = $1 AND chain_family = 'arc' AND state = 'ready'",
@@ -1540,7 +1541,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
        VALUES ($1, 'privy', $2, 'solana', $3, 'ready', now())`,
       [userId, providerWalletId, address],
     );
-    const { client, fetchMock } = mockServerClient({
+    const { client, listCalls } = mockServerClient({
       list: [
         privyWallet(
           "ethereum",
@@ -1556,7 +1557,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     );
 
     await service.syncWallet(userId);
-    expectSolanaListingCall(fetchMock, did);
+    expectSolanaListingCall(listCalls, did);
     const rows = await database.query<{
       provider_wallet_id: string;
       address: string;
@@ -1575,7 +1576,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
   }, async () => {
     const did = `did:privy:sol-sync-outage-${randomUUID()}`;
     const userId = await provisionUser(database, did);
-    const { client, fetchMock } = mockServerClient({
+    const { client, listCalls } = mockServerClient({
       solanaListStatuses: [503],
     });
     const service = new EmbeddedWalletService(
@@ -1590,7 +1591,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     );
     // The outage path must still have attempted the authenticated,
     // solana-restricted listing before failing closed.
-    expectSolanaListingCall(fetchMock, did);
+    expectSolanaListingCall(listCalls, did);
     expect(await solanaReadyRowCount(userId)).toBe("0");
   });
 
@@ -1599,7 +1600,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
   }, async () => {
     const did = `did:privy:sol-sync-invalid-${randomUUID()}`;
     const userId = await provisionUser(database, did);
-    const { client, fetchMock } = mockServerClient({
+    const { client, listCalls } = mockServerClient({
       list: [privyWallet("solana", "0xdeadbeefnotbase58!!!")],
     });
     const service = new EmbeddedWalletService(
@@ -1612,7 +1613,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     await service.syncWallet(userId);
     // The invalid-address wallet was still discovered through the
     // authenticated solana listing before being rejected.
-    expectSolanaListingCall(fetchMock, did);
+    expectSolanaListingCall(listCalls, did);
     expect(await solanaReadyRowCount(userId)).toBe("0");
   });
 });

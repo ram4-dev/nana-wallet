@@ -13,7 +13,8 @@ import {
 } from "../../src/db/client.js";
 import {
   PrivyServerClient,
-  type PrivyFetch,
+  type PrivySdkClient,
+  type PrivyWalletPage,
   type PrivyWalletRecord,
 } from "../../src/wallet/privy-server-client.js";
 
@@ -73,6 +74,14 @@ function walletRecordFor(did: string, address: string): PrivyWalletRecord {
   };
 }
 
+function listPage(records: readonly PrivyWalletRecord[]): PrivyWalletPage {
+  return {
+    data: [...records],
+    hasNextPage: () => false,
+    getNextPage: async () => listPage([]),
+  };
+}
+
 function mockServerClient(
   dids: string[],
   addresses: string[],
@@ -80,23 +89,34 @@ function mockServerClient(
   const byDid = new Map(
     dids.map((did, index) => [did, walletRecordFor(did, addresses[index]!)]),
   );
-  const fetchMock = vi.fn<PrivyFetch>(async (url) => {
-    const did = decodeURIComponent(
-      (url.match(/user_id=([^&]+)/) ?? [])[1] ?? "",
-    );
-    const record = byDid.get(did);
-    return {
-      ok: Boolean(record),
-      status: record ? 200 : 404,
-      json: () =>
-        Promise.resolve(record ? { data: [record] } : { error: "not_found" }),
-    };
-  });
   return new PrivyServerClient({
     appId: "test-balances-app",
     appSecret: "test-balances-secret",
-    baseUrl: "https://mock.privy.test/v1",
-    fetch: fetchMock,
+    client: {
+      wallets: () => ({
+        list: async ({ user_id }: { user_id: string }) => {
+          const record = byDid.get(user_id);
+          return listPage(record ? [record] : []);
+        },
+        get: async () => {
+          throw new Error("unused by the balances suite");
+        },
+        update: async () => {
+          throw new Error("unused by the balances suite");
+        },
+      }),
+      policies: () => ({
+        create: async () => {
+          throw new Error("unused by the balances suite");
+        },
+        get: async () => {
+          throw new Error("unused by the balances suite");
+        },
+        update: async () => {
+          throw new Error("unused by the balances suite");
+        },
+      }),
+    } as unknown as PrivySdkClient,
   });
 }
 

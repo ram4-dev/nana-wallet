@@ -13,7 +13,9 @@ import {
 import { createPrivyWalletApiClient } from "../../src/wallet/privy-client.js";
 import {
   PrivyServerClient,
-  type PrivyFetch,
+  type PrivySdkClient,
+  type PrivyWalletPage,
+  type PrivyWalletRecord,
 } from "../../src/wallet/privy-server-client.js";
 import {
   TransferUncertainError,
@@ -51,37 +53,57 @@ const DID_B = "did:privy:wallet-cross-b";
 const ADDRESS_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ADDRESS_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
+function listPage(records: readonly PrivyWalletRecord[]): PrivyWalletPage {
+  return {
+    data: [...records],
+    hasNextPage: () => false,
+    getNextPage: async () => listPage([]),
+  };
+}
+
 function userScopedPrivyServer(): PrivyServerClient {
-  const fetchMock: PrivyFetch = async (rawUrl) => {
-    const url = new URL(rawUrl);
-    const did = url.searchParams.get("user_id");
+  const walletFor = (user_id: string): PrivyWalletRecord | null => {
     const address =
-      did === DID_A ? ADDRESS_A : did === DID_B ? ADDRESS_B : null;
+      user_id === DID_A ? ADDRESS_A : user_id === DID_B ? ADDRESS_B : null;
+    if (!address) return null;
     return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        data: address
-          ? [
-              {
-                id: `wallet-${did === DID_A ? "a" : "b"}`,
-                address,
-                chain_type: "ethereum",
-                policy_ids: [],
-                owner_id: `owner-${did === DID_A ? "a" : "b"}`,
-                additional_signers: [],
-                archived_at: null,
-              },
-            ]
-          : [],
-      }),
+      id: `wallet-${user_id === DID_A ? "a" : "b"}`,
+      address,
+      chain_type: "ethereum",
+      policy_ids: [],
+      owner_id: `owner-${user_id === DID_A ? "a" : "b"}`,
+      additional_signers: [],
+      archived_at: null,
     };
   };
   return new PrivyServerClient({
     appId: "test-wallet-cross-app",
     appSecret: "test-secret-never-logged",
-    baseUrl: "https://mock.privy.test/v1",
-    fetch: fetchMock,
+    client: {
+      wallets: () => ({
+        list: async ({ user_id }: { user_id: string }) => {
+          const record = walletFor(user_id);
+          return listPage(record ? [record] : []);
+        },
+        get: async () => {
+          throw new Error("unused in cross-user isolation");
+        },
+        update: async () => {
+          throw new Error("unused in cross-user isolation");
+        },
+      }),
+      policies: () => ({
+        create: async () => {
+          throw new Error("unused in cross-user isolation");
+        },
+        get: async () => {
+          throw new Error("unused in cross-user isolation");
+        },
+        update: async () => {
+          throw new Error("unused in cross-user isolation");
+        },
+      }),
+    } as unknown as PrivySdkClient,
   });
 }
 
