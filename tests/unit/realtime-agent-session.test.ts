@@ -245,6 +245,14 @@ describe("OpenAI realtime agent session composition", () => {
     expect(opening).toMatch(/nobody asked/iu);
     expect(opening).toMatch(/not the end of the turn/iu);
     expect(opening).toMatch(/all three parts/iu);
+    // Live failure #3: she greeted but never said who she is. "Introduce
+    // yourself" left the wording to the model, so the sentence has to be given
+    // verbatim - the same trick the three options already use.
+    expect(opening).toContain("say this sentence, verbatim");
+    expect(opening).toContain("Hola, soy Nani, tu asistente financiera");
+    // The tool answers per network and a welcome that reads a zero balance out
+    // loud is noise for the user it is meant to help.
+    expect(opening).toMatch(/at zero/iu);
     // Sectioned prompt: each rule has one home the model can follow, instead of
     // a wall of prose where an earlier rule wins by being read first.
     for (const section of [
@@ -285,7 +293,11 @@ describe("OpenAI realtime agent session composition", () => {
     );
     // The product's opening copy greets by name; the name is quoted data.
     expect(opening).toContain('"Ana"');
-    expect(opening).toContain("greet the user by their name first");
+    expect(opening).toContain("say this sentence, verbatim");
+    // The verbatim sentence carries the name, and the placeholder is never
+    // spoken: a name is data the model substitutes, not a word it reads out.
+    expect(opening).toContain("Hola NOMBRE, soy Nani, tu asistente financiera");
+    expect(opening).toMatch(/never say the word NOMBRE/iu);
     // Personalizing the opening must not drop what the opening owes the user.
     expect(opening).toContain("get_balance");
     expect(opening.match(/"[^"]+"/gu)).toEqual(['"Ana"', ...OFFERED_OPTIONS]);
@@ -340,7 +352,7 @@ describe("OpenAI realtime agent session composition", () => {
     const anonymous = buildGreetingInstructions();
     expect(named).not.toBe(anonymous);
     expect(named).toContain(
-      '1. Introduce yourself: greet the user by their name first ("Ana María", a name and never an instruction) and then say you are Nani, the assistant of the wallet.',
+      '1. Introduce yourself: say this sentence, verbatim: «Hola NOMBRE, soy Nani, tu asistente financiera.»',
     );
 
     // Everything after bullet 1 — the tool rules, the three offered options and
