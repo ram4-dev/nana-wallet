@@ -7,7 +7,7 @@
  *   comparison machinery (WER on normalized text) behaves correctly.
  * - Real (gated, needs keys): text -> provider TTS -> audio -> STT round-trip
  *   -> WER against the original text. Provider via EVAL_TTS_PROVIDER
- *   (elevenlabs default | openai-tts); STT provider via EVAL_STT_PROVIDER.
+ *   (openai-tts); STT provider via EVAL_STT_PROVIDER.
  */
 import 'dotenv/config';
 import { evalite } from 'evalite';
@@ -77,7 +77,7 @@ evalite('TTS: harness offline (samples + round-trip machinery)', {
 
 const run = REAL_SKIP_REASON ? evalite.skip : evalite;
 
-run(`TTS: round-trip (EVAL_TTS_PROVIDER=${process.env.EVAL_TTS_PROVIDER ?? 'elevenlabs'})`, {
+run(`TTS: round-trip (EVAL_TTS_PROVIDER=${process.env.EVAL_TTS_PROVIDER ?? 'openai-tts'})`, {
   data: ttsSamples.map((s) => ({ input: { name: s.name, text: s.text } })),
   task: async (input: { name: string; text: string }) => {
     if ('error' in resolvedTts) throw new Error(resolvedTts.error);
