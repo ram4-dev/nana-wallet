@@ -3,18 +3,23 @@ import { describe, expect, it, vi } from "vitest";
 // Hermetic: the local development .env may select live wallet mode; these tests
 // assert the fixture-mode health contract. The pins run before the server
 // import because dotenv evaluates the ambient .env during that import chain.
+//
+// The server is built through the injected-identity fixture: production identity
+// is always Privy, so a bare `buildServer()` would demand Privy credentials, and
+// this suite is about the health contract, not authentication. With no Privy
+// identity inputs in the environment `MODE()` reports `fixture`, which is the
+// contract asserted below.
 vi.hoisted(() => {
-  process.env.IDENTITY_PROVIDER = "demo";
   process.env.WDK_TOOLS_SOURCE = "fixture";
   process.env.WDK_NETWORK = "sepolia";
   process.env.WDK_TOKEN = "USDT";
 });
 
-import { buildServer } from "../../src/server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 
 describe("GET /health", () => {
   it("reports ok status with mcp and wallet state", async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     const response = await app.inject({ method: "GET", url: "/health" });
 
     expect(response.statusCode).toBe(200);
@@ -34,7 +39,7 @@ describe("GET /health", () => {
     const previous = process.env.CORS_ORIGINS;
     delete process.env.CORS_ORIGINS;
     try {
-      const app = buildServer();
+      const app = buildTestServer();
       const allowed = await app.inject({
         method: "GET",
         url: "/health",

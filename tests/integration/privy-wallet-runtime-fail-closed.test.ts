@@ -30,7 +30,6 @@ suite("Privy runtime without server credentials", () => {
   const previous = { ...process.env };
 
   beforeAll(() => {
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = APP_ID;
     process.env.PRIVY_VERIFICATION_KEY = publicKey.export({
       type: "spki",
@@ -46,7 +45,6 @@ suite("Privy runtime without server credentials", () => {
 
   afterAll(() => {
     for (const name of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "PRIVY_APP_SECRET",

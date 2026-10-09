@@ -16,7 +16,6 @@ suite("authenticated notifications feed HTTP (Slice 5 RED)", () => {
 
   beforeAll(() => {
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "WDK_TOOLS_SOURCE",
@@ -24,7 +23,6 @@ suite("authenticated notifications feed HTTP (Slice 5 RED)", () => {
     ]) {
       previousEnv[key] = process.env[key];
     }
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-notifications-feed";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.WDK_TOOLS_SOURCE = "fixture";

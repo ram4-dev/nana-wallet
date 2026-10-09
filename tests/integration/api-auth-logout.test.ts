@@ -42,7 +42,6 @@ suite("POST /v1/auth/logout and the session floor (privy mode)", () => {
   const previous = { ...process.env };
 
   beforeAll(() => {
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-identity-app";
     process.env.PRIVY_VERIFICATION_KEY = String(
       appKeys.publicKey.export({ type: "spki", format: "pem" }),
@@ -53,7 +52,6 @@ suite("POST /v1/auth/logout and the session floor (privy mode)", () => {
 
   afterAll(() => {
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
     ]) {

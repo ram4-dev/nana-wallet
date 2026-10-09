@@ -60,7 +60,6 @@ suite("provider webhook receipts + notifications feed (receipt-only)", () => {
 
   beforeAll(async () => {
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "PRIVY_WEBHOOK_SECRET",
@@ -69,7 +68,6 @@ suite("provider webhook receipts + notifications feed (receipt-only)", () => {
     ]) {
       previousEnv[key] = process.env[key];
     }
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-notifications-webhook";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.PRIVY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;

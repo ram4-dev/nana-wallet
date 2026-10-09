@@ -19,10 +19,7 @@ import {
   createCoreDependencies,
   createGrantCreator,
 } from "./runtime/dependencies.js";
-import {
-  DemoIdentityProvider,
-  type RequestIdentityProvider,
-} from "./auth/identity.js";
+import type { RequestIdentityProvider } from "./auth/identity.js";
 import { ensureDemoSentinelUser } from "./auth/demo-sentinel.js";
 import {
   PrivyIdentityError,
@@ -43,10 +40,7 @@ import {
 import { ContactsRepository } from "./memory/contacts-repository.js";
 import { EmbeddingService } from "./memory/embedding.js";
 import { FinancialTaskRegistry } from "./conversations/financial-task-registry.js";
-import {
-  readApiProcessConfig,
-  readIdentityProviderMode,
-} from "./config/process.js";
+import { readApiProcessConfig } from "./config/process.js";
 import {
   getConfiguredRecipientMemoryRuntime,
   getMemoryRuntimeForUser,
@@ -96,6 +90,42 @@ export function resolveCorsOrigins(raw = process.env.CORS_ORIGINS): string[] {
     .filter(Boolean);
 }
 
+/**
+ * PMU-001: the production identity provider. It verifies Privy access tokens
+ * offline (app id + verification key, read from the environment) and resolves
+ * the verified Privy DID to the internal users UUID through the idempotent
+ * provisioning function (PMU-003). The provider stays a pure offline verifier;
+ * the session floor is layered on top so a logged-out user's still-valid token
+ * stops being accepted.
+ */
+function createPrivyIdentity(
+  database: DatabaseClient,
+  sessionFloors: SessionFloorStore,
+): RequestIdentityProvider {
+  const { appId, verificationKeyPem } = readPrivyVerificationInputs(
+    process.env,
+  );
+  return createSessionFloorIdentity(
+    new PrivyIdentityProvider({
+      appId,
+      verificationKeyPem,
+      resolvePrivyDid: (did, displayName) =>
+        database
+          .query<{ id: string }>(
+            "SELECT users_ensure_for_privy_did($1, $2) AS id",
+            [did, displayName ?? null],
+          )
+          .then((result) => {
+            const row = result.rows[0];
+            if (!row)
+              throw new Error("users_ensure_for_privy_did returned no id");
+            return row.id;
+          }),
+    }),
+    sessionFloors,
+  );
+}
+
 export function buildServer(options: {
   privyServer?: PrivyServerClient;
   identity?: RequestIdentityProvider;
@@ -136,53 +166,30 @@ export function buildServer(options: {
 
   const core = createCoreDependencies();
   const config = readRecipientMemoryConfig();
-  const identityProviderMode = readIdentityProviderMode();
 
-  // PMU-001: build the sole identity provider from configuration.
-  let identity: RequestIdentityProvider;
+  // PMU-001: build the sole identity provider. Production identity is ALWAYS the
+  // Privy verifier; `options.identity` is the test seam that replaces the removed
+  // demo switch. When an identity is injected none of the Privy inputs are read.
   let database: DatabaseClient | undefined;
   // Session floor (server-side session invalidation): durable per-user revoke
   // instant. Set by POST /v1/auth/logout and enforced on every authenticated
   // request through the identity decorator below.
   let sessionFloors: SessionFloorStore | undefined;
-  if (identityProviderMode === "privy") {
-    const { appId, verificationKeyPem } = readPrivyVerificationInputs(
-      process.env,
-    );
-    if (!config.databaseUrl)
-      throw new Error("DATABASE_URL is required when IDENTITY_PROVIDER=privy.");
-    // PMU-024: identity-only rollout — a funded singleton provider is already
-    // rejected at config-read time (readApiProcessConfig).
+  if (config.databaseUrl) {
     database = createConfiguredDatabaseClient();
     sessionFloors = createSessionFloorStore(database);
-    // The provider stays a pure offline verifier; the session floor is layered
-    // on top so a logged-out user's still-valid token stops being accepted.
-    identity = createSessionFloorIdentity(
-      new PrivyIdentityProvider({
-        appId,
-        verificationKeyPem,
-        resolvePrivyDid: (did, displayName) =>
-          database!
-            .query<{ id: string }>(
-              "SELECT users_ensure_for_privy_did($1, $2) AS id",
-              [did, displayName ?? null],
-            )
-            .then((result) => {
-              const row = result.rows[0];
-              if (!row)
-                throw new Error("users_ensure_for_privy_did returned no id");
-              return row.id;
-            }),
-      }),
-      sessionFloors,
-    );
+  }
+  let identity: RequestIdentityProvider;
+  if (options.identity) {
+    identity = options.identity;
   } else {
-    identity =
-      options.identity ?? new DemoIdentityProvider(config.demoUserId ?? "");
-    if (config.databaseUrl) {
-      database = createConfiguredDatabaseClient();
-      sessionFloors = createSessionFloorStore(database);
-    }
+    if (!database || !sessionFloors)
+      throw new Error(
+        "DATABASE_URL is required for the Privy identity provider.",
+      );
+    // PMU-024: identity-only rollout — a funded singleton provider is already
+    // rejected at config-read time (readApiProcessConfig).
+    identity = createPrivyIdentity(database, sessionFloors);
   }
 
   const resolveUserId = async (request: FastifyRequest): Promise<string> =>
@@ -213,15 +220,15 @@ export function buildServer(options: {
     ? createConfiguredWalletForUser(database, process.env, privyServer)
     : undefined;
 
-  const healthWallet =
-    identityProviderMode === "privy"
-      ? createPrivyWalletHealthProvider(Boolean(privyServer))
-      : core.walletReads;
+  const healthWallet = privyServer
+    ? createPrivyWalletHealthProvider(true)
+    : core.walletReads;
   app.register(registerHealthRoutes, { wallet: healthWallet });
-  // PMU-024: wallet reads authenticate in privy mode (public in demo for compatibility).
+  // PMU-024: wallet reads always authenticate. The removed switch used to keep
+  // them public in the demo mode; no mode makes them public now.
   app.register(registerWalletRoutes, {
     wallet: core.walletReads,
-    ...(identityProviderMode === "privy" ? { resolveUserId } : {}),
+    resolveUserId,
     ...(walletForUser ? { walletForUser } : {}),
   });
 
@@ -251,10 +258,7 @@ export function buildServer(options: {
 
     const conversations = new PostgresConversationRepository(database);
     const financialTasks = new FinancialTaskRegistry();
-    const memory =
-      identityProviderMode === "demo"
-        ? getConfiguredRecipientMemoryRuntime()
-        : undefined;
+    const memory = getConfiguredRecipientMemoryRuntime();
     const service = createWalletConversationService({
       conversations,
       wallet: core.wallet,
@@ -288,9 +292,11 @@ export function buildServer(options: {
       memoryForUser: (userId) => getMemoryRuntimeForUser(userId),
     });
 
-    // PMU-004: demo-mode startup provisions the sentinel before serving
-    // requests, including the seed-before-server flow.
-    if (identityProviderMode === "demo" && config.demoUserId) {
+    // PMU-004: when a demo tenant is configured, startup provisions the sentinel
+    // before serving requests, including the seed-before-server flow. The removed
+    // switch used to key this on the demo mode; the demo tenant itself is the
+    // property the hook actually protects.
+    if (config.demoUserId) {
       const demoUserId = config.demoUserId;
       app.addHook("onReady", async () => {
         await ensureDemoSentinelUser(database!, demoUserId);
@@ -415,12 +421,19 @@ export function buildServer(options: {
     });
 
     // PEW-001..014: user-scoped embedded wallet surface. The fixture Privy
-    // client is the default (and the only mode allowed in privy identity
-    // mode); the live wallet client fails closed without PRIVY_* credentials.
-    // The server client is constructed ONLY when the server config is present
-    // (app id + secret); otherwise sync/enrollment stay fixture-backed.
+    // client is the default; the live wallet client fails closed without PRIVY_*
+    // credentials. The server client is constructed ONLY when the server config
+    // is present (app id + secret); otherwise enrollment stays fixture-backed.
+    //
+    // In a Privy deployment without a server client the surface must fail closed
+    // instead of serving fixture wallets. The discriminator is the Privy identity
+    // inputs, not an injected identity: the fixture suites carry neither input,
+    // so they keep the fixture client they always had.
+    const privyIdentityConfigured =
+      Boolean(process.env.PRIVY_APP_ID?.trim()) &&
+      Boolean(process.env.PRIVY_VERIFICATION_KEY?.trim());
     const privyClient =
-      identityProviderMode === "privy" && !privyServer
+      privyIdentityConfigured && !privyServer
         ? unavailablePrivyWalletClient()
         : createPrivyWalletApiClient(process.env, {});
     const enrollment = privyServerConfig?.keyQuorumId
@@ -449,27 +462,26 @@ export function buildServer(options: {
     });
   }
 
-  // PMU-020: room tokens authenticate the caller and authorize the owned
-  // conversation in privy mode; demo keeps the compatibility path.
+  // PMU-020: room tokens always authenticate the caller and authorize the owned
+  // conversation. The removed switch used to keep this path open in the demo
+  // mode; no mode leaves room tokens unauthenticated now.
   const voiceOptions: VoiceRoutesOptions = {};
-  if (identityProviderMode === "privy") {
-    voiceOptions.authorizeRoomToken = async (request, conversationId) => {
-      const userId = await resolveUserId(request);
-      const owned = database
-        ? await new PostgresConversationRepository(database).get(
-            userId,
-            conversationId,
-          )
-        : undefined;
-      // Missing and foreign conversations are indistinguishable: same 404.
-      if (!owned) return { ok: false as const, reason: "not_found" as const };
-      return {
-        ok: true as const,
-        identity: userId,
-        roomName: `nani-${conversationId}`,
-      };
+  voiceOptions.authorizeRoomToken = async (request, conversationId) => {
+    const userId = await resolveUserId(request);
+    const owned = database
+      ? await new PostgresConversationRepository(database).get(
+          userId,
+          conversationId,
+        )
+      : undefined;
+    // Missing and foreign conversations are indistinguishable: same 404.
+    if (!owned) return { ok: false as const, reason: "not_found" as const };
+    return {
+      ok: true as const,
+      identity: userId,
+      roomName: `nani-${conversationId}`,
     };
-  }
+  };
   voiceOptions.liveKitTokenIssuer = {
     issue: (input: RoomTokenInput) =>
       issueRoomToken(

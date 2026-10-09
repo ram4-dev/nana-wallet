@@ -124,11 +124,14 @@ describe('GET /health provider field (additive, D5)', () => {
   });
 });
 
-describe('GET /health privy-mode network default (Solana-only)', () => {
-  // The privy identity path is Solana-only: with no explicit WDK_NETWORK the
+describe('GET /health privy-identity network default (Solana-only)', () => {
+  // The Privy identity path is Solana-only: with no explicit WDK_NETWORK the
   // route must advertise the Solana devnet, never the removed Arc testnet.
+  // `mode` is now derived from the Privy identity inputs (app id + verification
+  // key) instead of the removed identity switch, so this case pins those inputs.
   const previous = new Map<string, string | undefined>([
-    ['IDENTITY_PROVIDER', process.env.IDENTITY_PROVIDER],
+    ['PRIVY_APP_ID', process.env.PRIVY_APP_ID],
+    ['PRIVY_VERIFICATION_KEY', process.env.PRIVY_VERIFICATION_KEY],
     ['WDK_NETWORK', process.env.WDK_NETWORK],
     ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
   ]);
@@ -140,10 +143,13 @@ describe('GET /health privy-mode network default (Solana-only)', () => {
     }
   });
 
-  it('defaults the network to solana-devnet under privy identity', async () => {
+  it('defaults the network to solana-devnet under the Privy identity inputs', async () => {
     delete process.env.WDK_NETWORK;
     delete process.env.WDK_TOOLS_SOURCE;
-    process.env.IDENTITY_PROVIDER = 'privy';
+    // `/health` only checks that the identity inputs are present; it never
+    // parses the key, so a placeholder is enough to pin the `live` contract.
+    process.env.PRIVY_APP_ID = 'test-health-app';
+    process.env.PRIVY_VERIFICATION_KEY = 'test-health-verification-key';
 
     const body = await healthBody(fakeWalletProvider(async () => ({ status: 'healthy' })));
 

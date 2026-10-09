@@ -63,15 +63,12 @@ async function main(): Promise<void> {
       "Recipient memory and RECIPIENT_MEMORY_SEED_FILE are required for seeding.",
     );
   }
-  // PMU-004: the recipient-memory seed is a demo-only fixture. Privy mode
-  // provisions per-user data on login and must never seed the singleton.
-  if (config.identityProvider !== "demo") {
-    throw new Error(
-      "Recipient memory seeding requires IDENTITY_PROVIDER=demo; refusing to seed in privy mode.",
-    );
-  }
+  // PMU-004: the recipient-memory seed is a demo-tenant fixture. It writes to
+  // the configured demo tenant only — the property the removed demo/privy switch
+  // was standing in for. A deployment with no demo tenant (production, where the
+  // Privy path provisions per-user data on login) must never seed a singleton.
   if (!config.demoUserId) {
-    throw new Error("DEMO_USER_ID is required for seeding in demo mode.");
+    throw new Error("DEMO_USER_ID is required for seeding.");
   }
   // Decode the seed file at the I/O boundary: parse errors become a single
   // actionable seed failure instead of an unguarded throw.

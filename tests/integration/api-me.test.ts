@@ -38,7 +38,6 @@ suite("/v1/me (PMU-007) and contacts auth (privy mode)", () => {
   const previous = { ...process.env };
 
   beforeAll(() => {
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-identity-app";
     process.env.PRIVY_VERIFICATION_KEY = String(
       appKeys.publicKey.export({ type: "spki", format: "pem" }),
@@ -49,7 +48,6 @@ suite("/v1/me (PMU-007) and contacts auth (privy mode)", () => {
 
   afterAll(() => {
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
     ]) {

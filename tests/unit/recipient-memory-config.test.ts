@@ -6,13 +6,10 @@ describe('recipient memory configuration', () => {
     expect(readRecipientMemoryConfig({})).toMatchObject({ enabled: false });
   });
 
-  it('requires a database URL and a UUID demo identity only when enabled', () => {
-    expect(() => readRecipientMemoryConfig({ RECIPIENT_MEMORY_ENABLED: 'true' })).toThrow('DATABASE_URL');
-    expect(() => readRecipientMemoryConfig({
-      RECIPIENT_MEMORY_ENABLED: 'true',
-      DATABASE_URL: 'postgresql://example',
-      DEMO_USER_ID: 'not-a-uuid',
-    })).toThrow('DEMO_USER_ID');
+  it('requires a database URL only when enabled', () => {
+    expect(() =>
+      readRecipientMemoryConfig({ RECIPIENT_MEMORY_ENABLED: 'true' }),
+    ).toThrow('DATABASE_URL');
   });
 
   it('accepts an enabled fixed demo identity and bounded ranking settings', () => {

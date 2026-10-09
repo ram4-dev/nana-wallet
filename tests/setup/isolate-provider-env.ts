@@ -26,9 +26,8 @@
  *     deleted.
  *
  * Deleting (rather than pinning to "") returns each variable to its true unset
- * state, which is exactly the CI shape: strict enums such as IDENTITY_PROVIDER
- * fall back to their documented default instead of failing validation on an
- * empty string.
+ * state, which is exactly the CI shape: strict enums and credential checks then
+ * see an unset variable instead of failing validation on an empty string.
  *
  * WHAT IS DELIBERATELY NOT TOUCHED
  * --------------------------------
@@ -54,7 +53,6 @@ export const ISOLATED_PROVIDER_ENV_KEYS = [
   "PRIVY_AUTHORIZATION_PUBLIC_KEY",
   "PRIVY_AUTHORIZATION_KEY_QUORUM_ID",
   "PRIVY_API_BASE_URL",
-  "IDENTITY_PROVIDER",
   // Live voice binding + LiveKit
   "LIVE_VOICE_ENABLED",
   "LIVE_VOICE_BINDING_PRIVATE_KEY",

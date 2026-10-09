@@ -51,7 +51,6 @@ suite("/v1/voice/room-token authorization (PMU-020, privy mode)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-voice-app";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.WDK_TOOLS_SOURCE = "fixture";
@@ -65,7 +64,6 @@ suite("/v1/voice/room-token authorization (PMU-020, privy mode)", () => {
   afterAll(async () => {
     await database.close();
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "DEMO_USER_ID",

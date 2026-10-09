@@ -37,84 +37,75 @@ describe("process-specific configuration", () => {
     ).toThrow("DEMO_USER_ID");
   });
 
-  it("defaults to the demo identity provider and rejects unknown values (PMU-001)", () => {
-    expect(readApiProcessConfig({ PORT: "3001" })).toMatchObject({
-      identityProvider: "demo",
+  it("requires the Privy identity inputs and a binding key in production", () => {
+    const keys = keyPair();
+    const tenant = "11111111-1111-4111-8111-111111111111";
+    expect(() => readApiProcessConfig({ NODE_ENV: "production" })).toThrow(
+      "DATABASE_URL",
+    );
+    expect(() =>
+      readApiProcessConfig({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://local",
+        DEMO_USER_ID: tenant,
+      }),
+    ).toThrow(/PRIVY_APP_ID/u);
+    expect(() =>
+      readApiProcessConfig({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://local",
+        DEMO_USER_ID: tenant,
+        PRIVY_APP_ID: "app",
+        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
+      }),
+    ).toThrow("LIVE_VOICE_BINDING_PRIVATE_KEY");
+    expect(
+      readApiProcessConfig({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgres://local",
+        DEMO_USER_ID: tenant,
+        PRIVY_APP_ID: "app",
+        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
+        LIVE_VOICE_BINDING_PRIVATE_KEY: keys.privateKey,
+      }),
+    ).toMatchObject({
+      databaseUrl: "postgres://local",
+      demoUserId: tenant,
     });
-    expect(
-      readApiProcessConfig({
-        PORT: "3001",
-        IDENTITY_PROVIDER: "demo",
-        DEMO_USER_ID: "11111111-1111-4111-8111-111111111111",
-      }),
-    ).toMatchObject({ identityProvider: "demo" });
-    expect(() => readApiProcessConfig({ IDENTITY_PROVIDER: "auth0" })).toThrow(
-      "IDENTITY_PROVIDER",
-    );
   });
 
-  it("privy mode requires Privy credentials and rejects the demo sentinel id (PMU-001)", () => {
-    expect(() => readApiProcessConfig({ IDENTITY_PROVIDER: "privy" })).toThrow(
-      /PRIVY_APP_ID/u,
-    );
-    expect(() =>
-      readApiProcessConfig({ IDENTITY_PROVIDER: "privy", PRIVY_APP_ID: "app" }),
-    ).toThrow(/PRIVY_VERIFICATION_KEY/u);
-    expect(() =>
-      readApiProcessConfig({
-        IDENTITY_PROVIDER: "privy",
-        PRIVY_APP_ID: "app",
-        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
-        DEMO_USER_ID: "11111111-1111-4111-8111-111111111111",
-      }),
-    ).toThrow("DEMO_USER_ID");
-    expect(
-      readApiProcessConfig({
-        IDENTITY_PROVIDER: "privy",
-        PRIVY_APP_ID: "app",
-        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
-      }),
-    ).toMatchObject({ identityProvider: "privy" });
-  });
-
-  it("rejects a funded singleton wallet provider in privy mode (PMU-024)", () => {
+  it("rejects a funded singleton wallet provider (PMU-024)", () => {
     // The `live`/WDK provider family was removed from the switch; a stale
-    // `WDK_TOOLS_SOURCE=live` is still rejected in privy mode instead of
-    // silently selecting a provider. The per-user-bound sources are accepted.
-    expect(() =>
-      readApiProcessConfig({
-        IDENTITY_PROVIDER: "privy",
-        PRIVY_APP_ID: "app",
-        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
-        WDK_TOOLS_SOURCE: "live",
-      }),
-    ).toThrow(/singleton|funded|WDK_TOOLS_SOURCE/u);
+    // `WDK_TOOLS_SOURCE=live` is still rejected instead of silently selecting a
+    // provider. The per-user-bound sources are accepted.
+    expect(() => readApiProcessConfig({ WDK_TOOLS_SOURCE: "live" })).toThrow(
+      /singleton|funded|WDK_TOOLS_SOURCE/u,
+    );
     for (const source of ["fixture", "solana-devnet"] as const) {
-      expect(
-        readApiProcessConfig({
-          IDENTITY_PROVIDER: "privy",
-          PRIVY_APP_ID: "app",
-          PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
-          WDK_TOOLS_SOURCE: source,
-        }),
-      ).toMatchObject({ identityProvider: "privy" });
+      expect(readApiProcessConfig({ WDK_TOOLS_SOURCE: source })).toMatchObject({
+        databaseUrl: undefined,
+        demoUserId: undefined,
+      });
     }
   });
 
-  it("accepts the per-user-bound solana-devnet provider in privy mode (PMU-024)", () => {
-    // The guard exists to keep a FUNDED SINGLETON out of privy mode. Solana
-    // devnet signs through a per-user wallet binding, so it has no singleton
-    // sender identity and fails closed on its own. This must stay in sync with
-    // `readPrivyServerConfig`, which already allows it: an API that refuses to
-    // boot on a configuration the rest of the stack supports is unusable.
+  it("accepts the per-user-bound solana-devnet provider (PMU-024)", () => {
+    // The guard exists to keep a FUNDED SINGLETON out of the Privy identity
+    // path. Solana devnet signs through a per-user wallet binding, so it has no
+    // singleton sender identity and fails closed on its own. This must stay in
+    // sync with `readPrivyServerConfig`, which already allows it: an API that
+    // refuses to boot on a configuration the rest of the stack supports is
+    // unusable.
     expect(
       readApiProcessConfig({
-        IDENTITY_PROVIDER: "privy",
-        PRIVY_APP_ID: "app",
-        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
         WDK_TOOLS_SOURCE: "solana-devnet",
+        DATABASE_URL: "postgres://local",
+        DEMO_USER_ID: "11111111-1111-4111-8111-111111111111",
       }),
-    ).toMatchObject({ identityProvider: "privy" });
+    ).toMatchObject({
+      databaseUrl: "postgres://local",
+      demoUserId: "11111111-1111-4111-8111-111111111111",
+    });
   });
 
   it("rejects an invalid API binding key", () => {

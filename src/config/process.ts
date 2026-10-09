@@ -49,63 +49,42 @@ function assertEd25519Key(
   }
 }
 
-export type IdentityProviderMode = "demo" | "privy";
-
 export type ApiProcessConfig = {
   host: string;
   port: number;
-  identityProvider: IdentityProviderMode;
   databaseUrl?: string;
   demoUserId?: string;
   bindingPrivateKey?: string;
 };
 
 export type WorkerProcessConfig = LiveKitWorkerConfig & {
-  identityProvider: IdentityProviderMode;
   databaseUrl: string;
   demoUserId: string;
 };
 
 /**
- * PMU-001: exactly two identity modes. `demo` (default) keys identity to the
- * demo sentinel; `privy` verifies Privy access tokens and requires the app id
- * plus verification key. Any other value rejects startup.
- */
-export function readIdentityProviderMode(
-  environment: NodeJS.ProcessEnv = process.env,
-): IdentityProviderMode {
-  const raw = environment.IDENTITY_PROVIDER?.trim() || "demo";
-  if (raw !== "demo" && raw !== "privy") {
-    throw new Error("IDENTITY_PROVIDER must be either 'demo' or 'privy'.");
-  }
-  return raw;
-}
-
-/**
  * PMU-024: the identity foundation must not serve financial operations from a
- * funded singleton wallet provider in privy mode. With the `live`/WDK provider
- * family removed, this is now a strict allowlist: in privy mode only the
- * per-user-bound sources below may be selected. Any other value — including a
- * stale `WDK_TOOLS_SOURCE=live` left behind by the removed EVM path — is
- * rejected at boot rather than silently falling through to the fixture provider.
+ * funded singleton wallet provider. Production identity is always the Privy
+ * verifier, so the guard is unconditional: only the per-user-bound sources
+ * below may be selected. Any other value — including a stale
+ * `WDK_TOOLS_SOURCE=live` left behind by the removed EVM path — is rejected at
+ * boot rather than silently falling through to the fixture provider.
  *
  * `solana-devnet` is not a singleton: its signing path resolves a per-user
  * wallet binding, so the singleton provider has no sender identity and fails
- * closed. `readPrivyServerConfig` already allows it for that reason; this guard
- * must accept exactly the same set, otherwise the API refuses to boot on a
+ * closed. `readPrivyServerConfig` allows exactly the same set for the same
+ * reason; this guard must stay in sync, otherwise the API refuses to boot on a
  * configuration the rest of the stack supports.
  */
 const PER_USER_BOUND_SOURCES = new Set(["fixture", "solana-devnet"]);
 
 function rejectFundedSingletonInPrivyMode(
   environment: NodeJS.ProcessEnv,
-  identityProvider: IdentityProviderMode,
 ): void {
-  if (identityProvider !== "privy") return;
   const source = environment.WDK_TOOLS_SOURCE?.trim() || "fixture";
   if (!PER_USER_BOUND_SOURCES.has(source)) {
     throw new Error(
-      `WDK_TOOLS_SOURCE=${source} is not allowed with IDENTITY_PROVIDER=privy: the identity foundation must not start with a funded singleton wallet provider. Use 'fixture' or the per-user-bound 'solana-devnet' provider.`,
+      `WDK_TOOLS_SOURCE=${source} is not allowed: the identity foundation must not start with a funded singleton wallet provider. Use 'fixture' or the per-user-bound 'solana-devnet' provider.`,
     );
   }
 }
@@ -179,32 +158,17 @@ export function readLiveKitWorkerConfig(
 export function readApiProcessConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): ApiProcessConfig {
-  const identityProvider = readIdentityProviderMode(environment);
   const databaseUrl = environment.DATABASE_URL?.trim() || undefined;
   const demoUserId = environment.DEMO_USER_ID?.trim() || undefined;
-  if (identityProvider === "demo") {
-    if (databaseUrl && (!demoUserId || !uuid.safeParse(demoUserId).success)) {
-      throw new Error(
-        "DEMO_USER_ID must be a UUID when DATABASE_URL is configured.",
-      );
-    }
-  } else {
-    // PMU-001: privy mode requires Privy credentials; the demo sentinel is a
-    // demo-only concern and must not be configured.
-    const appId = environment.PRIVY_APP_ID?.trim();
-    const verificationKey = environment.PRIVY_VERIFICATION_KEY?.trim();
-    if (!appId)
-      throw new Error("PRIVY_APP_ID is required when IDENTITY_PROVIDER=privy.");
-    if (!verificationKey)
-      throw new Error(
-        "PRIVY_VERIFICATION_KEY is required when IDENTITY_PROVIDER=privy.",
-      );
-    if (demoUserId)
-      throw new Error(
-        "DEMO_USER_ID must not be set when IDENTITY_PROVIDER=privy.",
-      );
+  // A durable-database API must name the tenant it can fall back to: without a
+  // valid DEMO_USER_ID a demo-path request would resolve to an unmapped
+  // identity. (The Privy path provisions its own tenants per login.)
+  if (databaseUrl && (!demoUserId || !uuid.safeParse(demoUserId).success)) {
+    throw new Error(
+      "DEMO_USER_ID must be a UUID when DATABASE_URL is configured.",
+    );
   }
-  rejectFundedSingletonInPrivyMode(environment, identityProvider);
+  rejectFundedSingletonInPrivyMode(environment);
 
   const bindingPrivateKey =
     environment.LIVE_VOICE_BINDING_PRIVATE_KEY?.trim() || undefined;
@@ -226,9 +190,15 @@ export function readApiProcessConfig(
   if (environment.NODE_ENV === "production") {
     if (!databaseUrl)
       throw new Error("DATABASE_URL is required for production API access.");
-    if (!demoUserId || !uuid.safeParse(demoUserId).success)
+    // Production identity is always the Privy verifier, so the app id and the
+    // verification key are part of the boot contract instead of the removed
+    // demo-sentinel switch.
+    if (
+      !environment.PRIVY_APP_ID?.trim() ||
+      !environment.PRIVY_VERIFICATION_KEY?.trim()
+    )
       throw new Error(
-        "DEMO_USER_ID must be replaced with an authenticated identity provider in production.",
+        "PRIVY_APP_ID and PRIVY_VERIFICATION_KEY are required for production API access.",
       );
     if (!bindingPrivateKey)
       throw new Error(
@@ -239,7 +209,6 @@ export function readApiProcessConfig(
   return {
     host: environment.HOST?.trim() || "127.0.0.1",
     port: positiveInteger(environment.PORT, "PORT", 3000),
-    identityProvider,
     databaseUrl,
     demoUserId,
     bindingPrivateKey,
@@ -249,47 +218,23 @@ export function readApiProcessConfig(
 export function readWorkerProcessConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): WorkerProcessConfig {
-  const identityProvider = readIdentityProviderMode(environment);
   const liveKit = readLiveKitWorkerConfig(environment);
   const publicKey = required(environment, "LIVE_VOICE_BINDING_PUBLIC_KEY");
   assertEd25519Key(publicKey, "LIVE_VOICE_BINDING_PUBLIC_KEY", "public");
   const databaseUrl = required(environment, "DATABASE_URL");
-  if (identityProvider === "demo") {
-    const demoUserId = required(environment, "DEMO_USER_ID");
-    if (!uuid.safeParse(demoUserId).success)
-      throw new Error("DEMO_USER_ID must be a UUID for the worker.");
-    required(environment, "OPENAI_API_KEY");
-    return {
-      ...liveKit,
-      identityProvider,
-      publicKey,
-      databaseUrl,
-      demoUserId,
-    };
-  }
-  // PMU-001: privy mode requires Privy credentials; the demo sentinel is a
-  // demo-only concern and must not be configured.
-  const appId = environment.PRIVY_APP_ID?.trim();
-  const verificationKey = environment.PRIVY_VERIFICATION_KEY?.trim();
-  if (!appId)
-    throw new Error("PRIVY_APP_ID is required when IDENTITY_PROVIDER=privy.");
-  if (!verificationKey)
-    throw new Error(
-      "PRIVY_VERIFICATION_KEY is required when IDENTITY_PROVIDER=privy.",
-    );
-  if (environment.DEMO_USER_ID?.trim())
-    throw new Error(
-      "DEMO_USER_ID must not be set when IDENTITY_PROVIDER=privy.",
-    );
+  // The worker binds memory tools to the resolved per-session user, which in
+  // production arrives at runtime through the signed conversation binding — so
+  // the demo sentinel is optional and defaults to empty. When it IS configured
+  // it must still be a real tenant UUID.
+  const demoUserId = environment.DEMO_USER_ID?.trim();
+  if (demoUserId && !uuid.safeParse(demoUserId).success)
+    throw new Error("DEMO_USER_ID must be a UUID for the worker.");
   required(environment, "OPENAI_API_KEY");
-  // The worker binds memory tools to the resolved per-session user; without a
-  // demo sentinel the resolved UUID arrives at runtime via the conversation binding.
   return {
     ...liveKit,
-    identityProvider,
     publicKey,
     databaseUrl,
-    demoUserId: "",
+    demoUserId: demoUserId ?? "",
   };
 }
 

@@ -41,7 +41,6 @@ suite("provider webhook ingress receipt-only contract", () => {
 
   beforeAll(() => {
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "PRIVY_WEBHOOK_SECRET",
@@ -50,7 +49,6 @@ suite("provider webhook ingress receipt-only contract", () => {
     ]) {
       previousEnv[key] = process.env[key];
     }
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-notifications-receipt";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.PRIVY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;

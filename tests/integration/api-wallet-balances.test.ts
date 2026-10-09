@@ -144,7 +144,6 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
     addressB = fixtureAddress(userIdB);
 
     process.env.DATABASE_URL = databaseUrl;
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-balances-app";
     process.env.PRIVY_VERIFICATION_KEY = String(
       appKeys.publicKey.export({ type: "spki", format: "pem" }),
@@ -171,7 +170,6 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
     await database.close();
     for (const key of [
       "DATABASE_URL",
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "WDK_TOOLS_SOURCE",

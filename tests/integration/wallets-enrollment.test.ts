@@ -144,13 +144,12 @@ suite(
     beforeAll(() => {
       database = createDatabaseClient(databaseUrl!);
       // Suite-wide test verification key (P-256, ES256) for the access-token
-      // identity provider in privy mode.
+      // identity provider.
       const pair = generateKeyPairSync("ec", { namedCurve: "P-256" });
       verifyPrivateKey = pair.privateKey;
       process.env.PRIVY_VERIFICATION_KEY = String(
         pair.publicKey.export({ type: "spki", format: "pem" }),
       );
-      process.env.IDENTITY_PROVIDER = "privy";
       process.env.PRIVY_APP_ID = APP_ID;
       process.env.PRIVY_APP_SECRET = APP_SECRET;
       process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
@@ -162,7 +161,6 @@ suite(
     afterAll(async () => {
       await database.close();
       for (const key of [
-        "IDENTITY_PROVIDER",
         "PRIVY_APP_ID",
         "PRIVY_APP_SECRET",
         "PRIVY_VERIFICATION_KEY",
@@ -805,7 +803,6 @@ suite(
       process.env.PRIVY_VERIFICATION_KEY = String(
         pair.publicKey.export({ type: "spki", format: "pem" }),
       );
-      process.env.IDENTITY_PROVIDER = "privy";
       process.env.PRIVY_APP_ID = APP_ID;
       process.env.PRIVY_APP_SECRET = APP_SECRET;
       process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
@@ -817,7 +814,6 @@ suite(
     afterAll(async () => {
       await database.close();
       for (const key of [
-        "IDENTITY_PROVIDER",
         "PRIVY_APP_ID",
         "PRIVY_APP_SECRET",
         "PRIVY_VERIFICATION_KEY",
@@ -1295,7 +1291,6 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     process.env.PRIVY_VERIFICATION_KEY = String(
       pair.publicKey.export({ type: "spki", format: "pem" }),
     );
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = APP_ID;
     process.env.PRIVY_APP_SECRET = APP_SECRET;
     process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
@@ -1307,7 +1302,6 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
   afterAll(async () => {
     await database.close();
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_APP_SECRET",
       "PRIVY_VERIFICATION_KEY",

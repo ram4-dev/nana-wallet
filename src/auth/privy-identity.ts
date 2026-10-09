@@ -120,10 +120,10 @@ export function readPrivyVerificationInputs(
     "\n",
   );
   if (!appId)
-    throw new Error("PRIVY_APP_ID is required when IDENTITY_PROVIDER=privy.");
+    throw new Error("PRIVY_APP_ID is required for the Privy identity provider.");
   if (!verificationKeyPem)
     throw new Error(
-      "PRIVY_VERIFICATION_KEY is required when IDENTITY_PROVIDER=privy.",
+      "PRIVY_VERIFICATION_KEY is required for the Privy identity provider.",
     );
   try {
     parseVerificationKeys(verificationKeyPem);

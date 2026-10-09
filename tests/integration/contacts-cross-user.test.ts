@@ -34,7 +34,6 @@ suite("contacts cross-user isolation (PMU-013/019)", () => {
   const previousEnv = { ...process.env };
 
   beforeAll(() => {
-    process.env.IDENTITY_PROVIDER = "privy";
     process.env.PRIVY_APP_ID = "test-cross-app";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.WDK_TOOLS_SOURCE = "fixture";
@@ -43,7 +42,6 @@ suite("contacts cross-user isolation (PMU-013/019)", () => {
 
   afterAll(() => {
     for (const key of [
-      "IDENTITY_PROVIDER",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "DEMO_USER_ID",

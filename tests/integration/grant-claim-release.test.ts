@@ -428,20 +428,16 @@ function notDispatchedWallet(events: string[]): {
 suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
   beforeEach(() => {
     // Deterministic intent parsing + fixture tools (proven phase-4 setup).
     process.env.AGENT_RUNTIME = "deterministic";
     process.env.WDK_TOOLS_SOURCE = "fixture";
-    delete process.env.IDENTITY_PROVIDER;
   });
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
   });
 
   beforeAll(async () => {
@@ -892,7 +888,6 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
     // claimed-recipient revalidation. With no recipient-memory dependency the
     // service fails that closed — a real rejection from the OWNED broadcasting
     // state, before any broadcast.
-    process.env.IDENTITY_PROVIDER = "privy";
     const wallet = new FixtureWalletProvider();
     const previewSpy = vi
       .spyOn(wallet, "previewTransfer")
@@ -991,7 +986,6 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
     // The provider policy owns enforcement under the privy identity, so the
     // local gate is inert and this case pins the settlement CAS on the
     // provider not_dispatched path, not the local transfer policy.
-    process.env.IDENTITY_PROVIDER = "privy";
     const { wallet, spy } = notDispatchedWallet(events);
     const service = createWalletConversationService({
       conversations: repository,

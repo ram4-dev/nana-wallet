@@ -1,5 +1,4 @@
 import { createPublicKey } from "node:crypto";
-import { readIdentityProviderMode } from "./process.js";
 
 /**
  * PEW-014: server-side Privy configuration for the owner-verified sync and
@@ -19,9 +18,8 @@ import { readIdentityProviderMode } from "./process.js";
  *    DER/SPKI that decodes to a P-256 public key. The key material is never
  *    printed, and no validation failure includes the key value.
  *  - No secret is ever logged or embedded in a thrown error (PEW-011).
- *  - PMU-024: a funded singleton wallet provider is still rejected in privy
- *    identity mode; only the per-user-bound sources (`fixture` and
- *    `solana-devnet`) are allowed there.
+ *  - PMU-024: a funded singleton wallet provider is rejected outright; only the
+ *    per-user-bound sources (`fixture` and `solana-devnet`) are allowed.
  */
 
 export type PrivyServerConfig = {
@@ -78,23 +76,18 @@ export function readPrivyServerConfig(
  const appSecret = environment.PRIVY_APP_SECRET?.trim();
  if (!appId || !appSecret) return undefined;
 
- // PMU-024: the identity foundation still must not start with a funded
- // singleton wallet provider in privy mode. With the `live`/WDK family removed,
- // any source outside the per-user-bound set is rejected — including a stale
- // `WDK_TOOLS_SOURCE=live`.
- const identityProvider = readIdentityProviderMode(environment);
+ // PMU-024: the identity foundation must not start with a funded singleton
+ // wallet provider. Production identity is always the Privy verifier, so the
+ // allowlist is unconditional: any source outside the per-user-bound set is
+ // rejected — including a stale `WDK_TOOLS_SOURCE=live`.
  const source = environment.WDK_TOOLS_SOURCE?.trim() || "fixture";
- // PMU-024: Solana devnet is the only live provider allowed in Privy identity
- // mode because its signing path requires a per-user wallet binding; the
- // singleton Solana provider has no sender identity and fails closed.
+ // PMU-024: Solana devnet is the only live provider allowed because its signing
+ // path requires a per-user wallet binding; the singleton Solana provider has
+ // no sender identity and fails closed.
  const perUserBoundSolana = source === "solana-devnet";
- if (
-  identityProvider === "privy" &&
-  source !== "fixture" &&
-  !perUserBoundSolana
- ) {
+ if (source !== "fixture" && !perUserBoundSolana) {
   throw new Error(
-   `WDK_TOOLS_SOURCE=${source} is not allowed with IDENTITY_PROVIDER=privy: use 'fixture' or the per-user-bound 'solana-devnet' provider.`,
+   `WDK_TOOLS_SOURCE=${source} is not allowed: use 'fixture' or the per-user-bound 'solana-devnet' provider.`,
   );
  }
 

@@ -10,8 +10,19 @@ const WALLET = () => process.env.WDK_WALLET_NAME ?? "privy-user";
 // Read lazily: module-level constants froze the ambient .env at import time and
 // made the health contract depend on dotenv evaluation order (hermetic tests pin
 // the env before building the server).
-const MODE = () =>
-  process.env.IDENTITY_PROVIDER === "privy" ? "live" : "fixture";
+//
+// The removed identity-provider switch used to key this field. Production
+// identity is now always the Privy verifier, so the same observable contract is
+// derived from the Privy identity inputs: a deployment that presents an app id
+// and a verification key is `live`; anything else (including every fixture
+// suite, whose identity is injected) reports `fixture`.
+const MODE = (): HealthResponse["mode"] =>
+  Boolean(
+    process.env.PRIVY_APP_ID?.trim() &&
+      process.env.PRIVY_VERIFICATION_KEY?.trim(),
+  )
+    ? "live"
+    : "fixture";
 
 export async function registerHealthRoutes(
   app: FastifyInstance,

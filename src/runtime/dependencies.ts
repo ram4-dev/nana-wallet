@@ -29,7 +29,6 @@ import {
   getConfiguredRecipientMemoryRuntime,
   getMemoryRuntimeForUser,
 } from "../memory/runtime.js";
-import { readIdentityProviderMode } from "../config/process.js";
 import { readPrivyServerConfig } from "../config/privy-server.js";
 import { PrivyServerClient } from "../wallet/privy-server-client.js";
 import {
@@ -102,7 +101,24 @@ export function createConfiguredWalletForUser(
   injectedPrivyServer?: PrivyServerClient,
   authorizationSigner?: PayloadSigner,
 ): WalletForUser | undefined {
-  if (readIdentityProviderMode(environment) !== "privy") return undefined;
+  // Production identity is always the Privy verifier, so the per-user wallet
+  // seam is built whenever this process is configured as a Privy deployment:
+  // either a server client was injected (the test seam) or the Privy identity
+  // inputs are present.
+  //
+  // The identity inputs must stay part of the predicate. `walletForUser` has to
+  // remain DEFINED — and fail closed — in the Privy suites, including
+  // `privy-wallet-runtime-fail-closed`, which reaches the fail-closed resolver
+  // with `PRIVY_APP_ID` + `PRIVY_VERIFICATION_KEY` but no `PRIVY_APP_SECRET`, and
+  // in the unit suites that inject a Privy client with no
+  // `PRIVY_VERIFICATION_KEY`. The fixture suites carry neither input, so
+  // `walletForUser` stays undefined there and the fixture wallet keeps serving
+  // them. In production both inputs are always present, so this is always true.
+  const privyIdentityConfigured =
+    Boolean(environment.PRIVY_APP_ID?.trim()) &&
+    Boolean(environment.PRIVY_VERIFICATION_KEY?.trim());
+  if (injectedPrivyServer === undefined && !privyIdentityConfigured)
+    return undefined;
   const config = readPrivyServerConfig(environment);
   const privyServer =
     injectedPrivyServer ??
