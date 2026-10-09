@@ -49,12 +49,19 @@ named in its report.
   policy-sync case recomputed its expected expiry at assertion time, so
   crossing a second boundary failed the whole backend job (CI run 37636561838
   on `2958412`).
-- **Environment caveat for local runs**: an untracked `.env` with live Privy
-  credentials at the repository root leaks into the suite through `dotenv`, so
-  fixture-based cases hit the real provider (two `wallets-sync` cases then
-  report `unavailable` instead of `ready`). Verified by bisect: the same commit
-  is fully green in a clean environment. Run the suite from a checkout without
-  live credentials, or keep the credentials out of the repository root.
+- **Environment leak — FIXED**. An untracked root `.env` with live Privy
+  credentials leaked into the suite through the side-effect
+  `import "dotenv/config"` in `src/server.ts` / `src/livekit/worker.ts`, so
+  fixture-based cases called the real provider (two `wallets-sync` cases
+  reported `unavailable` instead of `ready`). Bisect proved it was the ambient
+  file, not the code: the same commit was fully green in a clean environment.
+  `tests/setup/isolate-provider-env.ts` (wired through `vitest.config.ts`)
+  now loads dotenv first and deletes the provider/identity/voice credentials,
+  so the cached module cannot reintroduce them; `DATABASE_URL`/`DEMO_USER_ID`
+  are untouched to avoid silently skipping the integration suites.
+  Verified: with the leaking `.env` present the suite reports the clean-env
+  baseline (158 files / 1069 passed / 10 skipped, evals 27/27), and
+  `VI_TEST_AMBIENT_PROVIDER_ENV=1` reproduces the leak on demand.
 
 ## Notable cross-cutting deferrals
 
