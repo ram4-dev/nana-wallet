@@ -14,7 +14,13 @@ function unusedSdkClient(): PrivySdkClient {
   } as unknown as PrivySdkClient;
 }
 
-describe("configured multi-chain per-user wallet resolver", () => {
+/**
+ * The configured per-user resolver is no longer multi-chain: Solana is the only
+ * chain family this deployment serves. The missing-hint case below survives
+ * (it still fails closed); the retired `"ethereum"` arm is now pinned as a
+ * refusal instead of resolving a provider.
+ */
+describe("configured per-user wallet resolver", () => {
   it("requires an explicit chain family instead of falling through to Ethereum", async () => {
     const privy = new PrivyServerClient({
       appId: "app-test",
@@ -24,6 +30,19 @@ describe("configured multi-chain per-user wallet resolver", () => {
     const resolve = createConfiguredWalletForUser({} as DatabaseClient, {}, privy);
 
     await expect(resolve?.("user-a")).rejects.toMatchObject({
+      code: "wallet_config_error",
+    });
+  });
+
+  it("refuses the retired ethereum family instead of resolving Solana", async () => {
+    const privy = new PrivyServerClient({
+      appId: "app-test",
+      appSecret: "secret-test",
+      client: unusedSdkClient(),
+    });
+    const resolve = createConfiguredWalletForUser({} as DatabaseClient, {}, privy);
+
+    await expect(resolve?.("user-a", "ethereum")).rejects.toMatchObject({
       code: "wallet_config_error",
     });
   });

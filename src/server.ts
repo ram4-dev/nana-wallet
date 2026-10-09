@@ -73,7 +73,7 @@ import { createGrantPolicySyncService } from "./wallet/grants/privy-policy-runti
 import { readPrivyServerConfig } from "./config/privy-server.js";
 import { PrivyServerClient } from "./wallet/privy-server-client.js";
 import { createWorkerPayloadSigner } from "./wallet/signer/index.js";
-import { createPrivyWalletHealthProvider } from "./wallet/privy-user-provider.js";
+import { createPrivyWalletHealthProvider } from "./wallet/user-wallet.js";
 import type { FastifyRequest } from "fastify";
 
 export const DEFAULT_CORS_ORIGINS = [

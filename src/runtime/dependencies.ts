@@ -34,10 +34,9 @@ import {
 import { createGrantPolicySyncService } from "../wallet/grants/privy-policy-runtime.js";
 import {
   PrivyWalletRuntimeError,
-  createPrivyWalletForUserResolver,
   createUnavailablePrivyWalletResolver,
   type WalletForUser,
-} from "../wallet/privy-user-provider.js";
+} from "../wallet/user-wallet.js";
 import { createSolanaWalletForUser } from "../wallet/solana-user-wallet.js";
 import {
   createWorkerPayloadSigner,
@@ -125,28 +124,26 @@ export function createConfiguredWalletForUser(
         })
       : undefined);
   if (!privyServer) return createUnavailablePrivyWalletResolver();
-  const ethereumWalletForUser = createPrivyWalletForUserResolver({
-    database,
-    privy: privyServer,
-    rpcUrl: environment.ARC_TESTNET_RPC_URL?.trim() || undefined,
-    ...(authorizationSigner ? { authorizationSigner } : {}),
-  });
   const solanaWalletForUser = createSolanaWalletForUser({
     database,
     privy: privyServer,
     environment,
-    // S4: the same sidecar-backed signer the EVM path uses signs the Solana
-    // dispatch; the worker process holds no authorization key.
+    // S4: the sidecar-backed signer signs the Solana dispatch; the worker
+    // process holds no authorization key.
     ...(authorizationSigner ? { authorizationSigner } : {}),
   });
   return async (userId, chainFamily) => {
     const requestedChain =
       typeof chainFamily === "function" ? chainFamily() : chainFamily;
-    if (requestedChain === "ethereum") return ethereumWalletForUser(userId);
     if (requestedChain === "solana") return solanaWalletForUser(userId);
+    // Solana is the only chain family this deployment serves. A missing hint is
+    // a caller gap and "ethereum" is the retired Arc/EVM family; both fail
+    // closed rather than silently resolving a Solana wallet for either.
     throw new PrivyWalletRuntimeError(
       "wallet_config_error",
-      "Wallet chain family is required for per-user wallet resolution.",
+      requestedChain === "ethereum"
+        ? "The Ethereum per-user wallet path was removed; this deployment serves Solana only."
+        : "Wallet chain family is required for per-user wallet resolution.",
     );
   };
 }

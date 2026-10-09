@@ -23,7 +23,7 @@
 import type { DelegatedGrantService } from "../wallet/grants/consumption.js";
 import { classifyGrantCoverage } from "./grant-coverage.js";
 import { parsePossibleFinancialIntent } from "./interpretation.js";
-import type { WalletForUser } from "../wallet/privy-user-provider.js";
+import type { WalletForUser } from "../wallet/user-wallet.js";
 
 export type GrantGateInput = {
   userId: string;

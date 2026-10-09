@@ -6,7 +6,7 @@ import {
 import type { ConversationRepository } from "../../src/conversations/repository.js";
 import type { ConversationSnapshot } from "../../src/conversations/types.js";
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
-import { PrivyWalletRuntimeError } from "../../src/wallet/privy-user-provider.js";
+import { PrivyWalletRuntimeError } from "../../src/wallet/user-wallet.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const CONVERSATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

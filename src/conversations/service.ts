@@ -36,11 +36,11 @@ import {
   type TransferRequest,
   type WalletProvider,
 } from "../wallet/provider.js";
+import { walletChainFamilyForNetwork } from "../wallet/chain-family.js";
 import {
   bindWalletForUser,
-  walletChainFamilyForNetwork,
   type WalletForUser,
-} from "../wallet/privy-user-provider.js";
+} from "../wallet/user-wallet.js";
 import {
   GrantWalletUnavailableError,
   InvalidGrantInputError,

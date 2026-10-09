@@ -1,11 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { getWalletAgentConfig } from "../agent/instructions.js";
 import type { WalletProvider } from "../wallet/provider.js";
+import { walletChainFamilyForNetwork } from "../wallet/chain-family.js";
 import {
   PrivyWalletRuntimeError,
-  walletChainFamilyForNetwork,
   type WalletForUser,
-} from "../wallet/privy-user-provider.js";
+} from "../wallet/user-wallet.js";
 import {
   walletBalanceQuerySchema,
   walletBalanceResponseSchema,

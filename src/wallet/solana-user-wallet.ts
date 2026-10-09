@@ -8,7 +8,7 @@ import {
   PrivyWalletRuntimeError,
   readUserWalletSelection,
   type WalletForUser,
-} from "./privy-user-provider.js";
+} from "./user-wallet.js";
 import {
   SolanaDevnetProvider,
   SOLANA_DEVNET_NETWORK,

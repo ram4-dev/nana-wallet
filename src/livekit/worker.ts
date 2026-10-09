@@ -33,11 +33,11 @@ import {
   createWorkerDependencies,
   type WorkerDependencies,
 } from "../runtime/dependencies.js";
+import { walletChainFamilyForNetwork } from "../wallet/chain-family.js";
 import {
   bindWalletForUser,
-  walletChainFamilyForNetwork,
   type WalletForUser,
-} from "../wallet/privy-user-provider.js";
+} from "../wallet/user-wallet.js";
 
 export function bindLiveKitWalletForUser(
   walletForUser: WalletForUser,
@@ -64,9 +64,9 @@ export function bindLiveKitWalletForUser(
     walletChainFamilyForNetwork(getWalletAgentConfig().network);
   const familyFor = (
     net: string | undefined,
-  ): import("../wallet/privy-user-provider.js").WalletChainFamilyHint =>
+  ): import("../wallet/chain-family.js").WalletChainFamilyHint =>
     !net || net === "" ? defaultFamily : () => walletChainFamilyForNetwork(net);
-  const resolve = (family?: import("../wallet/privy-user-provider.js").WalletChainFamilyHint) =>
+  const resolve = (family?: import("../wallet/chain-family.js").WalletChainFamilyHint) =>
     walletForUser(userId, family);
   type WP = import("../wallet/provider.js").WalletProvider;
   return {

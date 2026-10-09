@@ -19,7 +19,7 @@ import {
   type PrivyWalletPage,
   type PrivyWalletRecord,
 } from "../../src/wallet/privy-server-client.js";
-import { PrivyWalletRuntimeError } from "../../src/wallet/privy-user-provider.js";
+import { PrivyWalletRuntimeError } from "../../src/wallet/user-wallet.js";
 import { createSolanaWalletForUser } from "../../src/wallet/solana-user-wallet.js";
 import { createWorkerPayloadSigner } from "../../src/wallet/signer/client.js";
 import { createKeyPayloadSigner } from "../../src/wallet/signer/key-signer.js";
