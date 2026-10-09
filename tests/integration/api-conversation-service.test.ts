@@ -4,26 +4,23 @@ import { vi, afterEach, describe, expect, it } from "vitest";
 // full-suite parallel load (documented pattern in api-voice).
 vi.setConfig({ testTimeout: 15_000 });
 
-import { buildTestServer } from "../fixtures/test-server.js";
+import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-// Standard compose demo sentinel UUID: the users migration + PMU-004 make the
-// `demo` privy_did a unique slot per database, so every server-based test in a
-// shared database must agree on one demo user id (idempotent under concurrency).
-const userId = "00000000-0000-4000-8000-000000000001";
+// The shared fixture identity: every server-based suite in a shared database
+// agrees on one user id (idempotent under concurrency).
+const userId = TEST_USER_ID;
 const recipient = "0x1234567890123456789012345678901234567890";
 
 describe("typed conversation service with fixture wallet", () => {
   const previous = {
     enabled: process.env.RECIPIENT_MEMORY_ENABLED,
-    demoUserId: process.env.DEMO_USER_ID,
     runtime: process.env.AGENT_RUNTIME,
   };
 
   afterEach(() => {
     for (const [key, value] of Object.entries({
       RECIPIENT_MEMORY_ENABLED: previous.enabled,
-      DEMO_USER_ID: previous.demoUserId,
       AGENT_RUNTIME: previous.runtime,
     })) {
       if (value === undefined) delete process.env[key];
@@ -35,9 +32,8 @@ describe("typed conversation service with fixture wallet", () => {
     "completes preview, atomic confirmation, and fixture finality through HTTP",
     async () => {
       process.env.RECIPIENT_MEMORY_ENABLED = "true";
-      process.env.DEMO_USER_ID = userId;
       process.env.AGENT_RUNTIME = "deterministic";
-      const app = buildTestServer();
+      const app = buildTestServer({ userId });
       try {
         const created = await app.inject({
           method: "POST",

@@ -21,7 +21,6 @@ import {
 } from "./runtime/dependencies.js";
 import type { RequestIdentityProvider } from "./auth/identity.js";
 import type { WalletProvider } from "./wallet/provider.js";
-import { ensureDemoSentinelUser } from "./auth/demo-sentinel.js";
 import {
   PrivyIdentityError,
   PrivyIdentityProvider,
@@ -43,7 +42,6 @@ import { EmbeddingService } from "./memory/embedding.js";
 import { FinancialTaskRegistry } from "./conversations/financial-task-registry.js";
 import { readApiProcessConfig } from "./config/process.js";
 import {
-  getConfiguredRecipientMemoryRuntime,
   getMemoryRuntimeForUser,
 } from "./memory/runtime.js";
 import {
@@ -271,7 +269,6 @@ export function buildServer(options: {
 
     const conversations = new PostgresConversationRepository(database);
     const financialTasks = new FinancialTaskRegistry();
-    const memory = getConfiguredRecipientMemoryRuntime();
     const service = createWalletConversationService({
       conversations,
       wallet: core.wallet,
@@ -300,21 +297,9 @@ export function buildServer(options: {
           }
         : {}),
       // PMU-014: memory scoped to the RESOLVED per-request user in every mode;
-      // the fixed demo runtime (if configured) is only a fallback.
-      ...(memory ? { memory } : {}),
+      // there is no fixed demo tenant to fall back to.
       memoryForUser: (userId) => getMemoryRuntimeForUser(userId),
     });
-
-    // PMU-004: when a demo tenant is configured, startup provisions the sentinel
-    // before serving requests, including the seed-before-server flow. The removed
-    // switch used to key this on the demo mode; the demo tenant itself is the
-    // property the hook actually protects.
-    if (config.demoUserId) {
-      const demoUserId = config.demoUserId;
-      app.addHook("onReady", async () => {
-        await ensureDemoSentinelUser(database!, demoUserId);
-      });
-    }
 
     app.addHook("onClose", async () => {
       // Stop every DB-backed notifications worker before closing the pool.
@@ -500,7 +485,7 @@ export function buildServer(options: {
       issueRoomToken(
         {
           ...readLiveKitTokenIssuerConfig(),
-          identity: input.identity ?? config.demoUserId ?? "",
+          identity: input.identity ?? "",
         },
         input,
       ),

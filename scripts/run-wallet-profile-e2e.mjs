@@ -29,7 +29,9 @@ const BACKEND_URL = "http://127.0.0.1:3124";
 const FRONTEND_URL = "http://127.0.0.1:5199";
 const DB_CONTAINER = "nana-wallet-profile-test-db-1";
 const DB_NAME = "wdk_agent";
-const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
+// Fixture identity the browser and backend agree on. Mirrors
+// tests/fixtures/test-server.ts TEST_USER_ID (plain-node script: no TS import).
+const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
 const DATABASE_URL =
   process.env.WALLET_PROFILE_TEST_DATABASE_URL ??
   "postgresql://postgres@127.0.0.1:55432/wdk_agent?options=-csearch_path%3Dpublic,extensions";
@@ -42,7 +44,7 @@ function fixtureAddress(userId) {
   return `0x${digest.padStart(40, "0").slice(-40)}`;
 }
 
-const DEMO_ADDRESS = fixtureAddress(DEMO_USER_ID);
+const DEMO_ADDRESS = fixtureAddress(TEST_USER_ID);
 // 1.25 USDC for the happy path; a large uint256 is configured for the
 // overflow/precision check phase.
 const DEMO_BALANCE_ATOMIC = "1250000";
@@ -51,7 +53,6 @@ function backendEnv(overrides = {}) {
   return {
     ...process.env,
     DATABASE_URL,
-    DEMO_USER_ID,
     IDENTITY_PROVIDER: "demo",
     WDK_TOOLS_SOURCE: "fixture",
     AGENT_RUNTIME: "deterministic",
@@ -357,7 +358,7 @@ async function browserChecks() {
 
     // --- /perfil with an absent name ---
     try {
-      psql(`UPDATE users SET display_name = NULL WHERE id = '${DEMO_USER_ID}'`);
+      psql(`UPDATE users SET display_name = NULL WHERE id = '${TEST_USER_ID}'`);
       await page.reload({ waitUntil: "domcontentloaded" });
       await page
         .getByText("Todavía no tenemos tu nombre")
@@ -371,14 +372,14 @@ async function browserChecks() {
       );
     } finally {
       psql(
-        `UPDATE users SET display_name = 'Demo' WHERE id = '${DEMO_USER_ID}'`,
+        `UPDATE users SET display_name = 'Demo' WHERE id = '${TEST_USER_ID}'`,
       );
     }
 
     // --- 390px overflow with a long name ---
     try {
       psql(
-        `UPDATE users SET display_name = 'Ramiro Alejandro Güemes-Mendoza del Valle' WHERE id = '${DEMO_USER_ID}'`,
+        `UPDATE users SET display_name = 'Ramiro Alejandro Güemes-Mendoza del Valle' WHERE id = '${TEST_USER_ID}'`,
       );
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.waitForTimeout(500);
@@ -399,7 +400,7 @@ async function browserChecks() {
       );
     } finally {
       psql(
-        `UPDATE users SET display_name = 'Demo' WHERE id = '${DEMO_USER_ID}'`,
+        `UPDATE users SET display_name = 'Demo' WHERE id = '${TEST_USER_ID}'`,
       );
     }
 

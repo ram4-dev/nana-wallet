@@ -46,7 +46,6 @@ suite("POST /v1/auth/logout and the session floor (privy mode)", () => {
     process.env.PRIVY_VERIFICATION_KEY = String(
       appKeys.publicKey.export({ type: "spki", format: "pem" }),
     );
-    delete process.env.DEMO_USER_ID;
   });
 
   afterAll(() => {
@@ -57,8 +56,6 @@ suite("POST /v1/auth/logout and the session floor (privy mode)", () => {
       if (previous[key] === undefined) delete process.env[key];
       else process.env[key] = previous[key] as string;
     }
-    if (previous.DEMO_USER_ID === undefined) delete process.env.DEMO_USER_ID;
-    else process.env.DEMO_USER_ID = previous.DEMO_USER_ID;
   });
 
   it("revokes a token issued before logout and keeps a fresh token valid", async () => {

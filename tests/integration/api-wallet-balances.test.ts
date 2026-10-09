@@ -153,7 +153,6 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
       [addressA]: "1250000", // 1.25 USDC
       [addressB]: "0", // real zero is a valid balance
     });
-    delete process.env.DEMO_USER_ID;
 
     app = buildServer({
       privyServer: mockServerClient(
@@ -173,7 +172,6 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
       "PRIVY_VERIFICATION_KEY",
       "BALANCE_READ_SOURCE",
       "BALANCE_FIXTURE_BALANCES",
-      "DEMO_USER_ID",
     ]) {
       if (previousEnv[key] === undefined) delete process.env[key];
       else process.env[key] = previousEnv[key];

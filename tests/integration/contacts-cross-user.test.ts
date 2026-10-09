@@ -36,14 +36,12 @@ suite("contacts cross-user isolation (PMU-013/019)", () => {
   beforeAll(() => {
     process.env.PRIVY_APP_ID = "test-cross-app";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
-    delete process.env.DEMO_USER_ID;
   });
 
   afterAll(() => {
     for (const key of [
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
-      "DEMO_USER_ID",
     ]) {
       if (previousEnv[key] === undefined) delete process.env[key];
       else process.env[key] = previousEnv[key] as string;

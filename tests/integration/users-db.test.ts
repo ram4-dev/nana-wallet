@@ -6,7 +6,6 @@ import {
   type DatabaseClient,
 } from "../../src/db/client.js";
 import { runMigrations } from "../../src/db/migrate.js";
-import { ensureDemoSentinelUser } from "../../src/auth/demo-sentinel.js";
 
 const migrationUrl = new URL(
   "../../src/db/migrations/004_users.sql",
@@ -17,7 +16,6 @@ const migrationsDirectory = resolve(process.cwd(), "src/db/migrations");
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 
-const DEMO_B = "00000000-0000-4000-8000-0000000000b2";
 const DID_A = "did:privy:test-user-a";
 const DID_B = "did:privy:test-user-b";
 
@@ -198,54 +196,5 @@ suite("users migration (database)", () => {
       );
       expect(membership.rows[0]?.count).toBe("0");
     });
-  });
-});
-
-suite("demo sentinel (database)", () => {
-  it("is idempotent and preserves the configured UUID", async () => {
-    const { Pool } = await import("pg");
-    const pool = new Pool({ connectionString: databaseUrl! });
-    const client = await pool.connect();
-    // The shared demo sentinel UUID comes from the suite environment: parallel
-    // server-based tests in the same database legitimately own the 'demo'
-    // privy_did slot, so this test must exercise the real configured UUID.
-    const demoUserId = process.env.DEMO_USER_ID;
-    if (!demoUserId)
-      throw new Error("DEMO_USER_ID is required for sentinel tests.");
-    try {
-      // Rolled-back transaction: zero traces (including last_seen_at updates).
-      await client.query("BEGIN");
-      const first = await ensureDemoSentinelUser(client, demoUserId);
-      const second = await ensureDemoSentinelUser(client, demoUserId);
-      expect(first).toBe(demoUserId);
-      expect(second).toBe(demoUserId);
-    } finally {
-      await client.query("ROLLBACK");
-      client.release();
-      await pool.end();
-    }
-  });
-
-  it("rejects a conflicting sentinel without modifying data", async () => {
-    const { Pool } = await import("pg");
-    const pool = new Pool({ connectionString: databaseUrl! });
-    const client = await pool.connect();
-    const demoUserId = process.env.DEMO_USER_ID;
-    if (!demoUserId)
-      throw new Error("DEMO_USER_ID is required for sentinel tests.");
-    try {
-      await client.query("BEGIN");
-      // Provision once so the slot exists, then attempt provisioning a DIFFERENT
-      // UUID for the same demo DID: it must reject loudly without rewriting the
-      // existing sentinel (PMU-004). Everything rolls back afterwards.
-      await ensureDemoSentinelUser(client, demoUserId);
-      await expect(ensureDemoSentinelUser(client, DEMO_B)).rejects.toThrow(
-        /conflict/iu,
-      );
-    } finally {
-      await client.query("ROLLBACK");
-      client.release();
-      await pool.end();
-    }
   });
 });

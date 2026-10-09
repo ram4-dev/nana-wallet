@@ -31,15 +31,16 @@ describe("process-specific configuration", () => {
     });
   });
 
-  it("requires a tenant when the API has durable database access", () => {
-    expect(() =>
+  it("accepts a durable database without naming a tenant", () => {
+    // There is no fixed demo tenant any more: identity is resolved per request
+    // by the Privy verifier, which provisions its own users on login.
+    expect(
       readApiProcessConfig({ DATABASE_URL: "postgres://local" }),
-    ).toThrow("DEMO_USER_ID");
+    ).toMatchObject({ databaseUrl: "postgres://local" });
   });
 
   it("requires the Privy identity inputs and a binding key in production", () => {
     const keys = keyPair();
-    const tenant = "11111111-1111-4111-8111-111111111111";
     expect(() => readApiProcessConfig({ NODE_ENV: "production" })).toThrow(
       "DATABASE_URL",
     );
@@ -47,14 +48,12 @@ describe("process-specific configuration", () => {
       readApiProcessConfig({
         NODE_ENV: "production",
         DATABASE_URL: "postgres://local",
-        DEMO_USER_ID: tenant,
       }),
     ).toThrow(/PRIVY_APP_ID/u);
     expect(() =>
       readApiProcessConfig({
         NODE_ENV: "production",
         DATABASE_URL: "postgres://local",
-        DEMO_USER_ID: tenant,
         PRIVY_APP_ID: "app",
         PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
       }),
@@ -63,14 +62,12 @@ describe("process-specific configuration", () => {
       readApiProcessConfig({
         NODE_ENV: "production",
         DATABASE_URL: "postgres://local",
-        DEMO_USER_ID: tenant,
         PRIVY_APP_ID: "app",
         PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
         LIVE_VOICE_BINDING_PRIVATE_KEY: keys.privateKey,
       }),
     ).toMatchObject({
       databaseUrl: "postgres://local",
-      demoUserId: tenant,
     });
   });
 
@@ -84,7 +81,6 @@ describe("process-specific configuration", () => {
     for (const source of ["fixture", "solana-devnet"] as const) {
       expect(readApiProcessConfig({ WDK_TOOLS_SOURCE: source })).toMatchObject({
         databaseUrl: undefined,
-        demoUserId: undefined,
       });
     }
   });
@@ -100,11 +96,9 @@ describe("process-specific configuration", () => {
       readApiProcessConfig({
         WDK_TOOLS_SOURCE: "solana-devnet",
         DATABASE_URL: "postgres://local",
-        DEMO_USER_ID: "11111111-1111-4111-8111-111111111111",
       }),
     ).toMatchObject({
       databaseUrl: "postgres://local",
-      demoUserId: "11111111-1111-4111-8111-111111111111",
     });
   });
 
@@ -124,7 +118,6 @@ describe("process-specific configuration", () => {
       LIVEKIT_API_KEY: "dev-key",
       LIVEKIT_API_SECRET: "dev-secret",
       DATABASE_URL: "postgres://local",
-      DEMO_USER_ID: "11111111-1111-4111-8111-111111111111",
       OPENAI_API_KEY: "openai-key",
     };
     expect(() => readWorkerProcessConfig(base)).toThrow(
@@ -143,7 +136,6 @@ describe("process-specific configuration", () => {
       }),
     ).toMatchObject({
       databaseUrl: "postgres://local",
-      demoUserId: "11111111-1111-4111-8111-111111111111",
     });
   });
 
@@ -155,7 +147,6 @@ describe("process-specific configuration", () => {
       LIVEKIT_API_KEY: "dev-key",
       LIVEKIT_API_SECRET: "dev-secret",
       DATABASE_URL: "postgres://local",
-      DEMO_USER_ID: "11111111-1111-4111-8111-111111111111",
       LIVE_VOICE_BINDING_PUBLIC_KEY: keys.publicKey,
     };
     expect(() => readWorkerProcessConfig(base)).toThrow(

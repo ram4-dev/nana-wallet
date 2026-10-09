@@ -44,14 +44,12 @@ suite("provider webhook ingress receipt-only contract", () => {
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "PRIVY_WEBHOOK_SECRET",
-      "DEMO_USER_ID",
     ]) {
       previousEnv[key] = process.env[key];
     }
     process.env.PRIVY_APP_ID = "test-notifications-receipt";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.PRIVY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
-    delete process.env.DEMO_USER_ID;
     database = createDatabaseClient(databaseUrl!);
   });
 

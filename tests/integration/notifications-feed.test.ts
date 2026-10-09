@@ -18,13 +18,11 @@ suite("authenticated notifications feed HTTP (Slice 5 RED)", () => {
     for (const key of [
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
-      "DEMO_USER_ID",
     ]) {
       previousEnv[key] = process.env[key];
     }
     process.env.PRIVY_APP_ID = "test-notifications-feed";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
-    delete process.env.DEMO_USER_ID;
   });
 
   afterAll(() => {

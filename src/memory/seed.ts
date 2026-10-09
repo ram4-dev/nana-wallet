@@ -3,7 +3,6 @@ import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { readRecipientMemoryConfig } from "../config/env.js";
 import { createConfiguredDatabaseClient } from "../db/client.js";
-import { ensureDemoSentinelUser } from "../auth/demo-sentinel.js";
 import {
   EmbeddingService,
   factEmbeddingText,
@@ -63,12 +62,13 @@ async function main(): Promise<void> {
       "Recipient memory and RECIPIENT_MEMORY_SEED_FILE are required for seeding.",
     );
   }
-  // PMU-004: the recipient-memory seed is a demo-tenant fixture. It writes to
-  // the configured demo tenant only — the property the removed demo/privy switch
-  // was standing in for. A deployment with no demo tenant (production, where the
-  // Privy path provisions per-user data on login) must never seed a singleton.
-  if (!config.demoUserId) {
-    throw new Error("DEMO_USER_ID is required for seeding.");
+  // There is no fixed demo tenant any more: identity is the Privy user resolved
+  // per login, so the operator names the user this seed is scoped to.
+  const userId = process.argv[2]?.trim();
+  if (!userId) {
+    throw new Error(
+      "A target user id is required for seeding: npm run db:seed -- <userId>.",
+    );
   }
   // Decode the seed file at the I/O boundary: parse errors become a single
   // actionable seed failure instead of an unguarded throw.
@@ -86,13 +86,10 @@ async function main(): Promise<void> {
   }
   const database = createConfiguredDatabaseClient();
   try {
-    // Provision the sentinel before writing recipients, including when the
-    // server has never started (seed-before-server flow).
-    await ensureDemoSentinelUser(database, config.demoUserId);
     await seedConfirmedMemory(
       new RecipientMemoryRepository(database),
       new EmbeddingService(config.modelCacheDirectory),
-      config.demoUserId,
+      userId,
       input,
     );
   } finally {

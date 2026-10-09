@@ -1,8 +1,5 @@
 import { createPrivateKey, createPublicKey } from "node:crypto";
-import { z } from "zod";
 import { readLiveKitPrivacyConfig } from "./livekit.js";
-
-const uuid = z.string().uuid();
 
 function required(environment: NodeJS.ProcessEnv, name: string): string {
   const value = environment[name]?.trim();
@@ -53,13 +50,11 @@ export type ApiProcessConfig = {
   host: string;
   port: number;
   databaseUrl?: string;
-  demoUserId?: string;
   bindingPrivateKey?: string;
 };
 
 export type WorkerProcessConfig = LiveKitWorkerConfig & {
   databaseUrl: string;
-  demoUserId: string;
 };
 
 /**
@@ -159,15 +154,6 @@ export function readApiProcessConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): ApiProcessConfig {
   const databaseUrl = environment.DATABASE_URL?.trim() || undefined;
-  const demoUserId = environment.DEMO_USER_ID?.trim() || undefined;
-  // A durable-database API must name the tenant it can fall back to: without a
-  // valid DEMO_USER_ID a demo-path request would resolve to an unmapped
-  // identity. (The Privy path provisions its own tenants per login.)
-  if (databaseUrl && (!demoUserId || !uuid.safeParse(demoUserId).success)) {
-    throw new Error(
-      "DEMO_USER_ID must be a UUID when DATABASE_URL is configured.",
-    );
-  }
   rejectFundedSingletonInPrivyMode(environment);
 
   const bindingPrivateKey =
@@ -191,8 +177,7 @@ export function readApiProcessConfig(
     if (!databaseUrl)
       throw new Error("DATABASE_URL is required for production API access.");
     // Production identity is always the Privy verifier, so the app id and the
-    // verification key are part of the boot contract instead of the removed
-    // demo-sentinel switch.
+    // verification key are part of the boot contract.
     if (
       !environment.PRIVY_APP_ID?.trim() ||
       !environment.PRIVY_VERIFICATION_KEY?.trim()
@@ -210,7 +195,6 @@ export function readApiProcessConfig(
     host: environment.HOST?.trim() || "127.0.0.1",
     port: positiveInteger(environment.PORT, "PORT", 3000),
     databaseUrl,
-    demoUserId,
     bindingPrivateKey,
   };
 }
@@ -222,19 +206,14 @@ export function readWorkerProcessConfig(
   const publicKey = required(environment, "LIVE_VOICE_BINDING_PUBLIC_KEY");
   assertEd25519Key(publicKey, "LIVE_VOICE_BINDING_PUBLIC_KEY", "public");
   const databaseUrl = required(environment, "DATABASE_URL");
-  // The worker binds memory tools to the resolved per-session user, which in
-  // production arrives at runtime through the signed conversation binding — so
-  // the demo sentinel is optional and defaults to empty. When it IS configured
-  // it must still be a real tenant UUID.
-  const demoUserId = environment.DEMO_USER_ID?.trim();
-  if (demoUserId && !uuid.safeParse(demoUserId).success)
-    throw new Error("DEMO_USER_ID must be a UUID for the worker.");
+  // The worker binds memory tools to the resolved per-session user, which
+  // arrives at runtime through the signed conversation binding, so the worker
+  // config carries no identity of its own.
   required(environment, "OPENAI_API_KEY");
   return {
     ...liveKit,
     publicKey,
     databaseUrl,
-    demoUserId: demoUserId ?? "",
   };
 }
 

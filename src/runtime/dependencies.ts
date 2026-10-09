@@ -26,7 +26,6 @@ import {
 } from "../conversations/context-renewal.js";
 import type { ConversationSnapshot } from "../conversations/types.js";
 import {
-  getConfiguredRecipientMemoryRuntime,
   getMemoryRuntimeForUser,
 } from "../memory/runtime.js";
 import { readPrivyServerConfig } from "../config/privy-server.js";
@@ -260,22 +259,19 @@ export function createWorkerDependencies(
   );
   // REVIEW FIX V3: `isClaimedRecipientValid` needs a defined memory service to
   // revalidate versioned recipients; without it the check always returns false.
-  // The service contract today scopes the TEXT path to the demo tenant
-  // (DEMO_USER_ID), so we feed the demo-user runtime and keep tenant behavior
-  // unchanged. Voice tools do NOT use this runtime — they build a shared
-  // per-binding service in src/livekit/worker.ts and pass binding.sub as userId.
-  const memory = getConfiguredRecipientMemoryRuntime(environment);
+  // PMU-014: the worker's text path resolves memory for the conversation's
+  // actual user, so it wires the per-user factory and no fixed-tenant runtime.
+  // Voice tools do NOT use this seam — they build a shared per-binding service
+  // in src/livekit/worker.ts and pass binding.sub as userId.
   const conversationService = createWalletConversationService({
     conversations,
     wallet: core.wallet,
     ...(walletForUser ? { walletForUser } : {}),
-    memory,
     financialTasks,
     grantCreator,
     contextRenewal: core.contextRenewal,
-    ...(memory ? { memory } : {}),
     // PMU-014: claimed-recipient revalidation resolves the runtime for the
-    // conversation's actual user instead of the fixed demo tenant.
+    // conversation's actual user instead of a fixed tenant.
     memoryForUser: (userId) => getMemoryRuntimeForUser(userId, environment),
   });
   return {

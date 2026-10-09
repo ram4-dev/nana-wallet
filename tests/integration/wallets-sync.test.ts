@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { buildTestServer } from "../fixtures/test-server.js";
+import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -16,7 +16,8 @@ import {
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
-const USER_A = "00000000-0000-4000-8000-000000000001";
+// Fixture identity: the identity provider resolves every request to this user.
+const USER_A = TEST_USER_ID;
 
 async function provisionUser(
   database: DatabaseClient,
@@ -31,16 +32,13 @@ async function provisionUser(
 
 suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
   let database: DatabaseClient;
-  const previousEnv = { ...process.env };
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
-    process.env.DEMO_USER_ID = USER_A;
   });
 
   afterAll(async () => {
     await database.close();
-    process.env.DEMO_USER_ID = previousEnv.DEMO_USER_ID;
   });
 
   it("syncs the same wallet idempotently (created=false on repeat) with a stable address", {
@@ -146,7 +144,7 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
   it("authenticated GET /v1/wallets/current reflects the synced readiness + address", {
     timeout: 60_000,
   }, async () => {
-    const app = buildTestServer();
+    const app = buildTestServer({ userId: USER_A });
     try {
       const synced = await app.inject({
         method: "POST",
@@ -172,7 +170,7 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
   it("PEW-013: explicit activation with read-back; empty allowlist rejected (422)", {
     timeout: 60_000,
   }, async () => {
-    const app = buildTestServer();
+    const app = buildTestServer({ userId: USER_A });
     try {
       await app.inject({ method: "POST", url: "/v1/wallets/sync" });
       const empty = await app.inject({

@@ -35,7 +35,9 @@ const PORTLESS_NAME = process.env.NANA_E2E_PORTLESS_NAME;
 const FRONTEND_URL = process.env.NANA_E2E_FRONTEND_URL ??
   (PORTLESS_NAME ? `https://${PORTLESS_NAME}.localhost` : "http://127.0.0.1:5199");
 const FRONTEND_ORIGIN = new URL(FRONTEND_URL).origin;
-const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
+// Fixture identity the browser and backend agree on. Mirrors
+// tests/fixtures/test-server.ts TEST_USER_ID (plain-node script: no TS import).
+const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
 const RECIPIENT_ADDR = "0x9999999999999999999999999999999999999999";
 const CONTACT = {
   name: "E2E Lucas",
@@ -49,7 +51,6 @@ const DB_NAME = "wdk_agent";
 const BACKEND_ENV = {
   DATABASE_URL:
     "postgresql://postgres@127.0.0.1:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions",
-  DEMO_USER_ID,
   WDK_TOOLS_SOURCE: "fixture",
   AGENT_RUNTIME: "deterministic",
   RECIPIENT_MEMORY_ENABLED: "true",
@@ -284,7 +285,7 @@ async function run() {
       const body = await res.json().catch(() => null);
       // /v1/me returns the ApiEnvelope { ok: true, data: { userId, displayName } }.
       const userId = body?.data?.userId ?? body?.data?.userId ?? body?.userId;
-      const ok = res.status === 200 && userId === DEMO_USER_ID;
+      const ok = res.status === 200 && userId === TEST_USER_ID;
       record(
         "HTTP GET /v1/me → userId",
         ok ? "PASS" : "FAIL",

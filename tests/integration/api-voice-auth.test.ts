@@ -53,7 +53,6 @@ suite("/v1/voice/room-token authorization (PMU-020, privy mode)", () => {
     database = createDatabaseClient(databaseUrl!);
     process.env.PRIVY_APP_ID = "test-voice-app";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
-    delete process.env.DEMO_USER_ID;
     // Local loopback LiveKit defaults: the issuer fails closed when unset.
     process.env.LIVEKIT_URL = "ws://127.0.0.1:7880";
     process.env.LIVEKIT_API_KEY = "test-key";
@@ -65,7 +64,6 @@ suite("/v1/voice/room-token authorization (PMU-020, privy mode)", () => {
     for (const key of [
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
-      "DEMO_USER_ID",
       ...LIVEKIT_ENV,
     ]) {
       if (previousEnv[key] === undefined) delete process.env[key];

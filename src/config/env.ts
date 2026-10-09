@@ -11,7 +11,6 @@ const environmentSchema = z.object({
     .optional()
     .default("false"),
   DATABASE_URL: optionalNonEmpty,
-  DEMO_USER_ID: optionalNonEmpty,
   RECIPIENT_MEMORY_MODEL_CACHE: z
     .string()
     .min(1)
@@ -41,7 +40,6 @@ const environmentSchema = z.object({
 export type RecipientMemoryConfig = {
   enabled: boolean;
   databaseUrl?: string;
-  demoUserId?: string;
   modelCacheDirectory: string;
   scoreThreshold: number;
   scoreFloor: number;
@@ -66,7 +64,6 @@ export function readRecipientMemoryConfig(
   return {
     enabled,
     databaseUrl: parsed.DATABASE_URL,
-    demoUserId: parsed.DEMO_USER_ID,
     modelCacheDirectory: parsed.RECIPIENT_MEMORY_MODEL_CACHE,
     scoreThreshold: parsed.RECIPIENT_MEMORY_SCORE_THRESHOLD,
     scoreFloor: parsed.RECIPIENT_MEMORY_SCORE_FLOOR,

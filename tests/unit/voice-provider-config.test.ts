@@ -16,7 +16,6 @@ function workerEnv(overrides: Record<string, string | undefined> = {}) {
     LIVEKIT_API_KEY: "dev-key",
     LIVEKIT_API_SECRET: "dev-secret",
     DATABASE_URL: "postgres://local",
-    DEMO_USER_ID: "11111111-1111-4111-8111-111111111111",
     OPENAI_API_KEY: "openai-key",
     LIVE_VOICE_BINDING_PUBLIC_KEY: keyPair().publicKey,
     ...overrides,
@@ -34,7 +33,6 @@ describe("worker configuration", () => {
     const config = readWorkerProcessConfig(workerEnv());
     expect(config).toMatchObject({
       databaseUrl: "postgres://local",
-      demoUserId: "11111111-1111-4111-8111-111111111111",
     });
   });
 

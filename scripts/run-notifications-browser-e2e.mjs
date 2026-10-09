@@ -12,7 +12,9 @@ const DB_CONTAINER = process.env.NANA_E2E_DB_CONTAINER ?? "nana-privy-impl-db-1"
 const DB_NAME = process.env.NANA_E2E_DB_NAME ?? "wdk_agent";
 const DATABASE_URL = process.env.NANA_E2E_DATABASE_URL ??
   "postgresql://postgres@127.0.0.1:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions";
-const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
+// Fixture identity the seed and the backend agree on. Mirrors
+// tests/fixtures/test-server.ts TEST_USER_ID (plain-node script: no TS import).
+const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
 const BACKEND_PORT = process.env.NANA_E2E_BACKEND_PORT ?? "3124";
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const PORTLESS_NAME = process.env.NANA_E2E_PORTLESS_NAME ?? "slice5-notifications-e2e";
@@ -77,7 +79,6 @@ async function main() {
       cwd: ROOT,
       env: {
         DATABASE_URL,
-        DEMO_USER_ID,
         WDK_TOOLS_SOURCE: "fixture",
         AGENT_RUNTIME: "deterministic",
         IDENTITY_PROVIDER: "demo",
@@ -95,7 +96,6 @@ async function main() {
         env: {
           ...process.env,
           DATABASE_URL,
-          DEMO_USER_ID,
           NOTIFICATIONS_E2E_SEED_ID: seedId,
         },
         encoding: "utf8",
@@ -150,7 +150,7 @@ async function main() {
 
     const read = psql(
       `SELECT count(*) FROM wallet_notifications
-       WHERE user_id = '${DEMO_USER_ID}'
+       WHERE user_id = '${TEST_USER_ID}'
          AND dedupe_key IN ('${seeded.assistantDedupeKey}', '${seeded.chainDedupeKey}')
          AND read_at IS NOT NULL`,
     );
@@ -161,7 +161,7 @@ async function main() {
     for (const child of children.reverse()) await stop(child);
     try {
       psql(
-        `DELETE FROM wallet_notifications WHERE user_id = '${DEMO_USER_ID}'
+        `DELETE FROM wallet_notifications WHERE user_id = '${TEST_USER_ID}'
          AND dedupe_key IN ('assistant-transfer:${seedId}:submitted', '${chainDedupeKey}')`,
       );
       psql(`DELETE FROM assistant_lifecycle_outbox WHERE attempt_id = '${seedId}'`);

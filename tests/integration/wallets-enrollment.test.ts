@@ -154,7 +154,6 @@ suite(
       process.env.PRIVY_APP_SECRET = APP_SECRET;
       process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
       process.env.PRIVY_API_BASE_URL = BASE;
-      delete process.env.DEMO_USER_ID;
     });
 
     afterAll(async () => {
@@ -803,7 +802,6 @@ suite(
       process.env.PRIVY_APP_SECRET = APP_SECRET;
       process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
       process.env.PRIVY_API_BASE_URL = BASE;
-      delete process.env.DEMO_USER_ID;
     });
 
     afterAll(async () => {
@@ -1287,7 +1285,6 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     process.env.PRIVY_APP_SECRET = APP_SECRET;
     process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
     process.env.PRIVY_API_BASE_URL = BASE;
-    delete process.env.DEMO_USER_ID;
   });
 
   afterAll(async () => {

@@ -110,10 +110,12 @@ describe("issueRoomToken", () => {
     expect((payload.exp as number) - (payload.nbf as number)).toBe(600);
   });
 
-  it("rejects issuance without a demo identity", async () => {
+  it("rejects issuance without a resolved identity", async () => {
     await expect(
       issueRoomToken({ ...baseIssuerConfig, identity: "" }, { conversationId: CONVERSATION_ID }),
-    ).rejects.toThrow("DEMO_USER_ID is required to issue LiveKit room tokens.");
+    ).rejects.toThrow(
+      "A resolved participant identity is required to issue LiveKit room tokens.",
+    );
   });
 });
 

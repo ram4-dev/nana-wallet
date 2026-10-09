@@ -8,6 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs, parseEnv } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// The fixture identity the browser build and the backend agree on. Mirrors
+// tests/fixtures/test-server.ts TEST_USER_ID (this script runs under plain node,
+// so it cannot import that TypeScript module).
+const TEST_USER_ID = '00000000-0000-4000-8000-000000000001';
 const usage = `Uso: node scripts/docker-real-wallet.mjs --provider wdk [--env-file RUTA] [--vault] [--check]
 
 Arranca DB, LiveKit, API, worker y frontend. WDK también usa su daemon.
@@ -33,8 +37,6 @@ export function validateEnvironment(provider, supplied, repo = root) {
   } catch { throw new Error('LIVE_VOICE_BINDING_PRIVATE_KEY y LIVE_VOICE_BINDING_PUBLIC_KEY deben formar un par Ed25519 válido.'); }
   env.WDK_NETWORK = 'sepolia';
   env.WDK_WALLET_NAME ||= 'agent-demo';
-  env.DEMO_USER_ID ||= '00000000-0000-4000-8000-000000000001';
-  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(env.DEMO_USER_ID)) throw new Error('DEMO_USER_ID debe ser un UUID.');
   env.NANA_DOCKER_PROJECT ||= 'nana-real';
   env.NANA_HOSTNAME ||= 'nana';
   for (const name of ['NANA_DOCKER_PROJECT', 'NANA_HOSTNAME']) if (!/^[a-z][a-z0-9-]*$/.test(env[name])) throw new Error(`${name} debe usar letras minúsculas, números o guiones.`);
@@ -51,7 +53,7 @@ export function composeConfig(provider, env) {
     HOST: '0.0.0.0', PORT: '3000', WDK_TOOLS_SOURCE: env.WDK_TOOLS_SOURCE,
     WDK_NETWORK: env.WDK_NETWORK, WDK_TOKEN: env.WDK_TOKEN, WDK_WALLET_NAME: env.WDK_WALLET_NAME,
     DATABASE_URL: 'postgresql://postgres@db:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions',
-    DEMO_USER_ID: env.DEMO_USER_ID, RECIPIENT_MEMORY_ENABLED: 'true',
+    RECIPIENT_MEMORY_ENABLED: 'true',
     LIVE_VOICE_ENABLED: 'true', LIVEKIT_URL: 'ws://livekit:7880', LIVEKIT_BROWSER_URL: `${origin.replace('https:', 'wss:')}/livekit`,
     LIVEKIT_AGENT_RUNTIME: 'native-livekit', AGENT_RUNTIME: 'llm',
     LIVEKIT_RECORDING_ENABLED: 'false', AGENT_OBSERVABILITY_RECORDING: 'false',
@@ -71,7 +73,7 @@ export function composeConfig(provider, env) {
       livekit: { image: 'livekit/livekit-server:v1.13.6', command: ['--config', '/etc/livekit.yaml'], environment: { LIVEKIT_KEYS: '${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}' }, volumes: ['${NANA_LIVEKIT_CONFIG}:/etc/livekit.yaml:ro'], ports: [`127.0.0.1:${env.NANA_LIVEKIT_MEDIA_START}-${Number(env.NANA_LIVEKIT_MEDIA_START) + 10}:${env.NANA_LIVEKIT_MEDIA_START}-${Number(env.NANA_LIVEKIT_MEDIA_START) + 10}/udp`, `127.0.0.1:${env.NANA_LIVEKIT_MEDIA_START}:${env.NANA_LIVEKIT_MEDIA_START}/tcp`], healthcheck: { test: ['CMD', 'wget', '-q', '--spider', 'http://localhost:7880/'], interval: '2s', timeout: '5s', retries: 30 } },
       backend: { ...base, environment: { ...environment, LIVE_VOICE_BINDING_PRIVATE_KEY: ref('LIVE_VOICE_BINDING_PRIVATE_KEY') }, command: ['api'], healthcheck: { test: ['CMD', 'node', '-e', 'fetch("http://127.0.0.1:3000/health").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))'], interval: '3s', timeout: '20s', retries: 20 } },
       'voice-worker': { ...base, command: ['worker'] },
-      frontend: { build: { context: resolve(root, 'apps/nana-wallet'), dockerfile: 'docker/Dockerfile', args: { PARTICIPANT_IDENTITY: env.DEMO_USER_ID } }, ports: ['127.0.0.1::80'], depends_on: { backend: { condition: 'service_healthy' } }, healthcheck: { test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1/'], interval: '3s', timeout: '5s', retries: 20 } },
+      frontend: { build: { context: resolve(root, 'apps/nana-wallet'), dockerfile: 'docker/Dockerfile', args: { PARTICIPANT_IDENTITY: TEST_USER_ID } }, ports: ['127.0.0.1::80'], depends_on: { backend: { condition: 'service_healthy' } }, healthcheck: { test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1/'], interval: '3s', timeout: '5s', retries: 20 } },
     },
     volumes: { database: env.NANA_DB_VOLUME ? { external: true, name: env.NANA_DB_VOLUME } : {} },
   };

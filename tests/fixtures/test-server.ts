@@ -9,6 +9,19 @@ import type { WalletProvider } from "../../src/wallet/provider.js";
 import type { PrivyServerClient } from "../../src/wallet/privy-server-client.js";
 
 /**
+ * The fixed identity every fixture-based suite resolves to by default.
+ *
+ * Production identity is always Privy and resolves a real user per request.
+ * Most server-based tests do not authenticate at all: they inject against a
+ * fixture wallet and need the request to resolve to one fixed user, so they
+ * name this constant instead of an environment variable.
+ *
+ * The value is the shared-database singleton every server-based suite agrees
+ * on (see the `demo` privy_did slot in the users migration).
+ */
+export const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
+
+/**
  * Test server factory: gives a suite a running HTTP server without any Privy
  * credentials.
  *
@@ -16,24 +29,16 @@ import type { PrivyServerClient } from "../../src/wallet/privy-server-client.js"
  * ---------------
  * Production identity verification is Privy, so `buildServer()` needs
  * `PRIVY_APP_ID` + `PRIVY_VERIFICATION_KEY` and resolves a real user per
- * request. Most server-based tests do not authenticate at all: they inject
- * against a fixture wallet and need the request to resolve to one fixed user.
- *
- * That fixed user used to come from the removed demo default, in which
- * `src/server.ts` fell back to `new DemoIdentityProvider(config.demoUserId ??
- * "")` — a provider that resolves every request to a single fixed user. This
- * helper is the explicit seam that replaces that default, so the demo branch
- * could be removed without rewriting every server-based test.
+ * request. This helper is the explicit seam that replaces the removed demo
+ * default, in which `src/server.ts` fell back to a `DemoIdentityProvider`
+ * bound to a configured demo tenant, so the demo branch could be removed
+ * without rewriting every server-based test.
  *
  * DEFAULT IDENTITY
  * ----------------
- * The default reproduces the removed demo branch exactly: a
- * `DemoIdentityProvider` bound to `process.env.DEMO_USER_ID`, or `""` when that
- * variable is absent or empty — the same value `config.demoUserId ?? ""`
- * resolved to, because `DEMO_USER_ID` is `optionalNonEmpty` (an empty string
- * parses to `undefined`). `tests/setup/isolate-provider-env.ts` deliberately
- * leaves `DEMO_USER_ID` alone, so the suite observes the value it always did;
- * `.github/workflows/ci.yml` pins it to `00000000-0000-4000-8000-000000000001`.
+ * A `DemoIdentityProvider` bound to {@link TEST_USER_ID}, so a suite that does
+ * not care which user it is observes one stable identity. A suite that needs a
+ * different user passes `userId` and gets a provider bound to that user.
  *
  * DEFAULT WALLET
  * --------------
@@ -61,15 +66,16 @@ export function buildTestServer(
   options: {
     privyServer?: PrivyServerClient;
     identity?: RequestIdentityProvider;
+    userId?: string;
     wallet?: WalletProvider;
     walletReads?: WalletProvider;
   } = {},
 ) {
+  const { userId, ...serverOptions } = options;
   return buildServer({
-    ...options,
+    ...serverOptions,
     identity:
-      options.identity ??
-      new DemoIdentityProvider(process.env.DEMO_USER_ID ?? ""),
+      options.identity ?? new DemoIdentityProvider(userId ?? TEST_USER_ID),
     wallet: options.wallet ?? new FixtureWalletProvider(),
     walletReads: options.walletReads ?? createLegacyToolSourceWalletReads(),
   });

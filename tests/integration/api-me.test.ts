@@ -42,7 +42,6 @@ suite("/v1/me (PMU-007) and contacts auth (privy mode)", () => {
     process.env.PRIVY_VERIFICATION_KEY = String(
       appKeys.publicKey.export({ type: "spki", format: "pem" }),
     );
-    delete process.env.DEMO_USER_ID;
   });
 
   afterAll(() => {
@@ -53,8 +52,6 @@ suite("/v1/me (PMU-007) and contacts auth (privy mode)", () => {
       if (previous[key] === undefined) delete process.env[key];
       else process.env[key] = previous[key] as string;
     }
-    if (previous.DEMO_USER_ID === undefined) delete process.env.DEMO_USER_ID;
-    else process.env.DEMO_USER_ID = previous.DEMO_USER_ID;
   });
 
   it("returns identity-only data for a verified token", async () => {

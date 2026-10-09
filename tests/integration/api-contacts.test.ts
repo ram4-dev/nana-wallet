@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { buildTestServer } from "../fixtures/test-server.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -8,30 +8,24 @@ import {
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 
-// Demo mode: the identity provider resolves every request to the demo sentinel.
-const USER_A = "00000000-0000-4000-8000-000000000001";
+// Fixture identity: the identity provider resolves every request to this user.
+const USER_A = TEST_USER_ID;
 
-suite("/v1/contacts CRUD (demo mode, PMU-008..012)", () => {
+suite("/v1/contacts CRUD (fixture identity, PMU-008..012)", () => {
   let database: DatabaseClient;
-  const previousEnv = { ...process.env };
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
   });
 
-  beforeEach(() => {
-    process.env.DEMO_USER_ID = USER_A;
-  });
-
   afterAll(async () => {
     await database.close();
-    process.env.DEMO_USER_ID = previousEnv.DEMO_USER_ID;
   });
 
   it("creates a confirmed user contact, lists it, versions it, archives it and reveals it", {
     timeout: 60_000,
   }, async () => {
-    const app = buildTestServer();
+    const app = buildTestServer({ userId: USER_A });
     try {
       // CREATE (201, user-provenance confirmed at creation).
       const created = await app.inject({
@@ -128,7 +122,7 @@ suite("/v1/contacts CRUD (demo mode, PMU-008..012)", () => {
   it("returns the not-found shape for a missing id and 422 for a bad address", {
     timeout: 60_000,
   }, async () => {
-    const app = buildTestServer();
+    const app = buildTestServer({ userId: USER_A });
     try {
       const missing = await app.inject({
         method: "PATCH",
@@ -151,7 +145,7 @@ suite("/v1/contacts CRUD (demo mode, PMU-008..012)", () => {
   it("creates and versions explicit Solana devnet contacts without changing legacy EVM defaults", {
     timeout: 60_000,
   }, async () => {
-    const app = buildTestServer();
+    const app = buildTestServer({ userId: USER_A });
     try {
       const created = await app.inject({
         method: "POST",

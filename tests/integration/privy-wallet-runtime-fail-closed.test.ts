@@ -37,7 +37,6 @@ suite("Privy runtime without server credentials", () => {
     }) as string;
     process.env.DATABASE_URL = databaseUrl!;
     delete process.env.PRIVY_APP_SECRET;
-    delete process.env.DEMO_USER_ID;
     delete process.env.WDK_NETWORK;
     delete process.env.WDK_TOKEN;
   });
@@ -48,7 +47,6 @@ suite("Privy runtime without server credentials", () => {
       "PRIVY_VERIFICATION_KEY",
       "PRIVY_APP_SECRET",
       "DATABASE_URL",
-      "DEMO_USER_ID",
       "WDK_NETWORK",
       "WDK_TOKEN",
     ]) {

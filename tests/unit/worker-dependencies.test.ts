@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
-  const fakeDemoRuntime = {
-    userId: "demo-user",
+  const fakeUserRuntime = {
+    userId: "resolved-user",
     service: { id: "memory-service" },
   };
   return {
-    fakeDemoRuntime,
+    fakeUserRuntime,
     capturedServiceDeps: undefined as Record<string, unknown> | undefined,
   };
 });
@@ -23,7 +23,9 @@ vi.mock("../../src/conversations/service.js", () => ({
 }));
 
 vi.mock("../../src/memory/runtime.js", () => ({
-  getConfiguredRecipientMemoryRuntime: vi.fn(() => h.fakeDemoRuntime),
+  // Memory is always scoped to the resolved user: the fixed-tenant runtime the
+  // demo mode needed is gone, so the worker wires the per-user resolver.
+  getMemoryRuntimeForUser: vi.fn(() => h.fakeUserRuntime),
 }));
 
 vi.mock("../../src/db/client.js", () => ({
@@ -72,9 +74,13 @@ describe("createWorkerDependencies memory wiring", () => {
     expect(dependencies.conversationService).toBeDefined();
     const serviceDeps = h.capturedServiceDeps;
     expect(serviceDeps).toBeDefined();
-    expect(serviceDeps?.memory).toBe(h.fakeDemoRuntime);
+    const memoryForUser = serviceDeps?.memoryForUser as
+      | ((userId: string) => unknown)
+      | undefined;
+    expect(memoryForUser).toBeDefined();
+    expect(memoryForUser?.("resolved-user")).toBe(h.fakeUserRuntime);
     expect(
-      (serviceDeps?.memory as { service?: { id: string } })?.service,
+      (memoryForUser?.("resolved-user") as { service?: { id: string } })?.service,
     ).toBeDefined();
   });
 });

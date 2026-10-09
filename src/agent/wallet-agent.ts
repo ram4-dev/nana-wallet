@@ -48,7 +48,7 @@ import {
 } from '../conversations/session-state.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
 import { isValidEvmAddress } from '../memory/address.js';
-import { getConfiguredRecipientMemoryRuntime, type RecipientMemoryRuntime } from '../memory/runtime.js';
+import { type RecipientMemoryRuntime } from '../memory/runtime.js';
 import { resolveTransferRecipient, type RecipientMemoryToolPort } from './recipient-resolution.js';
 import { hasExplicitTransferAddress } from './recipient-intent.js';
 import type { ConversationTurnResult, PendingTransfer, TransactionResult } from '../contracts/http.js';
@@ -351,7 +351,10 @@ export async function handleMessage(
 ): Promise<ConversationTurnResult> {
   const normalized = normalizeResolutionText(userText);
   appendMessage(session, { role: 'user', content: userText });
-  const recipientMemory = options.recipientMemory ?? getConfiguredRecipientMemoryRuntime();
+  // PMU-014: memory comes from the caller, which resolves it for the request's
+  // authenticated user. There is no fixed-tenant default any more: a caller
+  // that supplies no runtime gets no memory tools.
+  const recipientMemory = options.recipientMemory;
   const rawMemoryTools = recipientMemory
     ? createRecipientMemoryTools({ userId: recipientMemory.userId, session, service: recipientMemory.service })
     : undefined;

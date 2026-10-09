@@ -8,12 +8,11 @@ describe("per-request memory runtime (PMU-014)", () => {
     ).toBeUndefined();
   });
 
-  it("builds a runtime keyed to the given user, not the demo tenant", () => {
+  it("builds a runtime keyed to the given user", () => {
     const userId = "22222222-2222-4222-8222-222222222222";
     const runtime = getMemoryRuntimeForUser(userId, {
       RECIPIENT_MEMORY_ENABLED: "true",
       DATABASE_URL: "postgresql://db.test/nana",
-      DEMO_USER_ID: "00000000-0000-4000-8000-000000000001",
     });
     expect(runtime).toBeDefined();
     expect(runtime?.userId).toBe(userId);
@@ -26,7 +25,6 @@ describe("per-request memory runtime (PMU-014)", () => {
     const env = {
       RECIPIENT_MEMORY_ENABLED: "true",
       DATABASE_URL: "postgresql://db.test/nana",
-      DEMO_USER_ID: "00000000-0000-4000-8000-000000000001",
     };
     const a = getMemoryRuntimeForUser(
       "00000000-0000-4000-8000-00000000000a1",
@@ -41,11 +39,11 @@ describe("per-request memory runtime (PMU-014)", () => {
 });
 
 describe("conversation service per-request memory provider (PMU-014)", () => {
-  it("uses memoryForUser(userId) over the fixed demo runtime", async () => {
+  it("uses memoryForUser(userId) over the caller-bound runtime", async () => {
     const { createWalletConversationService } = await import(
       "../../src/conversations/service.js"
     );
-    const fixedRuntime = { userId: "demo-tenant", service: {} } as never;
+    const callerBoundRuntime = { userId: "caller-bound", service: {} } as never;
     const perUserRuntime = { userId: "resolved-user", service: {} } as never;
     const memoryForUser = vi.fn(() => perUserRuntime);
     const conversations = {
@@ -55,7 +53,7 @@ describe("conversation service per-request memory provider (PMU-014)", () => {
     const service = createWalletConversationService({
       conversations,
       wallet: {} as never,
-      memory: fixedRuntime,
+      memory: callerBoundRuntime,
       memoryForUser,
     });
     expect(typeof service.handleTurn).toBe("function");

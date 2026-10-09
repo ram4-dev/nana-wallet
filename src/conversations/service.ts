@@ -195,7 +195,8 @@ export type WalletConversationDependencies = {
   memory?: RecipientMemoryRuntime;
   /**
    * PMU-014: per-request memory runtime for the RESOLVED user. Takes
-   * precedence over the fixed `memory` demo tenant when provided.
+   * precedence over the caller-bound `memory` runtime when provided. Every
+   * HTTP path provides it, so memory is always scoped to the resolved user.
    */
   memoryForUser?: (userId: string) => RecipientMemoryRuntime | undefined;
   model?: LanguageModel;
@@ -369,7 +370,17 @@ export function createWalletConversationService(
           ),
         )
       : dependencies.wallet;
-
+  /**
+   * PMU-014: resolve the memory runtime for a specific user. `memoryForUser` is
+   * the per-request factory used by every HTTP path; the `memory` slot is the
+   * caller-bound runtime a per-binding caller (the LiveKit voice service) hands
+   * in already scoped to its user. There is no fixed-tenant fallback: memory is
+   * always the runtime of the resolved user.
+   */
+  const memoryFor = (userId: string): RecipientMemoryRuntime | undefined =>
+    dependencies.memoryForUser
+      ? dependencies.memoryForUser(userId)
+      : dependencies.memory;
   async function* handleTurnStream(
     input: HandleTurnInput,
     requestAt = clock.now(),
@@ -546,15 +557,11 @@ export function createWalletConversationService(
     const persistedMessageCount = workingSnapshot.messages.length;
     let result: ConversationTurnResult;
     try {
+      const recipientMemory = memoryFor(input.userId);
       const options: HandleMessageOptions = {
         ...(dependencies.model ? { model: dependencies.model } : {}),
-        // PMU-014: scope memory to the RESOLVED per-request user; the fixed
-        // demo runtime remains only as a backwards-compatible fallback.
-        ...(dependencies.memoryForUser
-          ? dependencies.memoryForUser(input.userId)
-          : dependencies.memory
-            ? { recipientMemory: dependencies.memory }
-            : {}),
+        // PMU-014: scope memory to the RESOLVED per-request user.
+        ...(recipientMemory ? { recipientMemory } : {}),
         walletProvider: walletForUser(input.userId),
         ...(input.signal ? { abortSignal: input.signal } : {}),
         language: workingSnapshot.language,
@@ -1076,8 +1083,10 @@ export function createWalletConversationService(
   ): Promise<{ ok: true; address: string; name: string; network?: "solana-devnet" } | { ok: false }> {
     if (!recipientId || recipientVersion === undefined || recipientVersion <= 0)
       return { ok: false };
-    if (!dependencies.memory) return { ok: false };
-    const current = await dependencies.memory.service.getRecipientForVersion(
+    // PMU-014: always the RESOLVED user's runtime, never a fixed tenant.
+    const memory = memoryFor(userId);
+    if (!memory) return { ok: false };
+    const current = await memory.service.getRecipientForVersion(
       userId,
       recipientId,
       recipientVersion,
@@ -1145,9 +1154,11 @@ export function createWalletConversationService(
   }): Promise<ConversationTurnResult> {
     const { conversationId, userId, claimed, snapshot } = input;
     const transfer = toTransferRequest(claimed);
+    // PMU-014: the claimed recipient is revalidated against the RESOLVED user's
+    // memory runtime, not a fixed tenant.
     const recipientValid = await isClaimedRecipientValid(
       claimed,
-      dependencies.memory,
+      memoryFor(userId),
     );
     if (!recipientValid) {
       // AD-10: preflight rejection is a definitive non-dispatch —

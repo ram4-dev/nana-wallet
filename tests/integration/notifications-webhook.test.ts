@@ -61,14 +61,12 @@ suite("provider webhook ingress no-side-effects (Slice 5 RED)", () => {
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "PRIVY_WEBHOOK_SECRET",
-      "DEMO_USER_ID",
     ]) {
       previousEnv[key] = process.env[key];
     }
     process.env.PRIVY_APP_ID = "test-notifications-webhook";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.PRIVY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
-    delete process.env.DEMO_USER_ID;
     database = createDatabaseClient(databaseUrl!);
 
     // Seed a real locally enrolled wallet owned by a unique test user; the

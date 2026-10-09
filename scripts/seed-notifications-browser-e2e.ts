@@ -3,11 +3,14 @@ import { createDatabaseClient } from "../src/db/client.js";
 import { reconcileWalletOnce } from "../src/notifications/reconciliation-worker.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-const userId = process.env.DEMO_USER_ID;
+// Fixture identity the seeded rows and the backend agree on. Mirrors
+// tests/fixtures/test-server.ts TEST_USER_ID (this script must not import the
+// fixture module: it pulls in the whole server graph).
+const userId = "00000000-0000-4000-8000-000000000001";
 const seedId = process.env.NOTIFICATIONS_E2E_SEED_ID;
 
-if (!databaseUrl || !userId || !seedId) {
-  throw new Error("DATABASE_URL, DEMO_USER_ID, and NOTIFICATIONS_E2E_SEED_ID are required.");
+if (!databaseUrl || !seedId) {
+  throw new Error("DATABASE_URL and NOTIFICATIONS_E2E_SEED_ID are required.");
 }
 
 const conversationId = seedId;

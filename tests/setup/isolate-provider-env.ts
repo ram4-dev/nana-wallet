@@ -31,9 +31,9 @@
  *
  * WHAT IS DELIBERATELY NOT TOUCHED
  * --------------------------------
- * `DATABASE_URL` and `DEMO_USER_ID` are left alone: integration suites gate
- * themselves on `DATABASE_URL`, so clearing it would silently skip them and
- * report a false green. Only credentials are isolated.
+ * `DATABASE_URL` is left alone: integration suites gate themselves on it, so
+ * clearing it would silently skip them and report a false green. Only
+ * credentials are isolated.
  *
  * OPTING OUT
  * ----------
