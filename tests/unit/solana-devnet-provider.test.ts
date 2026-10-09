@@ -94,7 +94,11 @@ describe("SolanaDevnetProvider", () => {
 
       await expect(
         p.broadcastTransfer({ ...REQUEST, previewId }),
-      ).resolves.toMatchObject({ kind: "not_dispatched" });
+      ).resolves.toMatchObject({
+        kind: "not_dispatched",
+        // A missing previewId is our malformed request, not the wallet's fault.
+        cause: "invalid_request",
+      });
       expect(rpc.getRecentBlockhash).not.toHaveBeenCalled();
       expect(signer.signAndSend).not.toHaveBeenCalled();
     },
@@ -202,6 +206,7 @@ describe("SolanaDevnetProvider", () => {
 
     await expect(p.broadcastTransfer({ ...REQUEST, previewId: undefined })).resolves.toMatchObject({
       kind: "not_dispatched",
+      cause: "invalid_request",
     });
     expect(rpc.getRecentBlockhash).not.toHaveBeenCalled();
     expect(signer.signAndSend).not.toHaveBeenCalled();
@@ -222,6 +227,8 @@ describe("SolanaDevnetProvider", () => {
       notDispatched.broadcastTransfer(REQUEST),
     ).resolves.toMatchObject({
       kind: "not_dispatched",
+      // `definitive` is only set for a policy denial.
+      cause: "policy_rejected",
     });
 
     const uncertain = provider(
@@ -275,6 +282,7 @@ describe("SolanaDevnetProvider", () => {
       expect(outcome.kind).toBe("not_dispatched");
       if (outcome.kind === "not_dispatched") {
         expect(outcome.reason).toMatch(/preview/i);
+        expect(outcome.cause).toBe("invalid_request");
       }
       // Fail closed BEFORE any dispatch seam: no recent blockhash read,
       // no signing/broadcast, and no synthesized fallback reference.
@@ -736,6 +744,7 @@ describe("Privy Solana dispatch through the official SDK (S4)", () => {
 
     await expect(p.broadcastTransfer(REQUEST)).resolves.toMatchObject({
       kind: "not_dispatched",
+      cause: "policy_rejected",
     });
   });
 
@@ -779,6 +788,7 @@ describe("Privy Solana dispatch through the official SDK (S4)", () => {
 
     await expect(p.broadcastTransfer(REQUEST)).resolves.toMatchObject({
       kind: "not_dispatched",
+      cause: "policy_rejected",
     });
   });
 

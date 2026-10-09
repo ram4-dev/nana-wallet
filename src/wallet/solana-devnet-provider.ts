@@ -395,6 +395,9 @@ export class SolanaDevnetProvider implements WalletProvider {
       return {
         kind: "not_dispatched",
         reason: "A persisted preview ID is required before signing.",
+        // Our own malformed request: the preview identity is missing, so the
+        // provider never had a reconciliation reference to dispatch under.
+        cause: "invalid_request",
       };
     }
     this.assertRecipient(request.to);
@@ -434,7 +437,13 @@ export class SolanaDevnetProvider implements WalletProvider {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if ((error as { definitive?: boolean }).definitive === true) {
-        return { kind: "not_dispatched", reason: message };
+        // `definitive` is set only by asDispatchFailure/isPolicyDenial: a
+        // policy refusal that never left our process.
+        return {
+          kind: "not_dispatched",
+          reason: message,
+          cause: "policy_rejected",
+        };
       }
       // Outcome unknown after leaving our process: never re-sign or re-send;
       // reconciliation reuses the same reference_id.

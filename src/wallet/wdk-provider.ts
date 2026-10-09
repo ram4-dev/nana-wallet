@@ -139,7 +139,7 @@ export class WdkWalletProvider implements WalletProvider {
       const evidence = result.broadcast === undefined ? undefined : record(result.broadcast, 'WDK broadcast evidence');
       if (evidence) {
         if (evidence.attempted === false || evidence.verification === 'not-dispatched') {
-          return { kind: 'not_dispatched', reason: 'Wallet provider did not dispatch the transfer.' };
+          return { kind: 'not_dispatched', cause: 'provider_unavailable', reason: 'Wallet provider did not dispatch the transfer.' };
         }
       }
       const rawHash = result.transactionHash ?? result.txHash ?? result.hash ?? evidence?.hash;

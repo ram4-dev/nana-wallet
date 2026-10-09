@@ -17,7 +17,7 @@ import {
   consumedInWindow,
   DelegatedGrantService,
 } from "../../src/wallet/grants/consumption.js";
-import { createWalletConversationService } from "../../src/conversations/service.js";
+import { createWalletConversationService, type ConversationEvent } from "../../src/conversations/service.js";
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
 import type { ConversationSnapshot } from "../../src/conversations/types.js";
 
@@ -420,6 +420,11 @@ function notDispatchedWallet(events: string[]): {
   const spy = vi.spyOn(wallet, "broadcastTransfer").mockResolvedValue({
     kind: "not_dispatched" as const,
     reason: "Fixture injected no-dispatch (phase 8 RED).",
+    // A definitive refusal by the wallet's own policy. Resolution is
+    // INDEPENDENT of the cause: a policy refusal is still a definitive
+    // non-dispatch, so the reservation must be released and the cause must
+    // reach the user as the honest policy message.
+    cause: "policy_rejected" as const,
   });
   void events; // events recorded via service/repository spy instead
   return { wallet, spy };
@@ -1012,12 +1017,13 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
         }),
       },
     });
-    for await (const _ of service.handleTurnStream({
+    const turnEvents: ConversationEvent[] = [];
+    for await (const event of service.handleTurnStream({
       conversationId,
       userId,
       text: `Send 10 USDT to ${RECIPIENT}`,
     }))
-      void _;
+      turnEvents.push(event);
 
     // GREEN: the provider not_dispatched settle must run the atomic owned-CAS
     // settlement and release the reservation. RED: today the service only
@@ -1042,6 +1048,19 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
     expect(row?.released_at).not.toBeNull();
     expect(row?.released_reason).toBe("not_dispatched");
     expect(await releasedAuditCount(grantId, key)).toBe(1);
+    // The policy refusal is terminal AND truthful: the released reservation
+    // does not soften what the user is told. Reporting wallet_unavailable here
+    // would invite a retry that can never succeed.
+    const completed = turnEvents.find(
+      (event) => event.type === "turn-completed",
+    );
+    expect(completed).toMatchObject({
+      result: {
+        status: "error",
+        code: "policy_rejected",
+        message: "This transfer does not meet the wallet safety policy.",
+      },
+    });
   });
 
   // ---------------------------------------------------------------- 8.3 RED

@@ -24,10 +24,29 @@ export type WalletHistory = {
 };
 export type WalletBalanceQuery = WalletContext & { token?: string };
 export type WalletHistoryQuery = WalletContext & { token?: string };
+/**
+ * Machine-readable cause for a `not_dispatched` broadcast outcome. It is
+ * REQUIRED so a new producer cannot silently inherit an unrelated meaning and
+ * so the conversation layer can tell a definitive refusal from a transient
+ * outage (the two need opposite user-facing messages).
+ *
+ * - `policy_rejected`: the wallet's own policy refused the dispatch before
+ *   anything left our process. Definitive: retrying the same transfer can
+ *   never succeed.
+ * - `invalid_request`: the request WE built was malformed (for example a
+ *   missing persisted preview identity), so the provider never dispatched.
+ *   Our bug, not the wallet's.
+ * - `provider_unavailable`: the provider could not dispatch because it is not
+ *   reachable, not configured, or otherwise temporarily unusable.
+ */
+export type NotDispatchedCause =
+  | "policy_rejected"
+  | "invalid_request"
+  | "provider_unavailable";
 export type BroadcastOutcome =
   | { kind: "submitted"; transaction: TransactionResult }
   | { kind: "uncertain"; reason: string }
-  | { kind: "not_dispatched"; reason: string };
+  | { kind: "not_dispatched"; reason: string; cause: NotDispatchedCause };
 export type FinalityOutcome = {
   status: "confirmed" | "reverted" | "receipt_invalid";
   transactionHash: string;

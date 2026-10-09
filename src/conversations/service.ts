@@ -31,8 +31,9 @@ import type { ConversationSnapshot, WalletProgress } from "./types.js";
 import type { RecipientMemoryRuntime } from "../memory/runtime.js";
 import {
   explorerUrlFor,
-  type WalletProvider,
+  type NotDispatchedCause,
   type TransferRequest,
+  type WalletProvider,
 } from "../wallet/provider.js";
 import {
   bindWalletForUser,
@@ -1279,7 +1280,15 @@ export function createWalletConversationService(
           conversationId,
         );
       }
-      const result = errorResult(errorFromCode("wallet_unavailable"));
+      const result = errorResult(
+        errorFromCode(
+          notDispatchedErrorCode(broadcast.cause),
+          // The provider's own detail is diagnostic context. A ConversationError
+          // keeps it as `cause`; errorResult rebuilds the user copy from the
+          // safe message table, so the reason is never spoken to the user.
+          broadcast.reason,
+        ),
+      );
       const failed = await setProgress(
         (await dependencies.conversations.get(userId, conversationId)) ??
           snapshot,
@@ -1798,6 +1807,25 @@ function spokenResultMessage(
     return messages[result.code] ?? result.message;
   }
   return result.message;
+}
+
+/**
+ * Maps a provider-declared non-dispatch cause to the user-facing error code.
+ * `invalid_request` is OUR malformed request, so it reports `internal_error`:
+ * `invalid_tool_result` reads "The wallet returned an invalid transfer
+ * result.", which blames the wallet for our own invariant violation.
+ */
+function notDispatchedErrorCode(
+  cause: NotDispatchedCause,
+): ConversationErrorCode {
+  switch (cause) {
+    case "policy_rejected":
+      return "policy_rejected";
+    case "invalid_request":
+      return "internal_error";
+    case "provider_unavailable":
+      return "wallet_unavailable";
+  }
 }
 
 function errorResult(

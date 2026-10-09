@@ -308,6 +308,7 @@ describe("Privy per-user wallet runtime", () => {
     });
     await expect(provider.broadcastTransfer(request)).resolves.toMatchObject({
       kind: "not_dispatched",
+      cause: "provider_unavailable",
     });
   });
 

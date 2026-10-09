@@ -216,7 +216,11 @@ export function createPrivyWalletHealthProvider(
       throw unavailable();
     },
     async broadcastTransfer() {
-      return { kind: "not_dispatched", reason: unavailable().message };
+      return {
+        kind: "not_dispatched",
+        reason: unavailable().message,
+        cause: "provider_unavailable",
+      };
     },
     async waitForFinality() {
       throw unavailable();
@@ -506,6 +510,7 @@ export class PrivyUserWalletProvider implements WalletProvider {
     return {
       kind: "not_dispatched",
       reason: this.signingUnavailable().message,
+      cause: "provider_unavailable",
     };
   }
 

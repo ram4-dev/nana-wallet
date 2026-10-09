@@ -4,7 +4,7 @@ import type { ConversationRepository } from '../../src/conversations/repository.
 import type { ConversationSnapshot, ConversationState, WalletProgress } from '../../src/conversations/types.js';
 import type { PendingTransfer } from '../../src/contracts/http.js';
 import { FixtureWalletProvider } from '../../src/wallet/fixture-provider.js';
-import type { WalletProvider } from '../../src/wallet/provider.js';
+import type { BroadcastOutcome, WalletProvider } from '../../src/wallet/provider.js';
 import { FinancialTaskRegistry } from '../../src/conversations/financial-task-registry.js';
 
 const userId = '11111111-1111-4111-8111-111111111111';
@@ -159,6 +159,70 @@ describe('WalletConversationService', () => {
     const service = createWalletConversationService({ conversations: repository, wallet });
     await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
     await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirmar la transferencia' })).resolves.toMatchObject({ status: 'error', code: 'broadcast_uncertain', message: expect.stringContaining('uncertain') });
+  });
+
+  describe('not_dispatched cause mapping', () => {
+    // The provider states WHY it refused. A policy refusal is definitive and
+    // can never succeed on retry, so telling the user the wallet is
+    // "temporarily unavailable" is a lie that invites a pointless retry.
+    async function confirmWith(
+      outcome: Extract<BroadcastOutcome, { kind: 'not_dispatched' }>,
+    ) {
+      const repository = repositoryFixture();
+      const wallet = walletFixture();
+      vi.spyOn(wallet, 'broadcastTransfer').mockResolvedValue(outcome);
+      const service = createWalletConversationService({ conversations: repository, wallet });
+      await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
+      return service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirmar la transferencia' });
+    }
+
+    it('reports a policy refusal as policy_rejected, never wallet_unavailable', async () => {
+      const result = await confirmWith({
+        kind: 'not_dispatched',
+        reason: 'Privy denied the Solana dispatch by policy (policy_violation).',
+        cause: 'policy_rejected',
+      });
+
+      expect(result).toMatchObject({
+        status: 'error',
+        code: 'policy_rejected',
+        message: 'This transfer does not meet the wallet safety policy.',
+      });
+      // The provider's own detail is diagnostic context, never user copy.
+      expect(result.message).not.toMatch(/Privy|policy_violation/);
+    });
+
+    it('keeps provider_unavailable mapped to wallet_unavailable', async () => {
+      const result = await confirmWith({
+        kind: 'not_dispatched',
+        reason: 'The wallet provider is down.',
+        cause: 'provider_unavailable',
+      });
+
+      expect(result).toMatchObject({
+        status: 'error',
+        code: 'wallet_unavailable',
+        message: 'The wallet is temporarily unavailable.',
+      });
+      expect(result.message).not.toMatch(/provider is down/);
+    });
+
+    it('reports our own malformed request as internal_error, not as a wallet fault', async () => {
+      const result = await confirmWith({
+        kind: 'not_dispatched',
+        reason: 'A persisted preview ID is required before signing.',
+        cause: 'invalid_request',
+      });
+
+      // invalid_tool_result would blame the wallet ("The wallet returned an
+      // invalid transfer result") for a request WE built.
+      expect(result).toMatchObject({
+        status: 'error',
+        code: 'internal_error',
+        message: 'The conversation could not be completed.',
+      });
+      expect(result.message).not.toMatch(/preview ID/);
+    });
   });
 
   it('no longer applies a local transfer policy: the provider is reached with no policy env vars', async () => {

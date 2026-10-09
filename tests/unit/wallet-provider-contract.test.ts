@@ -82,6 +82,19 @@ describe('WalletProvider contract', () => {
     });
   }
 
+  it('maps a WDK not-dispatched broadcast to provider_unavailable, never a policy refusal', async () => {
+    const tools = {
+      send_token: { execute: async () => ({ success: true, broadcast: { attempted: false } }) },
+    };
+    const provider = new WdkWalletProvider(async () => tools as never);
+
+    // Behaviour-preserving: this path already reached the user as
+    // wallet_unavailable, and it was never a policy verdict.
+    await expect(provider.broadcastTransfer({
+      wallet: WDK_IDENTITY.wallet, network: WDK_IDENTITY.network, token: WDK_IDENTITY.token, to: RECIPIENT, amount: '1',
+    })).resolves.toMatchObject({ kind: 'not_dispatched', cause: 'provider_unavailable' });
+  });
+
   it('normalizes object-wrapped WDK network and token lists', async () => {
     const tools = {
       get_networks: { execute: async () => ({ networks: [{ name: 'sepolia', testnet: true }] }) },
