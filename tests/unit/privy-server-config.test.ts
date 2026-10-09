@@ -13,7 +13,7 @@ describe("Privy server configuration for per-user Solana devnet", () => {
       readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: "solana-devnet" }),
     ).toMatchObject({ appId: "app" });
     expect(() =>
-      readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: "circle-arc" }),
+      readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: "live" }),
     ).toThrow(/WDK_TOOLS_SOURCE/);
   });
 });

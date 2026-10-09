@@ -14,16 +14,8 @@ import {
   SolanaDevnetConfigError,
   SolanaDevnetProvider,
 } from "../../src/wallet/solana-devnet-provider.js";
-import { CircleArcProvider } from "../../src/wallet/circle-arc-provider.js";
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
 import { WdkWalletProvider } from "../../src/wallet/wdk-provider.js";
-
-const ARC_BASE = {
-  WDK_TOOLS_SOURCE: "circle-arc",
-  CIRCLE_API_KEY: "k",
-  CIRCLE_ENTITY_SECRET: "a".repeat(64),
-  CIRCLE_SENDER_WALLET_ID: "w",
-} as const;
 
 describe("createWalletProvider solana-devnet selection", () => {
   it("returns a live SolanaDevnetProvider when WDK_TOOLS_SOURCE=solana-devnet", () => {
@@ -87,24 +79,6 @@ describe("createCoreDependencies solana-devnet routing", () => {
 });
 
 describe("existing selections unchanged", () => {
-  it("circle-arc still builds CircleArcProvider and shares the reads instance", () => {
-    const wallet = createWalletProvider({
-      ...ARC_BASE,
-      WDK_NETWORK: "arc-testnet",
-      WDK_TOKEN: "USDC",
-    });
-    expect(wallet).toBeInstanceOf(CircleArcProvider);
-    expect(wallet.id).toBe("circle-arc");
-
-    const core = createCoreDependencies({
-      ...ARC_BASE,
-      WDK_NETWORK: "arc-testnet",
-      WDK_TOKEN: "USDC",
-      CONVERSATION_MAX_INPUT_TOKENS: "4096",
-    });
-    expect(core.walletReads).toBe(core.wallet);
-  });
-
   it("live still builds WdkWalletProvider and shares the reads instance", () => {
     const wallet = createWalletProvider({ WDK_TOOLS_SOURCE: "live" });
     expect(wallet).toBeInstanceOf(WdkWalletProvider);

@@ -226,14 +226,14 @@ describe('live WDK transfer policy', () => {
       });
     });
 
-    describe('circle-arc transfer policy parity', () => {
+    describe('solana-devnet transfer policy parity', () => {
       const previousSource = process.env.WDK_TOOLS_SOURCE;
       const previousMaxAmount = process.env.WDK_MAX_TRANSFER_AMOUNT;
       const previousAllowedRecipients = process.env.WDK_ALLOWED_RECIPIENTS;
 
       beforeEach(() => {
         resetSessionStore();
-        process.env.WDK_TOOLS_SOURCE = 'circle-arc';
+        process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
         process.env.WDK_MAX_TRANSFER_AMOUNT = '0.05';
         process.env.WDK_ALLOWED_RECIPIENTS = `0x${ALLOWED_ADDRESS.slice(2).toLocaleUpperCase('en-US')}`;
       });
@@ -248,7 +248,7 @@ describe('live WDK transfer policy', () => {
       });
 
       it.each(['WDK_MAX_TRANSFER_AMOUNT', 'WDK_ALLOWED_RECIPIENTS'] as const)(
-        'fails closed when %s is missing under circle-arc',
+        'fails closed when %s is missing under solana-devnet',
         async (variable) => {
           delete process.env[variable];
           const { execute, sendToken } = createGuardedSendToken();
@@ -260,7 +260,7 @@ describe('live WDK transfer policy', () => {
         },
       );
 
-      it('rejects an over-limit amount under circle-arc', async () => {
+      it('rejects an over-limit amount under solana-devnet', async () => {
         const { execute, sendToken } = createGuardedSendToken();
 
         await expect(sendToken.execute!(input({ amount: '0.06' }), toolOptions)).resolves.toMatchObject({
@@ -274,7 +274,7 @@ describe('live WDK transfer policy', () => {
         { label: 'zero', recipient: ZERO_ADDRESS },
         { label: 'burn', recipient: DEAD_ADDRESS },
         { label: 'malformed', recipient: 'not-an-address' },
-      ])('rejects a $label recipient under circle-arc', async ({ recipient }) => {
+      ])('rejects a $label recipient under solana-devnet', async ({ recipient }) => {
         const { execute, sendToken } = createGuardedSendToken();
 
         await expect(sendToken.execute!(input({ to: recipient }), toolOptions)).resolves.toMatchObject({
@@ -287,7 +287,7 @@ describe('live WDK transfer policy', () => {
         { label: 'wallet', override: { wallet: 'other-wallet' } },
         { label: 'network', override: { network: 'arc-testnet' } },
         { label: 'token', override: { token: 'USDC' } },
-      ])('rejects a mismatched $label under circle-arc', async ({ override }) => {
+      ])('rejects a mismatched $label under solana-devnet', async ({ override }) => {
         const { execute, sendToken } = createGuardedSendToken();
 
         await expect(sendToken.execute!(input(override), toolOptions)).resolves.toMatchObject({
@@ -296,7 +296,7 @@ describe('live WDK transfer policy', () => {
         expect(execute).not.toHaveBeenCalled();
       });
 
-      it('allows a matching transfer under circle-arc', async () => {
+      it('allows a matching transfer under solana-devnet', async () => {
         const { execute, sendToken } = createGuardedSendToken();
 
         await expect(sendToken.execute!(input(), toolOptions)).resolves.toMatchObject({ preview: true });

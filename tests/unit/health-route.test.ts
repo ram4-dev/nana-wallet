@@ -3,24 +3,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerHealthRoutes } from '../../src/api/health.js';
 import type { WalletProvider } from '../../src/wallet/provider.js';
 
-// CAR-017: config values used to fake a circle-arc environment. The unhealthy
+// CAR-017: config values used to fake a live provider environment. The unhealthy
 // provider reason below must never echo any of them through /health.
 const FAKE_CREDENTIALS = {
-  apiKey: 'CIRCLE_FAKE_API_KEY_VALUE_DO_NOT_LEAK',
-  entitySecret: 'fake-entity-secret-hex-value-do-not-leak',
-  walletId: 'fake-sender-wallet-id-do-not-leak',
+  apiKey: 'PROVIDER_FAKE_API_KEY_VALUE_DO_NOT_LEAK',
+  signerSecret: 'fake-signer-secret-hex-value-do-not-leak',
+  walletId: 'fake-provider-wallet-id-do-not-leak',
 };
 
 function fakeWalletProvider(health: () => Promise<unknown>): WalletProvider {
   return {
-    id: 'circle-arc',
+    id: 'solana-devnet',
     mode: 'live',
     health: vi.fn(health),
     listNetworks: vi.fn(async () => []),
     listTokens: vi.fn(async () => []),
-    getAddress: vi.fn(async () => ({ network: 'arc-testnet', address: '0x1' })),
-    getBalance: vi.fn(async () => ({ network: 'arc-testnet', address: '0x1', balance: '0' })),
-    getHistory: vi.fn(async () => ({ network: 'arc-testnet', transactions: [] })),
+    getAddress: vi.fn(async () => ({ network: 'solana-devnet', address: 'FakeAddress1' })),
+    getBalance: vi.fn(async () => ({ network: 'solana-devnet', address: 'FakeAddress1', balance: '0' })),
+    getHistory: vi.fn(async () => ({ network: 'solana-devnet', transactions: [] })),
     previewTransfer: vi.fn(async () => {
       throw new Error('not used');
     }),
@@ -54,8 +54,8 @@ describe('GET /health provider field (additive, D5)', () => {
   ]);
 
   beforeEach(() => {
-    process.env.WDK_TOOLS_SOURCE = 'circle-arc';
-    process.env.WDK_NETWORK = 'arc-testnet';
+    process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
+    process.env.WDK_NETWORK = 'solana-devnet';
     process.env.WDK_WALLET_NAME = FAKE_CREDENTIALS.walletId;
   });
 
@@ -71,8 +71,10 @@ describe('GET /health provider field (additive, D5)', () => {
 
     expect(body.provider).toEqual({ status: 'healthy' });
     expect(body.provider.reason).toBeUndefined();
-    expect(body.mode).toBe('live');
-    expect(body.network).toBe('arc-testnet');
+    // MODE() promotes only WDK_TOOLS_SOURCE=live (or privy identity) to 'live';
+    // the surviving solana-devnet source reports the fixture mode on this route.
+    expect(body.mode).toBe('fixture');
+    expect(body.network).toBe('solana-devnet');
     expect(body.status).toBe('ok');
   });
 
@@ -80,45 +82,73 @@ describe('GET /health provider field (additive, D5)', () => {
     const body = await healthBody(
       fakeWalletProvider(async () => ({
         status: 'unavailable',
-        reason: 'Arc RPC unreachable: connection refused while resolving the Circle wallet address.',
+        reason: 'RPC unreachable: connection refused while resolving the provider wallet address.',
       })),
     );
 
     expect(body.provider).toEqual({
       status: 'unavailable',
-      reason: 'Arc RPC unreachable: connection refused while resolving the Circle wallet address.',
+      reason: 'RPC unreachable: connection refused while resolving the provider wallet address.',
     });
-    expect(body.mode).toBe('live');
+    expect(body.mode).toBe('fixture');
     expect(body.mcp).toBe('connected');
     expect(body.wallet).toBe('unlocked');
-    expect(body.network).toBe('arc-testnet');
+    expect(body.network).toBe('solana-devnet');
   });
 
-  it('never leaks Circle credentials in an unhealthy provider reason (CAR-017)', async () => {
+  it('never leaks provider credentials in an unhealthy provider reason (CAR-017)', async () => {
     const body = await healthBody(
       fakeWalletProvider(async () => ({
         status: 'unavailable',
-        reason: 'Circle API rejected the request: parameter validation failed (code 2).',
+        reason: 'Provider API rejected the request: parameter validation failed (code 2).',
       })),
     );
 
     const reason = JSON.stringify(body.provider);
     expect(reason).not.toContain(FAKE_CREDENTIALS.apiKey);
-    expect(reason).not.toContain(FAKE_CREDENTIALS.entitySecret);
+    expect(reason).not.toContain(FAKE_CREDENTIALS.signerSecret);
     expect(reason).not.toContain(FAKE_CREDENTIALS.walletId);
   });
 
   it('degrades to unavailable when the provider health check throws instead of leaking the error', async () => {
     const body = await healthBody(
       fakeWalletProvider(async () => {
-        throw new Error(`Circle SDK exploded with ${FAKE_CREDENTIALS.entitySecret}`);
+        throw new Error(`Provider SDK exploded with ${FAKE_CREDENTIALS.signerSecret}`);
       }),
     );
 
     expect(body.provider).toEqual({ status: 'unavailable', reason: 'The wallet provider health check failed.' });
     const bodyText = JSON.stringify(body);
-    expect(bodyText).not.toContain(FAKE_CREDENTIALS.entitySecret);
+    expect(bodyText).not.toContain(FAKE_CREDENTIALS.signerSecret);
     expect(bodyText).not.toContain(FAKE_CREDENTIALS.apiKey);
+  });
+});
+
+describe('GET /health privy-mode network default (Solana-only)', () => {
+  // The privy identity path is Solana-only: with no explicit WDK_NETWORK the
+  // route must advertise the Solana devnet, never the removed Arc testnet.
+  const previous = new Map<string, string | undefined>([
+    ['IDENTITY_PROVIDER', process.env.IDENTITY_PROVIDER],
+    ['WDK_NETWORK', process.env.WDK_NETWORK],
+    ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
+  ]);
+
+  afterEach(() => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('defaults the network to solana-devnet under privy identity', async () => {
+    delete process.env.WDK_NETWORK;
+    delete process.env.WDK_TOOLS_SOURCE;
+    process.env.IDENTITY_PROVIDER = 'privy';
+
+    const body = await healthBody(fakeWalletProvider(async () => ({ status: 'healthy' })));
+
+    expect(body.network).toBe('solana-devnet');
+    expect(body.mode).toBe('live');
   });
 });
 

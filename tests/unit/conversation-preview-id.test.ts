@@ -131,7 +131,7 @@ describe('typed confirm flow previewId transport', () => {
   } {
     const broadcastRequests: Array<Record<string, unknown>> = [];
     const wallet = {
-      id: 'circle-arc',
+      id: 'solana-devnet',
       mode: 'live' as const,
       health: vi.fn(async () => ({ status: 'healthy' as const })),
       listNetworks: vi.fn(async () => []),

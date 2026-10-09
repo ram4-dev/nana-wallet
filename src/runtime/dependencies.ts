@@ -12,12 +12,6 @@ import {
   readSolanaDevnetProviderConfig,
 } from "../wallet/solana-devnet-provider.js";
 import { WdkWalletProvider } from "../wallet/wdk-provider.js";
-import {
-  ARC_TESTNET_NETWORK,
-  CircleArcConfigError,
-  CircleArcProvider,
-  readCircleArcProviderConfig,
-} from "../wallet/circle-arc-provider.js";
 import type { WalletProvider } from "../wallet/provider.js";
 import {
   createConfiguredDatabaseClient,
@@ -153,29 +147,10 @@ export function createConfiguredWalletForUser(
 export function createWalletProvider(
   environment: NodeJS.ProcessEnv = process.env,
 ): WalletProvider {
-  if (environment.WDK_TOOLS_SOURCE === "circle-arc") {
-    // D8 testnet-only boot guard (CAR-014): the health route derives
-    // `network` from WDK_NETWORK, so a set-but-mismatched network or token
-    // would advertise a contract the provider cannot serve. Fail closed at
-    // boot instead.
-    const network = environment.WDK_NETWORK;
-    if (network !== undefined && network !== ARC_TESTNET_NETWORK) {
-      throw new CircleArcConfigError(
-        `WDK_TOOLS_SOURCE=circle-arc requires WDK_NETWORK=${ARC_TESTNET_NETWORK}; got "${network}".`,
-      );
-    }
-    const token = environment.WDK_TOKEN;
-    if (token !== undefined && token !== "USDC") {
-      throw new CircleArcConfigError(
-        `WDK_TOOLS_SOURCE=circle-arc requires WDK_TOKEN=USDC; got "${token}".`,
-      );
-    }
-    return new CircleArcProvider(readCircleArcProviderConfig(environment));
-  }
   if (environment.WDK_TOOLS_SOURCE === "solana-devnet") {
-    // Devnet-only boot guard (same fail-closed discipline as circle-arc):
-    // a set-but-mismatched network or token would advertise a contract the
-    // devnet provider cannot serve, so refuse to boot.
+    // Devnet-only boot guard: the health route derives `network` from
+    // WDK_NETWORK, so a set-but-mismatched network or token would advertise a
+    // contract the devnet provider cannot serve. Fail closed at boot instead.
     const network = environment.WDK_NETWORK;
     if (network !== undefined && network !== SOLANA_DEVNET_NETWORK) {
       throw new SolanaDevnetConfigError(
@@ -204,7 +179,6 @@ export function createCoreDependencies(
   const wallet = createWalletProvider(environment);
   const walletReads =
     environment.WDK_TOOLS_SOURCE === "live" ||
-    environment.WDK_TOOLS_SOURCE === "circle-arc" ||
     environment.WDK_TOOLS_SOURCE === "solana-devnet"
       ? wallet
       : new WdkWalletProvider(async () => legacyToolSource());

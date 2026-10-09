@@ -453,12 +453,11 @@ export function normalizeBroadcastResult(output: unknown, network: string) {
 /**
  * Single source of truth for whether live-transfer policy applies. Both policy
  * gates (definition and wallet-agent) must branch on this predicate so the
- * circle-arc and Solana devnet live modes can never bypass the policy
+ * WDK live and Solana devnet live modes can never bypass the policy
  * configuration enforced for live wallet transfers.
  */
 export function isLiveTransferSource(environment: NodeJS.ProcessEnv = process.env): boolean {
   return environment.WDK_TOOLS_SOURCE === 'live' ||
-    environment.WDK_TOOLS_SOURCE === 'circle-arc' ||
     environment.WDK_TOOLS_SOURCE === 'solana-devnet';
 }
 

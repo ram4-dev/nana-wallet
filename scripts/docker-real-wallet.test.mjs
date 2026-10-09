@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -38,27 +38,6 @@ test('WDK usa live, adapta OpenAI y mantiene el token custom', () => {
   assert.equal(env.WDK_NETWORK, 'sepolia');
   assert.equal(env.WDK_TOKEN, 'usdt-test');
   assert.equal(env.OPENAI_API_KEY, 'synthetic-openai');
-});
-test('Circle exige integración y fija red/token en ambos procesos', () => {
-  const repo = mkdtempSync(join(tmpdir(), 'nana-circle-config-'));
-  try {
-    const input = { ...configured(), CIRCLE_API_KEY: 'synthetic-circle', CIRCLE_ENTITY_SECRET: 'a'.repeat(64), CIRCLE_SENDER_WALLET_ID: 'wallet' };
-    assert.throws(() => validateEnvironment('circle-arc', input, repo), /aún no está integrado/);
-    mkdirSync(join(repo, 'src/wallet'), { recursive: true }); writeFileSync(join(repo, 'src/wallet/circle-arc-provider.ts'), '');
-    const env = validateEnvironment('circle-arc', input, repo);
-    const config = composeConfig('circle-arc', env);
-    for (const name of ['backend', 'voice-worker']) {
-      assert.equal(config.services[name].environment.WDK_NETWORK, 'arc-testnet');
-      assert.equal(config.services[name].environment.WDK_TOKEN, 'USDC');
-      assert.equal(config.services[name].environment.WDK_TOOLS_SOURCE, 'circle-arc');
-      // Without these the balance reader keeps its `fixture` default with an empty
-      // map, so every `ready` wallet fails closed with 503 BALANCE_NO_DISPONIBLE.
-      assert.equal(config.services[name].environment.BALANCE_READ_SOURCE, 'rpc');
-      assert.equal(config.services[name].environment.BALANCE_RPC_URL, 'https://rpc.testnet.arc.io');
-    }
-    assert.equal(config.services['wdk-daemon'], undefined);
-    assert.ok(!JSON.stringify(config).includes('synthetic-circle'));
-  } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 test('Compose mantiene secretos fuera del documento, wallet externa y DB sin puerto público', () => {
   const config = composeConfig('wdk', validateEnvironment('wdk', configured()));

@@ -40,7 +40,7 @@ function fakeWalletProvider(outcome: {
 }): { provider: WalletProvider; calls: ProviderCalls } {
   const calls: ProviderCalls = { broadcast: [], finality: [] };
   const provider = {
-    id: 'circle-arc',
+    id: 'solana-devnet',
     mode: 'live' as const,
     health: vi.fn(async () => ({ status: 'healthy' as const })),
     listNetworks: vi.fn(async () => []),
@@ -91,7 +91,7 @@ describe('confirm-path provider seam', () => {
 
   beforeEach(() => {
     resetSessionStore();
-    process.env.WDK_TOOLS_SOURCE = 'circle-arc';
+    process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
     process.env.WDK_NETWORK = 'arc-testnet';
     process.env.WDK_TOKEN = 'USDC';
     process.env.WDK_WALLET_NAME = 'agent-demo';

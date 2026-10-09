@@ -368,7 +368,7 @@ export class SolanaDevnetProvider implements WalletProvider {
   }): Promise<WalletHistory> {
     assertDevnetNetwork(query.network);
     // History is out of scope for this slice: the provider reports an empty
-    // ledger instead of fabricating entries (pattern of circle-arc-provider).
+    // ledger instead of fabricating entries.
     return { network: SOLANA_DEVNET_NETWORK, transactions: [] };
   }
 

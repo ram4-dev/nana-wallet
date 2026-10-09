@@ -4,7 +4,7 @@ import type { WalletProvider } from "../wallet/provider.js";
 
 const NETWORK = () =>
   process.env.WDK_NETWORK ??
-  (process.env.IDENTITY_PROVIDER === "privy" ? "arc-testnet" : "sepolia");
+  (process.env.IDENTITY_PROVIDER === "privy" ? "solana-devnet" : "sepolia");
 const WALLET = () =>
   process.env.WDK_WALLET_NAME ??
   (process.env.IDENTITY_PROVIDER === "privy" ? "privy-user" : "agent-demo");
@@ -14,8 +14,7 @@ const WALLET = () =>
 const MODE = () =>
   process.env.IDENTITY_PROVIDER === "privy"
     ? "live"
-    : process.env.WDK_TOOLS_SOURCE === "live" ||
-        process.env.WDK_TOOLS_SOURCE === "circle-arc"
+    : process.env.WDK_TOOLS_SOURCE === "live"
       ? "live"
       : "fixture";
 

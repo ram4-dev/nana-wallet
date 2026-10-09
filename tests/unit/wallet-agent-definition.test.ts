@@ -176,7 +176,7 @@ describe("wallet agent definition", () => {
   });
 });
 
-describe("validateWalletTransferPolicy circle-arc parity", () => {
+describe("validateWalletTransferPolicy solana-devnet parity", () => {
   const previousSource = process.env.WDK_TOOLS_SOURCE;
   const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
   const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
@@ -200,7 +200,7 @@ describe("validateWalletTransferPolicy circle-arc parity", () => {
 
   beforeEach(() => {
     resetSessionStore();
-    process.env.WDK_TOOLS_SOURCE = "circle-arc";
+    process.env.WDK_TOOLS_SOURCE = "solana-devnet";
     process.env.WDK_MAX_TRANSFER_AMOUNT = "0.05";
     process.env.WDK_ALLOWED_RECIPIENTS =
       allowedAddress.toLocaleUpperCase("en-US");
@@ -218,7 +218,7 @@ describe("validateWalletTransferPolicy circle-arc parity", () => {
   });
 
   it.each(["WDK_MAX_TRANSFER_AMOUNT", "WDK_ALLOWED_RECIPIENTS"] as const)(
-    "fails closed when %s is missing under circle-arc",
+    "fails closed when %s is missing under solana-devnet",
     (variable) => {
       delete process.env[variable];
       expect(
@@ -229,7 +229,7 @@ describe("validateWalletTransferPolicy circle-arc parity", () => {
     },
   );
 
-  it("rejects an over-limit amount under circle-arc", () => {
+  it("rejects an over-limit amount under solana-devnet", () => {
     expect(
       validateWalletTransferPolicy(
         gateInput({ amount: "0.055" }),
@@ -245,7 +245,7 @@ describe("validateWalletTransferPolicy circle-arc parity", () => {
     { label: "zero", to: "0x0000000000000000000000000000000000000000" },
     { label: "burn", to: "0x000000000000000000000000000000000000dEaD" },
     { label: "malformed", to: "not-an-address" },
-  ])("rejects a $label recipient under circle-arc", ({ to }) => {
+  ])("rejects a $label recipient under solana-devnet", ({ to }) => {
     expect(
       validateWalletTransferPolicy(gateInput({ to }), context().config),
     ).toMatchObject({
@@ -257,7 +257,7 @@ describe("validateWalletTransferPolicy circle-arc parity", () => {
     { label: "wallet", override: { wallet: "other-wallet" } },
     { label: "network", override: { network: "arc-testnet" } },
     { label: "token", override: { token: "USDC" } },
-  ])("rejects a mismatched $label under circle-arc", ({ override }) => {
+  ])("rejects a mismatched $label under solana-devnet", ({ override }) => {
     expect(
       validateWalletTransferPolicy(gateInput(override), context().config),
     ).toMatchObject({
@@ -265,7 +265,7 @@ describe("validateWalletTransferPolicy circle-arc parity", () => {
     });
   });
 
-  it("allows a matching transfer under circle-arc", () => {
+  it("allows a matching transfer under solana-devnet", () => {
     expect(
       validateWalletTransferPolicy(gateInput(), context().config),
     ).toBeUndefined();

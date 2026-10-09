@@ -1,31 +1,30 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { createHash, createPrivateKey, createPublicKey } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs, parseEnv } from 'node:util';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const usage = `Uso: node scripts/docker-real-wallet.mjs --provider wdk|circle-arc [--env-file RUTA] [--vault] [--check]
+const usage = `Uso: node scripts/docker-real-wallet.mjs --provider wdk [--env-file RUTA] [--vault] [--check]
 
 Arranca DB, LiveKit, API, worker y frontend. WDK también usa su daemon.
 --check valida sin crear contenedores. --vault inyecta claves mediante vault-env.
 WDK requiere NANA_WDK_VOLUME (volumen existente) y WDK_WALLET_NAME/WDK_TOKEN.
-Ambos requieren WDK_MAX_TRANSFER_AMOUNT y WDK_ALLOWED_RECIPIENTS.
+Requiere WDK_MAX_TRANSFER_AMOUNT y WDK_ALLOWED_RECIPIENTS.
 No crea wallets, no las desbloquea ni ejecuta transferencias.
 Variables opcionales: NANA_DOCKER_PROJECT (nana-real), NANA_HOSTNAME (nana),
 NANA_DB_VOLUME (volumen existente), NANA_LIVEKIT_MEDIA_START (7881).
 `;
 
 export function validateEnvironment(provider, supplied, repo = root) {
-  if (!['wdk', 'circle-arc'].includes(provider)) throw new Error('Elegí --provider wdk o --provider circle-arc. Fixture no está admitido.');
+  if (provider !== 'wdk') throw new Error('Elegí --provider wdk. Fixture no está admitido.');
   const env = { ...supplied };
   env.OPENAI_API_KEY ||= env.OPEN_AI_API_KEY;
   const required = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVE_VOICE_BINDING_PRIVATE_KEY', 'LIVE_VOICE_BINDING_PUBLIC_KEY', 'OPENAI_API_KEY', 'OPENCODE_GO_API_KEY', 'WDK_MAX_TRANSFER_AMOUNT', 'WDK_ALLOWED_RECIPIENTS'];
-  if (provider === 'wdk') required.push('NANA_WDK_VOLUME', 'WDK_WALLET_NAME', 'WDK_TOKEN');
-  else required.push('CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'CIRCLE_SENDER_WALLET_ID');
+  required.push('NANA_WDK_VOLUME', 'WDK_WALLET_NAME', 'WDK_TOKEN');
   const missing = required.filter(name => !env[name]?.trim());
   if (missing.length) throw new Error(`Faltan variables: ${missing.join(', ')}`);
   if (!/^\d+(?:\.\d+)?$/.test(env.WDK_MAX_TRANSFER_AMOUNT) || !/[1-9]/.test(env.WDK_MAX_TRANSFER_AMOUNT)) throw new Error('WDK_MAX_TRANSFER_AMOUNT debe ser un decimal positivo.');
@@ -36,13 +35,8 @@ export function validateEnvironment(provider, supplied, repo = root) {
     const publicKey = createPublicKey(env.LIVE_VOICE_BINDING_PUBLIC_KEY.replace(/\\n/g, '\n'));
     if (privateKey.asymmetricKeyType !== 'ed25519' || publicKey.asymmetricKeyType !== 'ed25519' || !createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).equals(publicKey.export({ type: 'spki', format: 'der' }))) throw new Error();
   } catch { throw new Error('LIVE_VOICE_BINDING_PRIVATE_KEY y LIVE_VOICE_BINDING_PUBLIC_KEY deben formar un par Ed25519 válido.'); }
-  if (provider === 'circle-arc') {
-    if (!existsSync(resolve(repo, 'src/wallet/circle-arc-provider.ts'))) throw new Error('Circle Arc aún no está integrado en esta rama. Integrar primero las PRs del proveedor.');
-    if (!/^[0-9a-fA-F]{64}$/.test(env.CIRCLE_ENTITY_SECRET)) throw new Error('CIRCLE_ENTITY_SECRET debe tener 64 caracteres hexadecimales.');
-  }
-  env.WDK_TOOLS_SOURCE = provider === 'wdk' ? 'live' : 'circle-arc';
-  env.WDK_NETWORK = provider === 'wdk' ? 'sepolia' : 'arc-testnet';
-  if (provider === 'circle-arc') env.WDK_TOKEN = 'USDC';
+  env.WDK_TOOLS_SOURCE = 'live';
+  env.WDK_NETWORK = 'sepolia';
   env.WDK_WALLET_NAME ||= 'agent-demo';
   env.DEMO_USER_ID ||= '00000000-0000-4000-8000-000000000001';
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(env.DEMO_USER_ID)) throw new Error('DEMO_USER_ID debe ser un UUID.');
@@ -74,7 +68,7 @@ export function composeConfig(provider, env) {
     // BALANCE_NO_DISPONIBLE. Same endpoint the code pins as PRIVY_ARC_RPC_URL.
     BALANCE_READ_SOURCE: 'rpc', BALANCE_RPC_URL: 'https://rpc.testnet.arc.io',
   };
-  for (const name of ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVE_VOICE_BINDING_PUBLIC_KEY', 'OPENAI_API_KEY', 'OPENCODE_GO_API_KEY', 'WDK_INDEXER_API_KEY', ...(provider === 'circle-arc' ? ['CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'CIRCLE_SENDER_WALLET_ID'] : [])]) environment[name] = ref(name);
+  for (const name of ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVE_VOICE_BINDING_PUBLIC_KEY', 'OPENAI_API_KEY', 'OPENCODE_GO_API_KEY', 'WDK_INDEXER_API_KEY']) environment[name] = ref(name);
   const build = { context: root, dockerfile: 'Dockerfile' };
   const base = { build, environment, ...(provider === 'wdk' ? { volumes: ['wallet:/wdk-config'] } : {}), depends_on: { db: { condition: 'service_healthy' }, livekit: { condition: 'service_healthy' } } };
   const config = {
@@ -125,7 +119,7 @@ export async function main(args = process.argv.slice(2)) {
   if (values['env-file']) env = { ...parseEnv(readFileSync(resolve(values['env-file']), 'utf8')), ...env };
   if (values.vault) {
     const available = run('vault-env', ['list'], env, undefined, true).split(/\s+/);
-    const wanted = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVE_VOICE_BINDING_PRIVATE_KEY', 'LIVE_VOICE_BINDING_PUBLIC_KEY', 'OPENAI_API_KEY', 'OPEN_AI_API_KEY', 'OPENCODE_GO_API_KEY', 'WDK_INDEXER_API_KEY', ...(values.provider === 'circle-arc' ? ['CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'CIRCLE_SENDER_WALLET_ID'] : [])];
+    const wanted = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVE_VOICE_BINDING_PRIVATE_KEY', 'LIVE_VOICE_BINDING_PUBLIC_KEY', 'OPENAI_API_KEY', 'OPEN_AI_API_KEY', 'OPENCODE_GO_API_KEY', 'WDK_INDEXER_API_KEY'];
     const names = wanted.filter(name => available.includes(name) && !env[name]);
     if (names.length) {
       const result = spawnSync('vault-env', ['run', '--names', names.join(','), '--', process.execPath, fileURLToPath(import.meta.url), ...args.filter(a => a !== '--vault')], { cwd: root, env, stdio: 'inherit' });

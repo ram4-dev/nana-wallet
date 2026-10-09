@@ -86,14 +86,6 @@ describe("process-specific configuration", () => {
         PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
         WDK_TOOLS_SOURCE: "live",
       }),
-    ).toThrow(/WDK_TOOLS_SOURCE/u);
-    expect(() =>
-      readApiProcessConfig({
-        IDENTITY_PROVIDER: "privy",
-        PRIVY_APP_ID: "app",
-        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
-        WDK_TOOLS_SOURCE: "circle-arc",
-      }),
     ).toThrow(/singleton|funded|WDK_TOOLS_SOURCE/u);
     expect(
       readApiProcessConfig({
