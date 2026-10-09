@@ -71,37 +71,6 @@ describe("process-specific configuration", () => {
     });
   });
 
-  it("rejects a funded singleton wallet provider (PMU-024)", () => {
-    // The `live`/WDK provider family was removed from the switch; a stale
-    // `WDK_TOOLS_SOURCE=live` is still rejected instead of silently selecting a
-    // provider. The per-user-bound sources are accepted.
-    expect(() => readApiProcessConfig({ WDK_TOOLS_SOURCE: "live" })).toThrow(
-      /singleton|funded|WDK_TOOLS_SOURCE/u,
-    );
-    for (const source of ["fixture", "solana-devnet"] as const) {
-      expect(readApiProcessConfig({ WDK_TOOLS_SOURCE: source })).toMatchObject({
-        databaseUrl: undefined,
-      });
-    }
-  });
-
-  it("accepts the per-user-bound solana-devnet provider (PMU-024)", () => {
-    // The guard exists to keep a FUNDED SINGLETON out of the Privy identity
-    // path. Solana devnet signs through a per-user wallet binding, so it has no
-    // singleton sender identity and fails closed on its own. This must stay in
-    // sync with `readPrivyServerConfig`, which already allows it: an API that
-    // refuses to boot on a configuration the rest of the stack supports is
-    // unusable.
-    expect(
-      readApiProcessConfig({
-        WDK_TOOLS_SOURCE: "solana-devnet",
-        DATABASE_URL: "postgres://local",
-      }),
-    ).toMatchObject({
-      databaseUrl: "postgres://local",
-    });
-  });
-
   it("rejects an invalid API binding key", () => {
     expect(() =>
       readApiProcessConfig({

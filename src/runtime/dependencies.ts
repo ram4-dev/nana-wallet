@@ -1,14 +1,10 @@
 import { callWdkTool } from "../agent/wdk-tools.js";
 import type { Tool } from "ai";
-import { FixtureWalletProvider } from "../wallet/fixture-provider.js";
-import {
-  SOLANA_DEVNET_NETWORK,
-  SolanaDevnetConfigError,
-  SolanaDevnetProvider,
-  readSolanaDevnetProviderConfig,
-} from "../wallet/solana-devnet-provider.js";
 import { WdkWalletProvider } from "../wallet/wdk-provider.js";
-import type { WalletProvider } from "../wallet/provider.js";
+import {
+  createUnavailableWalletProvider,
+  type WalletProvider,
+} from "../wallet/provider.js";
 import {
   createConfiguredDatabaseClient,
   type DatabaseClient,
@@ -155,51 +151,31 @@ export function createConfiguredWalletForUser(
   };
 }
 
-export function createWalletProvider(
-  environment: NodeJS.ProcessEnv = process.env,
-): WalletProvider {
-  if (environment.WDK_TOOLS_SOURCE === "solana-devnet") {
-    // Devnet-only boot guard: the health route derives `network` from
-    // WDK_NETWORK, so a set-but-mismatched network or token would advertise a
-    // contract the devnet provider cannot serve. Fail closed at boot instead.
-    const network = environment.WDK_NETWORK;
-    if (network !== undefined && network !== SOLANA_DEVNET_NETWORK) {
-      throw new SolanaDevnetConfigError(
-        `WDK_TOOLS_SOURCE=solana-devnet requires WDK_NETWORK=${SOLANA_DEVNET_NETWORK}; got "${network}".`,
-      );
-    }
-    const token = environment.WDK_TOKEN;
-    if (token !== undefined && token !== "SOL") {
-      throw new SolanaDevnetConfigError(
-        `WDK_TOOLS_SOURCE=solana-devnet requires WDK_TOKEN=SOL; got "${token}".`,
-      );
-    }
-    return new SolanaDevnetProvider(
-      readSolanaDevnetProviderConfig(environment),
-    );
-  }
-  return new FixtureWalletProvider();
-}
-
 /**
- * Stage-1 wallet-injection seam: `createCoreDependencies` accepts an injected
+ * Wallet-injection seam: `createCoreDependencies` accepts an injected
  * `wallet`/`walletReads` pair so the HTTP server (and the test helper over it)
- * can supply a specific provider without going through `WDK_TOOLS_SOURCE`.
- * Nothing is injected in production: both defaults below stay today's
- * expressions, so the environment switch and its provider selection are
- * unchanged. Stage 2 removes that switch; this seam is what it then deletes
- * around instead of sweeping every suite.
+ * can supply a specific provider. The `WDK_TOOLS_SOURCE` switch and the wallet
+ * provider selection it drove are GONE — production has exactly one wallet
+ * configuration, the per-user Privy path on Solana devnet — so the defaults
+ * below are the doubles tests inject; nothing else selects a provider.
+ *
+ * A caller that injects neither gets the fail-closed
+ * `createUnavailableWalletProvider`, never a silent fixture.
  */
 export function createCoreDependencies(
   environment: NodeJS.ProcessEnv = process.env,
   options: { wallet?: WalletProvider; walletReads?: WalletProvider } = {},
 ): CoreDependencies {
-  const wallet = options.wallet ?? createWalletProvider(environment);
+  const wallet =
+    options.wallet ??
+    createUnavailableWalletProvider(
+      "No wallet provider was injected: production resolves the per-user Privy Solana wallet, and tests inject a double through createCoreDependencies.",
+    );
   const walletReads =
     options.walletReads ??
-    (environment.WDK_TOOLS_SOURCE === "solana-devnet"
-      ? wallet
-      : createLegacyToolSourceWalletReads());
+    createUnavailableWalletProvider(
+      "No walletReads provider was injected: production resolves the per-user Privy Solana wallet, and tests inject a double through createCoreDependencies.",
+    );
   const maxInputTokens = Number(
     environment.CONVERSATION_MAX_INPUT_TOKENS ?? 4096,
   );
@@ -291,12 +267,12 @@ export function createWorkerDependencies(
 }
 
 /**
- * The reads-side provider the non-devnet ("fixture") selection built: a WDK
+ * The reads-side provider the legacy ("fixture") selection built: a WDK
  * provider over the legacy MCP tool source. It is also the reads double the
- * HTTP test helper injects, so a suite migrated off `WDK_TOOLS_SOURCE=fixture`
- * keeps exactly the provider that pin selected. Each call returns a fresh
- * provider, which keeps `walletReads !== wallet` — the identity check every
- * shutdown path uses to decide whether there are two providers to close.
+ * HTTP test helper injects, so a suite keeps exactly the provider that pin
+ * selected. Each call returns a fresh provider, which keeps `walletReads !==
+ * wallet` — the identity check every shutdown path uses to decide whether there
+ * are two providers to close.
  */
 export function createLegacyToolSourceWalletReads(): WalletProvider {
   return new WdkWalletProvider(async () => legacyToolSource());

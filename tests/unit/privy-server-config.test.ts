@@ -1,22 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { readPrivyServerConfig } from "../../src/config/privy-server.js";
 
-describe("Privy server configuration for per-user Solana devnet", () => {
+// The `WDK_TOOLS_SOURCE` allowlist this file used to pin is gone with the
+// switch: there is no provider selector left, so there is no funded-singleton
+// source to reject. What remains is the server-client input contract itself.
+describe("Privy server configuration input requirements", () => {
   const base = {
     PRIVY_APP_ID: "app",
     PRIVY_APP_SECRET: "secret",
   };
 
-  it("allows only the per-user-bound providers in the Privy identity path", () => {
-    for (const source of ["fixture", "solana-devnet"] as const) {
-      expect(
-        readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: source }),
-      ).toMatchObject({ appId: "app" });
-    }
-    // The `live`/WDK provider family was removed; a stale value is still
-    // rejected instead of silently selecting a provider.
-    expect(() =>
-      readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: "live" }),
-    ).toThrow(/WDK_TOOLS_SOURCE/);
+  it("builds the server client from the app id and secret", () => {
+    expect(readPrivyServerConfig(base)).toMatchObject({ appId: "app" });
+  });
+
+  it("stays unconfigured without the server secret", () => {
+    expect(readPrivyServerConfig({ PRIVY_APP_ID: "app" })).toBeUndefined();
   });
 });

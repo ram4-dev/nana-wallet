@@ -42,8 +42,8 @@ export const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
  *
  * DEFAULT WALLET
  * --------------
- * The default injects the same pair the `WDK_TOOLS_SOURCE=fixture` pin used to
- * select, so a suite that drops that pin cannot change which provider it gets:
+ * The default injects the write/read pair every fixture-based suite expects, so
+ * a suite gets a stable provider regardless of the environment:
  *
  *  - `wallet`       → `FixtureWalletProvider` (the write-side double).
  *  - `walletReads`  → `createLegacyToolSourceWalletReads()`, the WDK provider

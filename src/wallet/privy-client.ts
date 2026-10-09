@@ -3,11 +3,10 @@ import { createHash } from "node:crypto";
 /**
  * PEW-002/003/007/011: Privy server-API boundary for embedded wallets.
  *
- * The live implementation is deliberately fail-closed: without the PRIVY_*
- * credentials (which are only ever provisioned through vault-env) it refuses to
- * construct, and every remote capability it exposes is gated behind WU-E1
- * provider proof. It never invents capabilities, never fabricates signed bytes
- * and never reaches a real RPC without credentials.
+ * Only the fixture implementation is built here. The `live` implementation the
+ * removed `WDK_TOOLS_SOURCE` switch could select is gone: it never reached a
+ * real RPC (every method failed closed behind WU-E1 proof), so it only ever
+ * offered a fail-closed facade that the fixture already stands in for.
  *
  * The fixture implementation is deterministic per-user so the full backend,
  * RLS and signing flow can be exercised without a live Privy app or test funds.
@@ -222,96 +221,14 @@ export function deterministicHash(input: string): string {
 }
 
 /**
- * Live Privy client. Construction fails closed when any PRIVY_* credential is
- * missing, and every remote method refuses to act until WU-E1 proves the
- * provider-side per-transfer cap, rolling window and gas ceiling. This class is
- * intentionally thin: it exists to make the boundary explicit and unforgeable.
- */
-export class LivePrivyWalletApiClient implements PrivyWalletApiClient {
-  public readonly mode = "live" as const;
-  private readonly appId: string;
-  private readonly appSecret: string;
-  private readonly verificationKey: string;
-
-  public constructor(environment: NodeJS.ProcessEnv = process.env) {
-    const appId = environment.PRIVY_APP_ID?.trim();
-    const appSecret = environment.PRIVY_APP_SECRET?.trim();
-    const verificationKey = environment.PRIVY_VERIFICATION_KEY?.trim();
-    // The authorization private key is deliberately NOT read here. Nothing in
-    // this client signs: every method fails closed, and the signing path lives
-    // behind the local sidecar (src/wallet/signer/), which is the only process
-    // that may hold that credential.
-    const missing = [
-      ["PRIVY_APP_ID", appId],
-      ["PRIVY_APP_SECRET", appSecret],
-      ["PRIVY_VERIFICATION_KEY", verificationKey],
-    ]
-      .filter(([, value]) => !value)
-      .map(([name]) => name as string);
-    if (missing.length > 0) throw new PrivyCredentialsMissingError(missing);
-    this.appId = appId!;
-    this.appSecret = appSecret!;
-    this.verificationKey = verificationKey!;
-  }
-
-  private failClosed(method: string): never {
-    throw new Error(
-      `LivePrivyWalletApiClient.${method}: live signing is disabled until WU-E1 proves the provider-side per-transfer cap, rolling window and gas ceiling for this configuration.`,
-    );
-  }
-
-  public async listWallets(_userId: string): Promise<ProviderWallet[]> {
-    return this.failClosed("listWallets");
-  }
-  public async getWallet(
-    _userId: string,
-    _providerWalletId: string,
-  ): Promise<ProviderWallet | undefined> {
-    return this.failClosed("getWallet");
-  }
-  public async verifyOwnership(
-    _userId: string,
-    _input: { address: string; providerWalletId: string },
-  ): Promise<OwnershipProof> {
-    return this.failClosed("verifyOwnership");
-  }
-  public async createWallet(
-    _userId: string,
-    _chainFamily: string,
-  ): Promise<ProviderWallet> {
-    return this.failClosed("createWallet");
-  }
-  public async readEffectivePolicy(
-    _walletId: string,
-  ): Promise<EffectiveProviderPolicy> {
-    return this.failClosed("readEffectivePolicy");
-  }
-  public async createGrantPolicy(
-    _input: GrantPolicyInput,
-  ): Promise<EffectiveProviderPolicy> {
-    return this.failClosed("createGrantPolicy");
-  }
-  public async revokeGrantPolicy(_policyId: string): Promise<void> {
-    return this.failClosed("revokeGrantPolicy");
-  }
-  public async signTransaction(
-    _intent: SigningIntent,
-  ): Promise<SignedTransactionPayload> {
-    return this.failClosed("signTransaction");
-  }
-}
-
-/**
- * Builds the configured Privy client. Fixture is the default (and the only mode
- * allowed in privy-identity mode today); a non-fixture request with missing
- * credentials fails closed at construction.
+ * Builds the configured Privy client. The fixture client is the only
+ * implementation; the `live` variant went with the removed `WDK_TOOLS_SOURCE`
+ * switch. `environment` is retained for signature compatibility but no longer
+ * selects an implementation.
  */
 export function createPrivyWalletApiClient(
-  environment: NodeJS.ProcessEnv = process.env,
+  _environment: NodeJS.ProcessEnv = process.env,
   options: FixturePrivyClientOptions = {},
 ): PrivyWalletApiClient {
-  if ((environment.WDK_TOOLS_SOURCE ?? "fixture") === "live") {
-    return new LivePrivyWalletApiClient(environment);
-  }
   return new FixturePrivyWalletApiClient(options);
 }

@@ -49,30 +49,6 @@ export class SolanaDevnetConfigError extends Error {
 }
 
 /**
- * Reads provider config from environment; fails closed when the required
- * Privy credential surface is absent (no default devnet dispatch without it).
- */
-export function readSolanaDevnetProviderConfig(
-  environment: NodeJS.ProcessEnv,
-): { walletId?: string; senderAddress?: string } {
-  const walletId = environment.SOLANA_DEVNET_WALLET_ID?.trim();
-  const senderAddress = environment.SOLANA_DEVNET_SENDER_ADDRESS?.trim();
-  if ((walletId && !senderAddress) || (!walletId && senderAddress)) {
-    throw new SolanaDevnetConfigError(
-      "SOLANA_DEVNET_WALLET_ID and SOLANA_DEVNET_SENDER_ADDRESS must be set together.",
-    );
-  }
-  // Identity is OPTIONAL at boot (ADR-3): a global wallet id + sender address
-  // breaks tenant isolation, so per-user resolution through
-  // `createSolanaWalletForUser` is the primary path. The static pair is only a
-  // legacy override; per-request methods fail closed when no identity is bound.
-  return {
-    ...(walletId ? { walletId } : {}),
-    ...(senderAddress ? { senderAddress } : {}),
-  };
-}
-
-/**
  * Test-only construction seam: wires a provider whose dispatch/RPC seams
  * are placeholders that fail closed on use. NODE_ENV=test enforced (same
  * discipline as FixtureWalletProvider fault injection).

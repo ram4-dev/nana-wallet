@@ -57,33 +57,6 @@ export type WorkerProcessConfig = LiveKitWorkerConfig & {
   databaseUrl: string;
 };
 
-/**
- * PMU-024: the identity foundation must not serve financial operations from a
- * funded singleton wallet provider. Production identity is always the Privy
- * verifier, so the guard is unconditional: only the per-user-bound sources
- * below may be selected. Any other value — including a stale
- * `WDK_TOOLS_SOURCE=live` left behind by the removed EVM path — is rejected at
- * boot rather than silently falling through to the fixture provider.
- *
- * `solana-devnet` is not a singleton: its signing path resolves a per-user
- * wallet binding, so the singleton provider has no sender identity and fails
- * closed. `readPrivyServerConfig` allows exactly the same set for the same
- * reason; this guard must stay in sync, otherwise the API refuses to boot on a
- * configuration the rest of the stack supports.
- */
-const PER_USER_BOUND_SOURCES = new Set(["fixture", "solana-devnet"]);
-
-function rejectFundedSingletonInPrivyMode(
-  environment: NodeJS.ProcessEnv,
-): void {
-  const source = environment.WDK_TOOLS_SOURCE?.trim() || "fixture";
-  if (!PER_USER_BOUND_SOURCES.has(source)) {
-    throw new Error(
-      `WDK_TOOLS_SOURCE=${source} is not allowed: the identity foundation must not start with a funded singleton wallet provider. Use 'fixture' or the per-user-bound 'solana-devnet' provider.`,
-    );
-  }
-}
-
 export type LiveKitAgentRuntime = "service-adapter" | "native-livekit";
 
 export const nativeLiveKitRetirementGates = [
@@ -154,7 +127,6 @@ export function readApiProcessConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): ApiProcessConfig {
   const databaseUrl = environment.DATABASE_URL?.trim() || undefined;
-  rejectFundedSingletonInPrivyMode(environment);
 
   const bindingPrivateKey =
     environment.LIVE_VOICE_BINDING_PRIVATE_KEY?.trim() || undefined;

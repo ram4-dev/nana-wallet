@@ -76,3 +76,35 @@ export interface WalletProvider {
   ): Promise<FinalityOutcome>;
   close(): Promise<void>;
 }
+
+/**
+ * Fail-closed wallet provider for a missing wallet configuration. It exists so a
+ * deployment that never wired a wallet fails LOUDLY on first use instead of
+ * silently serving the fixture double, whose reads answer and whose
+ * "broadcasts" fabricate a synthetic transfer.
+ *
+ * `mode` is the type-level `"fixture"` constraint, not a claim about this
+ * provider: it is neither a fixture nor a live provider, and every method
+ * rejects. `id` is the distinct literal `"unavailable"` so health and shutdown
+ * can tell it apart from the fixture. `close()` resolves so a shutdown path can
+ * always retire it.
+ */
+export function createUnavailableWalletProvider(
+  reason: string,
+): WalletProvider {
+  const unavailable = (): Promise<never> => Promise.reject(new Error(reason));
+  return {
+    id: "unavailable",
+    mode: "fixture",
+    health: unavailable,
+    listNetworks: unavailable,
+    listTokens: unavailable,
+    getAddress: unavailable,
+    getBalance: unavailable,
+    getHistory: unavailable,
+    previewTransfer: unavailable,
+    broadcastTransfer: unavailable,
+    waitForFinality: unavailable,
+    async close() {},
+  };
+}

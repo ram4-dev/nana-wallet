@@ -48,13 +48,11 @@ async function healthBody(wallet: WalletProvider) {
 
 describe('GET /health provider field (additive, D5)', () => {
   const previous = new Map<string, string | undefined>([
-    ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
     ['WDK_NETWORK', process.env.WDK_NETWORK],
     ['WDK_WALLET_NAME', process.env.WDK_WALLET_NAME],
   ]);
 
   beforeEach(() => {
-    process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
     process.env.WDK_NETWORK = 'solana-devnet';
     process.env.WDK_WALLET_NAME = FAKE_CREDENTIALS.walletId;
   });
@@ -133,7 +131,6 @@ describe('GET /health privy-identity network default (Solana-only)', () => {
     ['PRIVY_APP_ID', process.env.PRIVY_APP_ID],
     ['PRIVY_VERIFICATION_KEY', process.env.PRIVY_VERIFICATION_KEY],
     ['WDK_NETWORK', process.env.WDK_NETWORK],
-    ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
   ]);
 
   afterEach(() => {
@@ -145,7 +142,6 @@ describe('GET /health privy-identity network default (Solana-only)', () => {
 
   it('defaults the network to solana-devnet under the Privy identity inputs', async () => {
     delete process.env.WDK_NETWORK;
-    delete process.env.WDK_TOOLS_SOURCE;
     // `/health` only checks that the identity inputs are present; it never
     // parses the key, so a placeholder is enough to pin the `live` contract.
     process.env.PRIVY_APP_ID = 'test-health-app';
@@ -159,18 +155,14 @@ describe('GET /health privy-identity network default (Solana-only)', () => {
 });
 
 describe('GET /health fixture-mode parity (additive field is backward compatible)', () => {
-  const previousSource = process.env.WDK_TOOLS_SOURCE;
   const previousNetwork = process.env.WDK_NETWORK;
 
   afterEach(() => {
-    if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousSource;
     if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
     else process.env.WDK_NETWORK = previousNetwork;
   });
 
   it('keeps the fixture contract and adds a healthy provider field', async () => {
-    process.env.WDK_TOOLS_SOURCE = 'fixture';
     process.env.WDK_NETWORK = 'sepolia';
 
     const body = await healthBody(fakeWalletProvider(async () => ({ status: 'healthy' })));
