@@ -55,23 +55,14 @@ services:
       HOST: "0.0.0.0"
       PORT: "3000"
       DATABASE_URL: "postgresql://postgres@db:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions"
-      DEMO_USER_ID: "00000000-0000-4000-8000-000000000001"
-      # Wallet source is interpolable so the git-ignored .env opts into
-      # live WDK explicitly; the compose default stays fixture (repo rule).
-      WDK_TOOLS_SOURCE: "${WDK_TOOLS_SOURCE:-fixture}"
-      WDK_NETWORK: "${WDK_NETWORK:-sepolia}"
-      WDK_TOKEN: "${WDK_TOKEN:-USDT}"
+      WDK_NETWORK: "solana-devnet"
+      WDK_TOKEN: "SOL"
       WDK_WALLET_NAME: "${WDK_WALLET_NAME:-agent-dev}"
-      WDK_MAX_TRANSFER_AMOUNT: "${WDK_MAX_TRANSFER_AMOUNT:-}"
-      WDK_ALLOWED_RECIPIENTS: "${WDK_ALLOWED_RECIPIENTS:-}"
       RECIPIENT_MEMORY_ENABLED: "true"
       RECIPIENT_MEMORY_SEED_FILE: "examples/recipient-memory.seed.json"
       LIVE_VOICE_ENABLED: "true"
       AGENT_RUNTIME: "${AGENT_RUNTIME:-llm}"
       OPENCODE_GO_API_KEY: "${OPENCODE_GO_API_KEY:-}"
-      # Host WDK wallet store + daemon socket (the agent wallet is unlocked
-      # by a human via docker exec, never by agents).
-      XDG_CONFIG_HOME: "/wdk-config"
       # Sign room tokens against the self-hosted server over the compose
       # network; LIVEKIT_BROWSER_URL (browser-facing URL) comes from the
       # git-ignored .env and must stay ws://localhost:7880 so the browser
@@ -80,8 +71,6 @@ services:
       LIVEKIT_BROWSER_URL: "${LIVEKIT_BROWSER_URL:-ws://localhost:7880}"
       LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-}"
       LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-}"
-    volumes:
-      - wdk_config:/wdk-config
     ports:
       - "127.0.0.1:${BACKEND_HOST_PORT:-3000}:3000"
     depends_on:
@@ -114,19 +103,12 @@ services:
       # DATABASE_URL at host loopback, which is unreachable from inside the
       # container — the compose db service is authoritative here.
       DATABASE_URL: "postgresql://postgres@db:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions"
-      DEMO_USER_ID: "00000000-0000-4000-8000-000000000001"
       # Same interpolable wallet source as the backend (compose default fixture).
-      WDK_TOOLS_SOURCE: "${WDK_TOOLS_SOURCE:-fixture}"
-      WDK_NETWORK: "${WDK_NETWORK:-sepolia}"
-      WDK_TOKEN: "${WDK_TOKEN:-USDT}"
+      WDK_NETWORK: "solana-devnet"
+      WDK_TOKEN: "SOL"
       WDK_WALLET_NAME: "${WDK_WALLET_NAME:-agent-dev}"
-      WDK_MAX_TRANSFER_AMOUNT: "${WDK_MAX_TRANSFER_AMOUNT:-}"
-      WDK_ALLOWED_RECIPIENTS: "${WDK_ALLOWED_RECIPIENTS:-}"
       RECIPIENT_MEMORY_ENABLED: "true"
       RECIPIENT_MEMORY_SEED_FILE: "examples/recipient-memory.seed.json"
-      XDG_CONFIG_HOME: "/wdk-config"
-    volumes:
-      - wdk_config:/wdk-config
     depends_on:
       db:
         condition: service_healthy

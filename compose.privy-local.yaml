@@ -1,14 +1,15 @@
 name: nana-privy-impl
 
 x-identity: &identity
-  IDENTITY_PROVIDER: privy
   PRIVY_APP_ID: ${PRIVY_APP_ID:?}
   PRIVY_APP_SECRET: ${PRIVY_APP_SECRET:?}
   PRIVY_VERIFICATION_KEY: ${PRIVY_VERIFICATION_KEY:?}
   DATABASE_URL: postgresql://postgres@db:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions
-  WDK_TOOLS_SOURCE: fixture
-  WDK_NETWORK: arc-testnet
-  WDK_TOKEN: USDC
+  # The single wallet configuration: Solana devnet through the per-user Privy
+  # path. WDK_NETWORK drives chain routing, so it must name Solana: any other
+  # value resolves an EVM wallet family and silently skips the Solana resolver.
+  WDK_NETWORK: solana-devnet
+  WDK_TOKEN: SOL
   RECIPIENT_MEMORY_ENABLED: "true"
   LIVEKIT_URL: ws://livekit:7880
   LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?}
@@ -62,12 +63,11 @@ services:
       CORS_ORIGINS: https://nana-privy.localhost
       AGENT_RUNTIME: llm
       OPENCODE_GO_API_KEY: ${OPENCODE_GO_API_KEY:?}
-      # WP-003..WP-009: GET /v1/wallets/current/balances reads the Arc testnet
-      # USDC ERC-20. Without this the reader stays on its `fixture` default with an
-      # empty map, so every `ready` wallet fails closed with 503
-      # BALANCE_NO_DISPONIBLE. Same endpoint as PRIVY_ARC_RPC_URL in code.
-      BALANCE_READ_SOURCE: rpc
-      BALANCE_RPC_URL: https://rpc.testnet.arc.io
+      # NOTE: no BALANCE_READ_SOURCE/BALANCE_RPC_URL. That reader is an Arc
+      # ERC-20 eth_call path guarded on chain family "arc", so pointing it at an
+      # Arc RPC in a Solana deployment could only refuse or mislabel. The
+      # balances endpoint has no Solana implementation yet; until it does it
+      # reports unavailable instead of serving another chain's numbers.
     ports: ["127.0.0.1::3000"]
     volumes:
       - ${PRIVY_SOURCE_DIR:-.}/src:/app/src:ro
