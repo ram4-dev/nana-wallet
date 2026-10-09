@@ -20,16 +20,12 @@ suite("/v1/contacts CRUD (demo mode, PMU-008..012)", () => {
   });
 
   beforeEach(() => {
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     process.env.DEMO_USER_ID = USER_A;
   });
 
   afterAll(async () => {
     await database.close();
     process.env.DEMO_USER_ID = previousEnv.DEMO_USER_ID;
-    if (previousEnv.WDK_TOOLS_SOURCE === undefined)
-      delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousEnv.WDK_TOOLS_SOURCE;
   });
 
   it("creates a confirmed user contact, lists it, versions it, archives it and reveals it", {

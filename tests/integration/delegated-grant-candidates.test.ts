@@ -44,7 +44,6 @@ suite(
     let database: DatabaseClient;
     let grants: DelegatedGrantService;
     const previousRuntime = process.env.AGENT_RUNTIME;
-    const previousSource = process.env.WDK_TOOLS_SOURCE;
 
     beforeAll(async () => {
       database = createDatabaseClient(databaseUrl!);
@@ -57,7 +56,6 @@ suite(
     const previousToken = process.env.WDK_TOKEN;
     beforeEach(() => {
       process.env.AGENT_RUNTIME = "deterministic";
-      process.env.WDK_TOOLS_SOURCE = "fixture";
       // Route previews to the Solana delegated-grant registry network.
       process.env.WDK_NETWORK = "solana-devnet";
       process.env.WDK_TOKEN = "SOL";
@@ -65,8 +63,6 @@ suite(
     afterEach(() => {
       if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
       else process.env.AGENT_RUNTIME = previousRuntime;
-      if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-      else process.env.WDK_TOOLS_SOURCE = previousSource;
       if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
       else process.env.WDK_NETWORK = previousNetwork;
       if (previousToken === undefined) delete process.env.WDK_TOKEN;

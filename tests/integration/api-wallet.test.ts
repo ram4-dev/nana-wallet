@@ -4,12 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 // default under full-suite parallel load (documented pattern in api-voice).
 vi.setConfig({ testTimeout: 15_000 });
 
-// Hermetic: the local development .env may set WDK_TOOLS_SOURCE=live; these
-// tests exercise the fixture provider contract. The pins run before the server
-// import because dotenv evaluates the ambient .env during that import chain
-// and src/api/wallet.ts freezes NETWORK at module import time.
+// Hermetic: the network and token these cases query come from the ambient .env
+// otherwise, so they are pinned before the server import (dotenv evaluates that
+// file during the import chain and src/api/wallet.ts freezes NETWORK at module
+// import time). The wallet provider comes from the fixture doubles injected by
+// buildTestServer, not from WDK_TOOLS_SOURCE.
 vi.hoisted(() => {
-  process.env.WDK_TOOLS_SOURCE = 'fixture';
   process.env.WDK_NETWORK = 'sepolia';
   process.env.WDK_TOKEN = 'USDT';
 });

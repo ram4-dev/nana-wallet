@@ -61,7 +61,6 @@ suite("provider webhook ingress no-side-effects (Slice 5 RED)", () => {
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
       "PRIVY_WEBHOOK_SECRET",
-      "WDK_TOOLS_SOURCE",
       "DEMO_USER_ID",
     ]) {
       previousEnv[key] = process.env[key];
@@ -69,7 +68,6 @@ suite("provider webhook ingress no-side-effects (Slice 5 RED)", () => {
     process.env.PRIVY_APP_ID = "test-notifications-webhook";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
     process.env.PRIVY_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     delete process.env.DEMO_USER_ID;
     database = createDatabaseClient(databaseUrl!);
 

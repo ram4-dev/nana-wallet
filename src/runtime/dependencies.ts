@@ -182,14 +182,25 @@ export function createWalletProvider(
   return new FixtureWalletProvider();
 }
 
+/**
+ * Stage-1 wallet-injection seam: `createCoreDependencies` accepts an injected
+ * `wallet`/`walletReads` pair so the HTTP server (and the test helper over it)
+ * can supply a specific provider without going through `WDK_TOOLS_SOURCE`.
+ * Nothing is injected in production: both defaults below stay today's
+ * expressions, so the environment switch and its provider selection are
+ * unchanged. Stage 2 removes that switch; this seam is what it then deletes
+ * around instead of sweeping every suite.
+ */
 export function createCoreDependencies(
   environment: NodeJS.ProcessEnv = process.env,
+  options: { wallet?: WalletProvider; walletReads?: WalletProvider } = {},
 ): CoreDependencies {
-  const wallet = createWalletProvider(environment);
+  const wallet = options.wallet ?? createWalletProvider(environment);
   const walletReads =
-    environment.WDK_TOOLS_SOURCE === "solana-devnet"
+    options.walletReads ??
+    (environment.WDK_TOOLS_SOURCE === "solana-devnet"
       ? wallet
-      : new WdkWalletProvider(async () => legacyToolSource());
+      : createLegacyToolSourceWalletReads());
   const maxInputTokens = Number(
     environment.CONVERSATION_MAX_INPUT_TOKENS ?? 4096,
   );
@@ -281,6 +292,18 @@ export function createWorkerDependencies(
       await database.close();
     },
   };
+}
+
+/**
+ * The reads-side provider the non-devnet ("fixture") selection built: a WDK
+ * provider over the legacy MCP tool source. It is also the reads double the
+ * HTTP test helper injects, so a suite migrated off `WDK_TOOLS_SOURCE=fixture`
+ * keeps exactly the provider that pin selected. Each call returns a fresh
+ * provider, which keeps `walletReads !== wallet` — the identity check every
+ * shutdown path uses to decide whether there are two providers to close.
+ */
+export function createLegacyToolSourceWalletReads(): WalletProvider {
+  return new WdkWalletProvider(async () => legacyToolSource());
 }
 
 async function legacyToolSource(): Promise<Record<string, Tool>> {

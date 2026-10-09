@@ -35,16 +35,12 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     process.env.DEMO_USER_ID = USER_A;
   });
 
   afterAll(async () => {
     await database.close();
     process.env.DEMO_USER_ID = previousEnv.DEMO_USER_ID;
-    if (previousEnv.WDK_TOOLS_SOURCE === undefined)
-      delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousEnv.WDK_TOOLS_SOURCE;
   });
 
   it("syncs the same wallet idempotently (created=false on repeat) with a stable address", {

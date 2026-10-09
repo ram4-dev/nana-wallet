@@ -3,6 +3,9 @@ import {
   type RequestIdentityProvider,
 } from "../../src/auth/identity.js";
 import { buildServer } from "../../src/server.js";
+import { createLegacyToolSourceWalletReads } from "../../src/runtime/dependencies.js";
+import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
+import type { WalletProvider } from "../../src/wallet/provider.js";
 import type { PrivyServerClient } from "../../src/wallet/privy-server-client.js";
 
 /**
@@ -32,6 +35,21 @@ import type { PrivyServerClient } from "../../src/wallet/privy-server-client.js"
  * leaves `DEMO_USER_ID` alone, so the suite observes the value it always did;
  * `.github/workflows/ci.yml` pins it to `00000000-0000-4000-8000-000000000001`.
  *
+ * DEFAULT WALLET
+ * --------------
+ * The default injects the same pair the `WDK_TOOLS_SOURCE=fixture` pin used to
+ * select, so a suite that drops that pin cannot change which provider it gets:
+ *
+ *  - `wallet`       → `FixtureWalletProvider` (the write-side double).
+ *  - `walletReads`  → `createLegacyToolSourceWalletReads()`, the WDK provider
+ *                     over the legacy MCP tool source. This is the provider the
+ *                     `/v1/wallet/*` read routes actually serve in fixture mode,
+ *                     so it is NOT interchangeable with the write-side fixture
+ *                     (a suite that asserts the WDK tool-source calls, e.g.
+ *                     api-wallet-official-wdk, depends on it).
+ *
+ * Both stay overridable per suite through the same options object.
+ *
  * SCOPE
  * -----
  * An injected identity short-circuits the Privy identity construction: when
@@ -43,6 +61,8 @@ export function buildTestServer(
   options: {
     privyServer?: PrivyServerClient;
     identity?: RequestIdentityProvider;
+    wallet?: WalletProvider;
+    walletReads?: WalletProvider;
   } = {},
 ) {
   return buildServer({
@@ -50,5 +70,7 @@ export function buildTestServer(
     identity:
       options.identity ??
       new DemoIdentityProvider(process.env.DEMO_USER_ID ?? ""),
+    wallet: options.wallet ?? new FixtureWalletProvider(),
+    walletReads: options.walletReads ?? createLegacyToolSourceWalletReads(),
   });
 }

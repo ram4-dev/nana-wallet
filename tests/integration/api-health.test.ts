@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-// Hermetic: the local development .env may select live wallet mode; these tests
-// assert the fixture-mode health contract. The pins run before the server
-// import because dotenv evaluates the ambient .env during that import chain.
+// Hermetic: the network and token the health contract asserts come from the
+// ambient .env otherwise, so they are pinned before the server import (dotenv
+// evaluates that file during the import chain). The wallet provider is NOT
+// pinned here: buildTestServer injects the fixture doubles the removed
+// `WDK_TOOLS_SOURCE=fixture` pin used to select.
 //
 // The server is built through the injected-identity fixture: production identity
 // is always Privy, so a bare `buildServer()` would demand Privy credentials, and
@@ -10,7 +12,6 @@ import { describe, expect, it, vi } from "vitest";
 // identity inputs in the environment `MODE()` reports `fixture`, which is the
 // contract asserted below.
 vi.hoisted(() => {
-  process.env.WDK_TOOLS_SOURCE = "fixture";
   process.env.WDK_NETWORK = "sepolia";
   process.env.WDK_TOKEN = "USDT";
 });

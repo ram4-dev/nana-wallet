@@ -18,7 +18,6 @@ describe("typed conversation service with fixture wallet", () => {
     enabled: process.env.RECIPIENT_MEMORY_ENABLED,
     demoUserId: process.env.DEMO_USER_ID,
     runtime: process.env.AGENT_RUNTIME,
-    source: process.env.WDK_TOOLS_SOURCE,
   };
 
   afterEach(() => {
@@ -26,7 +25,6 @@ describe("typed conversation service with fixture wallet", () => {
       RECIPIENT_MEMORY_ENABLED: previous.enabled,
       DEMO_USER_ID: previous.demoUserId,
       AGENT_RUNTIME: previous.runtime,
-      WDK_TOOLS_SOURCE: previous.source,
     })) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -39,7 +37,6 @@ describe("typed conversation service with fixture wallet", () => {
       process.env.RECIPIENT_MEMORY_ENABLED = "true";
       process.env.DEMO_USER_ID = userId;
       process.env.AGENT_RUNTIME = "deterministic";
-      process.env.WDK_TOOLS_SOURCE = "fixture";
       const app = buildTestServer();
       try {
         const created = await app.inject({

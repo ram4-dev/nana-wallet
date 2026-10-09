@@ -46,7 +46,6 @@ suite("POST /v1/auth/logout and the session floor (privy mode)", () => {
     process.env.PRIVY_VERIFICATION_KEY = String(
       appKeys.publicKey.export({ type: "spki", format: "pem" }),
     );
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     delete process.env.DEMO_USER_ID;
   });
 

@@ -20,7 +20,6 @@ describe("live voice and touch decision race", () => {
     "claims once and reaches one terminal state",
     async () => {
       process.env.AGENT_RUNTIME = "deterministic";
-      process.env.WDK_TOOLS_SOURCE = "fixture";
       const database = createDatabaseClient(databaseUrl!);
       const repository = new PostgresConversationRepository(database);
       const wallet = new FixtureWalletProvider();

@@ -20,6 +20,7 @@ import {
   createGrantCreator,
 } from "./runtime/dependencies.js";
 import type { RequestIdentityProvider } from "./auth/identity.js";
+import type { WalletProvider } from "./wallet/provider.js";
 import { ensureDemoSentinelUser } from "./auth/demo-sentinel.js";
 import {
   PrivyIdentityError,
@@ -126,9 +127,18 @@ function createPrivyIdentity(
   );
 }
 
+/**
+ * `options.wallet` / `options.walletReads` are the wallet-injection seam: the
+ * production composition builds both from the environment, and every suite that
+ * needs a specific provider injects it here (or through `buildTestServer`) so it
+ * no longer depends on `WDK_TOOLS_SOURCE`. Omitted options keep today's
+ * environment-driven selection byte-for-byte.
+ */
 export function buildServer(options: {
   privyServer?: PrivyServerClient;
   identity?: RequestIdentityProvider;
+  wallet?: WalletProvider;
+  walletReads?: WalletProvider;
 } = {}) {
   const app = Fastify({
     logger: !process.env.VITEST,
@@ -164,7 +174,10 @@ export function buildServer(options: {
     throw error;
   });
 
-  const core = createCoreDependencies();
+  const core = createCoreDependencies(process.env, {
+    ...(options.wallet ? { wallet: options.wallet } : {}),
+    ...(options.walletReads ? { walletReads: options.walletReads } : {}),
+  });
   const config = readRecipientMemoryConfig();
 
   // PMU-001: build the sole identity provider. Production identity is ALWAYS the

@@ -209,16 +209,12 @@ suite("delegated grant execution ordering (phase 4 RED)", () => {
   });
 
   const previousRuntime = process.env.AGENT_RUNTIME;
-  const previousSource = process.env.WDK_TOOLS_SOURCE;
   beforeEach(() => {
     process.env.AGENT_RUNTIME = "deterministic";
-    process.env.WDK_TOOLS_SOURCE = "fixture";
   });
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
-    if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousSource;
   });
 
   async function provisionGrant(policyId: string | null): Promise<{

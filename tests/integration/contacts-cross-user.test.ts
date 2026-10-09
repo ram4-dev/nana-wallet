@@ -36,7 +36,6 @@ suite("contacts cross-user isolation (PMU-013/019)", () => {
   beforeAll(() => {
     process.env.PRIVY_APP_ID = "test-cross-app";
     process.env.PRIVY_VERIFICATION_KEY = verificationKeyPem;
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     delete process.env.DEMO_USER_ID;
   });
 

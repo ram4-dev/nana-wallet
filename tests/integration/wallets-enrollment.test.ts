@@ -154,7 +154,6 @@ suite(
       process.env.PRIVY_APP_SECRET = APP_SECRET;
       process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
       process.env.PRIVY_API_BASE_URL = BASE;
-      process.env.WDK_TOOLS_SOURCE = "fixture";
       delete process.env.DEMO_USER_ID;
     });
 
@@ -170,9 +169,6 @@ suite(
         if (previousEnv[key] === undefined) delete process.env[key];
         else process.env[key] = previousEnv[key] as string;
       }
-      if (previousEnv.WDK_TOOLS_SOURCE === undefined)
-        delete process.env.WDK_TOOLS_SOURCE;
-      else process.env.WDK_TOOLS_SOURCE = previousEnv.WDK_TOOLS_SOURCE;
     });
 
     it("sync gives unprovisioned for zero owned wallets and never creates a server wallet", {
@@ -807,7 +803,6 @@ suite(
       process.env.PRIVY_APP_SECRET = APP_SECRET;
       process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
       process.env.PRIVY_API_BASE_URL = BASE;
-      process.env.WDK_TOOLS_SOURCE = "fixture";
       delete process.env.DEMO_USER_ID;
     });
 
@@ -823,9 +818,6 @@ suite(
         if (previousEnv[key] === undefined) delete process.env[key];
         else process.env[key] = previousEnv[key] as string;
       }
-      if (previousEnv.WDK_TOOLS_SOURCE === undefined)
-        delete process.env.WDK_TOOLS_SOURCE;
-      else process.env.WDK_TOOLS_SOURCE = previousEnv.WDK_TOOLS_SOURCE;
     });
 
     /** A Solana-chain Privy wallet record with configurable additional signers. */
@@ -1295,7 +1287,6 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     process.env.PRIVY_APP_SECRET = APP_SECRET;
     process.env.PRIVY_AUTHORIZATION_KEY_QUORUM_ID = "key-quorum-1";
     process.env.PRIVY_API_BASE_URL = BASE;
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     delete process.env.DEMO_USER_ID;
   });
 
@@ -1311,9 +1302,6 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
       if (previousEnv[key] === undefined) delete process.env[key];
       else process.env[key] = previousEnv[key] as string;
     }
-    if (previousEnv.WDK_TOOLS_SOURCE === undefined)
-      delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousEnv.WDK_TOOLS_SOURCE;
   });
 
   /** A Privy wallet record with an explicit chain_type for sync scenarios. */

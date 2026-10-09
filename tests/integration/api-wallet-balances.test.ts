@@ -148,7 +148,6 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
     process.env.PRIVY_VERIFICATION_KEY = String(
       appKeys.publicKey.export({ type: "spki", format: "pem" }),
     );
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     process.env.BALANCE_READ_SOURCE = "fixture";
     process.env.BALANCE_FIXTURE_BALANCES = JSON.stringify({
       [addressA]: "1250000", // 1.25 USDC
@@ -172,7 +171,6 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
       "DATABASE_URL",
       "PRIVY_APP_ID",
       "PRIVY_VERIFICATION_KEY",
-      "WDK_TOOLS_SOURCE",
       "BALANCE_READ_SOURCE",
       "BALANCE_FIXTURE_BALANCES",
       "DEMO_USER_ID",
