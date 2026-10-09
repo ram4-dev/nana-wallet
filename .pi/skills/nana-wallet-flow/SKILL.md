@@ -46,5 +46,5 @@ writes code and `verify` checks the result against the spec.
 ## Quick checks
 
 - Read `AGENTS.md` before editing.
-- Canonical token alias is `USDT` (default `WDK_TOKEN`).
-- Default `WDK_TOOLS_SOURCE=fixture`; live is explicit and gated.
+- Canonical token alias is `SOL` (default `WDK_TOKEN`), on `solana-devnet`.
+- Single configuration: Solana devnet through Privy with per-user wallets; there is no mode switch to set.

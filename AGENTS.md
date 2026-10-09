@@ -49,7 +49,7 @@ El front se comunica con el back solo por HTTP (`apps/nana-wallet/src/lib/api.ts
 
 ## Seguridad de la plata (no negociable)
 
-- El modo por defecto es `WDK_TOOLS_SOURCE=fixture`. Nunca habilites el modo live (`WDK_TOOLS_SOURCE=live`) ni toques seeds, claves privadas ni credenciales.
+- La app corre una sola configuración: **Solana devnet a través de Privy** con wallets por usuario. No hay switch de modo que activar. Nunca toques seeds, claves privadas ni credenciales.
 - Los flujos de pago requieren preview + confirmación explícita con clave de idempotencia. No "simplifiques" ese flujo.
 - Un rechazo definitivo y un error de red ambiguo son distintos: nunca informes que una operación falló si no sabemos si se ejecutó.
 - Nunca hagas commit de secretos ni valores de entorno.
