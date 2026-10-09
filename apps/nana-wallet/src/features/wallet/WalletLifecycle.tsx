@@ -4,7 +4,7 @@ import { lazy, Suspense, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { api, getErrorMessage, isPrivyIdentityProvider, queryKeys } from "@/lib/api";
+import { api, getErrorMessage, queryKeys } from "@/lib/api";
 import { AddTrustedRecipient } from "./AddTrustedRecipient";
 import type {
   Contact,
@@ -133,12 +133,10 @@ function RoutePendingInline() {
 /**
  * The payment-authorization flow is Solana-directed: the panel reads and mutates
  * the Solana wallet/grant for the Privy signer-consent flow (the only flow that
- * can enroll the app signer). The legacy demo identity keeps the Arc default so
- * its fixture wallet stays reachable. This is an internal default, never a
- * user-facing chain picker.
+ * can enroll the app signer). This is an internal default, never a user-facing
+ * chain picker.
  */
 const SOLANA_CHAIN: WalletChainFamily = "solana";
-const ARC_CHAIN: WalletChainFamily = "arc";
 
 /**
  * A contact belongs to the chain being enrolled when its `network` says so.
@@ -154,16 +152,15 @@ function isContactOnChain(contact: Contact, chain: WalletChainFamily): boolean {
 export function WalletLifecycle({ userId }: { userId: string | undefined }) {
   const queryClient = useQueryClient();
   const enabled = Boolean(userId);
-  const privy = isPrivyIdentityProvider();
   const [isActivating, setIsActivating] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRevoking, setIsRevoking] = useState(false);
   const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
   const [preparation, setPreparation] = useState<EnrollmentPreparationResponse | null>(null);
 
-  // Privy signer consent is the Solana enrollment flow; the demo identity keeps
-  // its legacy Arc fixture wallet.
-  const chainTarget: WalletChainFamily = privy ? SOLANA_CHAIN : ARC_CHAIN;
+  // The panel always targets the Solana chain: signer consent is the Solana
+  // enrollment flow.
+  const chainTarget: WalletChainFamily = SOLANA_CHAIN;
 
   const walletQuery = useQuery({
     queryKey: queryKeys.currentWallet(userId),
@@ -257,34 +254,12 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
         return;
       }
 
-      if (privy) {
-        // PEW-014: user-authenticated signer enrollment — prepare step. The
-        // backend creates/reuses the provider policy; the browser then adds the
-        // signer via the Privy modal. Only completePermission (server read-back)
-        // can activate, so a client success flag can never be treated as active.
-        const prep = await api.prepareWalletPermission({ recipients: allowlist });
-        setPreparation(prep);
-        return;
-      }
-
-      // Demo path (unchanged): explicit activation with server read-back. The
-      // client cannot assert enrollment succeeded; a failed read-back surfaces
-      // as an error, never as "active".
-      await api.activateWalletPermission({ recipients: allowlist, chain: chainTarget });
-      const refreshed = await queryClient.fetchQuery({
-        queryKey: queryKeys.walletPermission(userId),
-        queryFn: () => api.getCurrentWalletPermission({ chain: chainTarget }),
-      });
-      if (refreshed.state !== "active") {
-        setPermissionMessage(
-          "Todavía no está activo el permiso de pagos. Volvé a intentar en un ratito.",
-        );
-      } else if (!hasBoundedLimits(refreshed)) {
-        setPermissionMessage(
-          "El proveedor no confirmó los límites del permiso. No mostramos pagos habilitados.",
-        );
-      }
-      void queryClient.invalidateQueries({ queryKey: queryKeys.currentWallet(userId) });
+      // PEW-014: user-authenticated signer enrollment — prepare step. The
+      // backend creates/reuses the provider policy; the browser then adds the
+      // signer via the Privy modal. Only completePermission (server read-back)
+      // can activate, so a client success flag can never be treated as active.
+      const prep = await api.prepareWalletPermission({ recipients: allowlist });
+      setPreparation(prep);
     } catch (error) {
       setPermissionMessage(getErrorMessage(error));
     } finally {
@@ -346,17 +321,14 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     }
   }
 
-  // The button must appear in BOTH identity modes: in privy mode the click
-  // branches into the PEW-014 prepare/addSigners/complete enrollment; in demo
-  // mode it performs the direct activation with server read-back. Gating on
-  // !privy here deadlocked privy users (button never rendered).
+  // The click branches into the PEW-014 prepare/addSigners/complete enrollment.
   const canActivate =
     wallet.state === "ready" &&
     (permission.state === "pending" || permission.state === "unavailable");
 
   return (
     <section className="surface-card mt-10 p-5" aria-label="Tu billetera y el permiso de pagos">
-      {privy && userId ? (
+      {userId ? (
         <Suspense fallback={null}>
           <PrivyWalletSync userId={userId} />
         </Suspense>
@@ -504,7 +476,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
               </p>
             )}
 
-            {privy && preparation ? (
+            {preparation ? (
               // PEW-014: step 2 of enrollment — the user consents in the Privy
               // modal (addSigners with the backend quorum + immutable policy),
               // then the server read-back (complete) decides activation.
@@ -527,7 +499,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
               </Suspense>
             ) : null}
 
-            {canActivate && !(privy && preparation) ? (
+            {canActivate && !preparation ? (
               <Button
                 type="button"
                 className="press mt-4 min-h-14 w-full text-base font-extrabold"

@@ -6,7 +6,7 @@ import { lazy, Suspense, useState } from "react";
 
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
-import { api, getErrorMessage, isPrivyIdentityProvider, queryKeys } from "@/lib/api";
+import { api, getErrorMessage, queryKeys } from "@/lib/api";
 import { resetSession } from "@/lib/session-isolation";
 
 /**
@@ -18,8 +18,6 @@ import { resetSession } from "@/lib/session-isolation";
  * `features/profile/LegacyProfileSections.tsx` and are intentionally not
  * mounted here (WP-015).
  */
-
-const isPrivyEnabled = import.meta.env["VITE_IDENTITY_PROVIDER"] === "privy";
 
 // Payment-authorization management (owner decision 2026-10-07): lives in the
 // account screen, in its own section — never in the wallet balance view.
@@ -60,12 +58,10 @@ function LogoutButton() {
     // valid: it revokes this user's tokens (session floor). A failure must not
     // block the local logout, but it must not be swallowed either — report it
     // the way background failures are reported elsewhere (console.error).
-    if (isPrivyEnabled) {
-      try {
-        await api.logout();
-      } catch (error) {
-        console.error("Backend logout (session floor) failed", error);
-      }
+    try {
+      await api.logout();
+    } catch (error) {
+      console.error("Backend logout (session floor) failed", error);
     }
     // WP-013: session reset aborts in-flight requests and clears the cache
     // before navigating away, so nothing of this user survives.
@@ -148,7 +144,7 @@ function PerfilPage() {
             Cuenta verificada
           </span>
         </div>
-        {isPrivyEnabled ? <LogoutButton /> : null}
+        <LogoutButton />
       </section>
 
       <section className="mt-6">

@@ -20,9 +20,10 @@ import { Button } from "../components/ui/button";
 import { Toaster } from "../components/ui/sonner";
 import { PRIVY_PROVIDER_CONFIG } from "../features/wallet/privy-config";
 
-const identityMode = import.meta.env["VITE_IDENTITY_PROVIDER"];
 const privyAppId = import.meta.env["VITE_PRIVY_APP_ID"] as string | undefined;
-const isPrivyEnabled = identityMode === "privy" && Boolean(privyAppId);
+// The app is always the Privy identity, so a configured app id is the only thing
+// that makes the provider mountable.
+const isPrivyEnabled = Boolean(privyAppId);
 
 function NotFoundComponent() {
   return (

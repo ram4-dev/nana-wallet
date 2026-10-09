@@ -68,9 +68,9 @@ Dos URLs para LiveKit (ambas necesarias cuando el backend corre en Docker):
 | `LIVEKIT_BROWSER_URL` (.env, default `ws://localhost:7880`) | `ws://localhost:7880` | `serverUrl` que la API devuelve al browser; debe ser alcanzable desde el navegador. |
 
 La firma del room token es del backend (`POST /v1/voice/room-token`); el front
-usa `VITE_LIVEKIT_TOKEN_SOURCE=local` (default). Contrato de privacidad sin
-cambios: `record: false`, sin Egress, sin observability recording, audio solo
-por loopback.
+no configura ningún source de LiveKit: siempre usa ese endpoint autenticado.
+Contrato de privacidad sin cambios: `record: false`, sin Egress, sin
+observability recording, audio solo por loopback.
 
 ## Aplicar el esquema de la base
 

@@ -21,11 +21,7 @@ describe("configured multi-chain per-user wallet resolver", () => {
       appSecret: "secret-test",
       client: unusedSdkClient(),
     });
-    const resolve = createConfiguredWalletForUser(
-      {} as DatabaseClient,
-      { IDENTITY_PROVIDER: "privy" },
-      privy,
-    );
+    const resolve = createConfiguredWalletForUser({} as DatabaseClient, {}, privy);
 
     await expect(resolve?.("user-a")).rejects.toMatchObject({
       code: "wallet_config_error",

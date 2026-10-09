@@ -71,29 +71,26 @@ public key and refuses to start without its LiveKit credentials, database
 identity, and OpenAI credential. `readApiProcessConfig` and
 `readWorkerProcessConfig` reject malformed values before a process starts.
 
-In the wallet `.env.local`, configure only public development values:
+In the wallet `.env.local`, point the app at the API:
 
 ```dotenv
 VITE_API_URL=http://localhost:3000
 VITE_AGENT_BACKEND=1
-# Default (local): the browser asks our own API for the room token.
-VITE_LIVEKIT_TOKEN_SOURCE=local
-# Cloud-only: required under VITE_LIVEKIT_TOKEN_SOURCE=cloud, ignored under local.
-# VITE_LIVEKIT_TOKEN_SERVER_ID=your-development-token-server-id
-VITE_LIVEKIT_AGENT_NAME=nani-agent
-VITE_LIVEKIT_PARTICIPANT_IDENTITY=11111111-1111-4111-8111-111111111111
 ```
 
-With the default `VITE_LIVEKIT_TOKEN_SOURCE=local`, the browser calls
-`POST /v1/voice/room-token` after binding the conversation and connects with
-the returned short-lived, room-scoped token; `VITE_LIVEKIT_TOKEN_SERVER_ID`
-is not needed. The Cloud path remains an explicit alternative: set
-`VITE_LIVEKIT_TOKEN_SOURCE=cloud` and configure
-`VITE_LIVEKIT_TOKEN_SERVER_ID` to keep the legacy LiveKit Cloud development
-token server flow byte-for-byte. On both paths the browser verifies that the
-token identity matches `VITE_LIVEKIT_PARTICIPANT_IDENTITY` before
-    connecting. The signed Fastify binding remains the worker's application
-    identity check.
+The wallet takes no LiveKit configuration. The browser never chooses a token
+source: it always calls `POST /v1/voice/room-token` after binding the
+conversation and connects with the short-lived, room-scoped token the API signs.
+The participant identity is always the authenticated session's — the `GET /v1/me`
+result — and the browser requires the returned token to be signed for exactly
+that identity before it connects. The signed Fastify binding remains the worker's
+application identity check.
+
+The demo LiveKit Cloud development token server
+(`VITE_LIVEKIT_TOKEN_SOURCE=cloud`) is gone, so the browser has no unauthenticated
+alternative to fall back to. `local` is the only remaining source and the default;
+a stale `VITE_LIVEKIT_TOKEN_SOURCE` set to anything else stops live voice with
+"Live voice is not configured for this browser." instead of connecting.
 
 ## Self-hosted LiveKit (default local)
 
@@ -142,12 +139,15 @@ and exercise one non-financial turn and one financial preview→confirm turn.
 
 ### Cloud alternative
 
-To use LiveKit Cloud instead of the local server, set `LIVEKIT_URL` to your
-`wss://<project>.livekit.cloud` URL and the matching Cloud credentials in the
-root `.env`, and set `VITE_LIVEKIT_TOKEN_SOURCE=cloud` plus
-`VITE_LIVEKIT_TOKEN_SERVER_ID` in the wallet `.env.local`. The Cloud dev token
-server then issues the browser's room token; the local self-hosted path above is
-the default and requires no Cloud account.
+To run the backend against LiveKit Cloud instead of the local server, set
+`LIVEKIT_URL` to your `wss://<project>.livekit.cloud` URL and the matching Cloud
+credentials in the root `.env`. The API and worker then sign and dispatch against
+that project. Set `LIVEKIT_BROWSER_URL` to the same `wss://<project>.livekit.cloud`
+URL, because that value is the `serverUrl` the API returns to the browser.
+
+The browser-side flow does not change: the wallet has no LiveKit configuration,
+so the room token still comes from `POST /v1/voice/room-token`. The local
+self-hosted server above remains the default and requires no Cloud account.
 
 ### Optional smoke e2e against the local server
 

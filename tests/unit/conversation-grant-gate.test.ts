@@ -250,7 +250,6 @@ async function events(
 
 describe("grant-covered conversation gate (phase 3 RED)", () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
   const previousNetwork = process.env.WDK_NETWORK;
   const previousToken = process.env.WDK_TOKEN;
@@ -258,12 +257,9 @@ describe("grant-covered conversation gate (phase 3 RED)", () => {
 
   beforeEach(() => {
     process.env.AGENT_RUNTIME = "deterministic";
-    // The local transfer gate delegates to the provider policy under the privy
-    // identity, so it is inert here: these cases pin the grant-covered decision,
-    // not the local transfer policy. The fixture wallet/network/token are pinned
-    // explicitly because the identity also selects the config defaults, so
-    // pinning keeps the transfer under test identical to the demo fixture.
-    process.env.IDENTITY_PROVIDER = "privy";
+    // These cases pin the grant-covered decision, not the local transfer policy.
+    // The fixture wallet/network/token are pinned explicitly so the transfer
+    // under test does not depend on ambient configuration.
     process.env.WDK_TOOLS_SOURCE = "fixture";
     process.env.WDK_NETWORK = "sepolia";
     process.env.WDK_TOKEN = "USDT";
@@ -273,8 +269,6 @@ describe("grant-covered conversation gate (phase 3 RED)", () => {
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
     if (previousNetwork === undefined) delete process.env.WDK_NETWORK;

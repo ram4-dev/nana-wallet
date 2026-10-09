@@ -115,23 +115,14 @@ function repositoryFixture(initialTransfer: PendingTransfer): ConversationReposi
 
 describe('typed confirm flow previewId transport', () => {
   const previousSource = process.env.WDK_TOOLS_SOURCE;
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
 
   beforeEach(() => {
     delete process.env.WDK_TOOLS_SOURCE;
-    // The local transfer gate delegates to the provider policy under the privy
-    // identity, so it is inert here: this case pins the persisted previewId
-    // transport into the broadcast request, not the local transfer policy. The
-    // fixture transfer (arc-testnet/USDC, agent-demo) cannot satisfy a local
-    // gate configured from the demo defaults.
-    process.env.IDENTITY_PROVIDER = 'privy';
   });
 
   afterEach(() => {
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
   });
 
   function capturingWallet(): {

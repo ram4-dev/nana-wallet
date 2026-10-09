@@ -25,13 +25,10 @@ function context(): WalletAgentContext {
 }
 
 describe("wallet agent definition", () => {
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
 
   afterEach(() => {
     resetSessionStore();
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
   });

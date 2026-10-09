@@ -39,23 +39,18 @@ function input(overrides: Record<string, unknown> = {}) {
  * The local transfer-policy gate — with its two policy environment variables —
  * was deleted: the provider policy attached to the wallet at signing time is the
  * single enforcement point, so this layer must no longer reject a transfer on a
- * locally computed cap or allowlist. These cases pin that surviving contract
- * under the strongest former gate configuration: the standalone solana-devnet
- * source under the demo identity, with no local policy configured at all.
+ * locally computed cap or allowlist. These cases pin that surviving contract on
+ * the standalone solana-devnet source, with no local policy configured at all.
  */
 describe('guarded send_token carries no local transfer policy', () => {
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
 
   beforeEach(() => {
     resetSessionStore();
-    process.env.IDENTITY_PROVIDER = 'demo';
     process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
   });
 
   afterEach(() => {
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
   });

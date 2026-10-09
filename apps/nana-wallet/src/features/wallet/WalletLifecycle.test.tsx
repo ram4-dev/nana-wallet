@@ -11,8 +11,6 @@ const mocks = vi.hoisted(() => ({
   prepareWalletPermission: vi.fn(),
   completeWalletPermission: vi.fn(),
   revokeWalletPermission: vi.fn(),
-  activateWalletPermission: vi.fn(),
-  isPrivyIdentityProvider: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -23,11 +21,9 @@ vi.mock("@/lib/api", () => ({
     prepareWalletPermission: mocks.prepareWalletPermission,
     completeWalletPermission: mocks.completeWalletPermission,
     revokeWalletPermission: mocks.revokeWalletPermission,
-    activateWalletPermission: mocks.activateWalletPermission,
     syncWallet: vi.fn(),
   },
   getErrorMessage: (error: unknown) => String(error),
-  isPrivyIdentityProvider: mocks.isPrivyIdentityProvider,
   queryKeys: {
     currentWallet: (userId: string | undefined) => ["wallet", "current", userId],
     wallet: (userId: string | undefined) => ["wallet", "summary", userId],
@@ -112,8 +108,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("offers payment-permission activation to a privy user with a ready wallet and no grant", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
-
     render(
       <Wrapper>
         <WalletLifecycle userId="user-1" />
@@ -127,7 +121,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("starts the privy enrollment flow (prepare) when the button is pressed", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getContacts.mockResolvedValue([
       {
         id: "c1",
@@ -164,7 +157,6 @@ describe("WalletLifecycle activation entry", () => {
   // contact drive an Arc policy while this screen was bound to the Solana
   // wallet, and made a mixed contact list impossible to enroll at all.
   it("sends only the Solana contacts to a Solana enrollment", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
     mocks.getContacts.mockResolvedValue([
       {
@@ -202,7 +194,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("refuses to prepare a Solana enrollment from an EVM-only contact list", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
     mocks.getContacts.mockResolvedValue([
       {
@@ -229,7 +220,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("still requires at least one trusted recipient before preparing", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getContacts.mockResolvedValue([]);
 
     render(
@@ -249,7 +239,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("drives the flow at the Solana wallet and Solana grant for a privy user", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
 
     render(
@@ -264,7 +253,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("shows the activation path for a privy user with a ready Solana wallet and no Solana grant", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
     mocks.getCurrentWalletPermission.mockResolvedValue(permissionWithoutGrant);
 
@@ -278,7 +266,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("completes Solana enrollment scoped to the solana chain", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
     mocks.getContacts.mockResolvedValue([
       {
@@ -317,7 +304,6 @@ describe("WalletLifecycle activation entry", () => {
   });
 
   it("revokes the Solana grant scoped to the solana chain", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(true);
     mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
     mocks.getCurrentWalletPermission.mockResolvedValue({
       ...permissionWithoutGrant,
@@ -341,19 +327,5 @@ describe("WalletLifecycle activation entry", () => {
     await waitFor(() =>
       expect(mocks.revokeWalletPermission).toHaveBeenCalledWith({ chain: "solana" }),
     );
-  });
-
-  it("keeps the arc chain for the legacy demo (non-privy) flow", async () => {
-    mocks.isPrivyIdentityProvider.mockReturnValue(false);
-
-    render(
-      <Wrapper>
-        <WalletLifecycle userId="user-1" />
-      </Wrapper>,
-    );
-
-    await screen.findByRole("button", { name: /activar permiso de pagos/i });
-    expect(mocks.getCurrentWallet).toHaveBeenCalledWith({ chain: "arc" });
-    expect(mocks.getCurrentWalletPermission).toHaveBeenCalledWith({ chain: "arc" });
   });
 });

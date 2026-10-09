@@ -1,5 +1,5 @@
 import Fastify from "fastify";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { registerWalletRoutes } from "../../src/api/wallet.js";
 import { PrivyIdentityError } from "../../src/auth/privy-identity.js";
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
@@ -80,20 +80,6 @@ async function createApp(
 }
 
 describe("Privy user-scoped wallet HTTP routes", () => {
-  const previousIdentityProvider = process.env.IDENTITY_PROVIDER;
-
-  beforeEach(() => {
-    process.env.IDENTITY_PROVIDER = "privy";
-  });
-
-  afterEach(() => {
-    if (previousIdentityProvider === undefined) {
-      delete process.env.IDENTITY_PROVIDER;
-    } else {
-      process.env.IDENTITY_PROVIDER = previousIdentityProvider;
-    }
-  });
-
   it("resolves the Solana chain when a wallet request names solana-devnet", async () => {
     const provider = new FixtureWalletProvider();
     const getAddress = vi.spyOn(provider, "getAddress").mockResolvedValue({

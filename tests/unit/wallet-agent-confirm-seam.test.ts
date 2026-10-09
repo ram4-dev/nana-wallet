@@ -82,7 +82,6 @@ function broadcastCalls(calls: ProviderCalls): number {
 describe('confirm-path provider seam', () => {
   const previous = new Map<string, string | undefined>([
     ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
-    ['IDENTITY_PROVIDER', process.env.IDENTITY_PROVIDER],
     ['WDK_NETWORK', process.env.WDK_NETWORK],
     ['WDK_TOKEN', process.env.WDK_TOKEN],
     ['WDK_WALLET_NAME', process.env.WDK_WALLET_NAME],
@@ -91,7 +90,6 @@ describe('confirm-path provider seam', () => {
   beforeEach(() => {
     resetSessionStore();
     process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
-    process.env.IDENTITY_PROVIDER = 'demo';
     process.env.WDK_NETWORK = 'arc-testnet';
     process.env.WDK_TOKEN = 'USDC';
     process.env.WDK_WALLET_NAME = 'agent-demo';
@@ -200,7 +198,6 @@ describe('confirm-path provider seam', () => {
 describe('receipt-waiter selection (D3, task 4.3)', () => {
   const previous = new Map<string, string | undefined>([
     ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
-    ['IDENTITY_PROVIDER', process.env.IDENTITY_PROVIDER],
     ['WDK_NETWORK', process.env.WDK_NETWORK],
     ['WDK_TOKEN', process.env.WDK_TOKEN],
     ['WDK_WALLET_NAME', process.env.WDK_WALLET_NAME],
@@ -209,7 +206,6 @@ describe('receipt-waiter selection (D3, task 4.3)', () => {
   beforeEach(() => {
     // These cases pin the receipt-waiter/provider seam; enforcement itself is
     // owned by the provider policy attached to the wallet.
-    process.env.IDENTITY_PROVIDER = 'privy';
   });
 
   afterEach(() => {

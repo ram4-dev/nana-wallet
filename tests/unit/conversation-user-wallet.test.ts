@@ -69,13 +69,11 @@ function serviceWithUnavailableUserWallet(): {
 
 describe("conversation per-user wallet selection", () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousNetwork = process.env.WDK_NETWORK;
   const previousToken = process.env.WDK_TOKEN;
 
   beforeEach(() => {
     process.env.AGENT_RUNTIME = "deterministic";
-    process.env.IDENTITY_PROVIDER = "privy";
     delete process.env.WDK_NETWORK;
     delete process.env.WDK_TOKEN;
   });
@@ -83,8 +81,6 @@ describe("conversation per-user wallet selection", () => {
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
     else process.env.WDK_NETWORK = previousNetwork;
     if (previousToken === undefined) delete process.env.WDK_TOKEN;

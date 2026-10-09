@@ -106,13 +106,11 @@ async function events(service: ReturnType<typeof createWalletConversationService
 
 describe('WalletConversationService', () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
 
   beforeEach(() => {
     process.env.AGENT_RUNTIME = 'deterministic';
     process.env.WDK_TOOLS_SOURCE = 'fixture';
-    process.env.IDENTITY_PROVIDER = 'demo';
   });
 
   it('streams a canonical preview through the injected wallet provider', async () => {
@@ -171,7 +169,6 @@ describe('WalletConversationService', () => {
     // wallet is the single enforcement point. On the standalone solana-devnet
     // source with no local policy configured the transfer must now reach the
     // wallet provider instead of being rejected before any side effect.
-    process.env.IDENTITY_PROVIDER = 'demo';
     process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
     const repository = repositoryFixture();
     const wallet = walletFixture();
@@ -287,15 +284,12 @@ describe('WalletConversationService', () => {
       afterEach(() => {
         if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
         else process.env.AGENT_RUNTIME = previousRuntime;
-        if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-        else process.env.IDENTITY_PROVIDER = previousIdentity;
         if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
         else process.env.WDK_TOOLS_SOURCE = previousSource;
       });
     });
 
     describe('WalletConversationService.previewTransfer', () => {
-      const previousIdentity = process.env.IDENTITY_PROVIDER;
       const previousSource = process.env.WDK_TOOLS_SOURCE;
       const previousNetwork = process.env.WDK_NETWORK;
       const previousToken = process.env.WDK_TOKEN;
@@ -303,12 +297,9 @@ describe('WalletConversationService', () => {
 
       beforeEach(() => {
         process.env.WDK_TOOLS_SOURCE = 'fixture';
-        process.env.IDENTITY_PROVIDER = 'demo';
       });
 
       afterEach(() => {
-        if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-        else process.env.IDENTITY_PROVIDER = previousIdentity;
         if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
         else process.env.WDK_TOOLS_SOURCE = previousSource;
         if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
@@ -400,10 +391,6 @@ describe('WalletConversationService', () => {
       });
 
       it('routes a versioned Solana devnet contact through an exact native SOL preview without broadcasting', async () => {
-        // The provider policy owns enforcement under the privy identity, so the
-        // local gate (keyed on the configured network/token pair) stays out of
-        // this routing case.
-        process.env.IDENTITY_PROVIDER = 'privy';
         process.env.WDK_TOOLS_SOURCE = 'fixture';
         process.env.WDK_NETWORK = 'sepolia';
         process.env.WDK_TOKEN = 'USDT';

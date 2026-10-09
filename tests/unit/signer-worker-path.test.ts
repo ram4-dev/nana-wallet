@@ -88,7 +88,6 @@ describe("worker wallet path authorization context", () => {
     const walletForUser = createConfiguredWalletForUser(
       databaseFixture(),
       {
-        IDENTITY_PROVIDER: "privy",
         PRIVY_APP_ID: "app-test",
         PRIVY_APP_SECRET: "secret-test",
       },
@@ -108,7 +107,6 @@ describe("worker wallet path authorization context", () => {
     const walletForUser = createConfiguredWalletForUser(
       databaseFixture(),
       {
-        IDENTITY_PROVIDER: "privy",
         PRIVY_APP_ID: "app-test",
         PRIVY_APP_SECRET: "secret-test",
       },
@@ -181,7 +179,6 @@ describe("worker wallet path authorization context", () => {
       const walletForUser = createConfiguredWalletForUser(
         databaseFixture(),
         {
-          IDENTITY_PROVIDER: "privy",
           PRIVY_APP_ID: "app-test",
           PRIVY_APP_SECRET: "secret-test",
         },

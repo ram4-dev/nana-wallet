@@ -1,4 +1,4 @@
-import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useLogin, usePrivy } from "@privy-io/react-auth";
 
 import { RoutePending } from "@/components/RouteStates";
@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 // never both. SMS is the default when the env var is absent or unrecognised.
 const phoneChannel: "sms" | "whatsapp" =
   import.meta.env["VITE_PRIVY_PHONE_CHANNEL"] === "whatsapp" ? "whatsapp" : "sms";
-const isPrivyEnabled = import.meta.env["VITE_IDENTITY_PROVIDER"] === "privy";
 
 export const Route = createFileRoute("/login")({
   head: () => ({
@@ -20,16 +19,8 @@ export const Route = createFileRoute("/login")({
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: LoginPage,
+  component: PrivyLoginContent,
 });
-
-function LoginPage() {
-  // The Privy hooks below only exist inside a PrivyProvider, which is mounted
-  // only in privy mode. Guard before rendering the Privy-backed component so a
-  // demo-mode visit to /login does not throw.
-  if (!isPrivyEnabled) return <Navigate to="/" replace />;
-  return <PrivyLoginContent />;
-}
 
 function PrivyLoginContent() {
   const navigate = useNavigate();

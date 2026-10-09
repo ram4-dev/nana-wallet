@@ -47,7 +47,6 @@ import type {
 import { beginRequest, finishRequest, isSessionCurrent } from "./session-isolation";
 
 export const FALLBACK_ERROR_MESSAGE = "Algo no salió bien. Probá de nuevo en un ratito.";
-const TOKEN_STORAGE_KEY = "nana-wallet-token";
 
 /**
  * Único lugar donde se decide qué texto ve el usuario cuando algo falla.
@@ -75,12 +74,10 @@ export function isAmbiguousError(error: unknown): boolean {
   return !(error instanceof ApiError) || error.ambiguous;
 }
 
-const TOKEN_STORAGE_KEY_DEMO = TOKEN_STORAGE_KEY;
-
 /**
  * Injectable source of the Authorization bearer token.
  *
- * In Privy mode the app injects a source backed by `usePrivy().getAccessToken()`
+ * The app injects a source backed by `usePrivy().getAccessToken()`
  * (which refreshes the session automatically when it is about to expire). The
  * module stays testable: tests inject a fake source with fake fetch.
  */
@@ -91,34 +88,10 @@ export type ApiTokenSource = {
 };
 
 let tokenSource: ApiTokenSource | null = null;
-let legacyConfiguredToken: string | null = null;
 
 /** Sets (or clears) the bearer token source used by every API request. */
 export function setApiTokenSource(source: ApiTokenSource | null) {
   tokenSource = source;
-}
-
-/**
- * Backwards-compatible static token setter. Prefer `setApiTokenSource` for the
- * Privy flow; this remains useful for tests and the demo path.
- */
-export function setApiToken(token: string | null) {
-  legacyConfiguredToken = token;
-}
-
-function identityProviderMode(): "demo" | "privy" | undefined {
-  return import.meta.env["VITE_IDENTITY_PROVIDER"] as "demo" | "privy" | undefined;
-}
-
-/** true only in the user-authenticated Privy flow (demo is always false). */
-export function isPrivyIdentityProvider(): boolean {
-  return identityProviderMode() === "privy";
-}
-
-function usesDemoToken(): boolean {
-  // The backend defaults IDENTITY_PROVIDER to "demo" when unset; mirror that so
-  // local dev works without a token source. Only "privy" is fail-closed.
-  return identityProviderMode() !== "privy";
 }
 
 export class ApiError extends Error {
@@ -161,28 +134,12 @@ function isUnauthorized(status: number | undefined): boolean {
 /**
  * Resolves the bearer token to attach to a request.
  *
- * Privy mode fails closed: without an injected source (i.e. not authenticated)
- * it returns null and requests are rejected before they leave the browser.
- * The demo fallback lives entirely inside the `demo` branch so the
- * `"token-de-desarrollo"` value and the `sessionStorage` token are never used
- * in Privy mode.
+ * The app is always authenticated through Privy, so it fails closed: without an
+ * injected source (i.e. not authenticated) this returns null and requests are
+ * rejected before they leave the browser.
  */
 async function getFreshToken(): Promise<string | null> {
-  if (tokenSource) return tokenSource.getToken();
-  if (legacyConfiguredToken) return legacyConfiguredToken;
-  if (usesDemoToken()) {
-    if (typeof window !== "undefined") {
-      const storedToken = window.sessionStorage.getItem(TOKEN_STORAGE_KEY_DEMO);
-      if (storedToken) return storedToken;
-    }
-    // Demo identity needs no token source: the backend resolves the demo user and
-    // ignores Authorization. Gating this on DEV made a production demo build
-    // return "", and `authedFetch` then rejected every request before it left
-    // the browser, so the deployed demo rendered its error state on every route.
-    return "token-de-desarrollo";
-  }
-  // Privy (or unset identity provider) without an injected source: fail closed.
-  return null;
+  return tokenSource ? tokenSource.getToken() : null;
 }
 
 function makeUrl(path: string, params?: URLSearchParams) {
@@ -367,9 +324,6 @@ function withChain(path: string, chain?: WalletChainFamily): string {
 
 export const api = {
   getWalletSummary: async (): Promise<WalletSummary> => {
-    if (!isPrivyIdentityProvider()) {
-      return request<WalletSummary>("/v1/wallet/summary");
-    }
     const balance = await rawConversationRequest<WalletBalanceResponse>(
       "/v1/wallet/balance?network=solana-devnet&token=USDC",
       {},
@@ -395,35 +349,29 @@ export const api = {
   },
 
   getMovements: async (params: { cursor?: string; limit?: number } = {}) => {
-    if (isPrivyIdentityProvider()) {
-      const history = await rawConversationRequest<WalletHistoryResponse>(
-        "/v1/wallet/history?network=solana-devnet&token=USDC",
-        {},
-      );
-      const offset = Number(params.cursor ?? "0");
-      const limit = params.limit ?? 20;
-      const selected = history.transactions.slice(offset, offset + limit);
-      const nextOffset = offset + selected.length;
-      return {
-        items: selected.map((transaction) => ({
-          id: transaction.hash,
-          kind: transaction.direction === "in" ? ("entrada" as const) : ("salida" as const),
-          title: transaction.direction === "in" ? "Recibiste USDC" : "Enviaste USDC",
-          subtitle: transaction.counterparty,
-          amount: {
-            amount: transaction.amount,
-            currency: "USDC" as const,
-            display: `${transaction.amount} ${transaction.token}`,
-          },
-          at: transaction.timestamp,
-        })),
-        nextCursor: nextOffset < history.transactions.length ? String(nextOffset) : null,
-      } satisfies MovementsPage;
-    }
-    const search = new URLSearchParams();
-    if (params.cursor) search.set("cursor", params.cursor);
-    search.set("limit", String(params.limit ?? 20));
-    return request<MovementsPage>(`/v1/wallet/movements?${search.toString()}`);
+    const history = await rawConversationRequest<WalletHistoryResponse>(
+      "/v1/wallet/history?network=solana-devnet&token=USDC",
+      {},
+    );
+    const offset = Number(params.cursor ?? "0");
+    const limit = params.limit ?? 20;
+    const selected = history.transactions.slice(offset, offset + limit);
+    const nextOffset = offset + selected.length;
+    return {
+      items: selected.map((transaction) => ({
+        id: transaction.hash,
+        kind: transaction.direction === "in" ? ("entrada" as const) : ("salida" as const),
+        title: transaction.direction === "in" ? "Recibiste USDC" : "Enviaste USDC",
+        subtitle: transaction.counterparty,
+        amount: {
+          amount: transaction.amount,
+          currency: "USDC" as const,
+          display: `${transaction.amount} ${transaction.token}`,
+        },
+        at: transaction.timestamp,
+      })),
+      nextCursor: nextOffset < history.transactions.length ? String(nextOffset) : null,
+    } satisfies MovementsPage;
   },
 
   // PEW-005/007/013: wallet lifecycle + permission surface. Readiness is
@@ -447,12 +395,11 @@ export const api = {
   getBalances: () => request<BalancesData>("/v1/wallets/current/balances"),
 
   // LuckGnome structure (owner decision 2026-10-07): "Tus activos" covers
-  // every chain the user holds. Privy mode reads each network through the
-  // per-user conversation wallet API; demo mode keeps the single fixture.
+  // every chain the user holds; each network is read through the per-user
+  // conversation wallet API.
   getNetworkBalances: async (): Promise<
     Array<{ network: string; token: string; address: string; balance: string }>
   > => {
-    if (!isPrivyIdentityProvider()) return [];
     const arc = await rawConversationRequest<WalletBalanceResponse>(
       "/v1/wallet/balance?network=solana-devnet&token=USDC",
       {},

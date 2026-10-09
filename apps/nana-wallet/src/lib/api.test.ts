@@ -4,7 +4,6 @@ import {
   createConversationTurnSender,
   getErrorMessage,
   queryKeys,
-  setApiToken,
   setApiTokenSource,
 } from "@/lib/api";
 import {
@@ -20,16 +19,16 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
-  // The API module only uses the demo fallback when VITE_IDENTITY_PROVIDER=demo.
-  // All existing tests exercise the request plumbing; run them in demo mode.
-  vi.stubEnv("VITE_IDENTITY_PROVIDER", "demo");
+  // The app is always the Privy identity, so the request plumbing runs against
+  // the same kind of token source the Privy bridge injects. The test that pins
+  // the unauthenticated path clears it explicitly.
+  setApiTokenSource({ getToken: async () => "test-token" });
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   setApiTokenSource(null);
-  setApiToken(null);
   if (typeof window !== "undefined") {
     window.sessionStorage.removeItem("nana-wallet-token");
   }
@@ -123,7 +122,6 @@ describe("notifications API", () => {
 
 describe("Privy wallet data", () => {
   it("derives the visible summary from the authenticated Arc USDC balance", async () => {
-    vi.stubEnv("VITE_IDENTITY_PROVIDER", "privy");
     setApiTokenSource({ getToken: async () => "privy-token" });
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({
@@ -151,7 +149,6 @@ describe("Privy wallet data", () => {
   });
 
   it("surfaces wallet-not-ready without inventing a zero balance", async () => {
-    vi.stubEnv("VITE_IDENTITY_PROVIDER", "privy");
     setApiTokenSource({ getToken: async () => "privy-token" });
     vi.stubGlobal(
       "fetch",
@@ -265,48 +262,8 @@ describe("bearer token plumbing (PMU-016/017)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("falls back to the demo token only when VITE_IDENTITY_PROVIDER=demo", async () => {
-    vi.stubEnv("VITE_IDENTITY_PROVIDER", "demo");
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true, data: [] }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await api.getContacts();
-
-    const [, init] = fetchMock.mock.calls[0] ?? [];
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer token-de-desarrollo");
-  });
-
-  it("still sends the demo token when the build is a production one", async () => {
-    // Regression: gating the demo token on `import.meta.env.DEV` made a
-    // production demo build return "", and `authedFetch` then rejected every
-    // request before it left the browser. The deployed demo rendered its error
-    // state on every route, with no request reaching the API.
-    vi.stubEnv("VITE_IDENTITY_PROVIDER", "demo");
-    vi.stubEnv("DEV", false);
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true, data: [] }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await api.getContacts();
-
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0] ?? [];
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer token-de-desarrollo");
-  });
-
-  it("uses the sessionStorage token in demo mode when no source is set", async () => {
-    vi.stubEnv("VITE_IDENTITY_PROVIDER", "demo");
-    window.sessionStorage.setItem("nana-wallet-token", "stored-token");
-    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true, data: [] }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    await api.getContacts();
-
-    const [, init] = fetchMock.mock.calls[0] ?? [];
-    expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer stored-token");
-  });
-
-  it("fails closed in privy mode without a token source and ignores sessionStorage", async () => {
-    vi.stubEnv("VITE_IDENTITY_PROVIDER", "privy");
+  it("fails closed without a token source and ignores sessionStorage", async () => {
+    setApiTokenSource(null);
     window.sessionStorage.setItem("nana-wallet-token", "stored-token");
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", fetchMock);

@@ -2,7 +2,6 @@ import {
   MediaDeviceFailure,
   Room,
   RoomEvent,
-  TokenSource,
   Track,
   type Participant,
   type RemoteParticipant,
@@ -21,59 +20,30 @@ export type LiveKitWebClientOptions = {
   onConnectionLost?: () => void;
   onReconnected?: () => void;
   room?: Room;
-  tokenSource?: "local" | "cloud";
-  tokenServerId?: string;
-  agentName?: string;
-  participantIdentity?: string;
+  tokenSource?: "local";
 };
 
-type LiveKitSourceConfig =
-  { tokenSource: "local" } | { tokenSource: "cloud"; tokenServerId: string; agentName: string };
-
-function isPrivyMode(): boolean {
-  return import.meta.env["VITE_IDENTITY_PROVIDER"] === "privy";
-}
-
 /**
- * Decides the LiveKit token source. In Privy mode the demo development token
- * server is never an authentication mechanism: only the authenticated Nana
- * endpoint (`local` source) may be used, so `cloud` is rejected there.
+ * Rejects a LiveKit token source other than the authenticated Nana endpoint.
+ * `local` is the only source left — the browser no longer has an
+ * unauthenticated demo development token server to fall back to — so this is a
+ * configuration check, not a source choice. It used to be gated on the identity
+ * provider; identity is always Privy now, so the gate is gone with it. A caller
+ * that explicitly asks for a source that no longer exists fails loudly instead
+ * of silently connecting through `local`.
  */
-function readSourceConfig(options: LiveKitWebClientOptions): LiveKitSourceConfig {
+function assertLocalTokenSource(options: LiveKitWebClientOptions): void {
   const source = options.tokenSource ?? (import.meta.env["VITE_LIVEKIT_TOKEN_SOURCE"] || undefined);
-  if (source === "cloud") {
-    if (isPrivyMode()) {
-      throw new Error("Live voice is not configured for this browser.");
-    }
-    const tokenServerId = options.tokenServerId ?? import.meta.env["VITE_LIVEKIT_TOKEN_SERVER_ID"];
-    if (!tokenServerId) throw new Error("Live voice is not configured for this browser.");
-    const agentName =
-      options.agentName ?? import.meta.env["VITE_LIVEKIT_AGENT_NAME"] ?? "nani-agent";
-    return { tokenSource: "cloud", tokenServerId, agentName };
+  if (source !== undefined && source !== "local") {
+    throw new Error("Live voice is not configured for this browser.");
   }
-  // source === "local" or unset: the authenticated Nana endpoint issues the token.
-  return { tokenSource: "local" };
 }
 
 /** Resolves the participant identity the browser should present. */
-async function resolveParticipantIdentity(
-  config: LiveKitSourceConfig,
-  options: LiveKitWebClientOptions,
-): Promise<string> {
-  if (isPrivyMode()) {
-    // PMU-020: identity comes from GET /v1/me, never from the env fallback.
-    if (config.tokenSource !== "local") {
-      throw new Error("Live voice is not configured for this browser.");
-    }
-    const me = await api.getMe();
-    return me.userId;
-  }
-  const participantIdentity =
-    options.participantIdentity ?? import.meta.env["VITE_LIVEKIT_PARTICIPANT_IDENTITY"];
-  if (!participantIdentity) {
-    throw new Error("Live voice is not configured for this browser.");
-  }
-  return participantIdentity;
+async function resolveParticipantIdentity(): Promise<string> {
+  // PMU-020: identity comes from GET /v1/me, never from an env fallback.
+  const me = await api.getMe();
+  return me.userId;
 }
 
 /** Decodes the JWT payload (base64url) to sanity-check the identity the server signed. */
@@ -175,26 +145,16 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
 
   async function connect() {
     resetAgentTranscript();
-    const config = readSourceConfig(options);
-    const participantIdentity = await resolveParticipantIdentity(config, options);
+    assertLocalTokenSource(options);
+    const participantIdentity = await resolveParticipantIdentity();
     const binding = await api.createLiveVoiceBinding(options.getConversationId?.() ?? undefined);
-    let credentials: { serverUrl: string; participantToken: string };
-    if (config.tokenSource === "local") {
-      // The local source asks our own API for the room token: room name, identity,
-      // grants, and agent dispatch are all decided server-side.
-      const roomToken = await api.fetchVoiceRoomToken(binding.conversationId);
-      const tokenIdentity = decodeJwtIdentity(roomToken.participantToken);
-      if (tokenIdentity !== participantIdentity)
-        throw new Error("Live voice token identity does not match this browser.");
-      roomName = roomToken.roomName;
-      credentials = roomToken;
-    } else {
-      credentials = await TokenSource.developmentTokenServer(config.tokenServerId).fetch({
-        roomName: `nani-${binding.conversationId}`,
-        participantIdentity,
-        agentName: config.agentName,
-      });
-    }
+    // The browser always asks our own API for the room token: room name,
+    // identity, grants, and agent dispatch are all decided server-side.
+    const credentials = await api.fetchVoiceRoomToken(binding.conversationId);
+    const tokenIdentity = decodeJwtIdentity(credentials.participantToken);
+    if (tokenIdentity !== participantIdentity)
+      throw new Error("Live voice token identity does not match this browser.");
+    roomName = credentials.roomName;
     room = options.room ?? new Room({ adaptiveStream: true, dynacast: true });
     manuallyDisconnected = false;
     room.on(RoomEvent.TrackSubscribed, handleTrackSubscribed);

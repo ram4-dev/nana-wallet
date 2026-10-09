@@ -20,7 +20,6 @@ const pendingFixture: PendingTransfer = {
 
 describe('handleMessage deterministic paths (no LLM call)', () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousToken = process.env.WDK_TOKEN;
   const previousNetwork = process.env.WDK_NETWORK;
   const previousWallet = process.env.WDK_WALLET_NAME;
@@ -28,13 +27,9 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   beforeEach(() => {
     resetSessionStore();
     process.env.AGENT_RUNTIME = 'deterministic';
-    // The local transfer gate delegates to the provider policy under the privy
-    // identity, so it is inert here: these cases pin the deterministic intent,
-    // preview, and confirm paths, not the local transfer policy. The fixture
-    // address (`0x1234…abcd` with 38 hex digits) is deliberately not a
-    // well-formed EVM address, so the local gate would reject it instead of
-    // exercising these paths.
-    process.env.IDENTITY_PROVIDER = 'privy';
+    // These cases pin the deterministic intent, preview, and confirm paths, not
+    // the local transfer policy. The fixture address (`0x1234…abcd` with 38 hex
+    // digits) is deliberately not a well-formed EVM address.
     process.env.WDK_TOKEN = 'USDT';
     process.env.WDK_NETWORK = 'sepolia';
     process.env.WDK_WALLET_NAME = 'agent-demo';
@@ -43,8 +38,6 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousToken === undefined) delete process.env.WDK_TOKEN;
     else process.env.WDK_TOKEN = previousToken;
     if (previousNetwork === undefined) delete process.env.WDK_NETWORK;

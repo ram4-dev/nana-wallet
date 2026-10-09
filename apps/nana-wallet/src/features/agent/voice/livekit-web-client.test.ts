@@ -6,13 +6,14 @@ import { createLiveKitWebClient } from "./livekit-web-client";
 const mocks = vi.hoisted(() => ({
   createLiveVoiceBinding: vi.fn(),
   fetchVoiceRoomToken: vi.fn(),
-  developmentTokenServer: vi.fn(),
+  getMe: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
   api: {
     createLiveVoiceBinding: mocks.createLiveVoiceBinding,
     fetchVoiceRoomToken: mocks.fetchVoiceRoomToken,
+    getMe: mocks.getMe,
   },
 }));
 
@@ -37,7 +38,6 @@ vi.mock("livekit-client", () => ({
     DeviceInUse: "DeviceInUse",
   },
   Track: { Kind: { Audio: "audio" } },
-  TokenSource: { developmentTokenServer: mocks.developmentTokenServer },
 }));
 
 const PARTICIPANT_IDENTITY = "11111111-1111-4111-8111-111111111111";
@@ -88,17 +88,13 @@ function handlerFor(room: Room, event: string) {
 }
 
 const savedEnv: Record<string, string | undefined> = {};
-const ENV_KEYS = [
-  "VITE_LIVEKIT_TOKEN_SOURCE",
-  "VITE_LIVEKIT_TOKEN_SERVER_ID",
-  "VITE_LIVEKIT_AGENT_NAME",
-  "VITE_LIVEKIT_PARTICIPANT_IDENTITY",
-];
+const ENV_KEYS = ["VITE_LIVEKIT_TOKEN_SOURCE", "VITE_LIVEKIT_PARTICIPANT_IDENTITY"];
 
 beforeEach(() => {
   for (const key of ENV_KEYS) savedEnv[key] = import.meta.env[key];
-  setEnv("VITE_LIVEKIT_PARTICIPANT_IDENTITY", PARTICIPANT_IDENTITY);
-  setEnv("VITE_LIVEKIT_AGENT_NAME", "nani-agent");
+  setEnv("VITE_LIVEKIT_TOKEN_SOURCE", undefined);
+  // The browser's identity is whatever the authenticated session says it is.
+  mocks.getMe.mockResolvedValue({ userId: PARTICIPANT_IDENTITY, displayName: null });
   mocks.createLiveVoiceBinding.mockResolvedValue({
     conversationId: CONVERSATION_ID,
     bindingToken: "binding-token",
@@ -112,9 +108,8 @@ afterEach(() => {
 });
 
 describe("livekit web client token source", () => {
-  it("defaults to the local source: it fetches the room token from our API and does not need a token server id", async () => {
+  it("defaults to the local source: it fetches the room token from our API", async () => {
     setEnv("VITE_LIVEKIT_TOKEN_SOURCE", undefined);
-    setEnv("VITE_LIVEKIT_TOKEN_SERVER_ID", undefined);
     const participantToken = tokenWithIdentity(PARTICIPANT_IDENTITY);
     mocks.fetchVoiceRoomToken.mockResolvedValue({
       serverUrl: SERVER_URL,
@@ -136,7 +131,6 @@ describe("livekit web client token source", () => {
       participantToken,
       expect.objectContaining({ autoSubscribe: true }),
     );
-    expect(mocks.developmentTokenServer).not.toHaveBeenCalled();
   });
 
   it("accepts an explicit VITE_LIVEKIT_TOKEN_SOURCE=local the same as the unset default", async () => {
@@ -156,42 +150,10 @@ describe("livekit web client token source", () => {
     });
 
     expect(mocks.fetchVoiceRoomToken).toHaveBeenCalledWith(CONVERSATION_ID);
-    expect(mocks.developmentTokenServer).not.toHaveBeenCalled();
   });
 
-  it("keeps the cloud development token server path when VITE_LIVEKIT_TOKEN_SOURCE=cloud", async () => {
+  it("fails loudly when the browser is configured for a token source that no longer exists", async () => {
     setEnv("VITE_LIVEKIT_TOKEN_SOURCE", "cloud");
-    setEnv("VITE_LIVEKIT_TOKEN_SERVER_ID", "dev-token-server");
-    const fetchToken = vi.fn().mockResolvedValue({
-      serverUrl: "wss://cloud.example",
-      participantToken: "cloud-token",
-    });
-    mocks.developmentTokenServer.mockReturnValue({ fetch: fetchToken });
-    const fakeRoom = createFakeRoom();
-
-    const client = createLiveKitWebClient({ room: fakeRoom });
-    await expect(client.connect()).resolves.toEqual({
-      conversationId: CONVERSATION_ID,
-      revision: 3,
-    });
-
-    expect(mocks.developmentTokenServer).toHaveBeenCalledWith("dev-token-server");
-    expect(fetchToken).toHaveBeenCalledWith({
-      roomName: `nani-${CONVERSATION_ID}`,
-      participantIdentity: PARTICIPANT_IDENTITY,
-      agentName: "nani-agent",
-    });
-    expect(fakeRoom.connect).toHaveBeenCalledWith(
-      "wss://cloud.example",
-      "cloud-token",
-      expect.objectContaining({ autoSubscribe: true }),
-    );
-    expect(mocks.fetchVoiceRoomToken).not.toHaveBeenCalled();
-  });
-
-  it("reports a clear configuration error in cloud mode without a token server id and does not connect", async () => {
-    setEnv("VITE_LIVEKIT_TOKEN_SOURCE", "cloud");
-    setEnv("VITE_LIVEKIT_TOKEN_SERVER_ID", undefined);
     const fakeRoom = createFakeRoom();
 
     const client = createLiveKitWebClient({ room: fakeRoom });
@@ -201,26 +163,32 @@ describe("livekit web client token source", () => {
 
     expect(mocks.createLiveVoiceBinding).not.toHaveBeenCalled();
     expect(fakeRoom.connect).not.toHaveBeenCalled();
-    expect(mocks.developmentTokenServer).not.toHaveBeenCalled();
   });
 
-  it("requires the participant identity in local mode too", async () => {
+  it("takes the participant identity from GET /v1/me and ignores any env identity", async () => {
     setEnv("VITE_LIVEKIT_TOKEN_SOURCE", undefined);
-    setEnv("VITE_LIVEKIT_PARTICIPANT_IDENTITY", undefined);
+    // A stale env identity must not change who the browser claims to be: the
+    // room token is only accepted when it is signed for the identity that the
+    // authenticated session returns.
+    setEnv("VITE_LIVEKIT_PARTICIPANT_IDENTITY", "99999999-9999-4999-8999-999999999999");
+    mocks.fetchVoiceRoomToken.mockResolvedValue({
+      serverUrl: SERVER_URL,
+      participantToken: tokenWithIdentity(PARTICIPANT_IDENTITY),
+      roomName: `nani-${CONVERSATION_ID}`,
+    });
     const fakeRoom = createFakeRoom();
 
     const client = createLiveKitWebClient({ room: fakeRoom });
-    await expect(client.connect()).rejects.toThrow(
-      "Live voice is not configured for this browser.",
-    );
+    await expect(client.connect()).resolves.toEqual({
+      conversationId: CONVERSATION_ID,
+      revision: 3,
+    });
 
-    expect(mocks.fetchVoiceRoomToken).not.toHaveBeenCalled();
-    expect(fakeRoom.connect).not.toHaveBeenCalled();
+    expect(mocks.getMe).toHaveBeenCalled();
   });
 
-  it("surfaces a local endpoint failure to the caller instead of falling back to cloud", async () => {
+  it("surfaces a local endpoint failure to the caller", async () => {
     setEnv("VITE_LIVEKIT_TOKEN_SOURCE", undefined);
-    setEnv("VITE_LIVEKIT_TOKEN_SERVER_ID", "dev-token-server");
     mocks.fetchVoiceRoomToken.mockRejectedValue(
       new Error("LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET are required."),
     );
@@ -232,7 +200,6 @@ describe("livekit web client token source", () => {
     );
 
     expect(fakeRoom.connect).not.toHaveBeenCalled();
-    expect(mocks.developmentTokenServer).not.toHaveBeenCalled();
   });
 
   it("rejects a local token whose identity does not match the participant identity before connecting", async () => {
