@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { api, getErrorMessage, isPrivyIdentityProvider, queryKeys } from "@/lib/api";
 import { AddTrustedRecipient } from "./AddTrustedRecipient";
 import type {
+  Contact,
   EnrollmentPreparationResponse,
   PermissionState,
   WalletChainFamily,
@@ -139,6 +140,17 @@ function RoutePendingInline() {
 const SOLANA_CHAIN: WalletChainFamily = "solana";
 const ARC_CHAIN: WalletChainFamily = "arc";
 
+/**
+ * A contact belongs to the chain being enrolled when its `network` says so.
+ * `recipients.network` is NULL for EVM and 'solana-devnet' for Solana (see
+ * migration 012_chain_scoped_recipients), which is the same discriminator the
+ * backend uses to infer the chain from the recipient list.
+ */
+function isContactOnChain(contact: Contact, chain: WalletChainFamily): boolean {
+  const network = contact.network ?? null;
+  return chain === SOLANA_CHAIN ? network === "solana-devnet" : network === null;
+}
+
 export function WalletLifecycle({ userId }: { userId: string | undefined }) {
   const queryClient = useQueryClient();
   const enabled = Boolean(userId);
@@ -228,7 +240,16 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
       // enrollment therefore needs at least one Solana-format contact: with an
       // EVM-only contact list `prepare` cannot produce a Solana policy (the
       // recipient format decides the chain, and one permission binds one chain).
-      const allowlist = (contactsQuery.data ?? []).map((contact) => contact.address);
+      // One permission binds one wallet and one policy, and the backend infers
+      // the chain from the recipient format. The allowlist must therefore carry
+      // only the contacts belonging to the chain being enrolled: sending every
+      // saved contact let an EVM contact drive an Arc policy while this screen
+      // was bound to the Solana wallet, and made a mixed list impossible to
+      // enroll at all (the backend rejects it with "All recipients must share
+      // one chain").
+      const allowlist = (contactsQuery.data ?? [])
+        .filter((contact) => isContactOnChain(contact, chainTarget))
+        .map((contact) => contact.address);
       if (allowlist.length === 0) {
         setPermissionMessage(
           "Agregá al menos un destinatario de confianza antes de activar el permiso.",

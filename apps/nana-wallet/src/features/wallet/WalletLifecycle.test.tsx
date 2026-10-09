@@ -131,9 +131,9 @@ describe("WalletLifecycle activation entry", () => {
     mocks.getContacts.mockResolvedValue([
       {
         id: "c1",
-        alias: "Mama",
-        address: "0x2222222222222222222222222222222222222222",
-        network: null,
+        alias: "Nieta",
+        address: SOL_RECIPIENT,
+        network: "solana-devnet",
         createdAt: "2026-10-06T00:00:00.000Z",
         expectedVersion: 1,
       },
@@ -153,10 +153,79 @@ describe("WalletLifecycle activation entry", () => {
 
     await waitFor(() =>
       expect(mocks.prepareWalletPermission).toHaveBeenCalledWith({
-        recipients: ["0x2222222222222222222222222222222222222222"],
+        recipients: [SOL_RECIPIENT],
       }),
     );
     expect(await screen.findByTestId("signer-enrollment")).toBeInTheDocument();
+  });
+
+  // One permission binds one wallet and one policy, and the backend infers the
+  // chain from the recipient format. Sending every saved contact let an EVM
+  // contact drive an Arc policy while this screen was bound to the Solana
+  // wallet, and made a mixed contact list impossible to enroll at all.
+  it("sends only the Solana contacts to a Solana enrollment", async () => {
+    mocks.isPrivyIdentityProvider.mockReturnValue(true);
+    mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
+    mocks.getContacts.mockResolvedValue([
+      {
+        id: "c1",
+        alias: "Nieta",
+        address: SOL_RECIPIENT,
+        network: "solana-devnet",
+        createdAt: "2026-10-06T00:00:00.000Z",
+        expectedVersion: 1,
+      },
+      {
+        id: "c2",
+        alias: "Sobrino",
+        address: "0x2222222222222222222222222222222222222222",
+        network: null,
+        createdAt: "2026-10-06T00:00:00.000Z",
+        expectedVersion: 1,
+      },
+    ]);
+
+    render(
+      <Wrapper>
+        <WalletLifecycle userId="user-1" />
+      </Wrapper>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /activar permiso de pagos/i }));
+
+    await waitFor(() =>
+      expect(mocks.prepareWalletPermission).toHaveBeenCalledWith({
+        recipients: [SOL_RECIPIENT],
+      }),
+    );
+  });
+
+  it("refuses to prepare a Solana enrollment from an EVM-only contact list", async () => {
+    mocks.isPrivyIdentityProvider.mockReturnValue(true);
+    mocks.getCurrentWallet.mockResolvedValue(readySolanaWallet);
+    mocks.getContacts.mockResolvedValue([
+      {
+        id: "c1",
+        alias: "Sobrino",
+        address: "0x2222222222222222222222222222222222222222",
+        network: null,
+        createdAt: "2026-10-06T00:00:00.000Z",
+        expectedVersion: 1,
+      },
+    ]);
+
+    render(
+      <Wrapper>
+        <WalletLifecycle userId="user-1" />
+      </Wrapper>,
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /activar permiso de pagos/i }));
+
+    expect(await screen.findByText(/al menos un destinatario de confianza/i)).toBeInTheDocument();
+    expect(mocks.prepareWalletPermission).not.toHaveBeenCalled();
   });
 
   it("still requires at least one trusted recipient before preparing", async () => {
@@ -216,7 +285,7 @@ describe("WalletLifecycle activation entry", () => {
         id: "c1",
         alias: "Sol",
         address: SOL_RECIPIENT,
-        network: null,
+        network: "solana-devnet",
         createdAt: "2026-10-06T00:00:00.000Z",
         expectedVersion: 1,
       },
