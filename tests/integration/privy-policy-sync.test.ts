@@ -66,6 +66,7 @@ suite("privy policy sync (DGC-4, hybrid enforcement)", () => {
     userId: string;
     walletId: string;
     grantId: string;
+    expiresAtSeconds: number;
   }> {
     const user = await database.query<{ id: string }>(
       `INSERT INTO users (privy_did, display_name)
@@ -79,6 +80,11 @@ suite("privy policy sync (DGC-4, hybrid enforcement)", () => {
       [userId, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
     );
     const walletId = wallet.rows[0]!.id;
+    // Single source for the expiry: the case must assert the EXACT stored
+    // expiry, so recomputing `Date.now()` at assertion time made the check
+    // flip by one second whenever the wall clock crossed a second boundary
+    // between grant creation and the assertion (observed in CI).
+    const expiresAt = new Date(Date.now() + 86_400_000);
     const grant = await service.createGrant({
       userId,
       walletId,
@@ -88,13 +94,18 @@ suite("privy policy sync (DGC-4, hybrid enforcement)", () => {
       maxCumulative: "5_000_000",
       windowSeconds: 3_600,
       recipients: [RECIPIENT],
-      expiresAt: new Date(Date.now() + 86_400_000),
+      expiresAt,
     });
-    return { userId, walletId, grantId: grant.id };
+    return {
+      userId,
+      walletId,
+      grantId: grant.id,
+      expiresAtSeconds: Math.floor(expiresAt.getTime() / 1000),
+    };
   }
 
   it("provisions the policy and records policy_synced with the policy id", async () => {
-    const { userId, walletId, grantId } = await setup();
+    const { userId, walletId, grantId, expiresAtSeconds } = await setup();
     const provisioner = fakeProvisioner();
 
     const sync = new PrivyPolicySyncService(database, provisioner);
@@ -109,7 +120,8 @@ suite("privy policy sync (DGC-4, hybrid enforcement)", () => {
       maxPerTransfer: "1000000",
       maxCumulative: "5000000",
       // Exact stored expiry (epoch seconds), never a window rollforward.
-      expiresAt: Math.floor(new Date(Date.now() + 86_400_000).getTime() / 1000),
+      // Deterministic: the same instant the grant was created with.
+      expiresAt: expiresAtSeconds,
     });
 
     const row = await database.withUserTransaction(userId, (client) =>
