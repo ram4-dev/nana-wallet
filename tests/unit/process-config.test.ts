@@ -78,7 +78,10 @@ describe("process-specific configuration", () => {
     ).toMatchObject({ identityProvider: "privy" });
   });
 
-  it("rejects a funded/live singleton wallet provider in privy mode (PMU-024)", () => {
+  it("rejects a funded singleton wallet provider in privy mode (PMU-024)", () => {
+    // The `live`/WDK provider family was removed from the switch; a stale
+    // `WDK_TOOLS_SOURCE=live` is still rejected in privy mode instead of
+    // silently selecting a provider. The per-user-bound sources are accepted.
     expect(() =>
       readApiProcessConfig({
         IDENTITY_PROVIDER: "privy",
@@ -87,14 +90,16 @@ describe("process-specific configuration", () => {
         WDK_TOOLS_SOURCE: "live",
       }),
     ).toThrow(/singleton|funded|WDK_TOOLS_SOURCE/u);
-    expect(
-      readApiProcessConfig({
-        IDENTITY_PROVIDER: "privy",
-        PRIVY_APP_ID: "app",
-        PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
-        WDK_TOOLS_SOURCE: "fixture",
-      }),
-    ).toMatchObject({ identityProvider: "privy" });
+    for (const source of ["fixture", "solana-devnet"] as const) {
+      expect(
+        readApiProcessConfig({
+          IDENTITY_PROVIDER: "privy",
+          PRIVY_APP_ID: "app",
+          PRIVY_VERIFICATION_KEY: PRIVY_TEST_KEY,
+          WDK_TOOLS_SOURCE: source,
+        }),
+      ).toMatchObject({ identityProvider: "privy" });
+    }
   });
 
   it("accepts the per-user-bound solana-devnet provider in privy mode (PMU-024)", () => {

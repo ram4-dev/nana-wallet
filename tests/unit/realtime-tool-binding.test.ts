@@ -13,16 +13,22 @@ import { createVoiceDecisionGate } from '../../src/livekit/voice-decision-gate.j
 import { isCancellation, isConfirmation } from '../../src/livekit/resolution-phrases.js';
 
 const envBackup = new Map<string, string | undefined>();
-const EVAL_ENV: Record<string, string> = {
-  WDK_TOOLS_SOURCE: 'live',
+// The live-transfer gate is keyed on the identity mode, not on the removed
+// `WDK_TOOLS_SOURCE=live` value: production is privy, so the gate is ON there.
+// `undefined` means "delete", so a stale ambient WDK_TOOLS_SOURCE cannot mask
+// the intent and the gate is never turned on by the removed provider value.
+const EVAL_ENV: Record<string, string | undefined> = {
+  IDENTITY_PROVIDER: 'privy',
   WDK_MAX_TRANSFER_AMOUNT: '100',
   WDK_ALLOWED_RECIPIENTS: MAMA_ADDRESS,
+  WDK_TOOLS_SOURCE: undefined,
 };
 
 beforeEach(() => {
   for (const [key, value] of Object.entries(EVAL_ENV)) {
     envBackup.set(key, process.env[key]);
-    process.env[key] = value;
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
   }
 });
 
@@ -186,7 +192,7 @@ describe('realtime tool binding — production execution against the fixture sta
     expect(stack.broadcastCalls).toHaveLength(0);
   });
 
-  it('over-cap amounts are rejected as policy_rejected (live policy env, fixture money)', async () => {
+  it('over-cap amounts are rejected as policy_rejected (privy policy env, fixture money)', async () => {
     const stack = createRealtimeFixtureStack();
     const binding = createRealtimeToolBinding(stack.deps);
     const output = await binding.executeFunctionCall(

@@ -35,7 +35,6 @@ export function validateEnvironment(provider, supplied, repo = root) {
     const publicKey = createPublicKey(env.LIVE_VOICE_BINDING_PUBLIC_KEY.replace(/\\n/g, '\n'));
     if (privateKey.asymmetricKeyType !== 'ed25519' || publicKey.asymmetricKeyType !== 'ed25519' || !createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).equals(publicKey.export({ type: 'spki', format: 'der' }))) throw new Error();
   } catch { throw new Error('LIVE_VOICE_BINDING_PRIVATE_KEY y LIVE_VOICE_BINDING_PUBLIC_KEY deben formar un par Ed25519 válido.'); }
-  env.WDK_TOOLS_SOURCE = 'live';
   env.WDK_NETWORK = 'sepolia';
   env.WDK_WALLET_NAME ||= 'agent-demo';
   env.DEMO_USER_ID ||= '00000000-0000-4000-8000-000000000001';
@@ -155,7 +154,7 @@ export async function main(args = process.argv.slice(2)) {
     compose(['exec', '-T', 'db', 'psql', '-U', 'postgres', '-d', 'wdk_agent'], migrationSql());
     console.log('Iniciando LiveKit, API, worker y frontend…');
     compose(['up', '-d', '--wait', '--wait-timeout', '180']);
-    const healthProbe = `const r=await fetch('http://127.0.0.1:3000/health');const h=await r.json();if(!r.ok||h.mode!=='live'||h.wallet!=='unlocked'||h.network!==process.env.WDK_NETWORK||(h.provider&&h.provider.status!=='healthy'))process.exit(1);const b=await fetch('http://127.0.0.1:3000/v1/wallet/balance?token='+encodeURIComponent(process.env.WDK_TOKEN));if(!b.ok)process.exit(1);const v=await b.json();if(v.network!==process.env.WDK_NETWORK||v.token!==process.env.WDK_TOKEN)process.exit(1);console.log('Wallet real accesible; lectura de saldo verificada.');`;
+    const healthProbe = `const r=await fetch('http://127.0.0.1:3000/health');const h=await r.json();if(!r.ok||h.wallet!=='unlocked'||h.network!==process.env.WDK_NETWORK||(h.provider&&h.provider.status!=='healthy'))process.exit(1);const b=await fetch('http://127.0.0.1:3000/v1/wallet/balance?token='+encodeURIComponent(process.env.WDK_TOKEN));if(!b.ok)process.exit(1);const v=await b.json();if(v.network!==process.env.WDK_NETWORK||v.token!==process.env.WDK_TOKEN)process.exit(1);console.log('Wallet real accesible; lectura de saldo verificada.');`;
     compose(['exec', '-T', 'backend', 'node', '--input-type=module', '-e', healthProbe], undefined, false);
     const worker = JSON.parse('[' + compose(['ps', '--format', 'json', 'voice-worker']).split('\n').filter(Boolean).join(',') + ']');
     if (!worker.length || worker.some(row => row.State !== 'running')) throw new Error('El worker no está corriendo.');

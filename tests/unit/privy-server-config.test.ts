@@ -8,10 +8,14 @@ describe("Privy server configuration for per-user Solana devnet", () => {
     PRIVY_APP_SECRET: "secret",
   };
 
-  it("allows the Solana provider only with the Privy identity path", () => {
-    expect(
-      readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: "solana-devnet" }),
-    ).toMatchObject({ appId: "app" });
+  it("allows only the per-user-bound providers in the Privy identity path", () => {
+    for (const source of ["fixture", "solana-devnet"] as const) {
+      expect(
+        readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: source }),
+      ).toMatchObject({ appId: "app" });
+    }
+    // The `live`/WDK provider family was removed; a stale value is still
+    // rejected in privy mode instead of silently selecting a provider.
     expect(() =>
       readPrivyServerConfig({ ...base, WDK_TOOLS_SOURCE: "live" }),
     ).toThrow(/WDK_TOOLS_SOURCE/);

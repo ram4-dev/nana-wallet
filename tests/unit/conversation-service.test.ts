@@ -106,6 +106,7 @@ async function events(service: ReturnType<typeof createWalletConversationService
 
 describe('WalletConversationService', () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
+  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
   const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
   const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
@@ -166,7 +167,10 @@ describe('WalletConversationService', () => {
   });
 
   it('returns a stable policy error before any provider side effect', async () => {
-    process.env.WDK_TOOLS_SOURCE = 'live';
+    // The live-transfer gate is keyed on the identity mode, not on the removed
+    // `WDK_TOOLS_SOURCE=live` value: production is privy, so the gate is ON there.
+    process.env.IDENTITY_PROVIDER = 'privy';
+    delete process.env.WDK_TOOLS_SOURCE;
     delete process.env.WDK_MAX_TRANSFER_AMOUNT;
     delete process.env.WDK_ALLOWED_RECIPIENTS;
     const repository = repositoryFixture();
@@ -283,6 +287,8 @@ describe('WalletConversationService', () => {
       afterEach(() => {
         if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
         else process.env.AGENT_RUNTIME = previousRuntime;
+        if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+        else process.env.IDENTITY_PROVIDER = previousIdentity;
         if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
         else process.env.WDK_TOOLS_SOURCE = previousSource;
         if (previousMaximum === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
@@ -293,6 +299,7 @@ describe('WalletConversationService', () => {
     });
 
     describe('WalletConversationService.previewTransfer', () => {
+      const previousIdentity = process.env.IDENTITY_PROVIDER;
       const previousSource = process.env.WDK_TOOLS_SOURCE;
       const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
       const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
@@ -305,6 +312,8 @@ describe('WalletConversationService', () => {
       });
 
       afterEach(() => {
+        if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+        else process.env.IDENTITY_PROVIDER = previousIdentity;
         if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
         else process.env.WDK_TOOLS_SOURCE = previousSource;
         if (previousMaximum === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
@@ -367,7 +376,10 @@ describe('WalletConversationService', () => {
       });
 
       it('returns policy_rejected before persisting when live policy is not configured', async () => {
-        process.env.WDK_TOOLS_SOURCE = 'live';
+        // The live-transfer gate is keyed on the identity mode, not on the removed
+        // `WDK_TOOLS_SOURCE=live` value: production is privy, so the gate is ON there.
+        process.env.IDENTITY_PROVIDER = 'privy';
+        delete process.env.WDK_TOOLS_SOURCE;
         delete process.env.WDK_MAX_TRANSFER_AMOUNT;
         delete process.env.WDK_ALLOWED_RECIPIENTS;
         const repository = repositoryFixture();

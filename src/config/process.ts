@@ -82,15 +82,18 @@ export function readIdentityProviderMode(
 }
 
 /**
- * PMU-024: until the per-user wallet change replaces the shared singleton, the
- * identity foundation must not serve financial operations from a funded/live
- * singleton provider in privy mode. Fixture stays available for preview.
+ * PMU-024: the identity foundation must not serve financial operations from a
+ * funded singleton wallet provider in privy mode. With the `live`/WDK provider
+ * family removed, this is now a strict allowlist: in privy mode only the
+ * per-user-bound sources below may be selected. Any other value — including a
+ * stale `WDK_TOOLS_SOURCE=live` left behind by the removed EVM path — is
+ * rejected at boot rather than silently falling through to the fixture provider.
  *
- * `solana-devnet` is the one exception, and it is not a singleton: its signing
- * path resolves a per-user wallet binding, so the singleton provider has no
- * sender identity and fails closed. `readPrivyServerConfig` already allows it
- * for that reason; this guard must accept exactly the same set, otherwise the
- * API refuses to boot on a configuration the rest of the stack supports.
+ * `solana-devnet` is not a singleton: its signing path resolves a per-user
+ * wallet binding, so the singleton provider has no sender identity and fails
+ * closed. `readPrivyServerConfig` already allows it for that reason; this guard
+ * must accept exactly the same set, otherwise the API refuses to boot on a
+ * configuration the rest of the stack supports.
  */
 const PER_USER_BOUND_SOURCES = new Set(["fixture", "solana-devnet"]);
 

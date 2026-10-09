@@ -71,8 +71,8 @@ describe('GET /health provider field (additive, D5)', () => {
 
     expect(body.provider).toEqual({ status: 'healthy' });
     expect(body.provider.reason).toBeUndefined();
-    // MODE() promotes only WDK_TOOLS_SOURCE=live (or privy identity) to 'live';
-    // the surviving solana-devnet source reports the fixture mode on this route.
+    // MODE() promotes only the privy identity mode to 'live'; the surviving
+    // solana-devnet source reports the fixture mode on this route.
     expect(body.mode).toBe('fixture');
     expect(body.network).toBe('solana-devnet');
     expect(body.status).toBe('ok');

@@ -453,12 +453,14 @@ export function normalizeBroadcastResult(output: unknown, network: string) {
 /**
  * Single source of truth for whether live-transfer policy applies. Both policy
  * gates (definition and wallet-agent) must branch on this predicate so the
- * WDK live and Solana devnet live modes can never bypass the policy
- * configuration enforced for live wallet transfers.
+ * remaining live modes can never bypass the policy configuration enforced for
+ * live wallet transfers: the `solana-devnet` provider and the `privy` identity
+ * mode (production). The removed `live`/WDK provider family no longer counts as
+ * a live source; demo mode stays inert.
  */
 export function isLiveTransferSource(environment: NodeJS.ProcessEnv = process.env): boolean {
-  return environment.WDK_TOOLS_SOURCE === 'live' ||
-    environment.WDK_TOOLS_SOURCE === 'solana-devnet';
+  return environment.WDK_TOOLS_SOURCE === 'solana-devnet' ||
+    (environment.IDENTITY_PROVIDER?.trim() || 'demo') === 'privy';
 }
 
 export function validateWalletTransferPolicy(

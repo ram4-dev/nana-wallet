@@ -1,8 +1,4 @@
-import {
-  callWdkTool,
-  getWdkTools,
-  closeWdkClient,
-} from "../agent/wdk-tools.js";
+import { callWdkTool } from "../agent/wdk-tools.js";
 import type { Tool } from "ai";
 import { FixtureWalletProvider } from "../wallet/fixture-provider.js";
 import {
@@ -167,9 +163,6 @@ export function createWalletProvider(
       readSolanaDevnetProviderConfig(environment),
     );
   }
-  if (environment.WDK_TOOLS_SOURCE === "live") {
-    return new WdkWalletProvider(getWdkTools, closeWdkClient);
-  }
   return new FixtureWalletProvider();
 }
 
@@ -178,7 +171,6 @@ export function createCoreDependencies(
 ): CoreDependencies {
   const wallet = createWalletProvider(environment);
   const walletReads =
-    environment.WDK_TOOLS_SOURCE === "live" ||
     environment.WDK_TOOLS_SOURCE === "solana-devnet"
       ? wallet
       : new WdkWalletProvider(async () => legacyToolSource());

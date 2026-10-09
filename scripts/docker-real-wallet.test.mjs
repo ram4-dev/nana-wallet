@@ -32,9 +32,8 @@ test('no arranca con política inválida ni par de binding diferente', () => {
   assert.throws(() => validateEnvironment('wdk', { ...configured(), WDK_ALLOWED_RECIPIENTS: '0x'+'0'.repeat(40) }), /dirección inválida/);
   assert.throws(() => validateEnvironment('wdk', { ...configured(), LIVE_VOICE_BINDING_PUBLIC_KEY: configured().LIVE_VOICE_BINDING_PUBLIC_KEY }), /par Ed25519/);
 });
-test('WDK usa live, adapta OpenAI y mantiene el token custom', () => {
+test('WDK adapta OpenAI y mantiene el token custom', () => {
   const env = validateEnvironment('wdk', { ...configured(), WDK_TOOLS_SOURCE: 'fixture', WDK_NETWORK: 'mainnet' });
-  assert.equal(env.WDK_TOOLS_SOURCE, 'live');
   assert.equal(env.WDK_NETWORK, 'sepolia');
   assert.equal(env.WDK_TOKEN, 'usdt-test');
   assert.equal(env.OPENAI_API_KEY, 'synthetic-openai');

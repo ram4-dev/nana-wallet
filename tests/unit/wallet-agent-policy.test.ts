@@ -42,18 +42,24 @@ function input(overrides: Record<string, unknown> = {}) {
 }
 
 describe('live WDK transfer policy', () => {
+  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
   const previousMaxAmount = process.env.WDK_MAX_TRANSFER_AMOUNT;
   const previousAllowedRecipients = process.env.WDK_ALLOWED_RECIPIENTS;
 
   beforeEach(() => {
     resetSessionStore();
-    process.env.WDK_TOOLS_SOURCE = 'live';
+    // The live-transfer gate is keyed on the identity mode, not on
+    // WDK_TOOLS_SOURCE: production is privy, so the gate is ON there.
+    process.env.IDENTITY_PROVIDER = 'privy';
+    delete process.env.WDK_TOOLS_SOURCE;
     process.env.WDK_MAX_TRANSFER_AMOUNT = '0.05';
     process.env.WDK_ALLOWED_RECIPIENTS = `0x${ALLOWED_ADDRESS.slice(2).toLocaleUpperCase('en-US')}`;
   });
 
   afterEach(() => {
+    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
     if (previousMaxAmount === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
@@ -216,6 +222,8 @@ describe('live WDK transfer policy', () => {
   });
 
       it('keeps fixture mode usable without policy variables', async () => {
+        // Back to the demo identity so the gate is inert for this case.
+        delete process.env.IDENTITY_PROVIDER;
         process.env.WDK_TOOLS_SOURCE = 'fixture';
         delete process.env.WDK_MAX_TRANSFER_AMOUNT;
         delete process.env.WDK_ALLOWED_RECIPIENTS;

@@ -79,17 +79,8 @@ describe("createCoreDependencies solana-devnet routing", () => {
 });
 
 describe("existing selections unchanged", () => {
-  it("live still builds WdkWalletProvider and shares the reads instance", () => {
-    const wallet = createWalletProvider({ WDK_TOOLS_SOURCE: "live" });
-    expect(wallet).toBeInstanceOf(WdkWalletProvider);
-
-    const core = createCoreDependencies({
-      WDK_TOOLS_SOURCE: "live",
-      CONVERSATION_MAX_INPUT_TOKENS: "4096",
-    });
-    expect(core.walletReads).toBe(core.wallet);
-  });
-
+  // The `live`/WDK provider family was removed with the `WDK_TOOLS_SOURCE`
+  // switch: `live` no longer selects a provider.
   it("unset still builds FixtureWalletProvider with the legacy reads provider", () => {
     const wallet = createWalletProvider({});
     expect(wallet).toBeInstanceOf(FixtureWalletProvider);

@@ -26,12 +26,15 @@ function context(): WalletAgentContext {
 }
 
 describe("wallet agent definition", () => {
+  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
   const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
   const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
 
   afterEach(() => {
     resetSessionStore();
+    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
     if (previousMaximum === undefined)
@@ -155,7 +158,8 @@ describe("wallet agent definition", () => {
   });
 
   it("keeps live transfer policy in the canonical operation layer", () => {
-    process.env.WDK_TOOLS_SOURCE = "live";
+    process.env.IDENTITY_PROVIDER = "privy";
+    delete process.env.WDK_TOOLS_SOURCE;
     process.env.WDK_MAX_TRANSFER_AMOUNT = "1";
     process.env.WDK_ALLOWED_RECIPIENTS =
       "0x1234567890123456789012345678901234567890";
@@ -308,5 +312,78 @@ describe("normalizeBroadcastResult explorer URL (D6, CAR-010)", () => {
       transactionHash: HASH,
       explorerUrl: `https://sepolia.etherscan.io/tx/${HASH}`,
     });
+  });
+});
+
+// The live-transfer gate is keyed on the identity mode now, not on
+// WDK_TOOLS_SOURCE. Production is `privy`, so the gate must be ON there even
+// when WDK_TOOLS_SOURCE is unset, while demo mode stays inert.
+describe("validateWalletTransferPolicy under privy identity", () => {
+  const previousIdentity = process.env.IDENTITY_PROVIDER;
+  const previousSource = process.env.WDK_TOOLS_SOURCE;
+  const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
+  const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
+
+  const allowedAddress = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+
+  function gateInput(
+    overrides: Partial<Parameters<typeof validateWalletTransferPolicy>[0]> = {},
+  ) {
+    return {
+      network: "sepolia",
+      token: "usdt-test",
+      to: allowedAddress,
+      amount: "0.05",
+      wallet: "agent-demo",
+      dryRun: true,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    resetSessionStore();
+    process.env.IDENTITY_PROVIDER = "privy";
+    delete process.env.WDK_TOOLS_SOURCE;
+    process.env.WDK_MAX_TRANSFER_AMOUNT = "0.05";
+    process.env.WDK_ALLOWED_RECIPIENTS =
+      allowedAddress.toLocaleUpperCase("en-US");
+  });
+
+  afterEach(() => {
+    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+    else process.env.IDENTITY_PROVIDER = previousIdentity;
+    if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
+    else process.env.WDK_TOOLS_SOURCE = previousSource;
+    if (previousMaximum === undefined)
+      delete process.env.WDK_MAX_TRANSFER_AMOUNT;
+    else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
+    if (previousAllowed === undefined)
+      delete process.env.WDK_ALLOWED_RECIPIENTS;
+    else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
+  });
+
+  it("still rejects when WDK_MAX_TRANSFER_AMOUNT is absent", () => {
+    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
+    expect(
+      validateWalletTransferPolicy(gateInput(), context().config),
+    ).toMatchObject({ error: "policy_rejected" });
+  });
+
+  it("still rejects an amount above the maximum", () => {
+    expect(
+      validateWalletTransferPolicy(
+        gateInput({ amount: "0.051" }),
+        context().config,
+      ),
+    ).toMatchObject({ error: "policy_rejected" });
+  });
+
+  it("stays inert in demo mode", () => {
+    process.env.IDENTITY_PROVIDER = "demo";
+    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
+    delete process.env.WDK_ALLOWED_RECIPIENTS;
+    expect(
+      validateWalletTransferPolicy(gateInput(), context().config),
+    ).toBeUndefined();
   });
 });

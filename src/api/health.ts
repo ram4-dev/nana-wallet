@@ -12,11 +12,7 @@ const WALLET = () =>
 // made the health contract depend on dotenv evaluation order (hermetic tests pin
 // the env before building the server).
 const MODE = () =>
-  process.env.IDENTITY_PROVIDER === "privy"
-    ? "live"
-    : process.env.WDK_TOOLS_SOURCE === "live"
-      ? "live"
-      : "fixture";
+  process.env.IDENTITY_PROVIDER === "privy" ? "live" : "fixture";
 
 export async function registerHealthRoutes(
   app: FastifyInstance,

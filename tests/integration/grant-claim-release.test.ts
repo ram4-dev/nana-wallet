@@ -418,16 +418,20 @@ function notDispatchedWallet(events: string[]): {
 suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
+  const previousIdentity = process.env.IDENTITY_PROVIDER;
   beforeEach(() => {
     // Deterministic intent parsing + fixture tools (proven phase-4 setup).
     process.env.AGENT_RUNTIME = "deterministic";
     process.env.WDK_TOOLS_SOURCE = "fixture";
+    delete process.env.IDENTITY_PROVIDER;
   });
   afterEach(() => {
     if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
     else process.env.AGENT_RUNTIME = previousRuntime;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
+    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+    else process.env.IDENTITY_PROVIDER = previousIdentity;
   });
 
   beforeAll(async () => {
@@ -869,16 +873,18 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
       attemptId,
       claimId: ownedClaimId,
     });
-    // Preflight-after-claim: previewTransfer succeeds while the source is
-    // fixture; flipping to 'live' AFTER the preview makes
+    // Preflight-after-claim: previewTransfer succeeds while the identity is
+    // demo; flipping to the privy identity AFTER the preview makes
     // validateWalletTransferPolicy reject in runFinancialTransfer (env
     // vars absent) — a real policy rejection from the OWNED broadcasting
-    // state, before any broadcast.
+    // state, before any broadcast. The gate is keyed on the identity mode,
+    // not on the removed `WDK_TOOLS_SOURCE=live` value.
     const wallet = new FixtureWalletProvider();
     const previewSpy = vi
       .spyOn(wallet, "previewTransfer")
       .mockImplementation(async (...args: unknown[]) => {
-        process.env.WDK_TOOLS_SOURCE = "live";
+        process.env.IDENTITY_PROVIDER = "privy";
+        delete process.env.WDK_TOOLS_SOURCE;
         const preview = {
           network: "base-sepolia",
           token: "USDT",
