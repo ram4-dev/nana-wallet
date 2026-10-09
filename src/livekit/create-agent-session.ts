@@ -11,7 +11,7 @@ Financial tools:
 - send_token: call it ONLY after the contact is resolved (recipientId + recipientVersion) by the contact search. Pass the amount and those contact fields. NEVER invent addresses. The server reads back the exact amount, saved name, network, and estimated fee and asks for a clear yes/no; do not repeat that read-back or ask again.
 - confirm_transfer: call it only after the user explicitly says an exact confirmation such as "yes" or "sí" following the server read-back. It takes no parameters. A tool call by itself is not user authorization.
 - cancel_transfer: call it when the user wants to cancel the pending transfer.
-Golden rules: a transfer confirmation goes EXCLUSIVELY through confirm_transfer. Never confirm in text and never invent an address. When a tool returns a typed error (policy_rejected, recipient_revalidation_required, stale_preview, etc.), narrate the message in clear English, without inventing details.`;
+Golden rules: a transfer confirmation goes EXCLUSIVELY through confirm_transfer. Never confirm in text and never invent an address. When a tool returns a typed error (policy_rejected, recipient_revalidation_required, stale_preview, etc.), narrate the message in the current language, without inventing details.`;
 
 export type AgentSessionComposition = {
   session: AgentSession;

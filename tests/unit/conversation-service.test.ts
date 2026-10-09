@@ -225,6 +225,83 @@ describe('WalletConversationService', () => {
     });
   });
 
+  describe('Spanish spoken copy for conversation errors', () => {
+    const ENGLISH_POLICY_REFUSAL = 'This transfer does not meet the wallet safety policy.';
+    const ENGLISH_WALLET_UNAVAILABLE = 'The wallet is temporarily unavailable.';
+    // Retry guidance: the temporary outage MUST invite a retry, the permanent
+    // policy refusal MUST NOT.
+    const RETRY_GUIDANCE = /prob[áa]|intent[áa]|de nuevo|otra vez/iu;
+
+    // The error copy for an `es` session is published by the financial result
+    // path (runFinancialTransfer), so the observable seam is the progress
+    // publisher — the same channel the UI speaks. The English `result.message`
+    // is still yielded as a generic "uncertain" segment; filtering on
+    // reason "result" isolates exactly the localized result copy.
+    async function spokenResultLines(
+      outcome: Extract<BroadcastOutcome, { kind: 'not_dispatched' }>,
+    ): Promise<string[]> {
+      const repository = repositoryFixture();
+      const wallet = walletFixture();
+      vi.spyOn(wallet, 'broadcastTransfer').mockResolvedValue(outcome);
+      const published: ConversationEvent[] = [];
+      const progress: ConversationProgressPublisher = {
+        publish: (event) => { published.push(event); },
+      };
+      const service = createWalletConversationService({ conversations: repository, wallet, progress });
+      await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
+      await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirmar la transferencia' });
+      return published
+        .filter((event): event is Extract<ConversationEvent, { type: 'spoken-segment' }> => event.type === 'spoken-segment' && event.reason === 'result')
+        .map((event) => event.text);
+    }
+
+    it('speaks a policy refusal in Spanish, never the English safe message', async () => {
+      const spoken = await spokenResultLines({
+        kind: 'not_dispatched',
+        reason: 'Privy denied the Solana dispatch by policy (policy_violation).',
+        cause: 'policy_rejected',
+      });
+
+      const line = spoken.join(' ');
+      expect(line).toMatch(/no se realiz/iu);
+      expect(spoken).not.toContain(ENGLISH_POLICY_REFUSAL);
+    });
+
+    it('distinguishes a permanent policy refusal from a temporary outage in Spanish', async () => {
+      const refusal = await spokenResultLines({
+        kind: 'not_dispatched',
+        reason: 'Privy denied the Solana dispatch by policy (policy_violation).',
+        cause: 'policy_rejected',
+      });
+      const outage = await spokenResultLines({
+        kind: 'not_dispatched',
+        reason: 'The wallet provider is down.',
+        cause: 'provider_unavailable',
+      });
+
+      const refusalLine = refusal.join(' ');
+      const outageLine = outage.join(' ');
+
+      expect(refusalLine).not.toBe(outageLine);
+      // The refusal is final: it never invites the user to retry.
+      expect(refusalLine).not.toMatch(RETRY_GUIDANCE);
+      // The outage is temporary: it does invite a retry.
+      expect(outageLine).toMatch(RETRY_GUIDANCE);
+      expect(outageLine).not.toContain(ENGLISH_WALLET_UNAVAILABLE);
+    });
+
+    it('speaks a malformed request as a Spanish internal error, never the English safe message', async () => {
+      const spoken = await spokenResultLines({
+        kind: 'not_dispatched',
+        reason: 'A persisted preview ID is required before signing.',
+        cause: 'invalid_request',
+      });
+
+      expect(spoken.join(' ')).toMatch(/no pude completar la conversación/iu);
+      expect(spoken).not.toContain('The conversation could not be completed.');
+    });
+  });
+
   it('no longer applies a local transfer policy: the provider is reached with no policy env vars', async () => {
     // The local transfer-policy gate (with its two policy environment
     // variables) was deleted; the provider policy attached to the wallet is the

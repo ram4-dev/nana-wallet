@@ -1803,6 +1803,31 @@ function spokenResultMessage(
         "La transferencia fue enviada, pero no pude verificar el comprobante.",
       pending_confirmation:
         "Hay una transferencia esperando tu decisión. Confirmala o cancelala antes de enviar otra instrucción.",
+      // A policy refusal is definitive: the transfer did NOT happen and
+      // retrying the same thing will not change that. Never say it is temporary.
+      policy_rejected:
+        "La transferencia no se realizó: no cumple con las reglas de seguridad de la billetera, y repetirla no va a cambiar nada.",
+      no_pending_preview:
+        "No hay ninguna transferencia esperando confirmación.",
+      stale_preview:
+        "Esa transferencia ya no está vigente. Preparala de nuevo.",
+      recipient_revalidation_required:
+        "El destinatario cambió o ya no es válido. Elegilo de nuevo.",
+      broadcast_in_progress:
+        "La transferencia ya se está enviando. Esperá a que termine.",
+      // A wallet outage IS genuinely temporary, so here a retry is honest.
+      wallet_unavailable:
+        "La billetera no está disponible en este momento. Probá de nuevo en un rato.",
+      invalid_tool_result:
+        "No pude entender la respuesta de la billetera. Probá de nuevo.",
+      internal_error: "No pude completar la conversación.",
+      conversation_not_found:
+        "No encontré esta conversación. Empezá una nueva.",
+      // `safeErrorMessage` has no case for this code: it returns its generic
+      // default, so the Spanish mirrors the generic internal message.
+      conversation_forbidden: "No pude completar la conversación.",
+      stale_revision:
+        "La conversación cambió. Actualizá y probá de nuevo.",
     };
     return messages[result.code] ?? result.message;
   }
