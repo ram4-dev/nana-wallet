@@ -1,3 +1,5 @@
+import type { NotDispatchedCause } from '../wallet/provider.js';
+
 export type ConversationErrorCode =
   | 'conversation_not_found'
   | 'conversation_forbidden'
@@ -131,4 +133,26 @@ export function errorFromCode(code: ConversationErrorCode, cause?: unknown): Con
                         : code === 'wallet_unavailable' ? 'wallet.unavailable'
                           : 'conversation.internal';
   return conversationError(code, key, safeErrorMessage(code), cause);
+}
+
+/**
+ * The ONE cause→code mapper for a provider-declared non-dispatch.
+ *
+ * It lives here with the error vocabulary rather than with the conversation
+ * service so the agent definition can reach it without importing the service.
+ * `invalid_request` is OUR malformed request, so it reports `internal_error`
+ * rather than the wallet-facing `invalid_tool_result`: blaming the wallet for a
+ * request we built would be a second inaccurate message about someone's money.
+ */
+export function notDispatchedErrorCode(
+  cause: NotDispatchedCause,
+): ConversationErrorCode {
+  switch (cause) {
+    case 'policy_rejected':
+      return 'policy_rejected';
+    case 'invalid_request':
+      return 'internal_error';
+    case 'provider_unavailable':
+      return 'wallet_unavailable';
+  }
 }

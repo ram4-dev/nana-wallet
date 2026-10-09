@@ -18,6 +18,7 @@ import type {
 import { appendMessage, type ConversationSession } from "./session-state.js";
 import {
   errorFromCode,
+  notDispatchedErrorCode,
   safeErrorMessage,
   type ConversationErrorCode,
 } from "./errors.js";
@@ -386,6 +387,38 @@ function transferResultMessage(
   return TRANSFER_RESULT_COPY[language][outcome];
 }
 
+/**
+ * The chat-visible progress labels (`WalletProgress.label`) shown while the
+ * agent works.
+ *
+ * They follow the SESSION language for the same reason the result copy above
+ * does: the frontend renders `progress.label` verbatim into an otherwise
+ * Spanish chat and has no i18n layer of its own, so an English label with a
+ * Spanish fallback alongside it covers nothing. The English strings are the
+ * existing contract and must not change.
+ */
+const PROGRESS_LABELS = {
+  en: {
+    awaiting_confirmation: "Transfer preview ready for confirmation",
+    broadcasting: "Transfer is being broadcast.",
+    verifying: "Verifying the transaction.",
+    completed: "Transfer confirmed.",
+  },
+  es: {
+    awaiting_confirmation: "La transferencia está lista para que la confirmes.",
+    broadcasting: "Estoy enviando la transferencia.",
+    verifying: "Estoy verificando la transacción.",
+    completed: "La transferencia quedó confirmada.",
+  },
+} as const;
+
+function progressLabel(
+  phase: keyof (typeof PROGRESS_LABELS)["en"],
+  language: "es" | "en",
+): string {
+  return PROGRESS_LABELS[language][phase];
+}
+
 export function createWalletConversationService(
   dependencies: WalletConversationDependencies,
 ): WalletConversationService {
@@ -749,7 +782,7 @@ export function createWalletConversationService(
       }
       const withProgress = await setProgress(visible, {
         phase: "awaiting_confirmation",
-        label: "Transfer preview ready for confirmation",
+        label: progressLabel("awaiting_confirmation", visible.language),
       });
       yield* emit(stateEvent(withProgress));
       yield* emitSpoken(
@@ -1272,7 +1305,7 @@ export function createWalletConversationService(
       snapshot;
     const broadcastingState = await setProgress(broadcasting, {
       phase: "broadcasting",
-      label: "Transfer is being broadcast.",
+      label: progressLabel("broadcasting", broadcasting.language),
     });
     await publish(stateEvent(broadcastingState));
     await publishSpoken(
@@ -1385,15 +1418,14 @@ export function createWalletConversationService(
       transaction.transactionHash,
       transaction,
     );
-    const verifying = await setProgress(
+    const verifyingSource =
       (await dependencies.conversations.get(userId, conversationId)) ??
-        snapshot,
-      {
-        phase: "verifying",
-        transactionHash: transaction.transactionHash,
-        label: "Verifying the transaction.",
-      },
-    );
+      snapshot;
+    const verifying = await setProgress(verifyingSource, {
+      phase: "verifying",
+      transactionHash: transaction.transactionHash,
+      label: progressLabel("verifying", verifyingSource.language),
+    });
     await publish(stateEvent(verifying));
     await publishSpoken(
       narrateFinancialFact({
@@ -1440,15 +1472,14 @@ export function createWalletConversationService(
         result.message,
         dependencies.conversations,
       );
-      const completed = await setProgress(
+      const completedSource =
         (await dependencies.conversations.get(userId, conversationId)) ??
-          snapshot,
-        {
-          phase: "completed",
-          transactionHash: transaction.transactionHash,
-          label: "Transfer confirmed.",
-        },
-      );
+        snapshot;
+      const completed = await setProgress(completedSource, {
+        phase: "completed",
+        transactionHash: transaction.transactionHash,
+        label: progressLabel("completed", completedSource.language),
+      });
       await publish(stateEvent(completed));
       await publishSpoken(
         narrateFinancialFact({
@@ -1640,7 +1671,7 @@ export function createWalletConversationService(
         },
         progress: {
           phase: "awaiting_confirmation",
-          label: "Transfer preview ready for confirmation",
+          label: progressLabel("awaiting_confirmation", snapshot.language),
         },
       },
       snapshot.messages.length,
@@ -1847,24 +1878,6 @@ function valueForRender(value: string | readonly string[] | undefined): string {
   return typeof value === "string" ? value : (value?.[0] ?? "");
 }
 
-/**
- * Maps a provider-declared non-dispatch cause to the user-facing error code.
- * `invalid_request` is OUR malformed request, so it reports `internal_error`:
- * `invalid_tool_result` reads "The wallet returned an invalid transfer
- * result.", which blames the wallet for our own invariant violation.
- */
-function notDispatchedErrorCode(
-  cause: NotDispatchedCause,
-): ConversationErrorCode {
-  switch (cause) {
-    case "policy_rejected":
-      return "policy_rejected";
-    case "invalid_request":
-      return "internal_error";
-    case "provider_unavailable":
-      return "wallet_unavailable";
-  }
-}
 
 function errorResult(
   error: unknown,

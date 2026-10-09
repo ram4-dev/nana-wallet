@@ -12,6 +12,11 @@ import type { WalletProvider, TransferRequest } from '../wallet/provider.js';
 import { explorerUrlFor } from '../wallet/provider.js';
 import { decodeMcpText } from '../wdk/mcp-client.js';
 import type { WalletConversationService } from '../conversations/service.js';
+import {
+  notDispatchedErrorCode,
+  safeErrorMessage,
+  type ConversationErrorCode,
+} from '../conversations/errors.js';
 import type { ConversationRepository } from '../conversations/repository.js';
 import type { VoiceDecisionGate } from '../livekit/voice-decision-gate.js';
 import {
@@ -882,7 +887,23 @@ async function sendToken(input: SendTokenBroadcastInput, context: WalletAgentCon
   if (normalized.dryRun) return { preview: true, ...await context.wallet.previewTransfer(request) };
   const outcome = await context.wallet.broadcastTransfer(request);
   if (outcome.kind === 'submitted') return outcome.transaction;
-  return { error: outcome.kind === 'uncertain' ? 'broadcast_uncertain' : 'wallet_unavailable', message: outcome.reason };
+  // The provider states WHY it did not dispatch, and the two reasons need
+  // opposite copy: a policy refusal is permanent, an outage is temporary.
+  // `notDispatchedErrorCode` is the single cause→code mapper (shared with the
+  // conversation service); `safeErrorMessage` is the single localized copy.
+  const code: ConversationErrorCode =
+    outcome.kind === 'uncertain'
+      ? 'broadcast_uncertain'
+      : notDispatchedErrorCode(outcome.cause);
+  return {
+    error: code,
+    // This `message` is what the model is told to narrate, so it must be the
+    // localized safe copy and never the provider's internal diagnostic (which
+    // was previously narrated verbatim to a Spanish-speaking user).
+    message: safeErrorMessage(code, context.language),
+    // The diagnostic is not lost, it is just kept off the narrated message.
+    cause: outcome.reason,
+  };
 }
 
 async function validatePreviewRecipient(

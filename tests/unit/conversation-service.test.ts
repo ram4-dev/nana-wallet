@@ -27,6 +27,10 @@ function repositoryFixture(initialTransfer?: PendingTransfer, language: 'es' | '
     ...(initialTransfer ? { pendingTransfer: { ...initialTransfer, previewId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } } : {}),
   };
   let transferStatus: 'previewed' | 'broadcasting' | 'submitted' | 'uncertain' | 'confirmed' | 'reverted' | 'receipt_invalid' | 'cancelled' | undefined = initialTransfer ? 'previewed' : undefined;
+  // Every chat-visible progress label the service publishes, in order. The
+  // frontend renders `WalletProgress.label` verbatim, so this is the only
+  // observable seam for the label language.
+  const progressLabels: string[] = [];
 
   const repository = {
     async create() { return snapshot; },
@@ -38,6 +42,7 @@ function repositoryFixture(initialTransfer?: PendingTransfer, language: 'es' | '
       snapshot.messages.push(message);
     },
     async saveSnapshot(_requestUserId: string, incoming: ConversationSnapshot, _count: number) {
+      if (incoming.progress?.label) progressLabels.push(incoming.progress.label);
       snapshot = {
         ...incoming,
         pendingTransfer: incoming.pendingTransfer
@@ -53,6 +58,7 @@ function repositoryFixture(initialTransfer?: PendingTransfer, language: 'es' | '
       return snapshot;
     },
     async setProgress(_requestUserId: string, _id: string, progress: WalletProgress) {
+      if (progress.label) progressLabels.push(progress.label);
       snapshot = { ...snapshot, progress, revision: snapshot.revision + 1 };
       return snapshot;
     },
@@ -90,6 +96,7 @@ function repositoryFixture(initialTransfer?: PendingTransfer, language: 'es' | '
     async acquireLiveLease() { throw new Error('not used'); },
     async renewLiveLease() { return false; },
     async releaseLiveLease() { return false; },
+    progressLabels,
   };
 
   return repository as unknown as ConversationRepository;
@@ -582,6 +589,95 @@ describe('WalletConversationService', () => {
       // An outage is temporary, so inviting a retry there is honest.
       expect(outage).not.toBe(refusal);
       expect(outage).toMatch(RETRY_GUIDANCE);
+    });
+  });
+
+  describe('progress labels follow the session language', () => {
+    // The frontend renders `WalletProgress.label` verbatim into an otherwise
+    // Spanish chat and has no i18n layer of its own, so the backend must send
+    // the SESSION language. These strings are pinned by hand on purpose: a
+    // silent English label here is the defect these tests exist to catch.
+    const ENGLISH_LABELS = [
+      'Transfer preview ready for confirmation',
+      'Transfer is being broadcast.',
+      'Verifying the transaction.',
+      'Transfer confirmed.',
+    ];
+    const SPANISH_LABELS = [
+      'La transferencia está lista para que la confirmes.',
+      'Estoy enviando la transferencia.',
+      'Estoy verificando la transacción.',
+      'La transferencia quedó confirmada.',
+    ];
+    const conversationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+    function labelsOf(repository: ConversationRepository): string[] {
+      return (repository as unknown as { progressLabels: string[] })
+        .progressLabels;
+    }
+
+    /** Drive the full preview → confirm flow and return what the chat showed. */
+    async function transferLabels(language: 'es' | 'en'): Promise<string[]> {
+      const repository = repositoryFixture(undefined, language);
+      const service = createWalletConversationService({
+        conversations: repository,
+        wallet: walletFixture(),
+      });
+      // Both turns stay in the session language, so the language detector
+      // cannot flip the session mid-transfer.
+      const preview =
+        language === 'es' ? 'Enviar 10 USDT a' : 'Send 10 USDT to';
+      const decision =
+        language === 'es' ? 'confirmar la transferencia' : 'confirm the transfer';
+
+      await service.handleTurn({ conversationId, userId, text: `${preview} ${recipient}` });
+      await service.handleTurn({ conversationId, userId, text: decision });
+
+      return labelsOf(repository);
+    }
+
+    it('publishes only Spanish labels while a Spanish user waits', async () => {
+      const labels = await transferLabels('es');
+
+      expect(labels).toEqual(SPANISH_LABELS);
+      // Belt and braces: no English label survived the flow.
+      for (const label of labels) expect(ENGLISH_LABELS).not.toContain(label);
+    });
+
+    it('keeps every English label byte-identical', async () => {
+      expect(await transferLabels('en')).toEqual(ENGLISH_LABELS);
+    });
+
+    it('localizes the native preview label the voice tool persists', async () => {
+      const repository = repositoryFixture(undefined, 'es');
+      const service = createWalletConversationService({
+        conversations: repository,
+        wallet: walletFixture(),
+      });
+
+      await service.persistNativePreview({
+        conversationId,
+        userId,
+        session: { id: conversationId } as never,
+        input: {
+          network: 'sepolia',
+          token: 'USDT',
+          to: recipient,
+          amount: '10',
+          wallet: 'agent-demo',
+          dryRun: true,
+        } as never,
+        output: {
+          preview: true,
+          network: 'sepolia',
+          token: 'USDT',
+          to: recipient,
+          amount: '10',
+          estimatedFee: '0.0003 ETH',
+        },
+      });
+
+      expect(labelsOf(repository)).toEqual([SPANISH_LABELS[0]]);
     });
   });
 
