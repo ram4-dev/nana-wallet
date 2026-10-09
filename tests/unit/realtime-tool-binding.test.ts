@@ -13,8 +13,8 @@ import { createVoiceDecisionGate } from '../../src/livekit/voice-decision-gate.j
 import { isCancellation, isConfirmation } from '../../src/livekit/resolution-phrases.js';
 
 const envBackup = new Map<string, string | undefined>();
-// These fixture cases are not about transfer policy. `undefined` means "delete",
-// so a stale ambient WDK_TOOLS_SOURCE cannot leak into the suite.
+// These fixture cases are not about transfer policy. The wallet triple is pinned
+// below so the suite never inherits an ambient value.
 //
 // The stack below is the demo-legacy EVM fixture world: its contact book holds
 // EVM addresses and it targets the sepolia/USDT fixture provider explicitly
@@ -23,7 +23,6 @@ const envBackup = new Map<string, string | undefined>();
 // seam closed). Moving this stack to the Solana world is the demo-removal unit's
 // job, not this pin's.
 const EVAL_ENV: Record<string, string | undefined> = {
-  WDK_TOOLS_SOURCE: undefined,
   WDK_WALLET_NAME: 'agent-demo',
   WDK_NETWORK: 'sepolia',
   WDK_TOKEN: 'USDT',

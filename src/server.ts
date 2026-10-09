@@ -128,9 +128,9 @@ function createPrivyIdentity(
 /**
  * `options.wallet` / `options.walletReads` are the wallet-injection seam: the
  * production composition builds both from the environment, and every suite that
- * needs a specific provider injects it here (or through `buildTestServer`) so it
- * no longer depends on `WDK_TOOLS_SOURCE`. Omitted options keep today's
- * environment-driven selection byte-for-byte.
+ * needs a specific provider injects it here (or through `buildTestServer`).
+ * Omitted options fall through to `createCoreDependencies`' fail-closed
+ * unavailable provider, never a silent fixture.
  */
 export function buildServer(options: {
   privyServer?: PrivyServerClient;

@@ -41,9 +41,8 @@ export function withLock<T>(work: () => Promise<T>): Promise<T> {
   return previous.then(work).finally(release);
 }
 
-/** Env vars that affect the agent config, WDK source, or recipient memory. */
+/** Env vars that affect the agent config or recipient memory. */
 const MANAGED_ENV = [
-  "WDK_TOOLS_SOURCE",
   "WDK_TOKEN",
   "WDK_NETWORK",
   "WDK_WALLET_NAME",
@@ -72,7 +71,6 @@ function applyDefaultEnv(): void {
   process.env.WDK_TOKEN = "USDT";
   process.env.WDK_NETWORK = "sepolia";
   process.env.WDK_WALLET_NAME = "agent-demo";
-  process.env.WDK_TOOLS_SOURCE = "fixture";
   process.env.RECIPIENT_MEMORY_ENABLED = "false";
   delete process.env.AGENT_RUNTIME;
 }

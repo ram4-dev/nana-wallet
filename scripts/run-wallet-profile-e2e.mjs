@@ -54,7 +54,6 @@ function backendEnv(overrides = {}) {
     ...process.env,
     DATABASE_URL,
     IDENTITY_PROVIDER: "demo",
-    WDK_TOOLS_SOURCE: "fixture",
     AGENT_RUNTIME: "deterministic",
     RECIPIENT_MEMORY_ENABLED: "false",
     PORT: "3124",

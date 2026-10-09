@@ -8,7 +8,7 @@ vi.setConfig({ testTimeout: 15_000 });
 // otherwise, so they are pinned before the server import (dotenv evaluates that
 // file during the import chain and src/api/wallet.ts freezes NETWORK at module
 // import time). The wallet provider comes from the fixture doubles injected by
-// buildTestServer, not from WDK_TOOLS_SOURCE.
+// buildTestServer.
 vi.hoisted(() => {
   process.env.WDK_NETWORK = 'sepolia';
   process.env.WDK_TOKEN = 'USDT';

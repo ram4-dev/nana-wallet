@@ -25,13 +25,6 @@ import { NANA_REALTIME_INSTRUCTIONS, runRealtimeDialogue } from './session.js';
 import { synthesizeSpeech } from '../tts/providers.js';
 import { matrixScenarios, type MatrixRunResult, type MatrixAssertionResult, type MatrixScenario } from './scenarios.js';
 
-// Live fixture-stack environment: the production transfer path reads the WDK
-// source at decision time, so it must be present before any scenario runs. In an
-// eval context (evalite, not vitest hooks) we set it once at module top; no
-// restore is needed. Transfer enforcement itself is owned by the provider policy
-// attached to the wallet.
-process.env.WDK_TOOLS_SOURCE = 'live';
-
 type TaskOutput = {
   scenarioId: string;
   run: MatrixRunResult;

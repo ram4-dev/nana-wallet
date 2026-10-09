@@ -25,12 +25,8 @@ function context(): WalletAgentContext {
 }
 
 describe("wallet agent definition", () => {
-  const previousSource = process.env.WDK_TOOLS_SOURCE;
-
   afterEach(() => {
     resetSessionStore();
-    if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousSource;
   });
 
   it("owns the existing prompt and stable wallet tool catalog", () => {

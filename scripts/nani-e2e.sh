@@ -115,20 +115,6 @@ grep -q '^RECIPIENT_MEMORY_ENABLED=true' .env || printf '\nRECIPIENT_MEMORY_ENAB
 grep -q '^CORS_ORIGINS=' .env || printf '\nCORS_ORIGINS=https://nana-wallet.localhost\n' >> .env
 grep -q '^LIVEKIT_AGENT_NAME=' .env || printf '\nLIVEKIT_AGENT_NAME=nani-agent\n' >> .env
 
-# --- 3b. WDK wallet mode validation -----------------------------------------
-wdk_source="$(strip_quotes "$(grep -E '^WDK_TOOLS_SOURCE=' .env | cut -d= -f2- | tail -1)")"
-if [[ "$wdk_source" == "live" ]]; then
-  # Live mode needs machine-local wallet config; catch it here instead of letting
-  # every transfer reach the provider with the template default wallet.
-  wallet_name="$(strip_quotes "$(grep -E '^WDK_WALLET_NAME=' .env | cut -d= -f2- | tail -1)")"
-  if [[ "$wallet_name" == "agent-demo" ]]; then
-    fail "WDK_TOOLS_SOURCE=live requires a machine-local WDK_WALLET_NAME in .env (template default 'agent-demo' — set the wallet created on this machine)."
-  fi
-  log "WDK live mode: wallet '${wallet_name}' (transfer enforcement is owned by the provider policy)."
-else
-  log "WDK fixture mode (safe default) — set WDK_TOOLS_SOURCE=live in .env for a real Sepolia wallet."
-fi
-
 # --- 4. seed demo contacts when empty --------------------------------------
 seeded=$(docker exec "$DB_CONTAINER" psql -U postgres -d postgres -tAc \
   "SELECT count(*) FROM public.recipients" 2>/dev/null || echo 0)

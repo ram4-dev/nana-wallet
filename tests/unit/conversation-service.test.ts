@@ -106,11 +106,9 @@ async function events(service: ReturnType<typeof createWalletConversationService
 
 describe('WalletConversationService', () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
-  const previousSource = process.env.WDK_TOOLS_SOURCE;
 
   beforeEach(() => {
     process.env.AGENT_RUNTIME = 'deterministic';
-    process.env.WDK_TOOLS_SOURCE = 'fixture';
   });
 
   it('streams a canonical preview through the injected wallet provider', async () => {
@@ -165,11 +163,10 @@ describe('WalletConversationService', () => {
 
   it('no longer applies a local transfer policy: the provider is reached with no policy env vars', async () => {
     // The local transfer-policy gate (with its two policy environment
-    // variables) was deleted; the provider policy attached to the
-    // wallet is the single enforcement point. On the standalone solana-devnet
-    // source with no local policy configured the transfer must now reach the
-    // wallet provider instead of being rejected before any side effect.
-    process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
+    // variables) was deleted; the provider policy attached to the wallet is the
+    // single enforcement point. With no local policy configured the transfer
+    // must reach the wallet provider instead of being rejected before any side
+    // effect.
     const repository = repositoryFixture();
     const wallet = walletFixture();
     const preview = vi.spyOn(wallet, 'previewTransfer');
@@ -284,24 +281,15 @@ describe('WalletConversationService', () => {
       afterEach(() => {
         if (previousRuntime === undefined) delete process.env.AGENT_RUNTIME;
         else process.env.AGENT_RUNTIME = previousRuntime;
-        if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-        else process.env.WDK_TOOLS_SOURCE = previousSource;
       });
     });
 
     describe('WalletConversationService.previewTransfer', () => {
-      const previousSource = process.env.WDK_TOOLS_SOURCE;
       const previousNetwork = process.env.WDK_NETWORK;
       const previousToken = process.env.WDK_TOKEN;
       const previousWallet = process.env.WDK_WALLET_NAME;
 
-      beforeEach(() => {
-        process.env.WDK_TOOLS_SOURCE = 'fixture';
-      });
-
       afterEach(() => {
-        if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-        else process.env.WDK_TOOLS_SOURCE = previousSource;
         if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
         else process.env.WDK_NETWORK = previousNetwork;
         if (previousToken === undefined) delete process.env.WDK_TOKEN;
@@ -391,7 +379,6 @@ describe('WalletConversationService', () => {
       });
 
       it('routes a versioned Solana devnet contact through an exact native SOL preview without broadcasting', async () => {
-        process.env.WDK_TOOLS_SOURCE = 'fixture';
         process.env.WDK_NETWORK = 'sepolia';
         process.env.WDK_TOKEN = 'USDT';
         process.env.WDK_WALLET_NAME = 'privy-user';

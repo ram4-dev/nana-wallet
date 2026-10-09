@@ -254,9 +254,9 @@ export type BalanceReadConfig = {
 
 /**
  * Server-side configuration (WP-009). BALANCE_READ_SOURCE defaults to
- * `fixture`; `rpc` demands BALANCE_RPC_URL. Values are never printed. Nothing
- * here can be chosen from a public HTTP surface, and WDK_TOOLS_SOURCE is
- * untouched.
+ * `fixture`; `rpc` demands BALANCE_RPC_URL. Values are never printed, and
+ * nothing here can be chosen from a public HTTP surface: both the source and
+ * the RPC URL are read from the process environment only.
  */
 export function readBalanceReadConfig(
   environment: NodeJS.ProcessEnv = process.env,

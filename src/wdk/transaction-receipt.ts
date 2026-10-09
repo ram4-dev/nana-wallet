@@ -232,7 +232,7 @@ export const immediateTransactionReceiptWaiter: TransactionReceiptWaiter = async
 };
 
 // The `live`/WDK provider family (and its Sepolia receipt polling branch) was
-// removed with the WDK_TOOLS_SOURCE switch. Every surviving provider settles
-// finality through an injected waiter or this immediate fixture outcome.
+// removed. Every surviving provider settles finality through an injected waiter
+// or this immediate fixture outcome.
 export const defaultTransactionReceiptWaiter: TransactionReceiptWaiter = (transaction, options) =>
   immediateTransactionReceiptWaiter(transaction, options);

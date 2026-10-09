@@ -19,7 +19,7 @@ import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
  * service consults the server-owned gate, claims the ledger, wins the
  * single-winner attempt, and resolves internally (no explicit UI confirm) —
  * each turn completes covered and broadcasts exactly once. No live
- * credentials: `WDK_TOOLS_SOURCE=fixture` default.
+ * credentials required.
  */
 
 const userId = "11111111-1111-4111-8111-111111111111";
@@ -254,10 +254,8 @@ describe("grant-covered E2E: typed + voice entry points (phase 5.4)", () => {
   it("covered typed turn + covered voice transcript: both skip confirmation, gate/ledger/broadcast per turn", async () => {
     const previous = {
       runtime: process.env.AGENT_RUNTIME,
-      source: process.env.WDK_TOOLS_SOURCE,
     };
     process.env.AGENT_RUNTIME = "deterministic";
-    process.env.WDK_TOOLS_SOURCE = "fixture";
     try {
       const { repository, events, getSnapshot } = sharedRepository();
       const { service, broadcast, gateEvaluate, ledgerClaim } =
@@ -339,8 +337,6 @@ describe("grant-covered E2E: typed + voice entry points (phase 5.4)", () => {
     } finally {
       if (previous.runtime === undefined) delete process.env.AGENT_RUNTIME;
       else process.env.AGENT_RUNTIME = previous.runtime;
-      if (previous.source === undefined) delete process.env.WDK_TOOLS_SOURCE;
-      else process.env.WDK_TOOLS_SOURCE = previous.source;
     }
   });
 });

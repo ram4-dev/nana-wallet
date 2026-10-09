@@ -154,9 +154,8 @@ export function createConfiguredWalletForUser(
 /**
  * Wallet-injection seam: `createCoreDependencies` accepts an injected
  * `wallet`/`walletReads` pair so the HTTP server (and the test helper over it)
- * can supply a specific provider. The `WDK_TOOLS_SOURCE` switch and the wallet
- * provider selection it drove are GONE — production has exactly one wallet
- * configuration, the per-user Privy path on Solana devnet — so the defaults
+ * can supply a specific provider. Production has exactly one wallet
+ * configuration — the per-user Privy path on Solana devnet — so the defaults
  * below are the doubles tests inject; nothing else selects a provider.
  *
  * A caller that injects neither gets the fail-closed

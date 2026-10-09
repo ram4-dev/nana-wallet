@@ -62,7 +62,6 @@ describe("createWorkerDependencies memory wiring", () => {
   beforeEach(() => {
     h.capturedServiceDeps = undefined;
     vi.clearAllMocks();
-    delete process.env.WDK_TOOLS_SOURCE;
     delete process.env.CONVERSATION_MAX_INPUT_TOKENS;
     delete process.env.RECIPIENT_MEMORY_ENABLED;
     delete process.env.DATABASE_URL;

@@ -108,11 +108,9 @@ describe('recipient-memory release flow', () => {
     const previousToken = process.env.WDK_TOKEN;
     const previousNetwork = process.env.WDK_NETWORK;
     const previousWallet = process.env.WDK_WALLET_NAME;
-    const previousToolsSource = process.env.WDK_TOOLS_SOURCE;
     process.env.WDK_TOKEN = 'usdt-test';
     process.env.WDK_NETWORK = 'sepolia';
     process.env.WDK_WALLET_NAME = 'agent-demo';
-    process.env.WDK_TOOLS_SOURCE = 'fixture';
 
     try {
       const session = createSession();
@@ -175,8 +173,6 @@ describe('recipient-memory release flow', () => {
       else process.env.WDK_NETWORK = previousNetwork;
       if (previousWallet === undefined) delete process.env.WDK_WALLET_NAME;
       else process.env.WDK_WALLET_NAME = previousWallet;
-      if (previousToolsSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-      else process.env.WDK_TOOLS_SOURCE = previousToolsSource;
       resetSessionStore();
     }
   });

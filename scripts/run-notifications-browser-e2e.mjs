@@ -79,7 +79,6 @@ async function main() {
       cwd: ROOT,
       env: {
         DATABASE_URL,
-        WDK_TOOLS_SOURCE: "fixture",
         AGENT_RUNTIME: "deterministic",
         IDENTITY_PROVIDER: "demo",
         NOTIFICATIONS_RECONCILIATION_ENABLED: "false",

@@ -3,8 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 // Hermetic: the network and token the health contract asserts come from the
 // ambient .env otherwise, so they are pinned before the server import (dotenv
 // evaluates that file during the import chain). The wallet provider is NOT
-// pinned here: buildTestServer injects the fixture doubles the removed
-// `WDK_TOOLS_SOURCE=fixture` pin used to select.
+// pinned here: buildTestServer injects the fixture doubles.
 //
 // The server is built through the injected-identity fixture: production identity
 // is always Privy, so a bare `buildServer()` would demand Privy credentials, and

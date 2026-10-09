@@ -51,7 +51,6 @@ const DB_NAME = "wdk_agent";
 const BACKEND_ENV = {
   DATABASE_URL:
     "postgresql://postgres@127.0.0.1:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions",
-  WDK_TOOLS_SOURCE: "fixture",
   AGENT_RUNTIME: "deterministic",
   RECIPIENT_MEMORY_ENABLED: "true",
   IDENTITY_PROVIDER: "demo",

@@ -3,10 +3,10 @@ import { createHash } from "node:crypto";
 /**
  * PEW-002/003/007/011: Privy server-API boundary for embedded wallets.
  *
- * Only the fixture implementation is built here. The `live` implementation the
- * removed `WDK_TOOLS_SOURCE` switch could select is gone: it never reached a
- * real RPC (every method failed closed behind WU-E1 proof), so it only ever
- * offered a fail-closed facade that the fixture already stands in for.
+ * Only the fixture implementation is built here. The `live` implementation is
+ * gone: it never reached a real RPC (every method failed closed behind WU-E1
+ * proof), so it only ever offered a fail-closed facade that the fixture
+ * already stands in for.
  *
  * The fixture implementation is deterministic per-user so the full backend,
  * RLS and signing flow can be exercised without a live Privy app or test funds.
@@ -222,9 +222,8 @@ export function deterministicHash(input: string): string {
 
 /**
  * Builds the configured Privy client. The fixture client is the only
- * implementation; the `live` variant went with the removed `WDK_TOOLS_SOURCE`
- * switch. `environment` is retained for signature compatibility but no longer
- * selects an implementation.
+ * implementation; the `live` variant is gone. `environment` is retained for
+ * signature compatibility but no longer selects an implementation.
  */
 export function createPrivyWalletApiClient(
   _environment: NodeJS.ProcessEnv = process.env,

@@ -50,7 +50,7 @@ export function composeConfig(provider, env) {
   const ref = name => '${' + name + '}';
   const origin = `https://${env.NANA_HOSTNAME}.localhost`;
   const environment = {
-    HOST: '0.0.0.0', PORT: '3000', WDK_TOOLS_SOURCE: env.WDK_TOOLS_SOURCE,
+    HOST: '0.0.0.0', PORT: '3000',
     WDK_NETWORK: env.WDK_NETWORK, WDK_TOKEN: env.WDK_TOKEN, WDK_WALLET_NAME: env.WDK_WALLET_NAME,
     DATABASE_URL: 'postgresql://postgres@db:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions',
     RECIPIENT_MEMORY_ENABLED: 'true',
