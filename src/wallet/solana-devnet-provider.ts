@@ -875,13 +875,34 @@ export function createPrivySignAndSendClient(
 }
 
 /**
- * A policy denial (403) is a definitive, pre-dispatch rejection: nothing left
- * our process, so the caller may report `not_dispatched`. Every other failure —
- * transport, timeout, 5xx — stays ambiguous so reconciliation, never an
- * in-flight retry, governs the next step.
+ * A policy denial is a definitive, pre-dispatch rejection: nothing left our
+ * process, so the caller may report `not_dispatched`. Every other failure —
+ * transport, timeout, 5xx, and any unrecognised 4xx — stays ambiguous so
+ * reconciliation, never an in-flight retry, governs the next step.
+ *
+ * Privy signals the denial in two different shapes and both must be recognised:
+ *   - HTTP 403 (`PermissionDeniedError`) when the authorization context itself
+ *     is refused;
+ *   - HTTP 400 carrying the body code `policy_violation` when the wallet policy
+ *     rejects the dispatch. Observed verbatim against the Solana wallet:
+ *       400 {"error":"RPC request denied due to policy violation","code":"policy_violation"}
+ * Matching only the 403 classified every real policy denial as an unknown
+ * dispatch outcome, telling the user we could not tell whether their money moved
+ * when Privy had already refused before signing anything.
  */
+function isPolicyDenial(error: unknown): boolean {
+  if (!(error instanceof APIError)) return false;
+  if (error.status === 403) return true;
+  const body = error.error;
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as { code?: unknown }).code === "policy_violation"
+  );
+}
+
 function asDispatchFailure(error: unknown): unknown {
-  if (error instanceof APIError && error.status === 403) {
+  if (isPolicyDenial(error)) {
     const denial = new Error("Privy denied the Solana dispatch by policy.");
     (denial as { definitive?: boolean }).definitive = true;
     return denial;

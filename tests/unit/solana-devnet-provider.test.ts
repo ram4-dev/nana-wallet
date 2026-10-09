@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { Transaction } from "@solana/web3.js";
 import {
   APIConnectionTimeoutError,
+  APIError,
   formatRequestForAuthorizationSignature,
   generateP256KeyPair,
   PermissionDeniedError,
@@ -736,6 +737,68 @@ describe("Privy Solana dispatch through the official SDK (S4)", () => {
     await expect(p.broadcastTransfer(REQUEST)).resolves.toMatchObject({
       kind: "not_dispatched",
     });
+  });
+
+  // The live endpoint answers a policy denial with HTTP 400 and the body code
+  // `policy_violation` — NOT the SDK's 403 `PermissionDeniedError`. Captured
+  // verbatim from a real call against the Solana wallet on 2026-10-09:
+  //   400 {"error":"RPC request denied due to policy violation","code":"policy_violation"}
+  // Recognising only 403 therefore classified every real denial as an unknown
+  // dispatch outcome, which tells the user we do not know whether their money
+  // moved when Privy had already refused before signing anything.
+  const realPolicyDenial = () =>
+    new APIError(
+      400,
+      {
+        error: "RPC request denied due to policy violation",
+        code: "policy_violation",
+      },
+      undefined,
+      new Headers(),
+    );
+
+  it("treats Privy's real 400 policy_violation body as a definitive denial", async () => {
+    const { sdk, respond } = fakeSolanaSdk();
+    const client = sdkClient(sdk);
+    respond({ kind: "error", error: realPolicyDenial() });
+
+    await expect(
+      client.signAndSend(
+        WALLET_ID,
+        SOLANA_DEVNET_CAIP2,
+        unsignedBase64(),
+        "preview-1",
+      ),
+    ).rejects.toMatchObject({ definitive: true });
+  });
+
+  it("reports Privy's real 400 policy denial as not_dispatched, never uncertain", async () => {
+    const { sdk, respond } = fakeSolanaSdk();
+    respond({ kind: "error", error: realPolicyDenial() });
+    const p = provider(rpcDouble(), sdkClient(sdk));
+
+    await expect(p.broadcastTransfer(REQUEST)).resolves.toMatchObject({
+      kind: "not_dispatched",
+    });
+  });
+
+  it("does not widen definitive to a 400 that is not a policy denial", async () => {
+    const { sdk, respond } = fakeSolanaSdk();
+    respond({
+      kind: "error",
+      error: new APIError(
+        400,
+        { error: "unexpected upstream failure", code: "upstream_error" },
+        undefined,
+        new Headers(),
+      ),
+    });
+    const p = provider(rpcDouble(), sdkClient(sdk));
+
+    // An unrecognised 400 stays ambiguous: reconciliation, never a silent
+    // retry, governs the next step.
+    const outcome = await p.broadcastTransfer(REQUEST);
+    expect(outcome.kind).toBe("uncertain");
   });
 
   it("keeps an ambiguous SDK failure uncertain and asks for reconciliation by reference", async () => {
