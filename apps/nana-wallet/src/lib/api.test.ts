@@ -146,7 +146,7 @@ describe("Privy wallet data", () => {
       ],
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      "/v1/wallet/balance?network=arc-testnet&token=USDC",
+      "/v1/wallet/balance?network=solana-devnet&token=USDC",
     );
   });
 

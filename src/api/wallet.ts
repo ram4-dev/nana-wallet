@@ -17,8 +17,11 @@ import {
   type WalletTransaction,
 } from "../contracts/http.js";
 
-const NETWORK = process.env.WDK_NETWORK ?? "sepolia";
-const WALLET = process.env.WDK_WALLET_NAME ?? "agent-demo";
+// Solana devnet and privy-user are the only network and wallet name the product
+// serves. Read lazily for the same reason the health route does: module-level
+// constants froze the ambient .env at import time.
+const NETWORK = () => process.env.WDK_NETWORK ?? "solana-devnet";
+const WALLET = () => process.env.WDK_WALLET_NAME ?? "privy-user";
 
 export function normalizeWalletBalance(
   rawAddress: unknown,
@@ -205,7 +208,7 @@ export async function registerWalletRoutes(
     network: string,
   ): Promise<{ provider: WalletProvider; wallet: string }> => {
     if (!dependencies.resolveUserId) {
-      return { provider: dependencies.wallet, wallet: WALLET };
+      return { provider: dependencies.wallet, wallet: WALLET() };
     }
     const userId = await dependencies.resolveUserId(request);
     return {
@@ -215,12 +218,12 @@ export async function registerWalletRoutes(
             walletChainFamilyForNetwork(network),
           )
         : dependencies.wallet,
-      wallet: dependencies.walletForUser ? userId : WALLET,
+      wallet: dependencies.walletForUser ? userId : WALLET(),
     };
   };
   const defaultNetwork = dependencies.walletForUser
     ? getWalletAgentConfig().network
-    : NETWORK;
+    : NETWORK();
   app.get(
     "/v1/wallet/address",
     async (

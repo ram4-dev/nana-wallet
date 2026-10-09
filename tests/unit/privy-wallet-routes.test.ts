@@ -157,25 +157,28 @@ describe("Privy user-scoped wallet HTTP routes", () => {
   it("returns each authenticated user's Arc address and real RPC balance", async () => {
     const { app, fixtureBalance } = await createApp();
     try {
+      // This case exists to exercise the Arc/EVM provider family, so it names
+      // the network it targets instead of inheriting the configured default —
+      // which is Solana and rejects these Arc wallets.
       const [addressA, balanceA, addressB, balanceB] = await Promise.all([
         app.inject({
           method: "GET",
-          url: "/v1/wallet/address",
+          url: "/v1/wallet/address?network=arc-testnet",
           headers: { authorization: "Bearer user-a" },
         }),
         app.inject({
           method: "GET",
-          url: "/v1/wallet/balance",
+          url: "/v1/wallet/balance?network=arc-testnet",
           headers: { authorization: "Bearer user-a" },
         }),
         app.inject({
           method: "GET",
-          url: "/v1/wallet/address",
+          url: "/v1/wallet/address?network=arc-testnet",
           headers: { authorization: "Bearer user-b" },
         }),
         app.inject({
           method: "GET",
-          url: "/v1/wallet/balance",
+          url: "/v1/wallet/balance?network=arc-testnet",
           headers: { authorization: "Bearer user-b" },
         }),
       ]);

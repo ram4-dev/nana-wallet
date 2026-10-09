@@ -4,16 +4,15 @@ export type WalletAgentConfig = {
     token: string;
 };
 
+// Solana devnet is the only network, SOL the only token, and privy-user the
+// only wallet name: the identity-conditioned defaults collapse into constants.
+// The WDK_* variables stay overridable here because the boot guards and the
+// HTTP read routes still read them; a later work unit owns removing them.
 export function getWalletAgentConfig(): WalletAgentConfig {
-    const privyUserWallet = process.env.IDENTITY_PROVIDER === "privy";
     return {
-        wallet:
-            process.env.WDK_WALLET_NAME ??
-            (privyUserWallet ? "privy-user" : "agent-demo"),
-        network:
-            process.env.WDK_NETWORK ??
-            (privyUserWallet ? "arc-testnet" : "sepolia"),
-        token: process.env.WDK_TOKEN ?? (privyUserWallet ? "USDC" : "USDT"),
+        wallet: process.env.WDK_WALLET_NAME ?? "privy-user",
+        network: process.env.WDK_NETWORK ?? "solana-devnet",
+        token: process.env.WDK_TOKEN ?? "SOL",
     };
 }
 

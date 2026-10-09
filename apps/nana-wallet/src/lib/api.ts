@@ -371,7 +371,7 @@ export const api = {
       return request<WalletSummary>("/v1/wallet/summary");
     }
     const balance = await rawConversationRequest<WalletBalanceResponse>(
-      "/v1/wallet/balance?network=arc-testnet&token=USDC",
+      "/v1/wallet/balance?network=solana-devnet&token=USDC",
       {},
     );
     const money = {
@@ -397,7 +397,7 @@ export const api = {
   getMovements: async (params: { cursor?: string; limit?: number } = {}) => {
     if (isPrivyIdentityProvider()) {
       const history = await rawConversationRequest<WalletHistoryResponse>(
-        "/v1/wallet/history?network=arc-testnet&token=USDC",
+        "/v1/wallet/history?network=solana-devnet&token=USDC",
         {},
       );
       const offset = Number(params.cursor ?? "0");
@@ -454,7 +454,7 @@ export const api = {
   > => {
     if (!isPrivyIdentityProvider()) return [];
     const arc = await rawConversationRequest<WalletBalanceResponse>(
-      "/v1/wallet/balance?network=arc-testnet&token=USDC",
+      "/v1/wallet/balance?network=solana-devnet&token=USDC",
       {},
     );
     const solana = await rawConversationRequest<WalletBalanceResponse>(

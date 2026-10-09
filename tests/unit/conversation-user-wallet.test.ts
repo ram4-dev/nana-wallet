@@ -114,7 +114,7 @@ describe("conversation per-user wallet selection", () => {
       text: "¿Cuál es mi saldo?",
     });
 
-    expect(resolveWallet).toHaveBeenCalledWith(USER_ID, "ethereum");
+    expect(resolveWallet).toHaveBeenCalledWith(USER_ID, "solana");
     expect(fixtureBalance).not.toHaveBeenCalled();
     expect(JSON.stringify(result)).not.toContain("42.5");
     expect(result.status).toBe("error");

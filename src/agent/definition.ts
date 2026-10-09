@@ -150,7 +150,7 @@ export type SendTokenInput = z.infer<typeof internalSendTokenInputSchema>;
 export type SendTokenBroadcastInput = SendTokenInput & { previewId?: string };
 
 /** Default network for a shared read tool that omits `network`. */
-export const DEFAULT_READ_NETWORK = 'arc-testnet';
+export const DEFAULT_READ_NETWORK = 'solana-devnet';
 
 /**
  * Guarded-wrapper schema: accepts BOTH the model-facing preview-only shape and

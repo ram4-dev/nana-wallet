@@ -2,12 +2,11 @@ import type { FastifyInstance } from "fastify";
 import type { HealthResponse } from "../contracts/http.js";
 import type { WalletProvider } from "../wallet/provider.js";
 
-const NETWORK = () =>
-  process.env.WDK_NETWORK ??
-  (process.env.IDENTITY_PROVIDER === "privy" ? "solana-devnet" : "sepolia");
-const WALLET = () =>
-  process.env.WDK_WALLET_NAME ??
-  (process.env.IDENTITY_PROVIDER === "privy" ? "privy-user" : "agent-demo");
+// Solana devnet and privy-user are the only network and wallet name the product
+// serves, so the former identity-conditioned default collapses to a constant.
+// WDK_NETWORK / WDK_WALLET_NAME stay as the explicit override.
+const NETWORK = () => process.env.WDK_NETWORK ?? "solana-devnet";
+const WALLET = () => process.env.WDK_WALLET_NAME ?? "privy-user";
 // Read lazily: module-level constants froze the ambient .env at import time and
 // made the health contract depend on dotenv evaluation order (hermetic tests pin
 // the env before building the server).

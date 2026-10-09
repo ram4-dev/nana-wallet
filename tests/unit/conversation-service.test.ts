@@ -121,7 +121,7 @@ describe('WalletConversationService', () => {
     const streamed = await events(service, { conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
     expect(streamed).toContainEqual(expect.objectContaining({ type: 'spoken-segment', reason: 'started' }));
     expect(streamed).toContainEqual(expect.objectContaining({ type: 'spoken-segment', reason: 'decision' }));
-    expect(streamed).toContainEqual(expect.objectContaining({ type: 'turn-completed', result: expect.objectContaining({ status: 'confirmation_required', preview: expect.objectContaining({ recipient, amount: '10', token: 'USDT' }) }) }));
+    expect(streamed).toContainEqual(expect.objectContaining({ type: 'turn-completed', result: expect.objectContaining({ status: 'confirmation_required', preview: expect.objectContaining({ recipient, amount: '10', token: 'SOL' }) }) }));
   });
 
   it('clarifies an incomplete financial turn before invoking the provider', async () => {
@@ -327,6 +327,10 @@ describe('WalletConversationService', () => {
         recipientVersion: 2,
       };
 
+      // A versioned contact of the only network the product serves: the demo
+      // path resolves the configured network (solana-devnet) for a contact that
+      // declares none, and claim-time revalidation requires the contact's
+      // address and network to be valid for it.
       const memoryThatResolves = () => ({
         userId,
         service: {
@@ -334,12 +338,13 @@ describe('WalletConversationService', () => {
             id: recipientId,
             userId,
             version: 2,
-            address: recipient,
+            address: solanaRecipient,
             name: 'Lucas Gutiérrez',
             normalizedName: 'lucas gutiérrez',
             description: 'Amigo del equipo',
             status: 'active',
             embeddingModelRevision: 'rev',
+            network: 'solana-devnet',
           }),
         },
       } as never);
@@ -361,7 +366,7 @@ describe('WalletConversationService', () => {
         expect(result).toMatchObject({
           status: 'confirmation_required',
           message: expect.stringContaining('Lucas Gutiérrez'),
-          preview: { recipient, amount: '10', token: 'USDT' },
+          preview: { recipient: solanaRecipient, amount: '10', token: 'SOL' },
         });
         expect(published).toContainEqual(expect.objectContaining({ type: 'state-revision' }));
       });

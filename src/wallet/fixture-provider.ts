@@ -1,5 +1,7 @@
+import { getWalletAgentConfig, type WalletAgentConfig } from '../agent/instructions.js';
 import type { TransactionResult, TransferPreview } from '../contracts/http.js';
 import { immediateTransactionReceiptWaiter } from '../wdk/transaction-receipt.js';
+import { explorerUrlFor } from './provider.js';
 import type {
   BroadcastOutcome,
   FinalityOutcome,
@@ -25,6 +27,16 @@ export class FixtureWalletProvider implements WalletProvider {
   public readonly id = 'fixture';
   public readonly mode = 'fixture' as const;
 
+  /**
+   * The fixture is the test double for the wallet path, so it reports the same
+   * wallet/network/token triple the product serves, read from the same source as
+   * production at call time. Hardcoded identity constants drifted from the agent
+   * config once and must never be able to do so again.
+   */
+  private get config(): WalletAgentConfig {
+    return getWalletAgentConfig();
+  }
+
   public constructor(
     private readonly testOptions: FixtureWalletProviderTestOptions = {},
   ) {
@@ -41,11 +53,11 @@ export class FixtureWalletProvider implements WalletProvider {
   }
 
   public async listNetworks(): Promise<WalletNetwork[]> {
-    return [{ network: 'sepolia', kind: 'testnet' }];
+    return [{ network: this.config.network, kind: 'testnet' }];
   }
 
-  public async listTokens(network = 'sepolia'): Promise<WalletToken[]> {
-    return [{ network, token: 'USDT', decimals: 6 }];
+  public async listTokens(network = this.config.network): Promise<WalletToken[]> {
+    return [{ network, token: this.config.token, decimals: 6 }];
   }
 
   public async getAddress(context: WalletContext): Promise<WalletAddress> {
@@ -53,7 +65,7 @@ export class FixtureWalletProvider implements WalletProvider {
   }
 
   public async getBalance(query: { network: string; token?: string; wallet: string }): Promise<WalletBalance> {
-    return { network: query.network, token: query.token ?? 'USDT', address: '0x1234000000000000000000000000000000abcd', balance: '42.5' };
+    return { network: query.network, token: query.token ?? this.config.token, address: '0x1234000000000000000000000000000000abcd', balance: '42.5' };
   }
 
   public async getHistory(query: { network: string; token?: string; wallet: string }): Promise<WalletHistory> {
@@ -64,7 +76,7 @@ export class FixtureWalletProvider implements WalletProvider {
         direction: 'in',
         counterparty: '0xsender00000000000000000000000000000000',
         amount: '5',
-        token: query.token ?? 'USDT',
+        token: query.token ?? this.config.token,
         timestamp: new Date(0).toISOString(),
       }],
     };
@@ -89,7 +101,7 @@ export class FixtureWalletProvider implements WalletProvider {
     const transaction: TransactionResult = {
       network: request.network,
       transactionHash,
-      explorerUrl: `https://sepolia.etherscan.io/tx/${transactionHash}`,
+      explorerUrl: explorerUrlFor(request.network, transactionHash),
     };
     return { kind: 'submitted', transaction };
   }

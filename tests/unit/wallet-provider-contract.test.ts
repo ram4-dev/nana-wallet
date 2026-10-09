@@ -1,20 +1,34 @@
 import { describe, expect, it } from 'vitest';
+import { getWalletAgentConfig } from '../../src/agent/instructions.js';
 import { FixtureWalletProvider } from '../../src/wallet/fixture-provider.js';
 import { WdkWalletProvider } from '../../src/wallet/wdk-provider.js';
 import type { WalletProvider } from '../../src/wallet/provider.js';
 
-const context = { wallet: 'agent-demo', network: 'sepolia' };
-const request = {
-  ...context,
+type ProviderIdentity = { wallet: string; network: string; token: string };
+
+const RECIPIENT = '0x1111111111111111111111111111111111111111';
+
+/**
+ * The fixture is the test double for the wallet path, so it reports the identity
+ * the agent config resolves — the same source production reads — instead of a
+ * hardcoded triple that can drift from it.
+ */
+function agentConfigIdentity(): ProviderIdentity {
+  const config = getWalletAgentConfig();
+  return { wallet: config.wallet, network: config.network, token: config.token };
+}
+
+/** The WDK fake ships its own sepolia/USDT tools, independent of the config. */
+const WDK_IDENTITY: ProviderIdentity = {
+  wallet: 'agent-demo',
+  network: 'sepolia',
   token: 'USDT',
-  to: '0x1111111111111111111111111111111111111111',
-  amount: '1',
 };
 
 function fakeWdkProvider(): WalletProvider {
   const tools = {
     get_address: { execute: async () => ({ network: 'sepolia', address: '0x2222222222222222222222222222222222222222' }) },
-    get_balance: { execute: async () => ({ network: 'sepolia', address: request.to, balance: '42.5', token: 'USDT' }) },
+    get_balance: { execute: async () => ({ network: 'sepolia', address: RECIPIENT, balance: '42.5', token: 'USDT' }) },
     get_history: { execute: async () => ({ network: 'sepolia', transactions: [] }) },
     get_networks: { execute: async () => [{ network: 'sepolia', kind: 'testnet' }] },
     list_tokens: { execute: async () => [{ network: 'sepolia', token: 'USDT', decimals: 6 }] },
@@ -25,29 +39,48 @@ function fakeWdkProvider(): WalletProvider {
   return new WdkWalletProvider(async () => tools as never);
 }
 
-async function assertContract(provider: WalletProvider): Promise<void> {
+async function assertContract(provider: WalletProvider, identity: ProviderIdentity): Promise<void> {
+  const context = { wallet: identity.wallet, network: identity.network };
+  const request = {
+    ...context,
+    token: identity.token,
+    to: RECIPIENT,
+    amount: '1',
+  };
   await expect(provider.health(context)).resolves.toMatchObject({ status: 'healthy' });
-  await expect(provider.listNetworks()).resolves.toEqual([{ network: 'sepolia', kind: 'testnet' }]);
-  await expect(provider.listTokens('sepolia')).resolves.toEqual([{ network: 'sepolia', token: 'USDT', decimals: 6 }]);
-  await expect(provider.getAddress(context)).resolves.toMatchObject({ network: 'sepolia', address: expect.any(String) });
-  await expect(provider.getBalance({ ...context, token: 'USDT' })).resolves.toMatchObject({ network: 'sepolia', balance: '42.5' });
-  await expect(provider.getHistory({ ...context, token: 'USDT' })).resolves.toMatchObject({ network: 'sepolia', transactions: expect.any(Array) });
+  await expect(provider.listNetworks()).resolves.toEqual([{ network: identity.network, kind: 'testnet' }]);
+  await expect(provider.listTokens(identity.network)).resolves.toEqual([{ network: identity.network, token: identity.token, decimals: 6 }]);
+  await expect(provider.getAddress(context)).resolves.toMatchObject({ network: identity.network, address: expect.any(String) });
+  await expect(provider.getBalance({ ...context, token: identity.token })).resolves.toMatchObject({ network: identity.network, balance: '42.5' });
+  await expect(provider.getHistory({ ...context, token: identity.token })).resolves.toMatchObject({ network: identity.network, transactions: expect.any(Array) });
   await expect(provider.previewTransfer(request)).resolves.toEqual({
-    network: 'sepolia', token: 'USDT', recipient: request.to, amount: '1', estimatedFee: '0.0003 ETH',
+    network: identity.network, token: identity.token, recipient: request.to, amount: '1', estimatedFee: '0.0003 ETH',
   });
   const broadcast = await provider.broadcastTransfer(request);
-  expect(broadcast).toMatchObject({ kind: 'submitted', transaction: { network: 'sepolia' } });
+  expect(broadcast).toMatchObject({ kind: 'submitted', transaction: { network: identity.network } });
   if (broadcast.kind === 'submitted') await expect(provider.waitForFinality(broadcast.transaction)).resolves.toMatchObject({ status: 'confirmed', transactionHash: broadcast.transaction.transactionHash });
   await provider.close();
 }
 
+type ContractCase = {
+  name: string;
+  create: () => WalletProvider;
+  identity: () => ProviderIdentity;
+};
+
+// The identity is resolved per case, at test time: the fixture case asserts the
+// identity the agent config resolves at that moment, never a captured default.
+const contractCases: ContractCase[] = [
+  { name: 'fixture', create: () => new FixtureWalletProvider(), identity: agentConfigIdentity },
+  { name: 'wdk', create: fakeWdkProvider, identity: () => WDK_IDENTITY },
+];
+
 describe('WalletProvider contract', () => {
-  it.each([
-    ['fixture', () => new FixtureWalletProvider()],
-    ['wdk', fakeWdkProvider],
-  ])('satisfies the normalized read and transfer contract: %s', async (_name, create) => {
-    await assertContract(create());
-  });
+  for (const { name, create, identity } of contractCases) {
+    it(`satisfies the normalized read and transfer contract: ${name}`, async () => {
+      await assertContract(create(), identity());
+    });
+  }
 
   it('normalizes object-wrapped WDK network and token lists', async () => {
     const tools = {

@@ -114,7 +114,7 @@ describe("createRealtimeTools", () => {
 
     expect(h.getBalance).toHaveBeenCalledWith({
       network: "arc-testnet",
-      wallet: "agent-demo",
+      wallet: "privy-user",
     });
     expect(result.balances).toEqual([
       {
