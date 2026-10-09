@@ -49,10 +49,11 @@ describe('live WDK transfer policy', () => {
 
   beforeEach(() => {
     resetSessionStore();
-    // The live-transfer gate is keyed on the identity mode, not on
-    // WDK_TOOLS_SOURCE: production is privy, so the gate is ON there.
-    process.env.IDENTITY_PROVIDER = 'privy';
-    delete process.env.WDK_TOOLS_SOURCE;
+    // The local gate is active only on the standalone solana-devnet source,
+    // where no provider policy exists to own the allowlist and the cap. On the
+    // privy path the provider policy owns both.
+    process.env.IDENTITY_PROVIDER = 'demo';
+    process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
     process.env.WDK_MAX_TRANSFER_AMOUNT = '0.05';
     process.env.WDK_ALLOWED_RECIPIENTS = `0x${ALLOWED_ADDRESS.slice(2).toLocaleUpperCase('en-US')}`;
   });
@@ -222,8 +223,9 @@ describe('live WDK transfer policy', () => {
   });
 
       it('keeps fixture mode usable without policy variables', async () => {
-        // Back to the demo identity so the gate is inert for this case.
-        delete process.env.IDENTITY_PROVIDER;
+        // The provider policy owns enforcement under the privy identity, so
+        // the local gate is inert and fixture mode needs no policy variables.
+        process.env.IDENTITY_PROVIDER = 'privy';
         process.env.WDK_TOOLS_SOURCE = 'fixture';
         delete process.env.WDK_MAX_TRANSFER_AMOUNT;
         delete process.env.WDK_ALLOWED_RECIPIENTS;
@@ -236,12 +238,14 @@ describe('live WDK transfer policy', () => {
 
     describe('solana-devnet transfer policy parity', () => {
       const previousSource = process.env.WDK_TOOLS_SOURCE;
+      const previousIdentity = process.env.IDENTITY_PROVIDER;
       const previousMaxAmount = process.env.WDK_MAX_TRANSFER_AMOUNT;
       const previousAllowedRecipients = process.env.WDK_ALLOWED_RECIPIENTS;
 
       beforeEach(() => {
         resetSessionStore();
         process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
+        process.env.IDENTITY_PROVIDER = 'demo';
         process.env.WDK_MAX_TRANSFER_AMOUNT = '0.05';
         process.env.WDK_ALLOWED_RECIPIENTS = `0x${ALLOWED_ADDRESS.slice(2).toLocaleUpperCase('en-US')}`;
       });
@@ -249,6 +253,8 @@ describe('live WDK transfer policy', () => {
       afterEach(() => {
         if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
         else process.env.WDK_TOOLS_SOURCE = previousSource;
+        if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+        else process.env.IDENTITY_PROVIDER = previousIdentity;
         if (previousMaxAmount === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
         else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaxAmount;
         if (previousAllowedRecipients === undefined) delete process.env.WDK_ALLOWED_RECIPIENTS;

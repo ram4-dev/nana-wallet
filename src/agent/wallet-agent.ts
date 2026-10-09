@@ -21,7 +21,7 @@ import {
   resolvePreviewRecipient,
   augmentPreviewOutput,
   guardedSendTokenSchema,
-  isLiveTransferSource,
+  requiresLocalTransferPolicy,
   type GrantCreationPort,
   type SendTokenInput,
 } from './definition.js';
@@ -162,11 +162,11 @@ function rejectByPolicy(message: string): { error: 'policy_rejected'; message: s
   return { error: 'policy_rejected', message };
 }
 
-function validateLiveTransferPolicy(
+function validateLocalTransferPolicy(
   input: SendTokenInput,
   config: WalletAgentConfig,
 ): { error: 'policy_rejected'; message: string } | null {
-  if (!isLiveTransferSource()) return null;
+  if (!requiresLocalTransferPolicy()) return null;
 
   const maxAmount = process.env.WDK_MAX_TRANSFER_AMOUNT?.trim();
   const allowedRecipients = process.env.WDK_ALLOWED_RECIPIENTS?.split(',')
@@ -316,7 +316,7 @@ export function buildGuardedTools(
         return { error: 'confirmation_required', message: 'Missing recipient: supply recipientId and recipientVersion for a preview.' };
       }
       const normalizedInput = normalizeSendTokenInput(parsedInternal.data, config.token);
-      const policyRejection = validateLiveTransferPolicy(normalizedInput, config);
+      const policyRejection = validateLocalTransferPolicy(normalizedInput, config);
       if (policyRejection) return policyRejection;
       const selected = session.recipientMemory?.selectedRecipient;
       const previewed = session.recipientMemory?.previewedRecipient;

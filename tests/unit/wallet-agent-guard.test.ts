@@ -27,14 +27,24 @@ const pendingFixture: PendingTransfer = {
 
 describe('guarded wallet tools', () => {
   const previousToken = process.env.WDK_TOKEN;
+  const previousIdentity = process.env.IDENTITY_PROVIDER;
 
   beforeEach(() => {
+    // The local transfer gate delegates to the provider policy under the privy
+    // identity, so it is inert here: these cases pin the guarded tool dispatch,
+    // token normalization, and recipient revalidation, not the local transfer
+    // policy. The fixture recipient (`0x1234...abcd`) is deliberately not a
+    // well-formed EVM address, so the local gate would reject it instead of
+    // exercising the guard behaviour under test.
+    process.env.IDENTITY_PROVIDER = 'privy';
     process.env.WDK_TOKEN = 'USDT';
   });
 
   afterEach(() => {
     if (previousToken === undefined) delete process.env.WDK_TOKEN;
     else process.env.WDK_TOKEN = previousToken;
+    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+    else process.env.IDENTITY_PROVIDER = previousIdentity;
   });
 
   it.each(['usdt', 'USDT', 'USD₮', 'tether'])(

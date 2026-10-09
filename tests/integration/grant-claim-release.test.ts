@@ -873,18 +873,18 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
       attemptId,
       claimId: ownedClaimId,
     });
-    // Preflight-after-claim: previewTransfer succeeds while the identity is
-    // demo; flipping to the privy identity AFTER the preview makes
-    // validateWalletTransferPolicy reject in runFinancialTransfer (env
-    // vars absent) — a real policy rejection from the OWNED broadcasting
-    // state, before any broadcast. The gate is keyed on the identity mode,
-    // not on the removed `WDK_TOOLS_SOURCE=live` value.
+    // Preflight-after-claim: on the privy identity the provider policy owns
+    // enforcement, so the preview passes with no local gate; flipping to the
+    // standalone solana-devnet source AFTER the preview activates the local
+    // gate, which rejects in runFinancialTransfer (env vars absent) — a real
+    // policy rejection from the OWNED broadcasting state, before any broadcast.
+    process.env.IDENTITY_PROVIDER = "privy";
     const wallet = new FixtureWalletProvider();
     const previewSpy = vi
       .spyOn(wallet, "previewTransfer")
       .mockImplementation(async (...args: unknown[]) => {
-        process.env.IDENTITY_PROVIDER = "privy";
-        delete process.env.WDK_TOOLS_SOURCE;
+        process.env.IDENTITY_PROVIDER = "demo";
+        process.env.WDK_TOOLS_SOURCE = "solana-devnet";
         const preview = {
           network: "base-sepolia",
           token: "USDT",
@@ -974,6 +974,10 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
       attemptId,
       claimId: ownedClaimId,
     });
+    // The provider policy owns enforcement under the privy identity, so the
+    // local gate is inert and this case pins the settlement CAS on the
+    // provider not_dispatched path, not the local transfer policy.
+    process.env.IDENTITY_PROVIDER = "privy";
     const { wallet, spy } = notDispatchedWallet(events);
     const service = createWalletConversationService({
       conversations: repository,

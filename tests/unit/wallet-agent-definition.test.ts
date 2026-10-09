@@ -158,8 +158,10 @@ describe("wallet agent definition", () => {
   });
 
   it("keeps live transfer policy in the canonical operation layer", () => {
-    process.env.IDENTITY_PROVIDER = "privy";
-    delete process.env.WDK_TOOLS_SOURCE;
+    // The local gate is active on the standalone solana-devnet source, where no
+    // provider policy exists.
+    process.env.IDENTITY_PROVIDER = "demo";
+    process.env.WDK_TOOLS_SOURCE = "solana-devnet";
     process.env.WDK_MAX_TRANSFER_AMOUNT = "1";
     process.env.WDK_ALLOWED_RECIPIENTS =
       "0x1234567890123456789012345678901234567890";
@@ -182,6 +184,7 @@ describe("wallet agent definition", () => {
 
 describe("validateWalletTransferPolicy solana-devnet parity", () => {
   const previousSource = process.env.WDK_TOOLS_SOURCE;
+  const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
   const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
 
@@ -205,12 +208,17 @@ describe("validateWalletTransferPolicy solana-devnet parity", () => {
   beforeEach(() => {
     resetSessionStore();
     process.env.WDK_TOOLS_SOURCE = "solana-devnet";
+    // The local gate runs on the standalone solana-devnet source, which has no
+    // provider policy to delegate to.
+    process.env.IDENTITY_PROVIDER = "demo";
     process.env.WDK_MAX_TRANSFER_AMOUNT = "0.05";
     process.env.WDK_ALLOWED_RECIPIENTS =
       allowedAddress.toLocaleUpperCase("en-US");
   });
 
   afterEach(() => {
+    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
+    else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
     if (previousMaximum === undefined)
@@ -275,7 +283,8 @@ describe("validateWalletTransferPolicy solana-devnet parity", () => {
     ).toBeUndefined();
   });
 
-  it("stays inert without a live transfer source", () => {
+  it("stays inert under the privy identity, where the provider policy owns enforcement", () => {
+    process.env.IDENTITY_PROVIDER = "privy";
     process.env.WDK_TOOLS_SOURCE = "fixture";
     delete process.env.WDK_MAX_TRANSFER_AMOUNT;
     delete process.env.WDK_ALLOWED_RECIPIENTS;
@@ -315,10 +324,12 @@ describe("normalizeBroadcastResult explorer URL (D6, CAR-010)", () => {
   });
 });
 
-// The live-transfer gate is keyed on the identity mode now, not on
-// WDK_TOOLS_SOURCE. Production is `privy`, so the gate must be ON there even
-// when WDK_TOOLS_SOURCE is unset, while demo mode stays inert.
-describe("validateWalletTransferPolicy under privy identity", () => {
+// On the Privy path the provider policy is authoritative: it is attached to the
+// wallet at signing time and enforces the allowlist and the per-transfer cap
+// there, so the local gate would be a weaker duplicate fed by a different
+// source of truth. The gate is retained only for the standalone solana-devnet
+// source, which has no provider policy behind it, where it must still reject.
+describe("validateWalletTransferPolicy delegation to the provider policy", () => {
   const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
   const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
@@ -342,8 +353,8 @@ describe("validateWalletTransferPolicy under privy identity", () => {
 
   beforeEach(() => {
     resetSessionStore();
-    process.env.IDENTITY_PROVIDER = "privy";
-    delete process.env.WDK_TOOLS_SOURCE;
+    process.env.IDENTITY_PROVIDER = "demo";
+    process.env.WDK_TOOLS_SOURCE = "solana-devnet";
     process.env.WDK_MAX_TRANSFER_AMOUNT = "0.05";
     process.env.WDK_ALLOWED_RECIPIENTS =
       allowedAddress.toLocaleUpperCase("en-US");
@@ -362,28 +373,41 @@ describe("validateWalletTransferPolicy under privy identity", () => {
     else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
   });
 
-  it("still rejects when WDK_MAX_TRANSFER_AMOUNT is absent", () => {
+  it("delegates to the provider policy under the privy identity with no local policy", () => {
+    process.env.IDENTITY_PROVIDER = "privy";
+    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
+    delete process.env.WDK_ALLOWED_RECIPIENTS;
+    expect(
+      validateWalletTransferPolicy(gateInput(), context().config),
+    ).toBeUndefined();
+  });
+
+  it("delegates even a local-rule violation to the provider policy under the privy identity", () => {
+    process.env.IDENTITY_PROVIDER = "privy";
+    expect(
+      validateWalletTransferPolicy(
+        gateInput({
+          amount: "999",
+          to: "0x9999999999999999999999999999999999999999",
+        }),
+        context().config,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("still rejects when WDK_MAX_TRANSFER_AMOUNT is absent on the solana-devnet source", () => {
     delete process.env.WDK_MAX_TRANSFER_AMOUNT;
     expect(
       validateWalletTransferPolicy(gateInput(), context().config),
     ).toMatchObject({ error: "policy_rejected" });
   });
 
-  it("still rejects an amount above the maximum", () => {
+  it("still rejects an amount above the maximum on the solana-devnet source", () => {
     expect(
       validateWalletTransferPolicy(
         gateInput({ amount: "0.051" }),
         context().config,
       ),
     ).toMatchObject({ error: "policy_rejected" });
-  });
-
-  it("stays inert in demo mode", () => {
-    process.env.IDENTITY_PROVIDER = "demo";
-    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    delete process.env.WDK_ALLOWED_RECIPIENTS;
-    expect(
-      validateWalletTransferPolicy(gateInput(), context().config),
-    ).toBeUndefined();
   });
 });

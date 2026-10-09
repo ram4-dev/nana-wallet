@@ -114,6 +114,11 @@ describe('WalletConversationService', () => {
   beforeEach(() => {
     process.env.AGENT_RUNTIME = 'deterministic';
     process.env.WDK_TOOLS_SOURCE = 'fixture';
+    // The local transfer gate applies where no provider policy exists — the
+    // demo legacy path — so fixture previews and confirmations satisfy it here.
+    process.env.IDENTITY_PROVIDER = 'demo';
+    process.env.WDK_MAX_TRANSFER_AMOUNT = '10';
+    process.env.WDK_ALLOWED_RECIPIENTS = recipient;
   });
 
   it('streams a canonical preview through the injected wallet provider', async () => {
@@ -167,10 +172,11 @@ describe('WalletConversationService', () => {
   });
 
   it('returns a stable policy error before any provider side effect', async () => {
-    // The live-transfer gate is keyed on the identity mode, not on the removed
-    // `WDK_TOOLS_SOURCE=live` value: production is privy, so the gate is ON there.
-    process.env.IDENTITY_PROVIDER = 'privy';
-    delete process.env.WDK_TOOLS_SOURCE;
+    // The local gate is active on the standalone solana-devnet source, which
+    // has no provider policy to delegate to: with no local policy configured
+    // the transfer is rejected before the provider is touched.
+    process.env.IDENTITY_PROVIDER = 'demo';
+    process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
     delete process.env.WDK_MAX_TRANSFER_AMOUNT;
     delete process.env.WDK_ALLOWED_RECIPIENTS;
     const repository = repositoryFixture();
@@ -309,6 +315,11 @@ describe('WalletConversationService', () => {
 
       beforeEach(() => {
         process.env.WDK_TOOLS_SOURCE = 'fixture';
+        // The local transfer gate applies where no provider policy exists (the
+        // demo identity), so these fixture previews satisfy it explicitly.
+        process.env.IDENTITY_PROVIDER = 'demo';
+        process.env.WDK_MAX_TRANSFER_AMOUNT = '10';
+        process.env.WDK_ALLOWED_RECIPIENTS = recipient;
       });
 
       afterEach(() => {
@@ -376,10 +387,12 @@ describe('WalletConversationService', () => {
       });
 
       it('returns policy_rejected before persisting when live policy is not configured', async () => {
-        // The live-transfer gate is keyed on the identity mode, not on the removed
-        // `WDK_TOOLS_SOURCE=live` value: production is privy, so the gate is ON there.
-        process.env.IDENTITY_PROVIDER = 'privy';
-        delete process.env.WDK_TOOLS_SOURCE;
+        // The local gate is active on the standalone solana-devnet source (no
+        // provider policy to delegate to): with no local policy configured the
+        // transfer is rejected before the provider is touched or anything is
+        // persisted.
+        process.env.IDENTITY_PROVIDER = 'demo';
+        process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
         delete process.env.WDK_MAX_TRANSFER_AMOUNT;
         delete process.env.WDK_ALLOWED_RECIPIENTS;
         const repository = repositoryFixture();
@@ -429,6 +442,10 @@ describe('WalletConversationService', () => {
       });
 
       it('routes a versioned Solana devnet contact through an exact native SOL preview without broadcasting', async () => {
+        // The provider policy owns enforcement under the privy identity, so the
+        // local gate (keyed on the configured network/token pair) stays out of
+        // this routing case.
+        process.env.IDENTITY_PROVIDER = 'privy';
         process.env.WDK_TOOLS_SOURCE = 'fixture';
         process.env.WDK_NETWORK = 'sepolia';
         process.env.WDK_TOKEN = 'USDT';
@@ -475,6 +492,8 @@ describe('WalletConversationService', () => {
       });
 
       it('rejects a Solana amount above the configured live maximum before preview or pending persistence', async () => {
+        // The local gate applies on the demo identity (no provider policy).
+        process.env.IDENTITY_PROVIDER = 'demo';
         process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
         process.env.WDK_NETWORK = 'sepolia';
         process.env.WDK_TOKEN = 'USDT';

@@ -451,23 +451,36 @@ export function normalizeBroadcastResult(output: unknown, network: string) {
 }
 
 /**
- * Single source of truth for whether live-transfer policy applies. Both policy
- * gates (definition and wallet-agent) must branch on this predicate so the
- * remaining live modes can never bypass the policy configuration enforced for
- * live wallet transfers: the `solana-devnet` provider and the `privy` identity
- * mode (production). The removed `live`/WDK provider family no longer counts as
- * a live source; demo mode stays inert.
+ * Single source of truth for whether the LOCAL transfer-policy gate applies.
+ *
+ * On the Privy path the provider policy is authoritative: it is attached to the
+ * wallet at signing time and enforces the recipient allowlist and the
+ * per-transfer cap there. A local re-check of the same allowlist and cap would
+ * be a weaker duplicate fed by a different source of truth (environment
+ * variables instead of the enrolled grant and the provider policy), and two
+ * allowlists with different sources drift. So on that path the local gate
+ * delegates and does not run.
+ *
+ * The local gate is kept for the one path that moves real money with NO provider
+ * policy behind it: the standalone `solana-devnet` provider. There the gate is
+ * the only enforcement, so removing it would remove the protection itself.
+ *
+ * Demo mode is deliberately NOT gated. Its provider is the fixture wallet, which
+ * cannot move funds, so a gate there would protect nothing while rejecting every
+ * fixture transfer whose scenario is unrelated to policy.
  */
-export function isLiveTransferSource(environment: NodeJS.ProcessEnv = process.env): boolean {
-  return environment.WDK_TOOLS_SOURCE === 'solana-devnet' ||
-    (environment.IDENTITY_PROVIDER?.trim() || 'demo') === 'privy';
+export function requiresLocalTransferPolicy(environment: NodeJS.ProcessEnv = process.env): boolean {
+  // A provider policy is attached on the privy path; nothing local to enforce.
+  if ((environment.IDENTITY_PROVIDER?.trim() || 'demo') === 'privy') return false;
+  // Real money, no provider policy: the local gate is the only enforcement.
+  return environment.WDK_TOOLS_SOURCE?.trim() === 'solana-devnet';
 }
 
 export function validateWalletTransferPolicy(
   input: SendTokenInput,
   config: WalletAgentConfig,
 ): { error: 'policy_rejected'; message: string } | undefined {
-  if (!isLiveTransferSource()) return undefined;
+  if (!requiresLocalTransferPolicy()) return undefined;
   const maximum = process.env.WDK_MAX_TRANSFER_AMOUNT?.trim();
   const allowed = process.env.WDK_ALLOWED_RECIPIENTS?.split(',').map((value) => value.trim()).filter(Boolean);
   if (!maximum || !allowed?.length) return { error: 'policy_rejected', message: 'Live transfer policy is not configured: set WDK_MAX_TRANSFER_AMOUNT and WDK_ALLOWED_RECIPIENTS.' };

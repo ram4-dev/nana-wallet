@@ -82,6 +82,7 @@ function broadcastCalls(calls: ProviderCalls): number {
 describe('confirm-path provider seam', () => {
   const previous = new Map<string, string | undefined>([
     ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
+    ['IDENTITY_PROVIDER', process.env.IDENTITY_PROVIDER],
     ['WDK_NETWORK', process.env.WDK_NETWORK],
     ['WDK_TOKEN', process.env.WDK_TOKEN],
     ['WDK_WALLET_NAME', process.env.WDK_WALLET_NAME],
@@ -92,6 +93,9 @@ describe('confirm-path provider seam', () => {
   beforeEach(() => {
     resetSessionStore();
     process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
+    // The local gate is retained where no provider policy exists: the demo
+    // identity, which must therefore satisfy the configured policy below.
+    process.env.IDENTITY_PROVIDER = 'demo';
     process.env.WDK_NETWORK = 'arc-testnet';
     process.env.WDK_TOKEN = 'USDC';
     process.env.WDK_WALLET_NAME = 'agent-demo';
@@ -202,10 +206,18 @@ describe('confirm-path provider seam', () => {
 describe('receipt-waiter selection (D3, task 4.3)', () => {
   const previous = new Map<string, string | undefined>([
     ['WDK_TOOLS_SOURCE', process.env.WDK_TOOLS_SOURCE],
+    ['IDENTITY_PROVIDER', process.env.IDENTITY_PROVIDER],
     ['WDK_NETWORK', process.env.WDK_NETWORK],
     ['WDK_TOKEN', process.env.WDK_TOKEN],
     ['WDK_WALLET_NAME', process.env.WDK_WALLET_NAME],
   ]);
+
+  beforeEach(() => {
+    // The provider policy owns enforcement under the privy identity, so the
+    // local gate is inert here: these cases pin the receipt-waiter/provider
+    // seam, not the local transfer policy.
+    process.env.IDENTITY_PROVIDER = 'privy';
+  });
 
   afterEach(() => {
     for (const [key, value] of previous) {
