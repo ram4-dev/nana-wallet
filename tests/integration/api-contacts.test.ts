@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { buildServer } from "../../src/server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -35,7 +35,7 @@ suite("/v1/contacts CRUD (demo mode, PMU-008..012)", () => {
   it("creates a confirmed user contact, lists it, versions it, archives it and reveals it", {
     timeout: 60_000,
   }, async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     try {
       // CREATE (201, user-provenance confirmed at creation).
       const created = await app.inject({
@@ -132,7 +132,7 @@ suite("/v1/contacts CRUD (demo mode, PMU-008..012)", () => {
   it("returns the not-found shape for a missing id and 422 for a bad address", {
     timeout: 60_000,
   }, async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     try {
       const missing = await app.inject({
         method: "PATCH",
@@ -155,7 +155,7 @@ suite("/v1/contacts CRUD (demo mode, PMU-008..012)", () => {
   it("creates and versions explicit Solana devnet contacts without changing legacy EVM defaults", {
     timeout: 60_000,
   }, async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     try {
       const created = await app.inject({
         method: "POST",

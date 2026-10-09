@@ -14,11 +14,11 @@ vi.hoisted(() => {
   process.env.WDK_TOKEN = 'USDT';
 });
 
-import { buildServer } from '../../src/server.js';
+import { buildTestServer } from '../fixtures/test-server.js';
 
 describe('wallet read endpoints', () => {
   it('GET /v1/wallet/address returns the fixture address', async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     const response = await app.inject({ method: 'GET', url: '/v1/wallet/address' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ network: 'sepolia', address: expect.any(String) });
@@ -26,7 +26,7 @@ describe('wallet read endpoints', () => {
   });
 
   it('GET /v1/wallet/balance returns the fixture balance', async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     const response = await app.inject({ method: 'GET', url: '/v1/wallet/balance?network=sepolia&token=USDT' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
@@ -38,7 +38,7 @@ describe('wallet read endpoints', () => {
   });
 
   it('GET /v1/wallet/history returns fixture transactions', async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     const response = await app.inject({ method: 'GET', url: '/v1/wallet/history?network=sepolia' });
     expect(response.statusCode).toBe(200);
     const body = response.json();
@@ -54,7 +54,7 @@ describe('wallet read endpoints', () => {
     '/v1/wallet/history?network=%20%20',
     '/v1/wallet/history?network=sepolia&token=',
   ])('rejects empty wallet query fields: %s', async (url) => {
-    const app = buildServer();
+    const app = buildTestServer();
     const response = await app.inject({ method: 'GET', url });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ status: 'error', code: 'invalid_query' });

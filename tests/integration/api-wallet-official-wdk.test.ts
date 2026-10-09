@@ -55,7 +55,7 @@ vi.mock("../../src/agent/wdk-tools.js", () => ({
   getWdkTools: vi.fn(async () => ({})),
 }));
 
-import { buildServer } from "../../src/server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 
 describe("wallet API with official WDK response shapes", () => {
   beforeEach(() => {
@@ -63,7 +63,7 @@ describe("wallet API with official WDK response shapes", () => {
   });
 
   it("composes get_address with get_balance when WDK omits the address", async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     try {
       const response = await app.inject({
         method: "GET",
@@ -97,7 +97,7 @@ describe("wallet API with official WDK response shapes", () => {
   });
 
   it("adapts the official get_history transfers shape through the HTTP route", async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     try {
       const response = await app.inject({
         method: "GET",

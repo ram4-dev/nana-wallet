@@ -4,18 +4,18 @@ import { vi, describe, expect, it } from 'vitest';
 // full-suite parallel load (documented pattern in api-voice).
 vi.setConfig({ testTimeout: 15_000 });
 
-import { buildServer } from '../../src/server.js';
+import { buildTestServer } from '../fixtures/test-server.js';
 
 describe('conversation API', () => {
   it('does not expose legacy session routes', async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     const response = await app.inject({ method: 'POST', url: '/v1/sessions' });
     expect(response.statusCode).toBe(404);
     await app.close();
   });
 
   it.skipIf(!process.env.DATABASE_URL)('creates and reads a durable conversation', async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     const created = await app.inject({ method: 'POST', url: '/v1/conversations' });
     expect(created.statusCode).toBe(200);
     const { conversationId } = created.json();

@@ -4,7 +4,7 @@ import { vi, afterEach, describe, expect, it } from "vitest";
 // full-suite parallel load (documented pattern in api-voice).
 vi.setConfig({ testTimeout: 15_000 });
 
-import { buildServer } from "../../src/server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 // Standard compose demo sentinel UUID: the users migration + PMU-004 make the
@@ -40,7 +40,7 @@ describe("typed conversation service with fixture wallet", () => {
       process.env.DEMO_USER_ID = userId;
       process.env.AGENT_RUNTIME = "deterministic";
       process.env.WDK_TOOLS_SOURCE = "fixture";
-      const app = buildServer();
+      const app = buildTestServer();
       try {
         const created = await app.inject({
           method: "POST",

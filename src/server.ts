@@ -96,7 +96,10 @@ export function resolveCorsOrigins(raw = process.env.CORS_ORIGINS): string[] {
     .filter(Boolean);
 }
 
-export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
+export function buildServer(options: {
+  privyServer?: PrivyServerClient;
+  identity?: RequestIdentityProvider;
+} = {}) {
   const app = Fastify({
     logger: !process.env.VITEST,
     bodyLimit: 25 * 1024 * 1024,
@@ -174,7 +177,8 @@ export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
       sessionFloors,
     );
   } else {
-    identity = new DemoIdentityProvider(config.demoUserId ?? "");
+    identity =
+      options.identity ?? new DemoIdentityProvider(config.demoUserId ?? "");
     if (config.databaseUrl) {
       database = createConfiguredDatabaseClient();
       sessionFloors = createSessionFloorStore(database);

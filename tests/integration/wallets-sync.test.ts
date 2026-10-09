@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { buildServer } from "../../src/server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -150,7 +150,7 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
   it("authenticated GET /v1/wallets/current reflects the synced readiness + address", {
     timeout: 60_000,
   }, async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     try {
       const synced = await app.inject({
         method: "POST",
@@ -176,7 +176,7 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
   it("PEW-013: explicit activation with read-back; empty allowlist rejected (422)", {
     timeout: 60_000,
   }, async () => {
-    const app = buildServer();
+    const app = buildTestServer();
     try {
       await app.inject({ method: "POST", url: "/v1/wallets/sync" });
       const empty = await app.inject({
