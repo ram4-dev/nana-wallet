@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWalletConversationService, type ConversationEvent, type ConversationProgressPublisher } from '../../src/conversations/service.js';
+import { safeErrorMessage, type ConversationErrorCode } from '../../src/conversations/errors.js';
 import type { ConversationRepository } from '../../src/conversations/repository.js';
 import type { ConversationSnapshot, ConversationState, WalletProgress } from '../../src/conversations/types.js';
-import type { PendingTransfer } from '../../src/contracts/http.js';
+import type { ConversationTurnResult, PendingTransfer } from '../../src/contracts/http.js';
 import { FixtureWalletProvider } from '../../src/wallet/fixture-provider.js';
 import type { BroadcastOutcome, WalletProvider } from '../../src/wallet/provider.js';
 import { FinancialTaskRegistry } from '../../src/conversations/financial-task-registry.js';
@@ -12,7 +13,7 @@ const recipient = '0x1234567890123456789012345678901234567890';
 const solanaRecipient = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
 const recipientId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
-function repositoryFixture(initialTransfer?: PendingTransfer): ConversationRepository {
+function repositoryFixture(initialTransfer?: PendingTransfer, language: 'es' | 'en' = 'es'): ConversationRepository {
   let snapshot: ConversationSnapshot = {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
     userId,
@@ -20,7 +21,7 @@ function repositoryFixture(initialTransfer?: PendingTransfer): ConversationRepos
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
     revision: 0,
-    language: 'es',
+    language,
     generation: 1,
     messages: [],
     ...(initialTransfer ? { pendingTransfer: { ...initialTransfer, previewId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } } : {}),
@@ -153,12 +154,14 @@ describe('WalletConversationService', () => {
   });
 
   it('fails closed when the provider cannot establish broadcast evidence', async () => {
-    const repository = repositoryFixture();
+    // An English session: this assertion pins the frozen ENGLISH copy (the
+    // Spanish copy of the same code is pinned in the language describe below).
+    const repository = repositoryFixture(undefined, 'en');
     const wallet = walletFixture();
     vi.spyOn(wallet, 'broadcastTransfer').mockResolvedValue({ kind: 'uncertain', reason: 'provider detail must stay private' });
     const service = createWalletConversationService({ conversations: repository, wallet });
     await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
-    await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirmar la transferencia' })).resolves.toMatchObject({ status: 'error', code: 'broadcast_uncertain', message: expect.stringContaining('uncertain') });
+    await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirm the transfer' })).resolves.toMatchObject({ status: 'error', code: 'broadcast_uncertain', message: expect.stringContaining('uncertain') });
   });
 
   describe('not_dispatched cause mapping', () => {
@@ -183,11 +186,14 @@ describe('WalletConversationService', () => {
         cause: 'policy_rejected',
       });
 
+      // The session is Spanish (the confirm turn is Spanish), so the refusal
+      // the user reads must be Spanish too.
       expect(result).toMatchObject({
         status: 'error',
         code: 'policy_rejected',
-        message: 'This transfer does not meet the wallet safety policy.',
+        message: 'La transferencia no se realizó: no cumple con las reglas de seguridad de la billetera, y repetirla no va a cambiar nada.',
       });
+      expect(result.message).not.toBe('This transfer does not meet the wallet safety policy.');
       // The provider's own detail is diagnostic context, never user copy.
       expect(result.message).not.toMatch(/Privy|policy_violation/);
     });
@@ -202,8 +208,9 @@ describe('WalletConversationService', () => {
       expect(result).toMatchObject({
         status: 'error',
         code: 'wallet_unavailable',
-        message: 'The wallet is temporarily unavailable.',
+        message: 'La billetera no está disponible en este momento. Probá de nuevo en un rato.',
       });
+      expect(result.message).not.toBe('The wallet is temporarily unavailable.');
       expect(result.message).not.toMatch(/provider is down/);
     });
 
@@ -219,8 +226,9 @@ describe('WalletConversationService', () => {
       expect(result).toMatchObject({
         status: 'error',
         code: 'internal_error',
-        message: 'The conversation could not be completed.',
+        message: 'No pude completar la conversación.',
       });
+      expect(result.message).not.toBe('The conversation could not be completed.');
       expect(result.message).not.toMatch(/preview ID/);
     });
   });
@@ -234,9 +242,8 @@ describe('WalletConversationService', () => {
 
     // The error copy for an `es` session is published by the financial result
     // path (runFinancialTransfer), so the observable seam is the progress
-    // publisher — the same channel the UI speaks. The English `result.message`
-    // is still yielded as a generic "uncertain" segment; filtering on
-    // reason "result" isolates exactly the localized result copy.
+    // publisher — the same channel the UI speaks. Filtering on reason "result"
+    // isolates exactly the localized result copy.
     async function spokenResultLines(
       outcome: Extract<BroadcastOutcome, { kind: 'not_dispatched' }>,
     ): Promise<string[]> {
@@ -302,6 +309,282 @@ describe('WalletConversationService', () => {
     });
   });
 
+  describe('language-aware result messages', () => {
+    // The frontend renders `turn.message` verbatim into an otherwise Spanish
+    // screen, so the backend must send the SESSION language. These expected
+    // strings are pinned by hand on purpose: a silent English default here is
+    // the defect these tests exist to catch.
+    const ENGLISH_CONFIRMED = 'Transfer confirmed.';
+    const ENGLISH_CANCELLED = 'Transfer cancelled.';
+    const ENGLISH_POLICY_REFUSAL = 'This transfer does not meet the wallet safety policy.';
+    const ENGLISH_WALLET_UNAVAILABLE = 'The wallet is temporarily unavailable.';
+    const ENGLISH_INTERNAL = 'The conversation could not be completed.';
+    const ENGLISH_BROADCAST_UNCERTAIN =
+      'The broadcast result is uncertain. Check the wallet history before taking another action.';
+
+    const SPANISH_CONFIRMED = 'La transferencia quedó confirmada.';
+    const SPANISH_CANCELLED = 'Transferencia cancelada.';
+    const SPANISH_POLICY_REFUSAL =
+      'La transferencia no se realizó: no cumple con las reglas de seguridad de la billetera, y repetirla no va a cambiar nada.';
+    const SPANISH_WALLET_UNAVAILABLE =
+      'La billetera no está disponible en este momento. Probá de nuevo en un rato.';
+    const SPANISH_BROADCAST_UNCERTAIN =
+      'No pude confirmar el resultado. Revisá el historial antes de intentar otra transferencia.';
+
+    // Retry guidance: the temporary outage MUST invite a retry, the permanent
+    // policy refusal MUST NOT.
+    const RETRY_GUIDANCE = /prob[áa]|intent[áa]|de nuevo|otra vez/iu;
+    // "temporarily": the outage IS temporary, the refusal is not.
+    const TEMPORARY_MARKER = /temporar/iu;
+
+    const refusalOutcome: Extract<BroadcastOutcome, { kind: 'not_dispatched' }> = {
+      kind: 'not_dispatched',
+      reason: 'Privy denied the Solana dispatch by policy (policy_violation).',
+      cause: 'policy_rejected',
+    };
+    const outageOutcome: Extract<BroadcastOutcome, { kind: 'not_dispatched' }> = {
+      kind: 'not_dispatched',
+      reason: 'The wallet provider is down.',
+      cause: 'provider_unavailable',
+    };
+    const malformedOutcome: Extract<BroadcastOutcome, { kind: 'not_dispatched' }> = {
+      kind: 'not_dispatched',
+      reason: 'A persisted preview ID is required before signing.',
+      cause: 'invalid_request',
+    };
+
+    const conversationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+    // Both turn texts match the session language, so the language detector
+    // cannot flip the session while the transfer is being resolved.
+    async function transferredResult(
+      language: 'es' | 'en',
+      outcome?: Extract<BroadcastOutcome, { kind: 'not_dispatched' }>,
+    ): Promise<ConversationTurnResult> {
+      const repository = repositoryFixture(undefined, language);
+      const wallet = walletFixture();
+      if (outcome) vi.spyOn(wallet, 'broadcastTransfer').mockResolvedValue(outcome);
+      const service = createWalletConversationService({ conversations: repository, wallet });
+      await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+      return service.handleTurn({
+        conversationId,
+        userId,
+        text: language === 'es' ? 'confirmar la transferencia' : 'confirm the transfer',
+      });
+    }
+
+    async function cancelledResult(language: 'es' | 'en'): Promise<ConversationTurnResult> {
+      const repository = repositoryFixture(undefined, language);
+      const wallet = walletFixture();
+      const service = createWalletConversationService({ conversations: repository, wallet });
+      await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+      return service.handleTurn({
+        conversationId,
+        userId,
+        text: language === 'es' ? 'cancelar la transferencia' : 'cancel the transfer',
+      });
+    }
+
+    it('reports the completed transfer in Spanish for an es session, never the English money message', async () => {
+      const result = await transferredResult('es');
+
+      expect(result).toMatchObject({ status: 'sent', message: SPANISH_CONFIRMED });
+      expect(result.message).not.toBe(ENGLISH_CONFIRMED);
+    });
+
+    it('reports the cancellation in Spanish for an es session', async () => {
+      const result = await cancelledResult('es');
+
+      expect(result).toEqual({ status: 'cancelled', message: SPANISH_CANCELLED });
+      expect(result.message).not.toBe(ENGLISH_CANCELLED);
+    });
+
+    it('reports a policy refusal in Spanish for an es session, never the English copy', async () => {
+      const result = await transferredResult('es', refusalOutcome);
+
+      expect(result).toMatchObject({
+        status: 'error',
+        code: 'policy_rejected',
+        message: SPANISH_POLICY_REFUSAL,
+      });
+      expect(result.message).not.toBe(ENGLISH_POLICY_REFUSAL);
+    });
+
+    it('reports a temporary outage in Spanish for an es session, never the English copy', async () => {
+      const result = await transferredResult('es', outageOutcome);
+
+      expect(result).toMatchObject({
+        status: 'error',
+        code: 'wallet_unavailable',
+        message: SPANISH_WALLET_UNAVAILABLE,
+      });
+      expect(result.message).not.toBe(ENGLISH_WALLET_UNAVAILABLE);
+    });
+
+    it('reports an uncertain broadcast in Spanish for an es session', async () => {
+      const repository = repositoryFixture();
+      const wallet = walletFixture();
+      vi.spyOn(wallet, 'broadcastTransfer').mockResolvedValue({
+        kind: 'uncertain',
+        reason: 'provider detail must stay private',
+      });
+      const service = createWalletConversationService({ conversations: repository, wallet });
+      await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+      const result = await service.handleTurn({
+        conversationId,
+        userId,
+        text: 'confirmar la transferencia',
+      });
+
+      expect(result).toMatchObject({
+        status: 'error',
+        code: 'broadcast_uncertain',
+        message: SPANISH_BROADCAST_UNCERTAIN,
+      });
+      // The warning that matters must survive localization: check history
+      // before trying another transfer.
+      expect(result.message).toMatch(/historial/iu);
+      expect(result.message).not.toBe(ENGLISH_BROADCAST_UNCERTAIN);
+    });
+
+    it('lets the persisted session language govern the decision path, which carries no turn text', async () => {
+      // The voice path resolves a decision with no user text at all, so the
+      // stored session language is the only thing the copy can follow.
+      const repository = repositoryFixture(undefined, 'es');
+      const wallet = walletFixture();
+      const service = createWalletConversationService({ conversations: repository, wallet });
+      await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+
+      const streamed: ConversationEvent[] = [];
+      for await (const event of service.resolveDecision({
+        conversationId,
+        userId,
+        previewId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        decision: 'cancel',
+      })) streamed.push(event);
+
+      const completed = streamed.find((event) => event.type === 'turn-completed');
+      expect(completed).toMatchObject({
+        result: { status: 'cancelled', message: SPANISH_CANCELLED },
+      });
+    });
+
+    it('pins the English result contract for an en session', async () => {
+      await expect(transferredResult('en')).resolves.toMatchObject({
+        status: 'sent',
+        message: ENGLISH_CONFIRMED,
+      });
+      await expect(cancelledResult('en')).resolves.toEqual({
+        status: 'cancelled',
+        message: ENGLISH_CANCELLED,
+      });
+      await expect(transferredResult('en', refusalOutcome)).resolves.toMatchObject({
+        status: 'error',
+        code: 'policy_rejected',
+        message: ENGLISH_POLICY_REFUSAL,
+      });
+      await expect(transferredResult('en', outageOutcome)).resolves.toMatchObject({
+        status: 'error',
+        code: 'wallet_unavailable',
+        message: ENGLISH_WALLET_UNAVAILABLE,
+      });
+      await expect(transferredResult('en', malformedOutcome)).resolves.toMatchObject({
+        status: 'error',
+        code: 'internal_error',
+        message: ENGLISH_INTERNAL,
+      });
+    });
+
+    it.each(['es', 'en'] as const)(
+      'separates a permanent refusal from a temporary outage with opposite guidance (%s)',
+      async (language) => {
+        const refusal = await transferredResult(language, refusalOutcome);
+        const outage = await transferredResult(language, outageOutcome);
+
+        expect(refusal.status).toBe('error');
+        expect(outage.status).toBe('error');
+        expect(refusal.message).not.toBe(outage.message);
+
+        if (language === 'es') {
+          // The refusal is final: the transfer did not happen and retrying
+          // will not help.
+          expect(refusal.message).toMatch(/no se realiz/iu);
+          expect(refusal.message).not.toMatch(RETRY_GUIDANCE);
+          expect(refusal.message).not.toMatch(TEMPORARY_MARKER);
+          // The outage is genuinely temporary: it does invite a retry.
+          expect(outage.message).toMatch(RETRY_GUIDANCE);
+          expect(outage.message).not.toBe(ENGLISH_POLICY_REFUSAL);
+        } else {
+          expect(refusal.message).toBe(ENGLISH_POLICY_REFUSAL);
+          expect(outage.message).toBe(ENGLISH_WALLET_UNAVAILABLE);
+          expect(refusal.message).not.toMatch(TEMPORARY_MARKER);
+          expect(outage.message).toMatch(TEMPORARY_MARKER);
+        }
+      },
+    );
+  });
+
+  describe('safeErrorMessage language table', () => {
+    // The Spanish table must cover EVERY code. A missing entry would send the
+    // English string to a Spanish speaker, which is the defect being fixed.
+    const CODES: ConversationErrorCode[] = [
+      'conversation_not_found',
+      'conversation_forbidden',
+      'stale_revision',
+      'pending_confirmation',
+      'no_pending_preview',
+      'stale_preview',
+      'recipient_revalidation_required',
+      'policy_rejected',
+      'broadcast_in_progress',
+      'broadcast_uncertain',
+      'transaction_receipt_invalid',
+      'transfer_reverted',
+      'invalid_tool_result',
+      'wallet_unavailable',
+      'internal_error',
+    ];
+    const RETRY_GUIDANCE = /prob[áa]|intent[áa]|de nuevo|otra vez/iu;
+
+    it.each(CODES)('has non-empty Spanish copy for %s that is not the English string', (code) => {
+      const english = safeErrorMessage(code);
+      const spanish = safeErrorMessage(code, 'es');
+
+      expect(spanish.trim().length).toBeGreaterThan(0);
+      expect(spanish).not.toBe(english);
+    });
+
+    it('defaults to English so a caller without a session language keeps today\'s behaviour', () => {
+      for (const code of CODES) {
+        expect(safeErrorMessage(code)).toBe(safeErrorMessage(code, 'en'));
+      }
+    });
+
+    it('keeps the English contract byte-identical for the two money-critical codes', () => {
+      expect(safeErrorMessage('policy_rejected')).toBe(
+        'This transfer does not meet the wallet safety policy.',
+      );
+      expect(safeErrorMessage('wallet_unavailable')).toBe(
+        'The wallet is temporarily unavailable.',
+      );
+    });
+
+    it('keeps the Spanish refusal permanent and the Spanish outage retryable', () => {
+      const refusal = safeErrorMessage('policy_rejected', 'es');
+      const outage = safeErrorMessage('wallet_unavailable', 'es');
+
+      // A refusal is final: the transfer did not happen, retrying changes
+      // nothing, and it is never described as temporary.
+      expect(refusal).toMatch(/no se realiz/iu);
+      expect(refusal).toMatch(/no va a cambiar/iu);
+      expect(refusal).not.toMatch(RETRY_GUIDANCE);
+      expect(refusal).not.toMatch(/temporar/iu);
+      // An outage is temporary, so inviting a retry there is honest.
+      expect(outage).not.toBe(refusal);
+      expect(outage).toMatch(RETRY_GUIDANCE);
+    });
+  });
+
   it('no longer applies a local transfer policy: the provider is reached with no policy env vars', async () => {
     // The local transfer-policy gate (with its two policy environment
     // variables) was deleted; the provider policy attached to the wallet is the
@@ -349,7 +632,7 @@ describe('WalletConversationService', () => {
     const broadcast = vi.spyOn(wallet, 'broadcastTransfer');
     const service = createWalletConversationService({ conversations: repository, wallet });
     await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
-    await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'cancelar la transferencia' })).resolves.toEqual({ status: 'cancelled', message: 'Transfer cancelled.' });
+    await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'cancelar la transferencia' })).resolves.toEqual({ status: 'cancelled', message: 'Transferencia cancelada.' });
     expect(broadcast).not.toHaveBeenCalled();
   });
 

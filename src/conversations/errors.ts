@@ -51,7 +51,53 @@ export function conversationError(
   return new ConversationError(code, safeMessageKey, message, cause === undefined ? undefined : { cause });
 }
 
-export function safeErrorMessage(code: ConversationErrorCode): string {
+/**
+ * The Spanish copy of the same table. These lines are read by older,
+ * Spanish-speaking users, usually about their money, so they are plain, short
+ * and warm (Rioplatense, voseo) rather than clinical.
+ *
+ * `policy_rejected` and `wallet_unavailable` are deliberately different kinds
+ * of message. A policy refusal is PERMANENT: the transfer did not happen and
+ * repeating it changes nothing, so it must never say it is temporary. A wallet
+ * outage IS temporary, so inviting a retry there is honest advice.
+ */
+const SAFE_MESSAGES_ES: Record<ConversationErrorCode, string> = {
+  conversation_not_found: 'No encontré esta conversación. Empezá una nueva.',
+  // No English case either: both languages mirror the generic internal copy.
+  conversation_forbidden: 'No pude completar la conversación.',
+  stale_revision: 'La conversación cambió. Actualizá y probá de nuevo.',
+  pending_confirmation: 'Hay una transferencia esperando tu decisión. Confirmala o cancelala antes de enviar otra instrucción.',
+  no_pending_preview: 'No hay ninguna transferencia esperando confirmación.',
+  stale_preview: 'Esa transferencia ya no está vigente. Preparala de nuevo.',
+  recipient_revalidation_required: 'El destinatario cambió o ya no es válido. Elegilo de nuevo.',
+  policy_rejected: 'La transferencia no se realizó: no cumple con las reglas de seguridad de la billetera, y repetirla no va a cambiar nada.',
+  broadcast_in_progress: 'La transferencia ya se está enviando. Esperá a que termine.',
+  broadcast_uncertain: 'No pude confirmar el resultado. Revisá el historial antes de intentar otra transferencia.',
+  transaction_receipt_invalid: 'La transferencia fue enviada, pero no pude verificar el comprobante.',
+  transfer_reverted: 'La transferencia fue revertida en la red.',
+  invalid_tool_result: 'No pude entender la respuesta de la billetera. Probá de nuevo.',
+  wallet_unavailable: 'La billetera no está disponible en este momento. Probá de nuevo en un rato.',
+  internal_error: 'No pude completar la conversación.',
+};
+
+/**
+ * The user-facing copy for a conversation error code.
+ *
+ * `language` defaults to `"en"` so callers that have no session language keep
+ * today's behaviour. A caller that DOES know the session language must pass it:
+ * the frontend renders this string verbatim, so defaulting here is the
+ * difference between "Transfer confirmed." and "La transferencia quedó
+ * confirmada." for a Spanish-speaking user.
+ */
+export function safeErrorMessage(
+  code: ConversationErrorCode,
+  language: "es" | "en" = "en",
+): string {
+  if (language === "es") {
+    // The record is complete for every code; the fallback mirrors the generic
+    // default of the English switch for a code that arrived untyped.
+    return SAFE_MESSAGES_ES[code] ?? SAFE_MESSAGES_ES.internal_error;
+  }
   switch (code) {
     case 'conversation_not_found': return 'Conversation not found.';
     case 'stale_revision': return 'Conversation state changed. Refresh and try again.';

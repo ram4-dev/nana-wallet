@@ -358,6 +358,34 @@ function grantErrorResult(
   return { status: "error", code, message: GRANT_ERROR_COPY[language][code] };
 }
 
+/**
+ * The user-visible copy for a completed, in-flight or cancelled transfer.
+ *
+ * The frontend renders `result.message` verbatim into an otherwise Spanish
+ * screen and has no i18n layer, so this copy follows the SESSION language
+ * instead of hardcoding English. The English strings are the contract the
+ * existing tests assert and must not change.
+ */
+const TRANSFER_RESULT_COPY = {
+  en: {
+    confirmed: "Transfer confirmed.",
+    processing: "Transfer is being processed.",
+    cancelled: "Transfer cancelled.",
+  },
+  es: {
+    confirmed: "La transferencia quedó confirmada.",
+    processing: "La transferencia se está procesando.",
+    cancelled: "Transferencia cancelada.",
+  },
+} as const;
+
+function transferResultMessage(
+  outcome: keyof (typeof TRANSFER_RESULT_COPY)["en"],
+  language: "es" | "en",
+): string {
+  return TRANSFER_RESULT_COPY[language][outcome];
+}
+
 export function createWalletConversationService(
   dependencies: WalletConversationDependencies,
 ): WalletConversationService {
@@ -391,7 +419,13 @@ export function createWalletConversationService(
       input.conversationId,
     );
     if (!snapshot) {
-      yield* completedError(input, "conversation_not_found");
+      // A conversation that is not there has no stored session language; the
+      // user's own turn is the only language evidence available.
+      yield* completedError(
+        input,
+        "conversation_not_found",
+        detectConversationLanguage(input.text),
+      );
       return;
     }
 
@@ -572,6 +606,7 @@ export function createWalletConversationService(
       };
       result = sanitizeResult(
         await handleMessage(workingSnapshot, input.text, options),
+        workingSnapshot.language,
       );
       await dependencies.conversations.saveSnapshot(
         input.userId,
@@ -579,7 +614,7 @@ export function createWalletConversationService(
         persistedMessageCount,
       );
     } catch (error) {
-      result = errorResult(error);
+      result = errorResult(error, workingSnapshot.language);
       await appendServiceMessage(
         workingSnapshot,
         input.userId,
@@ -728,8 +763,10 @@ export function createWalletConversationService(
       );
     } else {
       yield* emit(stateEvent(visible));
+      // `result.message` is already in the session language (the frontend
+      // renders it verbatim), so the spoken copy is the same string.
       yield* emitSpoken(
-        spokenResultMessage(result, visible.language),
+        result.message,
         result.status === "error" ? "uncertain" : "answer",
       );
     }
@@ -744,6 +781,10 @@ export function createWalletConversationService(
       input.conversationId,
     );
     if (!snapshot) {
+      // A conversation that is gone has no stored session language, and this
+      // defensive branch is unreachable from the production callers: every
+      // voice/HTTP caller resolves the pending preview from this same snapshot
+      // before calling in, so there is no session to read a language from.
       yield* completedError(
         {
           conversationId: input.conversationId,
@@ -751,12 +792,15 @@ export function createWalletConversationService(
           text: "",
         },
         "conversation_not_found",
+        "en",
       );
       return;
     }
+    // The persisted session language is what the user reads and hears.
+    const language = snapshot.language;
     const pending = snapshot.pendingTransfer;
     if (!pending || pending.previewId !== input.previewId) {
-      const result = errorResult(errorFromCode("stale_preview"));
+      const result = errorResult(errorFromCode("stale_preview"), language);
       yield* emit(stateEvent(snapshot));
       yield* emitSpoken(result.message, "answer");
       yield event({ type: "turn-completed", result });
@@ -777,6 +821,7 @@ export function createWalletConversationService(
               ? "stale_preview"
               : "broadcast_in_progress",
           ),
+          language,
         );
         yield* emit(stateEvent(snapshot));
         yield* emitSpoken(result.message, "answer");
@@ -785,7 +830,7 @@ export function createWalletConversationService(
       }
       const result: ConversationTurnResult = {
         status: "cancelled",
-        message: "Transfer cancelled.",
+        message: transferResultMessage("cancelled", language),
       };
       await appendConversationMessage(
         snapshot,
@@ -806,10 +851,10 @@ export function createWalletConversationService(
           input.conversationId,
         )) ?? snapshot;
       yield* emit(stateEvent(updated));
-      yield* emitSpoken(
-        spokenResultMessage(result, updated.language),
-        "result",
-      );
+      // `result.message` is already in the session language (the frontend
+      // renders it verbatim), so the spoken copy is the same string: one copy
+      // table, no drift.
+      yield* emitSpoken(result.message, "result");
       yield event({ type: "turn-completed", result });
       return;
     }
@@ -828,7 +873,7 @@ export function createWalletConversationService(
           : claim.status === "missing"
             ? "stale_preview"
             : "broadcast_in_progress";
-      const result = errorResult(errorFromCode(code));
+      const result = errorResult(errorFromCode(code), language);
       yield* emit(stateEvent(snapshot));
       yield* emitSpoken(
         result.message,
@@ -865,7 +910,7 @@ export function createWalletConversationService(
         run,
       });
       if (started === "already_running") {
-        const result = errorResult(errorFromCode("broadcast_in_progress"));
+        const result = errorResult(errorFromCode("broadcast_in_progress"), language);
         yield* emit(stateEvent(snapshot));
         yield* emitSpoken(result.message, "answer");
         yield event({ type: "turn-completed", result });
@@ -886,7 +931,7 @@ export function createWalletConversationService(
       );
       const result: ConversationTurnResult = {
         status: "answer",
-        message: "Transfer is being processed.",
+        message: transferResultMessage("processing", broadcasting.language),
       };
       if (input.waitForFinancialTask) {
         await dependencies.financialTasks.wait(input.previewId);
@@ -943,7 +988,12 @@ export function createWalletConversationService(
       input.userId,
       input.conversationId,
     );
-    if (!snapshot) return errorResult(errorFromCode("conversation_not_found"));
+    if (!snapshot) {
+      // A missing conversation has no stored session language, and
+      // `PreviewTransferInput` carries none (its callers read the same
+      // snapshot first), so this one stays English as it was.
+      return errorResult(errorFromCode("conversation_not_found"), "en");
+    }
 
     const recipient = await resolveRecipientForTransfer(
       input.userId,
@@ -951,7 +1001,10 @@ export function createWalletConversationService(
       input.recipientVersion,
     );
     if (!recipient.ok)
-      return errorResult(errorFromCode("recipient_revalidation_required"));
+      return errorResult(
+        errorFromCode("recipient_revalidation_required"),
+        snapshot.language,
+      );
 
     const config = getWalletAgentConfig();
     const network = recipient.network ?? config.network;
@@ -971,7 +1024,7 @@ export function createWalletConversationService(
         transferRequest.network,
       ).previewTransfer(transferRequest);
     } catch {
-      return errorResult(errorFromCode("wallet_unavailable"));
+      return errorResult(errorFromCode("wallet_unavailable"), snapshot.language);
     }
 
     const pendingTransfer: PendingTransfer = {
@@ -1198,6 +1251,7 @@ export function createWalletConversationService(
       }
       const result = errorResult(
         errorFromCode("recipient_revalidation_required"),
+        snapshot.language,
       );
       await appendServiceMessage(
         snapshot,
@@ -1209,10 +1263,7 @@ export function createWalletConversationService(
         (await dependencies.conversations.get(userId, conversationId)) ??
         snapshot;
       await publish(stateEvent(updated));
-      await publishSpoken(
-        spokenResultMessage(result, updated.language),
-        "answer",
-      );
+      await publishSpoken(result.message, "answer");
       return result;
     }
 
@@ -1288,6 +1339,7 @@ export function createWalletConversationService(
           // safe message table, so the reason is never spoken to the user.
           broadcast.reason,
         ),
+        snapshot.language,
       );
       const failed = await setProgress(
         (await dependencies.conversations.get(userId, conversationId)) ??
@@ -1301,10 +1353,7 @@ export function createWalletConversationService(
         dependencies.conversations,
       );
       await publish(stateEvent(failed));
-      await publishSpoken(
-        spokenResultMessage(result, failed.language),
-        "result",
-      );
+      await publishSpoken(result.message, "result");
       return result;
     }
     if (broadcast.kind === "uncertain") {
@@ -1312,7 +1361,7 @@ export function createWalletConversationService(
         userId,
         conversationId,
       );
-      const result = errorResult(errorFromCode("broadcast_uncertain"));
+      const result = errorResult(errorFromCode("broadcast_uncertain"), snapshot.language);
       const uncertain = await setProgress(
         (await dependencies.conversations.get(userId, conversationId)) ??
           snapshot,
@@ -1325,10 +1374,7 @@ export function createWalletConversationService(
         dependencies.conversations,
       );
       await publish(stateEvent(uncertain));
-      await publishSpoken(
-        spokenResultMessage(result, uncertain.language),
-        "uncertain",
-      );
+      await publishSpoken(result.message, "uncertain");
       return result;
     }
 
@@ -1385,7 +1431,7 @@ export function createWalletConversationService(
       );
       const result: ConversationTurnResult = {
         status: "sent",
-        message: "Transfer confirmed.",
+        message: transferResultMessage("confirmed", snapshot.language),
         transaction,
       };
       await appendServiceMessage(
@@ -1424,7 +1470,7 @@ export function createWalletConversationService(
       receiptResult: finality,
       failure: finality.reason,
     });
-    const result = errorResult(errorFromCode(code));
+    const result = errorResult(errorFromCode(code), snapshot.language);
     await appendServiceMessage(
       snapshot,
       userId,
@@ -1441,7 +1487,7 @@ export function createWalletConversationService(
       },
     );
     await publish(stateEvent(failed));
-    await publishSpoken(spokenResultMessage(result, failed.language), "result");
+    await publishSpoken(result.message, "result");
     return result;
   }
 
@@ -1481,10 +1527,14 @@ export function createWalletConversationService(
           snapshot.lastTransactionHash,
         ),
       };
-      return { status: "sent", message: "Transfer confirmed.", transaction };
+      return {
+        status: "sent",
+        message: transferResultMessage("confirmed", snapshot.language),
+        transaction,
+      };
     }
     if (snapshot.progress?.phase === "uncertain")
-      return errorResult(errorFromCode("broadcast_uncertain"));
+      return errorResult(errorFromCode("broadcast_uncertain"), snapshot.language);
     if (snapshot.progress?.phase === "failed") {
       return errorResult(
         errorFromCode(
@@ -1494,17 +1544,27 @@ export function createWalletConversationService(
             ? "transfer_reverted"
             : "transaction_receipt_invalid",
         ),
+        snapshot.language,
       );
     }
-    return { status: "answer", message: "Transfer is being processed." };
+    return {
+      status: "answer",
+      message: transferResultMessage("processing", snapshot.language),
+    };
   }
 
   async function handleTurn(
     input: HandleTurnInput,
   ): Promise<ConversationTurnResult> {
+    // Placeholder replaced by the streamed terminal result in every path. It
+    // still follows the language of the user's own turn: a conversation that
+    // does not exist yet has no stored session language to read.
     let result: ConversationTurnResult = {
       status: "error",
-      message: safeErrorMessage("internal_error"),
+      message: safeErrorMessage(
+        "internal_error",
+        detectConversationLanguage(input.text),
+      ),
       code: "internal_error",
     };
     for await (const current of handleTurnStream(input)) {
@@ -1787,53 +1847,6 @@ function valueForRender(value: string | readonly string[] | undefined): string {
   return typeof value === "string" ? value : (value?.[0] ?? "");
 }
 
-function spokenResultMessage(
-  result: ConversationTurnResult,
-  language: "es" | "en",
-): string {
-  if (language === "en") return result.message;
-  if (result.status === "sent") return "La transferencia quedó confirmada.";
-  if (result.status === "cancelled") return "Transferencia cancelada.";
-  if (result.status === "error") {
-    const messages: Record<string, string> = {
-      broadcast_uncertain:
-        "No pude confirmar el resultado. Revisá el historial antes de intentar otra transferencia.",
-      transfer_reverted: "La transferencia fue revertida en la red.",
-      transaction_receipt_invalid:
-        "La transferencia fue enviada, pero no pude verificar el comprobante.",
-      pending_confirmation:
-        "Hay una transferencia esperando tu decisión. Confirmala o cancelala antes de enviar otra instrucción.",
-      // A policy refusal is definitive: the transfer did NOT happen and
-      // retrying the same thing will not change that. Never say it is temporary.
-      policy_rejected:
-        "La transferencia no se realizó: no cumple con las reglas de seguridad de la billetera, y repetirla no va a cambiar nada.",
-      no_pending_preview:
-        "No hay ninguna transferencia esperando confirmación.",
-      stale_preview:
-        "Esa transferencia ya no está vigente. Preparala de nuevo.",
-      recipient_revalidation_required:
-        "El destinatario cambió o ya no es válido. Elegilo de nuevo.",
-      broadcast_in_progress:
-        "La transferencia ya se está enviando. Esperá a que termine.",
-      // A wallet outage IS genuinely temporary, so here a retry is honest.
-      wallet_unavailable:
-        "La billetera no está disponible en este momento. Probá de nuevo en un rato.",
-      invalid_tool_result:
-        "No pude entender la respuesta de la billetera. Probá de nuevo.",
-      internal_error: "No pude completar la conversación.",
-      conversation_not_found:
-        "No encontré esta conversación. Empezá una nueva.",
-      // `safeErrorMessage` has no case for this code: it returns its generic
-      // default, so the Spanish mirrors the generic internal message.
-      conversation_forbidden: "No pude completar la conversación.",
-      stale_revision:
-        "La conversación cambió. Actualizá y probá de nuevo.",
-    };
-    return messages[result.code] ?? result.message;
-  }
-  return result.message;
-}
-
 /**
  * Maps a provider-declared non-dispatch cause to the user-facing error code.
  * `invalid_request` is OUR malformed request, so it reports `internal_error`:
@@ -1855,6 +1868,7 @@ function notDispatchedErrorCode(
 
 function errorResult(
   error: unknown,
+  language: "es" | "en",
 ): Extract<ConversationTurnResult, { status: "error" }> {
   if (
     !(
@@ -1878,17 +1892,18 @@ function errorResult(
     typeof error.code === "string"
   ) {
     const code = error.code as ConversationErrorCode;
-    return { status: "error", code, message: safeErrorMessage(code) };
+    return { status: "error", code, message: safeErrorMessage(code, language) };
   }
   return {
     status: "error",
     code: "internal_error",
-    message: safeErrorMessage("internal_error"),
+    message: safeErrorMessage("internal_error", language),
   };
 }
 
 function sanitizeResult(
   result: ConversationTurnResult,
+  language: "es" | "en",
 ): ConversationTurnResult {
   if (result.status !== "error") return result;
   const supported = new Set<ConversationErrorCode>([
@@ -1911,7 +1926,7 @@ function sanitizeResult(
   const code = supported.has(result.code as ConversationErrorCode)
     ? (result.code as ConversationErrorCode)
     : "internal_error";
-  return { status: "error", code, message: safeErrorMessage(code) };
+  return { status: "error", code, message: safeErrorMessage(code, language) };
 }
 
 function isToolError(output: unknown): output is Record<string, unknown> {
@@ -1927,8 +1942,9 @@ function isToolError(output: unknown): output is Record<string, unknown> {
 async function* completedError(
   _input: HandleTurnInput,
   code: ConversationErrorCode,
+  language: "es" | "en",
 ): AsyncIterable<ConversationEvent> {
-  const result = errorResult(errorFromCode(code));
+  const result = errorResult(errorFromCode(code), language);
   yield {
     type: "spoken-segment",
     id: crypto.randomUUID(),
