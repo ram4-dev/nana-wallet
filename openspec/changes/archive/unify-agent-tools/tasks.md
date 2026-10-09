@@ -57,4 +57,4 @@ typecheck` por tarea.
       verde; suite de voz/realtime existente sin regresión.
 - [x] 5.2 Spec check contra `specs/unified-agent-tools/spec.md` (cada Requirement
       con su escenario evidenciado).
-- [ ] 5.3 PR squash a `main`; CI (backend + frontend) en verde.
+- [x] 5.3 PR squash a `main`; CI (backend + frontend) en verde. <!-- PR #5 squash-merged as 2958412; the PR check runs were green. The post-merge push run on 2958412 then failed on an unrelated expiry-boundary flake in privy-policy-sync, fixed in 5c84465. Archived ledger reconciled 2026-10-08. -->

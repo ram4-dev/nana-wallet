@@ -16,8 +16,9 @@ Una sola definición de herramientas para el agente de texto y el de voz, con pa
 
 ## Evidence
 
-- Merged as PR #5 on `ram4-dev/nana-wallet` (`2958412`).
-- Tasks ledger: 19/20 — item 5.3 (squash PR + green CI) is complete in fact and was marked done at archive time.
+- Merged as PR #5 on `ram4-dev/nana-wallet` (`2958412`); the PR check runs (backend + frontend) were green and gated the merge.
+- Ledger reconciled 2026-10-08: item 5.3 is now checked. Nuance recorded honestly — the post-merge push run on `2958412` failed its backend job on an unrelated expiry-boundary flake in `tests/integration/privy-policy-sync.test.ts` (recomputed `Date.now()` at assertion time; `expiresAt` 1791469667 vs 1791469666). Fixed in `5c84465` by giving `setup()` a single expiry source; 20 consecutive runs green.
+- Suite at the reconciled HEAD, in a clean environment: 1069 passed / 0 failed (158 files), evals 27/27 at 100%.
 - Evals grew from 16 to 27, all at 100%.
 
 ## Open items and deferrals

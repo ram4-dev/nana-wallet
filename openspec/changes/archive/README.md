@@ -38,6 +38,24 @@ named in its report.
 | `unify-agent-tools` | Una sola definición de herramientas para el agente de texto y el de voz, con paridad estructural, lecturas mul… | Yes |
 | `wallet-profile` | Perfil de wallet: identidad más saldo personal USDC con lectura explícita y sin métricas simuladas. | No |
 
+## Follow-ups after the archive commit
+
+- `c7fa2fe` completed the move by recording the delete half for the 16
+  pre-existing change directories (the archive commit had staged only the added
+  copies). Losslessness was verified first: every archived file is
+  byte-identical to its original except the ten `state.yaml` files, whose only
+  difference is the archive stamp.
+- `5c84465` fixed a latent CI flake surfaced while reconciling the ledger: the
+  policy-sync case recomputed its expected expiry at assertion time, so
+  crossing a second boundary failed the whole backend job (CI run 37636561838
+  on `2958412`).
+- **Environment caveat for local runs**: an untracked `.env` with live Privy
+  credentials at the repository root leaks into the suite through `dotenv`, so
+  fixture-based cases hit the real provider (two `wallets-sync` cases then
+  report `unavailable` instead of `ready`). Verified by bisect: the same commit
+  is fully green in a clean environment. Run the suite from a checkout without
+  live credentials, or keep the credentials out of the repository root.
+
 ## Notable cross-cutting deferrals
 
 - **Rolling 50 USDC / 3600 s aggregate** (`privy-embedded-wallets`): blocked on
