@@ -10,7 +10,6 @@ multiuser or production wallet access.
 - The application persists no microphone audio, synthesized audio, or replayable recordings.
 - Agent sessions use `record: false`; LiveKit Egress and automatic Egress stay disabled.
 - Deepgram uses LiveKit Inference with `mip_opt_out=true` and the documented ZDR path.
-- ElevenLabs logging is disabled only when the account's zero-retention capability has been verified. Otherwise provider defaults apply and may retain request history.
 - Content-free phase counters and latency aggregates are safe to keep with normal operational telemetry.
 - Native voice metrics are limited to the runtime label and aggregate connection, final-transcript, first-token, first-audio, interruption, recovery, and total-duration milestones.
 - Detailed traces are disabled by default. Development traces require explicit `VOICE_TRACE_ENABLED=true`, are redacted before storage, and expire after no more than seven days.
@@ -18,7 +17,6 @@ multiuser or production wallet access.
 
 Review the LiveKit Cloud project before a test window. Confirm that Egress,
 auto-Egress, room recording, and Agent Observability recording are disabled.
-Record any remaining ElevenLabs retention limitation in the deployment notes.
 
 ## Prerequisites
 
@@ -61,12 +59,6 @@ LIVE_VOICE_BINDING_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC K
 LIVEKIT_URL=ws://localhost:7880
 LIVEKIT_API_KEY=development-key
 LIVEKIT_API_SECRET=development-secret
-ELEVENLABS_API_KEY=development-provider-key
-LIVEKIT_TTS_PROVIDER=elevenlabs
-# Development fallback when the ElevenLabs account cannot use API voices:
-# LIVEKIT_TTS_PROVIDER=inference
-# LIVEKIT_TTS_MODEL=cartesia/sonic-3
-# LIVEKIT_TTS_VOICE=5c5ad5e7-1020-476b-8b91-fdcbe9cc313c
 LIVEKIT_RECORDING_ENABLED=false
 AGENT_OBSERVABILITY_RECORDING=false
 LIVEKIT_AGENT_RUNTIME=service-adapter
@@ -76,7 +68,7 @@ VOICE_TRACE_RETENTION_DAYS=7
 
 The API needs the private binding key to issue grants. The worker receives the
 public key and refuses to start without its LiveKit credentials, database
-identity, and ElevenLabs credential. `readApiProcessConfig` and
+identity, and OpenAI credential. `readApiProcessConfig` and
 `readWorkerProcessConfig` reject malformed values before a process starts.
 
 In the wallet `.env.local`, configure only public development values:

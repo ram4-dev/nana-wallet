@@ -30,15 +30,12 @@ describe("worker configuration", () => {
     ).toThrow("OPENAI_API_KEY is required");
   });
 
-  it("does not require an ElevenLabs key", () => {
-    const config = readWorkerProcessConfig(
-      workerEnv({ ELEVENLABS_API_KEY: undefined }),
-    );
+  it("accepts a complete worker environment", () => {
+    const config = readWorkerProcessConfig(workerEnv());
     expect(config).toMatchObject({
       databaseUrl: "postgres://local",
       demoUserId: "11111111-1111-4111-8111-111111111111",
     });
-    expect("elevenLabsApiKey" in config).toBe(false);
   });
 
   it("no longer reads a voice provider", () => {

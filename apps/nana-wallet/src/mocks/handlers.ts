@@ -631,9 +631,6 @@ export const handlers = [
     confirmIntent(request, String(params["intentId"]), "transfer"),
   ),
 
-  // /v1/agent/transcribe is intentionally unmocked: it's a real Whisper call proxied
-  // through the backend, and MSW's onUnhandledRequest: "bypass" lets it reach it in dev.
-
   http.post(apiPath("/conversations"), () => {
     if (shouldUseLiveAgentBackend()) return passthrough();
     const conversationId = crypto.randomUUID();

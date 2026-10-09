@@ -651,30 +651,7 @@ export const api = {
   // token of the caller issued before now. Call it BEFORE the local session is
   // cleared, while the access token is still valid.
   logout: () => request<void>("/v1/auth/logout", jsonRequest("POST", {})),
-
-  speak: (text: string) => speak(text),
 };
-
-/**
- * @deprecated Only the retired recorded transport reaches this helper; live
- * voice speaks through the LiveKit room. It survives until use-voice-playback
- * and this helper are removed together.
- */
-async function speak(text: string): Promise<Blob> {
-  const response = await authedFetch("/v1/voice/speak", {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
-
-  if (!response.ok) {
-    throw new ApiError("ERROR_INTERNO", "No pudimos generar el audio.", {
-      status: response.status,
-      ambiguous: response.status >= 500,
-    });
-  }
-
-  return response.blob();
-}
 
 /**
  * Builds a sender whose durable conversation identity stays in React-owned memory.

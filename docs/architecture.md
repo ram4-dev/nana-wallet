@@ -9,9 +9,7 @@ worker owns room jobs, media lifecycle, and the voice adapter. Both use the
 same Supabase PostgreSQL schema and tenant-scoped `recipient_app` role.
 
 The worker is started only after `LIVEKIT_URL`, LiveKit API credentials, the
-binding public key, database identity, and the OpenAI API key validate; it no
-longer requires ElevenLabs credentials. `ELEVENLABS_API_KEY` is used only by the
-API process for the recorded-transport `/v1/voice/speak` endpoint. It stops
+binding public key, database identity, and the OpenAI API key validate. It stops
 accepting jobs, drains registered financial tasks for the configured bounded
 interval, closes wallet and memory providers, and closes PostgreSQL last. A
 task that exceeds the drain deadline remains durable and fail-closed; it is
@@ -35,10 +33,6 @@ automatic Egress remain disabled. Live voice runs as a single OpenAI Realtime
 (GPT-Realtime) speech-to-speech session: transcription, inference, and speech
 generation happen inside the model session, with no intermediate STT/TTS
 providers. OpenAI audio retention follows the account's API data terms.
-ElevenLabs remains only behind the API process for the recorded-transport
-`/v1/voice/speak` endpoint; its request logging is disabled only when
-`ELEVENLABS_ZERO_RETENTION_VERIFIED=true`; otherwise provider defaults apply
-and the runbook documents that limitation.
 
 Voice metrics contain only aggregate phases, counts, and latency summaries.
 Detailed traces require `VOICE_TRACE_ENABLED=true`, are redacted before
@@ -51,8 +45,8 @@ amounts, and balances are never trace fields.
 
 Live voice is a single OpenAI Realtime speech-to-speech session
 (`gpt-realtime-2.1-mini`, default voice `marin`) created in the worker from
-`OPENAI_API_KEY`. The voice path uses no Deepgram STT, no ElevenLabs TTS, no
-silero VAD, and no `WalletConversationLLM`: transcription, inference, and speech
+`OPENAI_API_KEY`. The voice path uses no Deepgram STT, no silero VAD, and no
+`WalletConversationLLM`: transcription, inference, and speech
 generation happen inside the Realtime model session, and the LiveKit session is
 started with `record: false`.
 

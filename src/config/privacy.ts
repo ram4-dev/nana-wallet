@@ -16,7 +16,6 @@ const privacySchema = z.object({
   VOICE_TRACE_PRIVACY_APPROVED: booleanFlag.default("false"),
   VOICE_TRACE_ACCESS_ROLE: z.string().trim().min(1).optional(),
   VOICE_TRACE_DELETION_MECHANISM: z.string().trim().min(1).optional(),
-  ELEVENLABS_ZERO_RETENTION_VERIFIED: booleanFlag.default("false"),
 });
 
 export type VoiceTraceConfig = {
@@ -28,17 +27,6 @@ export type VoiceTraceConfig = {
   accessRole?: string;
   deletionMechanism?: string;
 };
-
-export type VoiceProviderConfig = {
-  elevenLabsZeroRetentionVerified: boolean;
-  elevenLabsEnableLogging: boolean;
-};
-
-export function readElevenLabsApiKey(
-  environment: NodeJS.ProcessEnv = process.env,
-): string | undefined {
-  return environment.ELEVEN_LABS_API_KEY?.trim() || environment.ELEVEN_LABS?.trim() || environment.ELEVENLABS_API_KEY?.trim() || undefined;
-}
 
 function isTrue(value: string | undefined): boolean {
   return value === "true" || value === "1";
@@ -74,19 +62,6 @@ export function readVoiceTraceConfig(
     privacyApproved,
     accessRole: parsed.VOICE_TRACE_ACCESS_ROLE,
     deletionMechanism: parsed.VOICE_TRACE_DELETION_MECHANISM,
-  };
-}
-
-export function readVoiceProviderConfig(
-  environment: NodeJS.ProcessEnv = process.env,
-): VoiceProviderConfig {
-  const parsed = privacySchema.parse(environment);
-  const verified = isTrue(parsed.ELEVENLABS_ZERO_RETENTION_VERIFIED);
-  return {
-    elevenLabsZeroRetentionVerified: verified,
-    // ElevenLabs only accepts enable_logging=false for accounts with the
-    // verified zero-retention capability. Otherwise use provider defaults.
-    elevenLabsEnableLogging: !verified,
   };
 }
 

@@ -96,4 +96,4 @@ export {
   readWorkerConfig,
   readWorkerProcessConfig,
 } from "./process.js";
-export { readVoiceProviderConfig, readVoiceTraceConfig } from "./privacy.js";
+export { readVoiceTraceConfig } from "./privacy.js";

@@ -4,7 +4,6 @@ import {
   readApiProcessConfig,
   readWorkerProcessConfig,
 } from "../../src/config/process.js";
-import { readElevenLabsApiKey } from "../../src/config/privacy.js";
 
 // A real (throwaway) ES256 public key generated at test runtime: config tests
 // must validate that the value actually parses as a PEM key.
@@ -157,10 +156,8 @@ describe("process-specific configuration", () => {
     });
   });
 
-  it("requires the OpenAI key for the worker and no longer consumes ElevenLabs there", () => {
-    // Post-migration: the worker requires OPENAI_API_KEY and no longer consumes
-    // ElevenLabs (ElevenLabs remains only in the API process for the recorded
-    // transport /v1/voice/speak).
+  it("requires the OpenAI key for the worker", () => {
+    // The worker requires OPENAI_API_KEY for the LiveKit voice path.
     const keys = keyPair();
     const base = {
       LIVEKIT_URL: "wss://example.livekit.cloud",
@@ -176,25 +173,5 @@ describe("process-specific configuration", () => {
     expect(
       readWorkerProcessConfig({ ...base, OPENAI_API_KEY: "vault-openai-key" }),
     ).toBeDefined();
-  });
-});
-
-// The dedicated Vault key is consumed by the recorded-audio API; the current
-// live worker uses OpenAI. Preserve the alias without reverting that migration.
-describe("ElevenLabs API credential aliases", () => {
-  it("prioritizes the dedicated Vault name and trims whitespace", () => {
-    expect(
-      readElevenLabsApiKey({
-        ELEVEN_LABS_API_KEY: " dedicated ",
-        ELEVEN_LABS: "legacy",
-        ELEVENLABS_API_KEY: "compat",
-      }),
-    ).toBe("dedicated");
-    expect(
-      readElevenLabsApiKey({ ELEVEN_LABS_API_KEY: " ", ELEVEN_LABS: "legacy" }),
-    ).toBe("legacy");
-    expect(readElevenLabsApiKey({ ELEVENLABS_API_KEY: "compat" })).toBe(
-      "compat",
-    );
   });
 });

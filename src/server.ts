@@ -97,7 +97,6 @@ export function resolveCorsOrigins(raw = process.env.CORS_ORIGINS): string[] {
 }
 
 export function buildServer(options: { privyServer?: PrivyServerClient } = {}) {
-  // 25MB matches the upstream Whisper transcription limit (see NAN_API docs).
   const app = Fastify({
     logger: !process.env.VITEST,
     bodyLimit: 25 * 1024 * 1024,
