@@ -118,19 +118,13 @@ grep -q '^LIVEKIT_AGENT_NAME=' .env || printf '\nLIVEKIT_AGENT_NAME=nani-agent\n
 # --- 3b. WDK wallet mode validation -----------------------------------------
 wdk_source="$(strip_quotes "$(grep -E '^WDK_TOOLS_SOURCE=' .env | cut -d= -f2- | tail -1)")"
 if [[ "$wdk_source" == "live" ]]; then
-  # Live policy fails closed at transfer time; catch missing machine config here
-  # instead of letting every preview return policy_rejected at runtime.
-  wdk_missing=()
-  for v in WDK_MAX_TRANSFER_AMOUNT WDK_ALLOWED_RECIPIENTS; do
-    val="$(strip_quotes "$(grep -E "^${v}=" .env | cut -d= -f2- | tail -1)")"
-    [[ -n "$val" ]] || wdk_missing+=("$v")
-  done
+  # Live mode needs machine-local wallet config; catch it here instead of letting
+  # every transfer reach the provider with the template default wallet.
   wallet_name="$(strip_quotes "$(grep -E '^WDK_WALLET_NAME=' .env | cut -d= -f2- | tail -1)")"
   if [[ "$wallet_name" == "agent-demo" ]]; then
-    wdk_missing+=("WDK_WALLET_NAME (template default 'agent-demo' — set the wallet created on this machine)")
+    fail "WDK_TOOLS_SOURCE=live requires a machine-local WDK_WALLET_NAME in .env (template default 'agent-demo' — set the wallet created on this machine)."
   fi
-  ((${#wdk_missing[@]} == 0)) || fail "WDK_TOOLS_SOURCE=live requires machine-local config missing from the template-based .env: ${wdk_missing[*]} (add them to .env and re-run)."
-  log "WDK live mode: wallet '${wallet_name}', policy cap and allowlist configured."
+  log "WDK live mode: wallet '${wallet_name}' (transfer enforcement is owned by the provider policy)."
 else
   log "WDK fixture mode (safe default) — set WDK_TOOLS_SOURCE=live in .env for a real Sepolia wallet."
 fi
@@ -147,7 +141,7 @@ if [[ "$seeded" == "0" ]]; then
    ('11111111-1111-4111-8111-111111111111','Lucas Herrera','lucas herrera','Primo, vive en Rosario','0x2222222222222222222222222222222222222222',1,'active',(SELECT ('[' || array_to_string(array_fill(0.05, ARRAY[384]), ',') || ']')::vector),'manual',now()),
    ('11111111-1111-4111-8111-111111111111','Ana Fernández','ana fernandez','Coworking, diseñadora','0x3333333333333333333333333333333333333333',1,'active',(SELECT ('[' || array_to_string(array_fill(0.05, ARRAY[384]), ',') || ']')::vector),'manual',now())
   ON CONFLICT DO NOTHING;" >/dev/null
-  log "note: contact addresses are non-allowlisted placeholders; in WDK_TOOLS_SOURCE=live, update one contact to a WDK_ALLOWED_RECIPIENTS address for a real transfer."
+  log "note: contact addresses are seed placeholders for the devnet flow."
 fi
 
 # --- 5. start processes (skip if already healthy) ---------------------------
@@ -212,8 +206,6 @@ for i in $(seq 1 30); do
    4. "Confirmá"                             → confirm_transfer (broadcast)
    5. Confirm from the UI card instead       → same DB claim, one broadcast
    6. Interrupt Nani mid-speech              → barge-in
-   7. In live mode (WDK_TOOLS_SOURCE=live): amounts above WDK_MAX_TRANSFER_AMOUNT
-      or non-allowlisted recipients must be narrated as policy_rejected.
  Stop everything: scripts/nani-e2e.sh stop
 ──────────────────────────────────────────────────────────────
 EOF

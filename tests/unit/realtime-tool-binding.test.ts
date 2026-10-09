@@ -13,17 +13,10 @@ import { createVoiceDecisionGate } from '../../src/livekit/voice-decision-gate.j
 import { isCancellation, isConfirmation } from '../../src/livekit/resolution-phrases.js';
 
 const envBackup = new Map<string, string | undefined>();
-// These fixture cases are not about transfer policy, so they run with the local
-// gate inert: the demo identity without a `solana-devnet` source is the only
-// combination that keeps it off. The single policy rejection case opts in by
-// setting `WDK_TOOLS_SOURCE=solana-devnet` in its own body, and the policy
-// variables below give that case a configured cap and allowlist.
-// `undefined` means "delete", so a stale ambient WDK_TOOLS_SOURCE cannot leak
-// into the suite.
+// These fixture cases are not about transfer policy. `undefined` means "delete",
+// so a stale ambient WDK_TOOLS_SOURCE cannot leak into the suite.
 const EVAL_ENV: Record<string, string | undefined> = {
   IDENTITY_PROVIDER: 'demo',
-  WDK_MAX_TRANSFER_AMOUNT: '100',
-  WDK_ALLOWED_RECIPIENTS: MAMA_ADDRESS,
   WDK_TOOLS_SOURCE: undefined,
 };
 
@@ -192,26 +185,6 @@ describe('realtime tool binding — production execution against the fixture sta
     const output = await binding.executeFunctionCall(call('confirm_transfer', {}));
     const parsed = JSON.parse(output.output) as { error?: string; code?: string };
     expect(parsed.error ?? parsed.code).toBe('stale_preview');
-    expect(stack.broadcastCalls).toHaveLength(0);
-  });
-
-  it('over-cap amounts are rejected as policy_rejected (solana-devnet source, fixture money)', async () => {
-    // The remaining cases in this file are not about policy, so the local gate
-    // stays inert for them. This rejection case selects the standalone
-    // solana-devnet source, the only lever that activates it.
-    process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
-    const stack = createRealtimeFixtureStack();
-    const binding = createRealtimeToolBinding(stack.deps);
-    const output = await binding.executeFunctionCall(
-      call('send_token', {
-        amount: '5000',
-        recipientId: MAMA_RECIPIENT_ID,
-        recipientVersion: MAMA_RECIPIENT_VERSION,
-      }),
-    );
-    const parsed = JSON.parse(output.output) as { error?: string; code?: string; message?: string };
-    const errorText = parsed.error ?? parsed.code ?? parsed.message ?? '';
-    expect(errorText).toContain('policy_rejected');
     expect(stack.broadcastCalls).toHaveLength(0);
   });
 

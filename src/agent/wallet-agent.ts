@@ -21,7 +21,6 @@ import {
   resolvePreviewRecipient,
   augmentPreviewOutput,
   guardedSendTokenSchema,
-  requiresLocalTransferPolicy,
   type GrantCreationPort,
   type SendTokenInput,
 } from './definition.js';
@@ -48,7 +47,7 @@ import {
   type ConversationSession,
 } from '../conversations/session-state.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
-import { isValidEvmAddress, isValidRecipientAddress } from '../memory/address.js';
+import { isValidEvmAddress } from '../memory/address.js';
 import { getConfiguredRecipientMemoryRuntime, type RecipientMemoryRuntime } from '../memory/runtime.js';
 import { resolveTransferRecipient, type RecipientMemoryToolPort } from './recipient-resolution.js';
 import { hasExplicitTransferAddress } from './recipient-intent.js';
@@ -122,110 +121,6 @@ const guardedSendTokenErrorSchema = z.object({
   error: z.enum(['confirmation_required', 'recipient_revalidation_required', 'policy_rejected']),
   message: z.string().trim().min(1),
 });
-
-const DECIMAL_AMOUNT = /^\d+(?:\.\d+)?$/u;
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
-
-type ParsedDecimal = {
-  integer: string;
-  fraction: string;
-};
-
-function parsePositiveDecimal(value: string): ParsedDecimal | null {
-  const normalized = value.trim();
-  if (!DECIMAL_AMOUNT.test(normalized)) return null;
-  const [rawInteger, fraction = ''] = normalized.split('.');
-  const integer = rawInteger.replace(/^0+(?=\d)/u, '');
-  if (!/[1-9]/u.test(`${integer}${fraction}`)) return null;
-  return { integer, fraction };
-}
-
-function compareDecimals(left: ParsedDecimal, right: ParsedDecimal): number {
-  if (left.integer.length !== right.integer.length) {
-    return left.integer.length < right.integer.length ? -1 : 1;
-  }
-  if (left.integer !== right.integer) return left.integer < right.integer ? -1 : 1;
-  const fractionLength = Math.max(left.fraction.length, right.fraction.length);
-  const leftFraction = left.fraction.padEnd(fractionLength, '0');
-  const rightFraction = right.fraction.padEnd(fractionLength, '0');
-  if (leftFraction === rightFraction) return 0;
-  return leftFraction < rightFraction ? -1 : 1;
-}
-
-function isBurnAddress(address: string): boolean {
-  const normalized = address.toLocaleLowerCase('en-US');
-  return normalized === ZERO_ADDRESS || normalized === DEAD_ADDRESS;
-}
-
-function rejectByPolicy(message: string): { error: 'policy_rejected'; message: string } {
-  return { error: 'policy_rejected', message };
-}
-
-function validateLocalTransferPolicy(
-  input: SendTokenInput,
-  config: WalletAgentConfig,
-): { error: 'policy_rejected'; message: string } | null {
-  if (!requiresLocalTransferPolicy()) return null;
-
-  const maxAmount = process.env.WDK_MAX_TRANSFER_AMOUNT?.trim();
-  const allowedRecipients = process.env.WDK_ALLOWED_RECIPIENTS?.split(',')
-    .map((address) => address.trim())
-    .filter(Boolean);
-  if (!maxAmount || !allowedRecipients?.length) {
-    return rejectByPolicy(
-      'Live transfer policy is not configured: set WDK_MAX_TRANSFER_AMOUNT and WDK_ALLOWED_RECIPIENTS.',
-    );
-  }
-
-  const parsedMaxAmount = parsePositiveDecimal(maxAmount);
-  if (!parsedMaxAmount) {
-    return rejectByPolicy(
-      'Live transfer policy is invalid: WDK_MAX_TRANSFER_AMOUNT must be a positive plain decimal.',
-    );
-  }
-  const solana = input.network === 'solana-devnet';
-  if (allowedRecipients.some((address) => !isValidRecipientAddress(address, solana ? 'solana-devnet' : undefined) || (!solana && isBurnAddress(address)))) {
-    return rejectByPolicy(
-      'Live transfer policy is invalid: WDK_ALLOWED_RECIPIENTS must contain only valid non-burn EVM addresses.',
-    );
-  }
-
-  if (
-    input.wallet !== config.wallet ||
-    input.network !== config.network ||
-    input.token !== config.token
-  ) {
-    return rejectByPolicy(
-      'Refusing live transfer: wallet, network, and token must exactly match the configured wallet.',
-    );
-  }
-
-  const parsedAmount = parsePositiveDecimal(input.amount);
-  if (!parsedAmount) {
-    return rejectByPolicy('Refusing live transfer: amount must be a positive plain decimal.');
-  }
-  if (solana && ((input.amount.split('.')[1]?.length ?? 0) > 9 || (maxAmount.split('.')[1]?.length ?? 0) > 9)) {
-    return rejectByPolicy('Refusing live transfer: SOL amounts must have at most 9 decimal places.');
-  }
-  if (compareDecimals(parsedAmount, parsedMaxAmount) > 0) {
-    return rejectByPolicy('Refusing live transfer: amount exceeds WDK_MAX_TRANSFER_AMOUNT.');
-  }
-
-  if (!isValidRecipientAddress(input.to, solana ? 'solana-devnet' : undefined)) {
-    return rejectByPolicy('Refusing live transfer: recipient must match the configured network.');
-  }
-  if (!solana && isBurnAddress(input.to)) {
-    return rejectByPolicy('Refusing live transfer: zero and burn addresses are prohibited.');
-  }
-  const allowlist = new Set(solana ? allowedRecipients : allowedRecipients.map((address) => address.toLocaleLowerCase('en-US')));
-  const normalizedRecipient = solana ? input.to : input.to.toLocaleLowerCase('en-US');
-  if (!allowlist.has(normalizedRecipient)) {
-    return rejectByPolicy('Refusing live transfer: recipient is not in WDK_ALLOWED_RECIPIENTS.');
-  }
-
-  return null;
-}
 
 const transactionReceiptOutcomeSchema = z.object({
   status: z.enum(['confirmed', 'reverted']),
@@ -316,8 +211,6 @@ export function buildGuardedTools(
         return { error: 'confirmation_required', message: 'Missing recipient: supply recipientId and recipientVersion for a preview.' };
       }
       const normalizedInput = normalizeSendTokenInput(parsedInternal.data, config.token);
-      const policyRejection = validateLocalTransferPolicy(normalizedInput, config);
-      if (policyRejection) return policyRejection;
       const selected = session.recipientMemory?.selectedRecipient;
       const previewed = session.recipientMemory?.previewedRecipient;
       const pending = session.pendingTransfer;

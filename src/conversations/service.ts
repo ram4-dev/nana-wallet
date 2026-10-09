@@ -39,7 +39,6 @@ import {
   walletChainFamilyForNetwork,
   type WalletForUser,
 } from "../wallet/privy-user-provider.js";
-import { validateWalletTransferPolicy } from "../wallet/agent-tools.js";
 import {
   GrantWalletUnavailableError,
   InvalidGrantInputError,
@@ -956,11 +955,6 @@ export function createWalletConversationService(
       amount: input.amount,
       wallet: config.wallet,
     };
-    const policyError = validateWalletTransferPolicy(
-      { ...transferRequest, dryRun: false },
-      policyConfigForTransfer(transferRequest, config),
-    );
-    if (policyError) return errorResult(errorFromCode("policy_rejected"));
 
     let preview: TransferPreview;
     try {
@@ -1151,15 +1145,11 @@ export function createWalletConversationService(
   }): Promise<ConversationTurnResult> {
     const { conversationId, userId, claimed, snapshot } = input;
     const transfer = toTransferRequest(claimed);
-    const policyError = validateWalletTransferPolicy(
-      { ...transfer, dryRun: false },
-      policyConfigForTransfer(transfer, getWalletAgentConfig()),
-    );
     const recipientValid = await isClaimedRecipientValid(
       claimed,
       dependencies.memory,
     );
-    if (policyError || !recipientValid) {
+    if (!recipientValid) {
       // AD-10: preflight rejection is a definitive non-dispatch —
       // settle the reservation ONLY with complete grant identity on
       // the delegated-grant path. Without it: fail closed, retain
@@ -1178,9 +1168,7 @@ export function createWalletConversationService(
           claimId: input.claimId,
           grantId: input.claimedGrantId,
           idempotencyKey: `grant-exec:${userId}:${input.previewId}`,
-          reason: policyError
-            ? "policy_rejected"
-            : "recipient_revalidation_required",
+          reason: "recipient_revalidation_required",
         });
         // The reservation key is retired. Any retry must create a new
         // persisted preview and claim a fresh reservation.
@@ -1197,9 +1185,7 @@ export function createWalletConversationService(
         );
       }
       const result = errorResult(
-        errorFromCode(
-          policyError ? "policy_rejected" : "recipient_revalidation_required",
-        ),
+        errorFromCode("recipient_revalidation_required"),
       );
       await appendServiceMessage(
         snapshot,
@@ -1899,16 +1885,6 @@ function toTransferRequest(transfer: PendingTransfer): TransferRequest {
     // the provider derives its Circle idempotency key from it.
     ...(transfer.previewId ? { previewId: transfer.previewId } : {}),
   };
-}
-
-function policyConfigForTransfer(
-  transfer: Pick<TransferRequest, "network" | "token">,
-  config: ReturnType<typeof getWalletAgentConfig>,
-) {
-  if (transfer.network === "solana-devnet" && transfer.token === "SOL") {
-    return { ...config, network: "solana-devnet", token: "SOL" };
-  }
-  return config;
 }
 
 async function isClaimedRecipientValid(

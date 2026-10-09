@@ -392,9 +392,6 @@ export function augmentPreviewOutput(
 }
 
 const GENERIC_USDT_NAMES = new Set(['usdt', 'usd₮', 'tether']);
-const DECIMAL_AMOUNT = /^\d+(?:\.\d+)?$/u;
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const DEAD_ADDRESS = '0x000000000000000000000000000000000000dead';
 
 export function normalizeWalletToken(token: string, configuredToken: string): string {
   const normalized = token.trim().normalize('NFKC').toLocaleLowerCase('en-US');
@@ -448,54 +445,6 @@ export function normalizeBroadcastResult(output: unknown, network: string) {
     explorerUrl: explorerUrlFor(network, hash),
   });
   return result.success ? result.data : null;
-}
-
-/**
- * Single source of truth for whether the LOCAL transfer-policy gate applies.
- *
- * On the Privy path the provider policy is authoritative: it is attached to the
- * wallet at signing time and enforces the recipient allowlist and the
- * per-transfer cap there. A local re-check of the same allowlist and cap would
- * be a weaker duplicate fed by a different source of truth (environment
- * variables instead of the enrolled grant and the provider policy), and two
- * allowlists with different sources drift. So on that path the local gate
- * delegates and does not run.
- *
- * The local gate is kept for the one path that moves real money with NO provider
- * policy behind it: the standalone `solana-devnet` provider. There the gate is
- * the only enforcement, so removing it would remove the protection itself.
- *
- * Demo mode is deliberately NOT gated. Its provider is the fixture wallet, which
- * cannot move funds, so a gate there would protect nothing while rejecting every
- * fixture transfer whose scenario is unrelated to policy.
- */
-export function requiresLocalTransferPolicy(environment: NodeJS.ProcessEnv = process.env): boolean {
-  // A provider policy is attached on the privy path; nothing local to enforce.
-  if ((environment.IDENTITY_PROVIDER?.trim() || 'demo') === 'privy') return false;
-  // Real money, no provider policy: the local gate is the only enforcement.
-  return environment.WDK_TOOLS_SOURCE?.trim() === 'solana-devnet';
-}
-
-export function validateWalletTransferPolicy(
-  input: SendTokenInput,
-  config: WalletAgentConfig,
-): { error: 'policy_rejected'; message: string } | undefined {
-  if (!requiresLocalTransferPolicy()) return undefined;
-  const maximum = process.env.WDK_MAX_TRANSFER_AMOUNT?.trim();
-  const allowed = process.env.WDK_ALLOWED_RECIPIENTS?.split(',').map((value) => value.trim()).filter(Boolean);
-  if (!maximum || !allowed?.length) return { error: 'policy_rejected', message: 'Live transfer policy is not configured: set WDK_MAX_TRANSFER_AMOUNT and WDK_ALLOWED_RECIPIENTS.' };
-  if (!positiveDecimal(maximum)) return { error: 'policy_rejected', message: 'Live transfer policy is invalid: WDK_MAX_TRANSFER_AMOUNT must be a positive plain decimal.' };
-  if (input.wallet !== config.wallet || input.network !== config.network || input.token !== config.token) return { error: 'policy_rejected', message: 'Refusing live transfer: wallet, network, and token must exactly match the configured wallet.' };
-  if (!positiveDecimal(input.amount)) return { error: 'policy_rejected', message: 'Refusing live transfer: amount must be a positive plain decimal.' };
-  const amountFraction = input.amount.split('.')[1];
-  const maximumFraction = maximum.split('.')[1];
-  if (input.network === 'solana-devnet' && ((amountFraction?.length ?? 0) > 9 || (maximumFraction?.length ?? 0) > 9)) {
-    return { error: 'policy_rejected', message: 'Refusing live transfer: SOL amounts must have at most 9 decimal places.' };
-  }
-  if (compareDecimals(input.amount, maximum) > 0) return { error: 'policy_rejected', message: 'Refusing live transfer: amount exceeds WDK_MAX_TRANSFER_AMOUNT.' };
-  if (!isValidRecipientAddress(input.to, input.network) || (input.network !== 'solana-devnet' && isBurnAddress(input.to))) return { error: 'policy_rejected', message: 'Refusing live transfer: recipient must match the configured network.' };
-  if (!allowed.some((value) => input.network === 'solana-devnet' ? value === input.to : value.toLocaleLowerCase('en-US') === input.to.toLocaleLowerCase('en-US'))) return { error: 'policy_rejected', message: 'Refusing live transfer: recipient is not in WDK_ALLOWED_RECIPIENTS.' };
-  return undefined;
 }
 
 export function createWalletAgentDefinition(): WalletAgentDefinition {
@@ -753,8 +702,6 @@ async function textPreviewTransfer(
     config: context.config,
   });
   if (!resolved.ok) return resolved.error;
-  const policyError = validateWalletTransferPolicy(resolved.internal, context.config);
-  if (policyError) return policyError;
   const preview = await context.wallet.previewTransfer({
     network: resolved.internal.network,
     token: resolved.internal.token,
@@ -920,8 +867,6 @@ function createVoiceDecisionOperations(context: WalletAgentContext): AgentToolDe
 
 async function sendToken(input: SendTokenBroadcastInput, context: WalletAgentContext): Promise<unknown> {
   const normalized = { ...input, token: normalizeWalletToken(input.token, context.config.token) };
-  const policyError = validateWalletTransferPolicy(normalized, context.config);
-  if (policyError) return policyError;
   if (normalized.dryRun) {
     const recipientError = await validatePreviewRecipient(normalized, context);
     if (recipientError) return recipientError;
@@ -984,24 +929,6 @@ async function validatePreviewRecipient(
   }
   context.session.recipientMemory!.previewedRecipient = selected;
   return undefined;
-}
-
-function positiveDecimal(value: string): boolean {
-  return DECIMAL_AMOUNT.test(value) && /[1-9]/u.test(value.replace('.', ''));
-}
-
-function compareDecimals(left: string, right: string): number {
-  const [leftWhole, leftFraction = ''] = left.split('.');
-  const [rightWhole, rightFraction = ''] = right.split('.');
-  if (leftWhole.length !== rightWhole.length) return leftWhole.length < rightWhole.length ? -1 : 1;
-  if (leftWhole !== rightWhole) return leftWhole < rightWhole ? -1 : 1;
-  const width = Math.max(leftFraction.length, rightFraction.length);
-  return leftFraction.padEnd(width, '0').localeCompare(rightFraction.padEnd(width, '0'));
-}
-
-function isBurnAddress(address: string): boolean {
-  const normalized = address.toLocaleLowerCase('en-US');
-  return normalized === ZERO_ADDRESS || normalized === DEAD_ADDRESS;
 }
 
 function decodePreviewCandidate(output: unknown, depth = 0): Record<string, unknown> | null {

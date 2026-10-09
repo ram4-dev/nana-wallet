@@ -232,6 +232,12 @@ function repositorySpy(input: {
   attemptId: string;
   /** DB-minted claim_id so the spy's winner returns the persisted token. */
   claimId?: string;
+  /**
+   * Versioned recipient identity the persisted pending transfer carries. The
+   * real repository persists one for every memory-resolved preview; leaving it
+   * out mirrors the address-typed preview (no recipient identity to revalidate).
+   */
+  claimedRecipient?: { recipientId: string; recipientVersion: number };
   failAfter?: "cas" | "ledger" | "audit";
 }): ConversationRepositoryLike {
   const { events, attemptId } = input;
@@ -340,7 +346,11 @@ function repositorySpy(input: {
       return {
         status: "claimed" as const,
         claimId,
-        transfer: { ...claimed, previewId: attemptId },
+        transfer: {
+          ...claimed,
+          previewId: attemptId,
+          ...(input.claimedRecipient ?? {}),
+        },
       } as never;
     },
     /**
@@ -868,23 +878,25 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
     });
 
     const events: string[] = [];
+    // The persisted attempt carries a versioned recipient identity, as it does
+    // for any memory-resolved preview.
+    const recipientId = randomUUID();
     const repository = repositorySpy({
       events,
       attemptId,
       claimId: ownedClaimId,
+      claimedRecipient: { recipientId, recipientVersion: 2 },
     });
-    // Preflight-after-claim: on the privy identity the provider policy owns
-    // enforcement, so the preview passes with no local gate; flipping to the
-    // standalone solana-devnet source AFTER the preview activates the local
-    // gate, which rejects in runFinancialTransfer (env vars absent) — a real
-    // policy rejection from the OWNED broadcasting state, before any broadcast.
+    // Preflight-after-claim: the local transfer-policy gate no longer exists, so
+    // the surviving pre-dispatch rejection in runFinancialTransfer is the
+    // claimed-recipient revalidation. With no recipient-memory dependency the
+    // service fails that closed — a real rejection from the OWNED broadcasting
+    // state, before any broadcast.
     process.env.IDENTITY_PROVIDER = "privy";
     const wallet = new FixtureWalletProvider();
     const previewSpy = vi
       .spyOn(wallet, "previewTransfer")
       .mockImplementation(async (...args: unknown[]) => {
-        process.env.IDENTITY_PROVIDER = "demo";
-        process.env.WDK_TOOLS_SOURCE = "solana-devnet";
         const preview = {
           network: "base-sepolia",
           token: "USDT",
@@ -943,12 +955,14 @@ suite("phase 8: reservation release on definitive no-dispatch (RED)", () => {
       false,
     );
     expect(
-      events.some((e) => e === "settle:policy_rejected:claimIdMatch=true"),
+      events.some(
+        (e) => e === "settle:recipient_revalidation_required:claimIdMatch=true",
+      ),
     ).toBe(true);
     expect((await getAttempt(attemptId))?.status).toBe("cancelled");
     const row = await claimRow(grantId, key);
     expect(row?.released_at).not.toBeNull();
-    expect(row?.released_reason).toBe("policy_rejected");
+    expect(row?.released_reason).toBe("recipient_revalidation_required");
     expect(await releasedAuditCount(grantId, key)).toBe(1);
   });
 

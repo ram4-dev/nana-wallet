@@ -4,7 +4,6 @@ import {
   internalSendTokenInputSchema,
   normalizeBroadcastResult,
   normalizeWalletToken,
-  validateWalletTransferPolicy,
   type WalletAgentContext,
 } from "../../src/agent/definition.js";
 import {
@@ -28,8 +27,6 @@ function context(): WalletAgentContext {
 describe("wallet agent definition", () => {
   const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
-  const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
-  const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
 
   afterEach(() => {
     resetSessionStore();
@@ -37,12 +34,6 @@ describe("wallet agent definition", () => {
     else process.env.IDENTITY_PROVIDER = previousIdentity;
     if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
     else process.env.WDK_TOOLS_SOURCE = previousSource;
-    if (previousMaximum === undefined)
-      delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
-    if (previousAllowed === undefined)
-      delete process.env.WDK_ALLOWED_RECIPIENTS;
-    else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
   });
 
   it("owns the existing prompt and stable wallet tool catalog", () => {
@@ -156,142 +147,6 @@ describe("wallet agent definition", () => {
       balanceSpoken: "noventa y seis USDC con noventa y nueve centavos",
     });
   });
-
-  it("keeps live transfer policy in the canonical operation layer", () => {
-    // The local gate is active on the standalone solana-devnet source, where no
-    // provider policy exists.
-    process.env.IDENTITY_PROVIDER = "demo";
-    process.env.WDK_TOOLS_SOURCE = "solana-devnet";
-    process.env.WDK_MAX_TRANSFER_AMOUNT = "1";
-    process.env.WDK_ALLOWED_RECIPIENTS =
-      "0x1234567890123456789012345678901234567890";
-
-    expect(
-      validateWalletTransferPolicy(
-        {
-          network: "sepolia",
-          token: "usdt-test",
-          to: "0x1234567890123456789012345678901234567890",
-          amount: "1",
-          wallet: "agent-demo",
-          dryRun: true,
-        },
-        context().config,
-      ),
-    ).toBeUndefined();
-  });
-});
-
-describe("validateWalletTransferPolicy solana-devnet parity", () => {
-  const previousSource = process.env.WDK_TOOLS_SOURCE;
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
-  const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
-  const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
-
-  const allowedAddress = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
-  const otherAddress = "0x1234567890123456789012345678901234567890";
-
-  function gateInput(
-    overrides: Partial<Parameters<typeof validateWalletTransferPolicy>[0]> = {},
-  ) {
-    return {
-      network: "sepolia",
-      token: "usdt-test",
-      to: allowedAddress,
-      amount: "0.05",
-      wallet: "agent-demo",
-      dryRun: true,
-      ...overrides,
-    };
-  }
-
-  beforeEach(() => {
-    resetSessionStore();
-    process.env.WDK_TOOLS_SOURCE = "solana-devnet";
-    // The local gate runs on the standalone solana-devnet source, which has no
-    // provider policy to delegate to.
-    process.env.IDENTITY_PROVIDER = "demo";
-    process.env.WDK_MAX_TRANSFER_AMOUNT = "0.05";
-    process.env.WDK_ALLOWED_RECIPIENTS =
-      allowedAddress.toLocaleUpperCase("en-US");
-  });
-
-  afterEach(() => {
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
-    if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousSource;
-    if (previousMaximum === undefined)
-      delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
-    if (previousAllowed === undefined)
-      delete process.env.WDK_ALLOWED_RECIPIENTS;
-    else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
-  });
-
-  it.each(["WDK_MAX_TRANSFER_AMOUNT", "WDK_ALLOWED_RECIPIENTS"] as const)(
-    "fails closed when %s is missing under solana-devnet",
-    (variable) => {
-      delete process.env[variable];
-      expect(
-        validateWalletTransferPolicy(gateInput(), context().config),
-      ).toMatchObject({
-        error: "policy_rejected",
-      });
-    },
-  );
-
-  it("rejects an over-limit amount under solana-devnet", () => {
-    expect(
-      validateWalletTransferPolicy(
-        gateInput({ amount: "0.055" }),
-        context().config,
-      ),
-    ).toMatchObject({
-      error: "policy_rejected",
-    });
-  });
-
-  it.each([
-    { label: "non-allowlisted", to: otherAddress },
-    { label: "zero", to: "0x0000000000000000000000000000000000000000" },
-    { label: "burn", to: "0x000000000000000000000000000000000000dEaD" },
-    { label: "malformed", to: "not-an-address" },
-  ])("rejects a $label recipient under solana-devnet", ({ to }) => {
-    expect(
-      validateWalletTransferPolicy(gateInput({ to }), context().config),
-    ).toMatchObject({
-      error: "policy_rejected",
-    });
-  });
-
-  it.each([
-    { label: "wallet", override: { wallet: "other-wallet" } },
-    { label: "network", override: { network: "arc-testnet" } },
-    { label: "token", override: { token: "USDC" } },
-  ])("rejects a mismatched $label under solana-devnet", ({ override }) => {
-    expect(
-      validateWalletTransferPolicy(gateInput(override), context().config),
-    ).toMatchObject({
-      error: "policy_rejected",
-    });
-  });
-
-  it("allows a matching transfer under solana-devnet", () => {
-    expect(
-      validateWalletTransferPolicy(gateInput(), context().config),
-    ).toBeUndefined();
-  });
-
-  it("stays inert under the privy identity, where the provider policy owns enforcement", () => {
-    process.env.IDENTITY_PROVIDER = "privy";
-    process.env.WDK_TOOLS_SOURCE = "fixture";
-    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    delete process.env.WDK_ALLOWED_RECIPIENTS;
-    expect(
-      validateWalletTransferPolicy(gateInput(), context().config),
-    ).toBeUndefined();
-  });
 });
 
 describe("normalizeBroadcastResult explorer URL (D6, CAR-010)", () => {
@@ -321,93 +176,5 @@ describe("normalizeBroadcastResult explorer URL (D6, CAR-010)", () => {
       transactionHash: HASH,
       explorerUrl: `https://sepolia.etherscan.io/tx/${HASH}`,
     });
-  });
-});
-
-// On the Privy path the provider policy is authoritative: it is attached to the
-// wallet at signing time and enforces the allowlist and the per-transfer cap
-// there, so the local gate would be a weaker duplicate fed by a different
-// source of truth. The gate is retained only for the standalone solana-devnet
-// source, which has no provider policy behind it, where it must still reject.
-describe("validateWalletTransferPolicy delegation to the provider policy", () => {
-  const previousIdentity = process.env.IDENTITY_PROVIDER;
-  const previousSource = process.env.WDK_TOOLS_SOURCE;
-  const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
-  const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
-
-  const allowedAddress = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
-
-  function gateInput(
-    overrides: Partial<Parameters<typeof validateWalletTransferPolicy>[0]> = {},
-  ) {
-    return {
-      network: "sepolia",
-      token: "usdt-test",
-      to: allowedAddress,
-      amount: "0.05",
-      wallet: "agent-demo",
-      dryRun: true,
-      ...overrides,
-    };
-  }
-
-  beforeEach(() => {
-    resetSessionStore();
-    process.env.IDENTITY_PROVIDER = "demo";
-    process.env.WDK_TOOLS_SOURCE = "solana-devnet";
-    process.env.WDK_MAX_TRANSFER_AMOUNT = "0.05";
-    process.env.WDK_ALLOWED_RECIPIENTS =
-      allowedAddress.toLocaleUpperCase("en-US");
-  });
-
-  afterEach(() => {
-    if (previousIdentity === undefined) delete process.env.IDENTITY_PROVIDER;
-    else process.env.IDENTITY_PROVIDER = previousIdentity;
-    if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
-    else process.env.WDK_TOOLS_SOURCE = previousSource;
-    if (previousMaximum === undefined)
-      delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
-    if (previousAllowed === undefined)
-      delete process.env.WDK_ALLOWED_RECIPIENTS;
-    else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
-  });
-
-  it("delegates to the provider policy under the privy identity with no local policy", () => {
-    process.env.IDENTITY_PROVIDER = "privy";
-    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    delete process.env.WDK_ALLOWED_RECIPIENTS;
-    expect(
-      validateWalletTransferPolicy(gateInput(), context().config),
-    ).toBeUndefined();
-  });
-
-  it("delegates even a local-rule violation to the provider policy under the privy identity", () => {
-    process.env.IDENTITY_PROVIDER = "privy";
-    expect(
-      validateWalletTransferPolicy(
-        gateInput({
-          amount: "999",
-          to: "0x9999999999999999999999999999999999999999",
-        }),
-        context().config,
-      ),
-    ).toBeUndefined();
-  });
-
-  it("still rejects when WDK_MAX_TRANSFER_AMOUNT is absent on the solana-devnet source", () => {
-    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    expect(
-      validateWalletTransferPolicy(gateInput(), context().config),
-    ).toMatchObject({ error: "policy_rejected" });
-  });
-
-  it("still rejects an amount above the maximum on the solana-devnet source", () => {
-    expect(
-      validateWalletTransferPolicy(
-        gateInput({ amount: "0.051" }),
-        context().config,
-      ),
-    ).toMatchObject({ error: "policy_rejected" });
   });
 });

@@ -13,7 +13,6 @@ const usage = `Uso: node scripts/docker-real-wallet.mjs --provider wdk [--env-fi
 Arranca DB, LiveKit, API, worker y frontend. WDK también usa su daemon.
 --check valida sin crear contenedores. --vault inyecta claves mediante vault-env.
 WDK requiere NANA_WDK_VOLUME (volumen existente) y WDK_WALLET_NAME/WDK_TOKEN.
-Requiere WDK_MAX_TRANSFER_AMOUNT y WDK_ALLOWED_RECIPIENTS.
 No crea wallets, no las desbloquea ni ejecuta transferencias.
 Variables opcionales: NANA_DOCKER_PROJECT (nana-real), NANA_HOSTNAME (nana),
 NANA_DB_VOLUME (volumen existente), NANA_LIVEKIT_MEDIA_START (7881).
@@ -23,13 +22,10 @@ export function validateEnvironment(provider, supplied, repo = root) {
   if (provider !== 'wdk') throw new Error('Elegí --provider wdk. Fixture no está admitido.');
   const env = { ...supplied };
   env.OPENAI_API_KEY ||= env.OPEN_AI_API_KEY;
-  const required = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVE_VOICE_BINDING_PRIVATE_KEY', 'LIVE_VOICE_BINDING_PUBLIC_KEY', 'OPENAI_API_KEY', 'OPENCODE_GO_API_KEY', 'WDK_MAX_TRANSFER_AMOUNT', 'WDK_ALLOWED_RECIPIENTS'];
+  const required = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'LIVE_VOICE_BINDING_PRIVATE_KEY', 'LIVE_VOICE_BINDING_PUBLIC_KEY', 'OPENAI_API_KEY', 'OPENCODE_GO_API_KEY'];
   required.push('NANA_WDK_VOLUME', 'WDK_WALLET_NAME', 'WDK_TOKEN');
   const missing = required.filter(name => !env[name]?.trim());
   if (missing.length) throw new Error(`Faltan variables: ${missing.join(', ')}`);
-  if (!/^\d+(?:\.\d+)?$/.test(env.WDK_MAX_TRANSFER_AMOUNT) || !/[1-9]/.test(env.WDK_MAX_TRANSFER_AMOUNT)) throw new Error('WDK_MAX_TRANSFER_AMOUNT debe ser un decimal positivo.');
-  const recipients = env.WDK_ALLOWED_RECIPIENTS.split(',').map(s => s.trim());
-  if (recipients.some(s => !/^0x[0-9a-fA-F]{40}$/.test(s) || /^0x0{40}$/i.test(s) || /^0x0{36}dead$/i.test(s))) throw new Error('WDK_ALLOWED_RECIPIENTS contiene una dirección inválida o de quema.');
   try {
     const privateKey = createPrivateKey(env.LIVE_VOICE_BINDING_PRIVATE_KEY.replace(/\\n/g, '\n'));
     const publicKey = createPublicKey(env.LIVE_VOICE_BINDING_PUBLIC_KEY.replace(/\\n/g, '\n'));
@@ -54,7 +50,6 @@ export function composeConfig(provider, env) {
   const environment = {
     HOST: '0.0.0.0', PORT: '3000', WDK_TOOLS_SOURCE: env.WDK_TOOLS_SOURCE,
     WDK_NETWORK: env.WDK_NETWORK, WDK_TOKEN: env.WDK_TOKEN, WDK_WALLET_NAME: env.WDK_WALLET_NAME,
-    WDK_MAX_TRANSFER_AMOUNT: ref('WDK_MAX_TRANSFER_AMOUNT'), WDK_ALLOWED_RECIPIENTS: ref('WDK_ALLOWED_RECIPIENTS'),
     DATABASE_URL: 'postgresql://postgres@db:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions',
     DEMO_USER_ID: env.DEMO_USER_ID, RECIPIENT_MEMORY_ENABLED: 'true',
     LIVE_VOICE_ENABLED: 'true', LIVEKIT_URL: 'ws://livekit:7880', LIVEKIT_BROWSER_URL: `${origin.replace('https:', 'wss:')}/livekit`,

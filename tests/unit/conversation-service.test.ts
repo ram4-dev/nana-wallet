@@ -108,17 +108,11 @@ describe('WalletConversationService', () => {
   const previousRuntime = process.env.AGENT_RUNTIME;
   const previousIdentity = process.env.IDENTITY_PROVIDER;
   const previousSource = process.env.WDK_TOOLS_SOURCE;
-  const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
-  const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
 
   beforeEach(() => {
     process.env.AGENT_RUNTIME = 'deterministic';
     process.env.WDK_TOOLS_SOURCE = 'fixture';
-    // The local transfer gate applies where no provider policy exists — the
-    // demo legacy path — so fixture previews and confirmations satisfy it here.
     process.env.IDENTITY_PROVIDER = 'demo';
-    process.env.WDK_MAX_TRANSFER_AMOUNT = '10';
-    process.env.WDK_ALLOWED_RECIPIENTS = recipient;
   });
 
   it('streams a canonical preview through the injected wallet provider', async () => {
@@ -171,20 +165,20 @@ describe('WalletConversationService', () => {
     await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirmar la transferencia' })).resolves.toMatchObject({ status: 'error', code: 'broadcast_uncertain', message: expect.stringContaining('uncertain') });
   });
 
-  it('returns a stable policy error before any provider side effect', async () => {
-    // The local gate is active on the standalone solana-devnet source, which
-    // has no provider policy to delegate to: with no local policy configured
-    // the transfer is rejected before the provider is touched.
+  it('no longer applies a local transfer policy: the provider is reached with no policy env vars', async () => {
+    // The local transfer-policy gate (with its two policy environment
+    // variables) was deleted; the provider policy attached to the
+    // wallet is the single enforcement point. On the standalone solana-devnet
+    // source with no local policy configured the transfer must now reach the
+    // wallet provider instead of being rejected before any side effect.
     process.env.IDENTITY_PROVIDER = 'demo';
     process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
-    delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-    delete process.env.WDK_ALLOWED_RECIPIENTS;
     const repository = repositoryFixture();
     const wallet = walletFixture();
     const preview = vi.spyOn(wallet, 'previewTransfer');
     const service = createWalletConversationService({ conversations: repository, wallet });
-    await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` })).resolves.toMatchObject({ status: 'error', code: 'policy_rejected', message: expect.not.stringContaining('WDK_MAX_TRANSFER_AMOUNT') });
-    expect(preview).not.toHaveBeenCalled();
+    await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` })).resolves.toMatchObject({ status: 'confirmation_required' });
+    expect(preview).toHaveBeenCalledOnce();
   });
 
   it('revalidates the recipient after the atomic claim and before dispatch', async () => {
@@ -297,29 +291,19 @@ describe('WalletConversationService', () => {
         else process.env.IDENTITY_PROVIDER = previousIdentity;
         if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
         else process.env.WDK_TOOLS_SOURCE = previousSource;
-        if (previousMaximum === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-        else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
-        if (previousAllowed === undefined) delete process.env.WDK_ALLOWED_RECIPIENTS;
-        else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
       });
     });
 
     describe('WalletConversationService.previewTransfer', () => {
       const previousIdentity = process.env.IDENTITY_PROVIDER;
       const previousSource = process.env.WDK_TOOLS_SOURCE;
-      const previousMaximum = process.env.WDK_MAX_TRANSFER_AMOUNT;
-      const previousAllowed = process.env.WDK_ALLOWED_RECIPIENTS;
       const previousNetwork = process.env.WDK_NETWORK;
       const previousToken = process.env.WDK_TOKEN;
       const previousWallet = process.env.WDK_WALLET_NAME;
 
       beforeEach(() => {
         process.env.WDK_TOOLS_SOURCE = 'fixture';
-        // The local transfer gate applies where no provider policy exists (the
-        // demo identity), so these fixture previews satisfy it explicitly.
         process.env.IDENTITY_PROVIDER = 'demo';
-        process.env.WDK_MAX_TRANSFER_AMOUNT = '10';
-        process.env.WDK_ALLOWED_RECIPIENTS = recipient;
       });
 
       afterEach(() => {
@@ -327,10 +311,6 @@ describe('WalletConversationService', () => {
         else process.env.IDENTITY_PROVIDER = previousIdentity;
         if (previousSource === undefined) delete process.env.WDK_TOOLS_SOURCE;
         else process.env.WDK_TOOLS_SOURCE = previousSource;
-        if (previousMaximum === undefined) delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-        else process.env.WDK_MAX_TRANSFER_AMOUNT = previousMaximum;
-        if (previousAllowed === undefined) delete process.env.WDK_ALLOWED_RECIPIENTS;
-        else process.env.WDK_ALLOWED_RECIPIENTS = previousAllowed;
         if (previousNetwork === undefined) delete process.env.WDK_NETWORK;
         else process.env.WDK_NETWORK = previousNetwork;
         if (previousToken === undefined) delete process.env.WDK_TOKEN;
@@ -384,33 +364,6 @@ describe('WalletConversationService', () => {
           preview: { recipient, amount: '10', token: 'USDT' },
         });
         expect(published).toContainEqual(expect.objectContaining({ type: 'state-revision' }));
-      });
-
-      it('returns policy_rejected before persisting when live policy is not configured', async () => {
-        // The local gate is active on the standalone solana-devnet source (no
-        // provider policy to delegate to): with no local policy configured the
-        // transfer is rejected before the provider is touched or anything is
-        // persisted.
-        process.env.IDENTITY_PROVIDER = 'demo';
-        process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
-        delete process.env.WDK_MAX_TRANSFER_AMOUNT;
-        delete process.env.WDK_ALLOWED_RECIPIENTS;
-        const repository = repositoryFixture();
-        const wallet = walletFixture();
-        const preview = vi.spyOn(wallet, 'previewTransfer');
-        const setPending = vi.spyOn(repository, 'setPendingTransfer');
-        const service = createWalletConversationService({
-          conversations: repository,
-          wallet,
-          memory: memoryThatResolves(),
-        });
-
-        await expect(service.previewTransfer(previewInput)).resolves.toMatchObject({
-          status: 'error',
-          code: 'policy_rejected',
-        });
-        expect(preview).not.toHaveBeenCalled();
-        expect(setPending).not.toHaveBeenCalled();
       });
 
       it('fails closed to recipient_revalidation_required when the recipient version is stale', async () => {
@@ -489,45 +442,6 @@ describe('WalletConversationService', () => {
           network: 'solana-devnet', token: 'SOL', amount: '0.01',
         }));
         expect(broadcast).not.toHaveBeenCalled();
-      });
-
-      it('rejects a Solana amount above the configured live maximum before preview or pending persistence', async () => {
-        // The local gate applies on the demo identity (no provider policy).
-        process.env.IDENTITY_PROVIDER = 'demo';
-        process.env.WDK_TOOLS_SOURCE = 'solana-devnet';
-        process.env.WDK_NETWORK = 'sepolia';
-        process.env.WDK_TOKEN = 'USDT';
-        process.env.WDK_WALLET_NAME = 'privy-user';
-        process.env.WDK_MAX_TRANSFER_AMOUNT = '0.01';
-        process.env.WDK_ALLOWED_RECIPIENTS = solanaRecipient;
-        const repository = repositoryFixture();
-        const wallet = walletFixture();
-        const preview = vi.spyOn(wallet, 'previewTransfer');
-        const setPending = vi.spyOn(repository, 'setPendingTransfer');
-        const memory = {
-          userId,
-          service: {
-            getRecipientForVersion: vi.fn().mockResolvedValue({
-              id: recipientId,
-              userId,
-              version: 2,
-              address: solanaRecipient,
-              name: 'Lucas Gutiérrez',
-              normalizedName: 'lucas gutiérrez',
-              description: 'Amigo del equipo',
-              status: 'active',
-              embeddingModelRevision: 'rev',
-              network: 'solana-devnet',
-            }),
-          },
-        } as never;
-        const service = createWalletConversationService({ conversations: repository, wallet, memory });
-
-        await expect(service.previewTransfer({ ...previewInput, amount: '0.010000001' })).resolves.toMatchObject({
-          status: 'error', code: 'policy_rejected',
-        });
-        expect(preview).not.toHaveBeenCalled();
-        expect(setPending).not.toHaveBeenCalled();
       });
 
       it('publishes state revisions across preview, claim, and finality (V8.4)', async () => {

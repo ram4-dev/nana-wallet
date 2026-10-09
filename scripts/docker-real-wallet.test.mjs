@@ -15,7 +15,6 @@ function configured() {
     LIVE_VOICE_BINDING_PRIVATE_KEY: keys.privateKey.export({ type: 'pkcs8', format: 'pem' }),
     LIVE_VOICE_BINDING_PUBLIC_KEY: keys.publicKey.export({ type: 'spki', format: 'pem' }),
     OPEN_AI_API_KEY: 'synthetic-openai', OPENCODE_GO_API_KEY: 'synthetic-llm',
-    WDK_MAX_TRANSFER_AMOUNT: '0.01', WDK_ALLOWED_RECIPIENTS: '0x' + '1'.repeat(40),
     NANA_WDK_VOLUME: 'existing-wallet', WDK_WALLET_NAME: 'agent-dev', WDK_TOKEN: 'usdt-test',
   };
 }
@@ -27,9 +26,7 @@ test('reporta nombres faltantes sin valores', () => {
   const input = configured(); delete input.LIVEKIT_API_SECRET;
   assert.throws(() => validateEnvironment('wdk', input), error => error.message.includes('LIVEKIT_API_SECRET') && !error.message.includes('synthetic-key'));
 });
-test('no arranca con política inválida ni par de binding diferente', () => {
-  assert.throws(() => validateEnvironment('wdk', { ...configured(), WDK_MAX_TRANSFER_AMOUNT: '0' }), /decimal positivo/);
-  assert.throws(() => validateEnvironment('wdk', { ...configured(), WDK_ALLOWED_RECIPIENTS: '0x'+'0'.repeat(40) }), /dirección inválida/);
+test('no arranca con un par de binding diferente', () => {
   assert.throws(() => validateEnvironment('wdk', { ...configured(), LIVE_VOICE_BINDING_PUBLIC_KEY: configured().LIVE_VOICE_BINDING_PUBLIC_KEY }), /par Ed25519/);
 });
 test('WDK adapta OpenAI y mantiene el token custom', () => {

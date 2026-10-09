@@ -41,11 +41,9 @@ export function withLock<T>(work: () => Promise<T>): Promise<T> {
   return previous.then(work).finally(release);
 }
 
-/** Env vars that affect the agent config, WDK source, or policy. */
+/** Env vars that affect the agent config, WDK source, or recipient memory. */
 const MANAGED_ENV = [
   "WDK_TOOLS_SOURCE",
-  "WDK_MAX_TRANSFER_AMOUNT",
-  "WDK_ALLOWED_RECIPIENTS",
   "WDK_TOKEN",
   "WDK_NETWORK",
   "WDK_WALLET_NAME",

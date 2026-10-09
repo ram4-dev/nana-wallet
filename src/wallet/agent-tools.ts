@@ -4,10 +4,7 @@ import { isValidEvmAddress } from '../memory/address.js';
 import type { RecipientMemoryRuntime } from '../memory/runtime.js';
 import type { ConversationSession } from '../conversations/session-state.js';
 import { getWalletAgentConfig, type WalletAgentConfig } from '../agent/instructions.js';
-import { validateWalletTransferPolicy } from '../agent/definition.js';
 import type { WalletProvider, TransferRequest } from './provider.js';
-
-export { validateWalletTransferPolicy } from '../agent/definition.js';
 
 const sendTokenSchema = z.object({
   network: z.string().trim().min(1),
@@ -93,8 +90,6 @@ async function sendToken(
   input: SendTokenInput,
 ): Promise<unknown> {
   const normalized: SendTokenInput = { ...input, token: normalizeToken(input.token, config.token) };
-  const policyError = validateWalletTransferPolicy(normalized, config);
-  if (policyError) return policyError;
 
   if (normalized.dryRun) {
     const recipientError = await revalidateRecipient(dependencies, normalized, true);

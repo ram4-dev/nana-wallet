@@ -18,19 +18,19 @@
 import 'dotenv/config';
 import { writeFile } from 'node:fs/promises';
 import { evalite } from 'evalite';
-import { createRealtimeFixtureStack, MAMA_ADDRESS } from './eval-fixtures.js';
+import { createRealtimeFixtureStack } from './eval-fixtures.js';
 import { createRealtimeToolBinding } from './tool-binding.js';
 import type { RealtimeUserTurn } from './session.js';
 import { NANA_REALTIME_INSTRUCTIONS, runRealtimeDialogue } from './session.js';
 import { synthesizeSpeech } from '../tts/providers.js';
 import { matrixScenarios, type MatrixRunResult, type MatrixAssertionResult, type MatrixScenario } from './scenarios.js';
 
-// Live policy for the fixture stack. The production `previewTransfer` reads these at
-// decision time, so they must be present before any scenario runs. In an eval context
-// (evalite, not vitest hooks) we set them once at module top; no restore is needed.
+// Live fixture-stack environment: the production transfer path reads the WDK
+// source at decision time, so it must be present before any scenario runs. In an
+// eval context (evalite, not vitest hooks) we set it once at module top; no
+// restore is needed. Transfer enforcement itself is owned by the provider policy
+// attached to the wallet.
 process.env.WDK_TOOLS_SOURCE = 'live';
-process.env.WDK_MAX_TRANSFER_AMOUNT = '100';
-process.env.WDK_ALLOWED_RECIPIENTS = MAMA_ADDRESS;
 
 type TaskOutput = {
   scenarioId: string;
