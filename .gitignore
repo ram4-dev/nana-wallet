@@ -10,6 +10,11 @@ dist/
 .cache/
 *.log
 
+# Signing-sidecar key material. `compose.privy-local.yaml` mounts this directory
+# read-only into the loopback signer services, so whatever lives here is a real
+# private key: keep it out of every future commit, including accidental `git add -A`.
+.secrets/
+
 # Riptide artifacts (cloud-synced)
 .humanlayer/tasks/
 
