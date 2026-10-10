@@ -28,7 +28,6 @@ import { isCancellation, isConfirmation } from "../../src/livekit/resolution-phr
 function armedGate(decision: "confirm" | "cancel") {
   const gate = createVoiceDecisionGate({ isConfirmation, isCancellation });
   gate.prepare("preview-abc");
-  gate.completeNarration("preview-abc", { interrupted: false });
   gate.recordTranscript({
     previewId: "preview-abc",
     text: decision === "confirm" ? "sí" : "cancelar",

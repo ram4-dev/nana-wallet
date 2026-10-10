@@ -2,17 +2,30 @@ import { describe, expect, it } from "vitest";
 import { createVoiceDecisionGate } from "../../../src/livekit/voice-decision-gate.js";
 
 /**
- * Unit contract for the pure voice decision gate (Slice 4, task 1.1).
+ * Unit contract for the pure voice decision gate.
  *
  * Spec: openspec/changes/slice4-voice-confirmation/specs — "Explicit
  * confirmation is authorized by final user speech" and "Spoken cancellation
- * is preview-bound". Design: .agent-workflow/tasks/slice4-voice-confirmation/
- * 02-research.md — per-preview, one-use gate armed only by a final exact
- * decision transcript after uninterrupted preview narration, consumed once
- * by the matching tool callback, failing closed otherwise.
+ * is preview-bound".
+ *
+ * ## What the gate guarantees
+ *
+ * An affirmative the user spoke AFTER the preview existed, from an
+ * authenticated speaker, counted once. That is the whole invariant.
+ *
+ * The gate used to additionally require a server read-back to have played out
+ * in full without interruption. That made paying depend on a nested model
+ * generation producing an exact sentence, which a speech-to-speech model does
+ * not reliably do: the read-back came back short, the gate never armed, and no
+ * confirmation could ever succeed. The ordering rule below is what actually
+ * keeps a "sí" that answered some OTHER question — or a model-invented
+ * confirmation with no user speech — from authorizing a transfer.
  *
  * Pure state only: no timers, no I/O. Phrase classification is injected.
  */
+
+/** Fixed preview creation instant, so every ordering assertion is exact. */
+const PREVIEW_AT = 1_000_000;
 
 const isConfirmation = (text: string): boolean =>
   [
@@ -32,14 +45,16 @@ function createGate() {
   return createVoiceDecisionGate({ isConfirmation, isCancellation });
 }
 
-function arm(
+/** Opens the decision window: the preview now exists. */
+function open(
   gate: ReturnType<typeof createGate>,
   previewId = "preview-1",
+  at = PREVIEW_AT,
 ): void {
-  gate.prepare(previewId);
-  gate.completeNarration(previewId, { interrupted: false });
+  gate.prepare(previewId, at);
 }
 
+/** The user spoke. Defaults to AFTER the preview, the accepting case. */
 function record(
   gate: ReturnType<typeof createGate>,
   text: string,
@@ -52,13 +67,13 @@ function record(
     text,
     isFinal: true,
     authenticatedSpeaker: true,
-    createdAt: Date.now() + 1,
+    createdAt: PREVIEW_AT + 1,
     ...overrides,
   });
 }
 
-describe("voice decision gate — exact final localized decision after arm", () => {
-  it("consumes a final exact confirmation spoken after uninterrupted narration, including standalone yes/sí/si", () => {
+describe("voice decision gate — exact final localized decision", () => {
+  it("consumes a final confirmation spoken after the preview existed, including standalone yes/sí/si", () => {
     for (const phrase of [
       "yes",
       "sí",
@@ -68,13 +83,13 @@ describe("voice decision gate — exact final localized decision after arm", () 
       "confirmar transferencia",
     ]) {
       const gate = createGate();
-      arm(gate);
+      open(gate);
       record(gate, phrase);
       expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
     }
   });
 
-  it("consumes a final exact cancellation after arm, distinct from confirmation", () => {
+  it("consumes a final cancellation, distinct from confirmation", () => {
     for (const phrase of [
       "cancel",
       "cancelar",
@@ -82,15 +97,15 @@ describe("voice decision gate — exact final localized decision after arm", () 
       "cancelar la transferencia",
     ]) {
       const gate = createGate();
-      arm(gate);
+      open(gate);
       record(gate, phrase);
       expect(gate.consume("preview-1", "cancel")).toBe("cancelled");
     }
   });
 
-  it("ignores speech outside the exact decision sets", () => {
+  it("ignores speech outside the decision sets", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     for (const phrase of [
       "yes please",
       "dale",
@@ -105,101 +120,56 @@ describe("voice decision gate — exact final localized decision after arm", () 
 
   it("rejects a consume decision that does not match the recorded phrase", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     record(gate, "cancelar");
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
 });
 
-describe("voice decision gate — arms only after uninterrupted narration", () => {
-  it("ignores confirmation spoken before narration completed and requires a fresh one", () => {
+describe("voice decision gate — the ordering rule", () => {
+  /**
+   * The load-bearing property. "Sí, mandale 5 a Test1" is an INSTRUCTION that
+   * creates the preview; the "sí" in it is not a decision about a preview that
+   * did not exist yet. Without this, the very sentence that starts a transfer
+   * would also authorize it.
+   */
+  it("rejects an affirmative spoken BEFORE the preview existed", () => {
     const gate = createGate();
-    gate.prepare("preview-1");
-    record(gate, "sí");
-    gate.completeNarration("preview-1", { interrupted: false });
+    record(gate, "sí", { createdAt: PREVIEW_AT - 1 });
+    open(gate);
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
 
-  it("does not arm when narration was interrupted; new speech after re-narration is required", () => {
+  it("rejects an affirmative spoken at the exact instant the preview was created", () => {
+    // The boundary is strict: the decision window opens when the preview
+    // exists, and a timestamp that is not strictly after it is not evidence of
+    // having heard it.
     const gate = createGate();
-    gate.prepare("preview-1");
-    gate.completeNarration("preview-1", { interrupted: true });
-    record(gate, "sí");
+    open(gate);
+    record(gate, "sí", { createdAt: PREVIEW_AT });
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
+  });
 
-    gate.completeNarration("preview-1", { interrupted: false });
-    record(gate, "sí");
+  it("accepts an affirmative spoken one millisecond after the preview existed", () => {
+    const gate = createGate();
+    open(gate);
+    record(gate, "sí", { createdAt: PREVIEW_AT + 1 });
     expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
-  });
-});
-
-describe("voice decision gate — reports an interrupted read-back so it can be re-read", () => {
-  it("reports none, interrupted and completed across the read-back lifecycle", () => {
-    const gate = createGate();
-    expect(gate.readbackStatus("preview-1")).toBe("none");
-
-    gate.prepare("preview-1");
-    expect(gate.readbackStatus("preview-1")).toBe("none");
-
-    gate.completeNarration("preview-1", { interrupted: true });
-    expect(gate.readbackStatus("preview-1")).toBe("interrupted");
-
-    gate.completeNarration("preview-1", { interrupted: false });
-    expect(gate.readbackStatus("preview-1")).toBe("completed");
-  });
-
-  it("reports none for an unknown or replaced preview, never another preview's state", () => {
-    const gate = createGate();
-    gate.prepare("preview-1");
-    gate.completeNarration("preview-1", { interrupted: true });
-
-    expect(gate.readbackStatus("other-preview")).toBe("none");
-
-    gate.prepare("preview-2");
-    expect(gate.readbackStatus("preview-1")).toBe("none");
-    expect(gate.readbackStatus("preview-2")).toBe("none");
   });
 
   /**
-   * The distinction the caller needs: "the user has not answered yet" and "this
-   * preview can never be confirmed" must not look the same. A user who speaks
-   * over the read-back gets an interruption, and the recovery is to read it
-   * again — not to ask the user to repeat a phrase that can never work.
+   * A model-initiated confirmation is not user authorization: with no user
+   * speech after the preview, there is no evidence at all.
    */
-  it("distinguishes an interrupted read-back from a missing decision", () => {
-    const interrupted = createGate();
-    interrupted.prepare("preview-1");
-    interrupted.completeNarration("preview-1", { interrupted: true });
-    record(interrupted, "sí");
-    expect(interrupted.consume("preview-1", "confirm")).toBeUndefined();
-    expect(interrupted.readbackStatus("preview-1")).toBe("interrupted");
-
-    const completed = createGate();
-    arm(completed);
-    expect(completed.consume("preview-1", "confirm")).toBeUndefined();
-    expect(completed.readbackStatus("preview-1")).toBe("completed");
-  });
-
-  it("clears the interrupted state once the preview is decided or replaced", () => {
+  it("rejects a confirmation with no user speech, however prepared", () => {
     const gate = createGate();
-    gate.prepare("preview-1");
-    gate.completeNarration("preview-1", { interrupted: true });
-    gate.clear("preview-1");
-    expect(gate.readbackStatus("preview-1")).toBe("none");
-
-    gate.prepare("preview-1");
-    gate.completeNarration("preview-1", { interrupted: false });
-    record(gate, "sí");
-    expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
-    // A consumed decision leaves the preview with no read-back to report.
-    expect(gate.readbackStatus("preview-1")).toBe("none");
+    open(gate);
+    expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
-});
 
-describe("voice decision gate — final transcripts only, ordering enforced", () => {
   it("ignores interim transcripts even when the text is an exact phrase", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     record(gate, "sí", { isFinal: false });
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
 
@@ -207,25 +177,10 @@ describe("voice decision gate — final transcripts only, ordering enforced", ()
     expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
   });
 
-  it("does not accept speech recorded before the preview was prepared (transcript-before-preview)", () => {
+  it("rejects a transcript with an unusable timestamp", () => {
     const gate = createGate();
-    record(gate, "confirmo");
-    arm(gate);
-    expect(gate.consume("preview-1", "confirm")).toBeUndefined();
-  });
-
-  it("rejects a delayed transcript event that was created before narration completed", () => {
-    const gate = createGate();
-    gate.prepare("preview-1");
-    const narratedAt = Date.now();
-    gate.completeNarration("preview-1", { interrupted: false });
-    gate.recordTranscript({
-      previewId: "preview-1",
-      text: "sí",
-      isFinal: true,
-      authenticatedSpeaker: true,
-      createdAt: narratedAt - 1,
-    });
+    open(gate);
+    record(gate, "sí", { createdAt: Number.NaN });
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
 });
@@ -233,72 +188,95 @@ describe("voice decision gate — final transcripts only, ordering enforced", ()
 describe("voice decision gate — consume once for the same preview ID", () => {
   it("returns the decision exactly once and is then exhausted", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     record(gate, "yes");
     expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
 
     const cancelGate = createGate();
-    arm(cancelGate, "preview-2");
-    record(cancelGate, "cancelar");
+    open(cancelGate, "preview-2");
+    cancelGate.recordTranscript({
+      previewId: "preview-2",
+      text: "cancelar",
+      isFinal: true,
+      authenticatedSpeaker: true,
+      createdAt: PREVIEW_AT + 1,
+    });
     expect(cancelGate.consume("preview-2", "cancel")).toBe("cancelled");
     expect(cancelGate.consume("preview-2", "cancel")).toBeUndefined();
   });
 
-  it("fails closed when evidence is missing but the preview is armed", () => {
+  it("fails closed when consuming an unknown or never-opened preview ID", () => {
     const gate = createGate();
-    arm(gate);
-    expect(gate.consume("preview-1", "confirm")).toBeUndefined();
-  });
-
-  it("fails closed when consuming an unknown or never-armed preview ID", () => {
-    const gate = createGate();
-    arm(gate);
+    open(gate);
     record(gate, "yes");
     expect(gate.consume("other-preview", "confirm")).toBeUndefined();
+  });
+
+  it("fails closed for a preview that was never prepared", () => {
+    const gate = createGate();
+    record(gate, "sí");
+    expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
 });
 
 describe("voice decision gate — replaced or cleared previews fail closed", () => {
   it("rejects stale evidence after a replacement preview is prepared", () => {
     const gate = createGate();
-    arm(gate, "preview-1");
+    open(gate, "preview-1");
     record(gate, "sí");
-    gate.prepare("preview-2");
-    gate.completeNarration("preview-2", { interrupted: false });
+    open(gate, "preview-2", PREVIEW_AT + 10);
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
 
-    record(gate, "sí");
+    gate.recordTranscript({
+      previewId: "preview-2",
+      text: "sí",
+      isFinal: true,
+      authenticatedSpeaker: true,
+      createdAt: PREVIEW_AT + 11,
+    });
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
     expect(gate.consume("preview-2", "confirm")).toBe("confirmed");
   });
 
   it("disarms evidence when the pending preview is cleared", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     record(gate, "sí");
     gate.clear("preview-1");
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
+
+  /**
+   * A new preview drops evidence recorded for a previous one: a decision about
+   * one transfer must never authorize a different one.
+   */
+  it("drops evidence for a previous preview when a new one is prepared", () => {
+    const gate = createGate();
+    open(gate, "preview-1");
+    record(gate, "sí");
+    open(gate, "preview-2", PREVIEW_AT + 5);
+    expect(gate.consume("preview-2", "confirm")).toBeUndefined();
+  });
 });
 
 describe("voice decision gate — fails closed for unknown speaker identity", () => {
-  it("rejects final exact decisions from an unauthenticated speaker", () => {
+  it("rejects final decisions from an unauthenticated speaker", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     record(gate, "sí", { authenticatedSpeaker: false });
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
 
   it("rejects evidence when the transcript carries no identity signal at all", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     gate.recordTranscript({
       previewId: "preview-1",
       text: "sí",
       isFinal: true,
       authenticatedSpeaker: null as unknown as boolean,
-      createdAt: Date.now() + 1,
+      createdAt: PREVIEW_AT + 1,
     });
     expect(gate.consume("preview-1", "confirm")).toBeUndefined();
   });
@@ -307,7 +285,7 @@ describe("voice decision gate — fails closed for unknown speaker identity", ()
 describe("voice decision gate — no parallel generic resolution route", () => {
   it("exposes decision evidence only through one-use consume and never routes transcripts into generic conversation handling", () => {
     const gate = createGate();
-    arm(gate);
+    open(gate);
     record(gate, "sí");
 
     // Design (openspec design.md): the worker must not pass the same user

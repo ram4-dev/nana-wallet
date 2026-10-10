@@ -22,7 +22,6 @@ import { getConfiguredRecipientMemoryService } from "../memory/runtime.js";
 import { createAgentSession } from "./create-agent-session.js";
 import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
-import { speakExactText } from "./speak-text.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
 import { attachVoiceDecisionTranscripts } from "./voice-decision-transcripts.js";
 import {
@@ -196,23 +195,6 @@ async function runJob(
         conversations: dependencies.conversations,
         ...(memoryService ? { recipientMemory: memoryService } : {}),
         voiceDecisionGate,
-        speakPreview: async (text) => {
-          // Not session.say(): a realtime session has no TTS model and say()
-          // throws outright, which a bare catch then reported as an interrupted
-          // read-back — refusing every confirmation forever. See speak-text.ts.
-          try {
-            return await speakExactText(session, text);
-          } catch (error) {
-            // Loud, not silent: the read-back is the evidence the confirmation
-            // binds to, so a failure to speak it is a real fault, not a
-            // paraphrase of "the user talked over it".
-            console.error(
-              "the transfer preview could not be spoken aloud",
-              error,
-            );
-            return { interrupted: true };
-          }
-        },
       });
       const created = createAgentSession({ tools });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {

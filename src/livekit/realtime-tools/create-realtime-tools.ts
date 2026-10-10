@@ -46,7 +46,6 @@ export type RealtimeToolsDependencies = {
   service?: WalletConversationService;
   conversations?: ConversationRepository;
   voiceDecisionGate?: VoiceDecisionGate;
-  speakPreview?: (text: string) => Promise<{ interrupted: boolean }>;
   /** Retained for seam stability; the service publishes revisions via financialTasks. */
   publishRevision?: (revision: number) => void;
 };
@@ -91,7 +90,6 @@ export function createRealtimeTools(dependencies: RealtimeToolsDependencies) {
     ...(dependencies.service ? { voiceService: dependencies.service } : {}),
     ...(dependencies.conversations ? { voiceConversations: dependencies.conversations } : {}),
     ...(dependencies.voiceDecisionGate ? { voiceDecisionGate: dependencies.voiceDecisionGate } : {}),
-    ...(dependencies.speakPreview ? { speakPreview: dependencies.speakPreview } : {}),
   };
   return toLivekitRealtimeTools(createWalletAgentDefinition(), context, {
     refreshContext: async (ctx) => {

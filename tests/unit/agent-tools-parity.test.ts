@@ -39,7 +39,6 @@ function voiceContext(): WalletAgentContext {
   return {
     ...textContext(true),
     voiceDecisionGate: undefined,
-    speakPreview: undefined,
   };
 }
 

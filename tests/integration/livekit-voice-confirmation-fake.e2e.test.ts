@@ -6,8 +6,6 @@ import { createVoiceDecisionGate } from "../../src/livekit/voice-decision-gate.j
 const RECIPIENT = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 
 function harness(options: {
-  interrupted?: boolean;
-  earlyConfirmation?: boolean;
   /** Simulates the provider refusing the confirmed transfer (a policy refusal). */
   refusal?: { code: string; message: string };
   /** Simulates the provider refusing at PREVIEW time, before any read-back. */
@@ -80,7 +78,6 @@ function harness(options: {
       address: RECIPIENT,
     })),
   };
-  const spoken: string[] = [];
   const tools = createRealtimeTools({
     conversationId: "conversation-1",
     userId: "user-1",
@@ -95,13 +92,6 @@ function harness(options: {
     conversations: conversations as never,
     recipientMemory: recipientMemory as never,
     voiceDecisionGate: gate,
-    speakPreview: vi.fn(async (text: string) => {
-      spoken.push(text);
-      if (options.earlyConfirmation) {
-        gate.recordTranscript({ previewId: "preview-1", text: "sí", isFinal: true, authenticatedSpeaker: true, createdAt: Date.now() + 1 });
-      }
-      return { interrupted: options.interrupted ?? false };
-    }),
   });
   const byName = (name: string) =>
     (tools as unknown as Array<{ name: string; execute: (input: unknown) => Promise<Record<string, unknown>> }>).find((t) => t.name === name)!;
@@ -117,7 +107,7 @@ function harness(options: {
       authenticatedSpeaker: overrides.authenticatedSpeaker ?? true,
       createdAt: Date.now() + 1,
     });
-  return { gate, pending, conversations, service, spoken, send, confirm, cancel, speakDecision, dispatches: () => dispatches };
+  return { gate, pending, conversations, service, send, confirm, cancel, speakDecision, dispatches: () => dispatches };
 }
 
 describe("fake LiveKit voice authorization E2E", () => {
@@ -126,12 +116,20 @@ describe("fake LiveKit voice authorization E2E", () => {
     delete process.env.WDK_TOKEN;
   });
 
-  it("rejects a forged confirm tool call and interim speech, then broadcasts after the completed read-back and a fresh final yes", async () => {
+  it("rejects a forged confirm tool call and interim speech, then broadcasts after a real yes", async () => {
     const worker = harness();
-    await worker.send();
-    expect(worker.spoken[0]).toContain("0.01 SOL");
-    expect(worker.spoken[0]).toContain("Ana");
-    expect(worker.spoken[0]).toContain("0.000005 SOL");
+    // The preview carries everything the assistant has to say out loud, and the
+    // tool result is what instructs it to say exactly that.
+    const preview = await worker.send();
+    expect(preview).toMatchObject({
+      status: "confirmation_required",
+      amount: "0.01",
+      recipientName: "Ana",
+      estimatedFee: "0.000005 SOL",
+    });
+    expect(String(preview.message)).toMatch(/monto|amount/iu);
+    expect(String(preview.message)).toMatch(/comisi[oó]n|fee/iu);
+    expect(String(preview.message)).toMatch(/contacto|contact/iu);
 
     expect(await worker.confirm()).toMatchObject({ status: "error", code: "confirmation_required" });
     worker.speakDecision("sí", { isFinal: false });
@@ -143,24 +141,26 @@ describe("fake LiveKit voice authorization E2E", () => {
     expect(worker.dispatches()).toBe(1);
   });
 
-  it("ignores a confirmation spoken before narration completes", async () => {
-    const worker = harness({ earlyConfirmation: true });
+  it("ignores a confirmation spoken before the preview existed", async () => {
+    const worker = harness();
+    // "si, mandale 5 a Test1" is the instruction that CREATES the preview, so
+    // the "si" in it cannot also be the decision about that preview.
+    worker.speakDecision("sí");
     await worker.send();
     expect(await worker.confirm()).toMatchObject({ status: "error", code: "confirmation_required" });
     expect(worker.service.resolveDecision).not.toHaveBeenCalled();
+    expect(worker.dispatches()).toBe(0);
   });
 
-  it("does not authorize after interrupted narration, and reports why so it can be re-read", async () => {
-    const worker = harness({ interrupted: true });
+  it("authorizes after the user answers the preview, with no ceremony in between", async () => {
+    const worker = harness();
     await worker.send();
-    worker.speakDecision("sí");
-    // The refusal still happens — no authorization, nothing dispatched. What is
-    // new is that the refusal explains itself: "confirmation_required" made an
-    // interrupted read-back look like a missing answer, so the caller kept asking
-    // the user to repeat a phrase that could never work.
-    expect(await worker.confirm()).toMatchObject({ status: "error", code: "readback_interrupted" });
-    expect(worker.service.resolveDecision).not.toHaveBeenCalled();
-    expect(worker.dispatches()).toBe(0);
+    worker.speakDecision("dale");
+    // This is the flow the user asked for: once the preview exists and the model
+    // has narrated it, an ordinary "dale" confirms. No read-back to wait for, and
+    // no phrase the user has to guess.
+    expect(await worker.confirm()).toMatchObject({ status: "sent" });
+    expect(worker.dispatches()).toBe(1);
   });
 
   it("cancels only the active preview and never dispatches a transfer", async () => {
@@ -243,9 +243,8 @@ describe("fake LiveKit voice authorization E2E", () => {
 
     expect(preview).toMatchObject({ status: "error", code: "policy_rejected" });
     expect(preview.message).toBe(refusal);
-    // No read-back was spoken, so the decision gate must never have been armed:
-    // a spoken "si" with nothing to authorize must stay unauthorized.
-    expect(worker.spoken).toHaveLength(0);
+    // The refusal landed before any preview existed, so the decision window was
+    // never opened: a spoken "si" with nothing to authorize stays unauthorized.
     worker.speakDecision("sí");
     expect(await worker.confirm()).toMatchObject({ status: "error", code: "confirmation_required" });
     expect(worker.service.resolveDecision).not.toHaveBeenCalled();

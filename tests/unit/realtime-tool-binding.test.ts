@@ -158,7 +158,6 @@ describe('realtime tool binding — production execution against the fixture sta
     const stack = createRealtimeFixtureStack();
     const voiceDecisionGate = createVoiceDecisionGate({ isConfirmation, isCancellation });
     stack.deps.voiceDecisionGate = voiceDecisionGate;
-    stack.deps.speakPreview = async () => ({ interrupted: false });
     const binding = createRealtimeToolBinding(stack.deps);
 
     const preview = await binding.executeFunctionCall(

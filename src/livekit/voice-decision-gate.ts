@@ -1,62 +1,58 @@
 export type VoiceDecision = "confirm" | "cancel";
 export type VoiceDecisionResult = "confirmed" | "cancelled";
 
-/**
- * Whether the active preview's read-back has played in full.
- *
- * `interrupted` is not a dead end, it is a REQUEST TO RE-READ: the user did not
- * hear the preview, so no decision can bind to it until the server reads it
- * again. That fact used to be invisible — the gate simply refused, forever, and
- * nothing could tell the difference between "the user has not answered yet" and
- * "this preview can never be confirmed". A user who spoke over the read-back
- * (the most natural thing to do) was stuck with no way forward.
- */
-export type VoiceReadbackStatus = "none" | "interrupted" | "completed";
-
 export type VoiceDecisionGate = ReturnType<typeof createVoiceDecisionGate>;
 
 /**
  * Per-session, one-use authorization evidence for an explicitly spoken
- * decision. Evidence is available only after a persisted preview's complete
- * read-back has played without interruption.
+ * decision about ONE persisted preview.
+ *
+ * ## What actually protects the transfer
+ *
+ * The invariant is: an affirmative the user spoke AFTER the preview existed,
+ * and only that. Everything the gate needs to know is WHEN the preview was
+ * created and WHEN the user spoke.
+ *
+ * ## Why the read-back requirement was removed
+ *
+ * The gate used to require the server's read-back to have played out in full
+ * without interruption, and only then would it arm. That made the user's
+ * ability to pay depend on a second, nested model generation producing an exact
+ * sentence — something a speech-to-speech model does not reliably do. In
+ * practice the read-back came back short or interrupted, the gate never armed,
+ * and **no confirmation could ever succeed**, while the refusal blamed the
+ * user's own speech.
+ *
+ * It was also redundant. The preview is persisted and narrated in the
+ * assistant's own turn, so by the time the user answers they have been told the
+ * amount, the fee and the contact. The ordering rule below is what keeps a "sí"
+ * that answered some OTHER question — or a model-invented confirmation with no
+ * user speech at all — from authorizing a transfer.
  */
 export function createVoiceDecisionGate(classifiers: {
   isConfirmation(text: string): boolean;
   isCancellation(text: string): boolean;
 }) {
   let activePreviewId: string | undefined;
-  let readback: VoiceReadbackStatus = "none";
-  let narrationCompletedAt: number | undefined;
+  let previewCreatedAt: number | undefined;
   let evidence: VoiceDecisionResult | undefined;
 
   return {
-    prepare(previewId: string): void {
+    /**
+     * Opens the decision window for a preview that now exists. Any evidence
+     * recorded for a previous preview is dropped: a decision never carries
+     * across transfers.
+     */
+    prepare(previewId: string, createdAt: number = Date.now()): void {
       if (!previewId) {
         activePreviewId = undefined;
-        readback = "none";
-        narrationCompletedAt = undefined;
+        previewCreatedAt = undefined;
         evidence = undefined;
         return;
       }
       activePreviewId = previewId;
-      readback = "none";
-      narrationCompletedAt = undefined;
+      previewCreatedAt = Number.isFinite(createdAt) ? createdAt : Date.now();
       evidence = undefined;
-    },
-
-    completeNarration(previewId: string, result: { interrupted: boolean }): void {
-      if (activePreviewId !== previewId) return;
-      readback = result.interrupted ? "interrupted" : "completed";
-      narrationCompletedAt = result.interrupted ? undefined : Date.now();
-      evidence = undefined;
-    },
-
-    /**
-     * Why the pending preview cannot be decided yet. `interrupted` means the
-     * read-back has to happen again; `none` means it never played.
-     */
-    readbackStatus(previewId: string): VoiceReadbackStatus {
-      return previewId === activePreviewId ? readback : "none";
     },
 
     recordTranscript(input: {
@@ -67,12 +63,15 @@ export function createVoiceDecisionGate(classifiers: {
       createdAt: number;
     }): void {
       if (
-        readback !== "completed" ||
+        previewCreatedAt === undefined ||
         !input.isFinal ||
         input.authenticatedSpeaker !== true ||
-        narrationCompletedAt === undefined ||
         !Number.isFinite(input.createdAt) ||
-        input.createdAt <= narrationCompletedAt
+        // The ordering rule: an affirmative only counts if it came AFTER the
+        // preview existed. A "sí" that answered an earlier question — or that
+        // was part of the instruction that created the preview — is not a
+        // decision about it.
+        input.createdAt <= previewCreatedAt
       ) {
         return;
       }
@@ -83,17 +82,15 @@ export function createVoiceDecisionGate(classifiers: {
     consume(previewId: string, decision: VoiceDecision): VoiceDecisionResult | undefined {
       if (previewId !== activePreviewId) return undefined;
       const expected = decision === "confirm" ? "confirmed" : "cancelled";
-      if (readback !== "completed" || evidence !== expected) return undefined;
+      if (evidence !== expected) return undefined;
       evidence = undefined;
-      readback = "none";
       return expected;
     },
 
     clear(previewId: string): void {
       if (previewId !== activePreviewId) return;
       activePreviewId = undefined;
-      readback = "none";
-      narrationCompletedAt = undefined;
+      previewCreatedAt = undefined;
       evidence = undefined;
     },
   };

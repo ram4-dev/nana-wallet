@@ -8,7 +8,6 @@ import { createVoiceDecisionGate } from "../../../src/livekit/voice-decision-gat
 function setup() {
   const gate = createVoiceDecisionGate({ isConfirmation, isCancellation });
   gate.prepare("preview-1");
-  gate.completeNarration("preview-1", { interrupted: false });
   const session = new EventEmitter();
   const detach = attachVoiceDecisionTranscripts(
     session as never,

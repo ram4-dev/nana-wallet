@@ -48,7 +48,6 @@ export type WalletAgentContext = {
   /** Voice-only: spoken-decision evidence gate (fail closed when absent). */
   voiceDecisionGate?: VoiceDecisionGate;
   /** Voice-only: plays the preview read-back aloud before the spoken decision. */
-  speakPreview?: (text: string) => Promise<{ interrupted: boolean }>;
   /**
    * Delegated-grant creation seam (DGC-6). Present for the text agent when the
    * conversation service is wired; voice uses `voiceService`. Absent ⇒ the
@@ -766,14 +765,13 @@ async function voicePreviewTransfer(
     pending.amount !== result.preview.amount ||
     pending.token !== result.preview.token ||
     pending.network !== result.preview.network ||
-    !context.voiceDecisionGate ||
-    !context.speakPreview
+    !context.voiceDecisionGate
   ) {
     if (previewId) context.voiceDecisionGate?.clear(previewId);
     return {
       status: 'error',
       code: 'confirmation_required',
-      message: 'The saved preview could not be read back safely. Please try again.',
+      message: 'The saved preview could not be confirmed safely. Please try again.',
     };
   }
   const recipient = context.recipientMemory
@@ -797,35 +795,23 @@ async function voicePreviewTransfer(
   }
   const state = await conversations.get(context.userId, context.conversationId);
   const language = state?.language ?? 'en';
-  const network = result.preview.network;
-  const networkLabel = network === 'solana-devnet' ? 'Solana devnet' : network;
+  const networkLabel = result.preview.network === 'solana-devnet' ? 'Solana devnet' : result.preview.network;
   const fee = result.preview.estimatedFee;
-  const readback = language === 'es'
-    ? `Transferencia de ${result.preview.amount} ${result.preview.token} por ${networkLabel} para ${recipient.name}. Comisión estimada: ${fee}. ¿Confirmás o cancelás?`
-    : `Transfer ${result.preview.amount} ${result.preview.token} on ${networkLabel} to ${recipient.name}. Estimated fee: ${fee}. Do you confirm or cancel?`;
+  // Opens the decision window. The window is anchored to the moment the
+  // preview EXISTS, not to a read-back: see voice-decision-gate.ts.
   context.voiceDecisionGate.prepare(previewId);
-  try {
-    const playout = await context.speakPreview(readback);
-    context.voiceDecisionGate.completeNarration(previewId, { interrupted: playout.interrupted });
-  } catch (error) {
-    // A read-back that could not be spoken is NOT an interruption the user
-    // caused, so it is logged as the fault it is and then reported as one.
-    // Swallowing it here is what let an unspokable preview look like a user
-    // talking over the assistant, and refuse every confirmation forever.
-    console.error("the transfer preview could not be read aloud", error);
-    context.voiceDecisionGate.completeNarration(previewId, { interrupted: true });
-  }
   return {
     ...output,
-    // Internal note to the model, never spoken: this string is a tool RESULT,
-    // so it reaches the model and must read as an instruction to it. The user
-    // already heard the preview from the server's own voice, and repeating it
-    // here is what made the assistant narrate the machinery.
-    message: 'INTERNAL - the preview was just read aloud by the assistant. '
-      + 'Do not speak this note, do not repeat the read-back, and wait for the user to answer.',
+    // This string is a tool RESULT, so it reaches the model and reads as an
+    // instruction to it. The narration is the MODEL's own turn, which is the
+    // only thing that reliably speaks on a realtime session — a nested
+    // generateReply asking for an exact sentence produced anything but that.
+    message: language === 'es'
+      ? 'Decile esto al usuario, breve y cálido, y después quedate esperando: el monto, la comisión estimada y el nombre del contacto. Preguntale si confirma o cancela. No menciones herramientas, redes ni estados internos, no repitas la comisión como número crudo.'
+      : 'Tell the user this briefly and warmly, then stop and wait: the amount, the estimated fee and the contact name. Ask whether to confirm or cancel. Never mention tools, networks or internal states, and never read the fee as a raw number.',
     recipientName: recipient.name,
     estimatedFee: fee,
-    network,
+    network: networkLabel,
   };
 }
 
@@ -840,13 +826,11 @@ async function voicePreviewTransfer(
     return language === 'es'
       ? {
           noPreview: 'Todavía no hay ninguna transferencia preparada. Decime a quién y cuánto querés mandarle.',
-          interrupted: 'No llegué a leerte la transferencia completa. Te la leo de nuevo así la escuchás entera.',
-          notYet: 'Primero te la leo completa y después me decís si la confirmás o la cancelás.',
+          notYet: 'Decile el monto, la comisión y a quién le vas a mandar, y preguntale si confirma o cancela. Todavía no te dijo que sí.',
         }
       : {
           noPreview: 'There is no transfer ready yet. Tell me who to pay and how much.',
-          interrupted: 'I did not get to read you the whole transfer. Let me read it again so you hear all of it.',
-          notYet: 'Let me read you the whole transfer first, and then tell me whether to confirm or cancel.',
+          notYet: 'Say the amount, the fee and who it goes to, and ask whether to confirm or cancel. The user has not agreed yet.',
         };
   }
 
@@ -866,13 +850,12 @@ async function voicePreviewTransfer(
       return { status: 'error', code: 'stale_preview', message: decisionCopy(language).noPreview };
     }
     if (!context.voiceDecisionGate?.consume(previewId, decision)) {
-      // An interrupted read-back is NOT a missing answer: the user never heard
-      // the preview, so no phrase can work until it is read again. Reporting it
-      // as an ordinary "confirm again" sent the user into a loop they could not
-      // escape, repeating a phrase that could never succeed.
-      if (context.voiceDecisionGate?.readbackStatus(previewId) === 'interrupted') {
-        return { status: 'error', code: 'readback_interrupted', message: decisionCopy(language).interrupted };
-      }
+      // The refusal is almost always one of two things: the user has not
+      // answered the preview yet, or they said something affirmative
+      // BEFORE it existed (for example "sí, mandale 5" to the instruction
+      // that created it). Either way the recovery is the same: say the
+      // preview and let them answer, so the message tells them that instead
+      // of naming an internal state.
       return {
         status: 'error',
         code: 'confirmation_required',
