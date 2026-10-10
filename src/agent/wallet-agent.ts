@@ -1,6 +1,6 @@
 import { ToolLoopAgent, tool, type Tool, type LanguageModel } from 'ai';
 import { z } from 'zod';
-import { model as defaultModel } from './model.js';
+import { createOpenCodeGoModel } from './model.js';
 import {
   buildWalletAgentInstructions,
   getWalletAgentConfig,
@@ -516,7 +516,9 @@ export async function handleMessage(
     return handleDeterministicTurn(userText, session, tools, agentConfig, options.language ?? 'en');
   }
   const agent = new ToolLoopAgent({
-    model: options.model ?? defaultModel,
+    // The gateway needs the session id it routes the completion by, so the
+    // model is built per conversation from the session's own identity.
+    model: options.model ?? createOpenCodeGoModel(session.id),
     instructions: definition
       ? definition.instructions({
         conversationId: session.id,

@@ -6322,3 +6322,153 @@ ids, addresses, amounts, the transaction hash and the balance; the environment-v
 used `docker inspect | jq` on the non-secret mode keys (`AGENT_RUNTIME`, `WDK_NETWORK`,
 `WDK_TOKEN`, `LIVE_VOICE_ENABLED`, `RECIPIENT_MEMORY_ENABLED`) and a key-name-only listing.
 No `.env`, token, key, payload or signature appears in any output or in this file.
+
+---
+
+## Work unit — the `x-opencode-session` fix in `src/agent/model.ts` (source change)
+
+This entry fixes, in source, the deployment defect that the previous entry recorded as a
+harness-layer workaround (Deviation 1). It is the first source change in this change after the
+frozen candidate `ca4fdb2`, so **that candidate is superseded: a re-freeze and a new review
+candidate are owed.** Neither is performed here.
+
+### Defect
+
+`src/agent/model.ts` built the `opencode-go` chat model without the routing header the zen
+gateway requires, so **every LLM turn failed** with
+`HTTP 400 {"type":"MissingSessionID","message":"Request is missing x-opencode-session and cannot be routed efficiently."}`.
+The upstream API mapped the resulting `agent_error` to `internal_error` / HTTP 422, so the
+conversation produced no model output at all — no balance answer, no recipient preview.
+
+### Root cause
+
+The module exported one shared, module-level `model` built from a provider instance that set no
+per-conversation header. The gateway routes a completion by the caller's session id; the shared
+instance therefore had no session identity to send, and `wallet-agent.ts` had no way to supply
+one.
+
+### Fix (minimal, idiomatic)
+
+- `src/agent/model.ts`: replaces the module-level `const model` export with
+  `createOpenCodeGoModel(sessionId, config = getOpenCodeGoModelConfig())`, which sets
+  `headers: { 'x-opencode-session': sessionId }` **on that provider instance**. The header is
+  scoped to the `opencode-go` provider and reaches only the configured host; it is not a global
+  outbound header.
+- `src/agent/wallet-agent.ts`: `model: options.model ?? createOpenCodeGoModel(session.id)`. The
+  id used is the conversation identity, the same value the neighbouring call already passes as
+  `conversationId` to `definition.instructions({ conversationId: session.id, … })`.
+- No caller depended on the removed module-level `model` export: the only importer of
+  `./model.js` is `wallet-agent.ts` (`grep -rn "agent/model|from './model.js'" src tests` →
+  two hits, both `createOpenCodeGoModel`).
+
+### Test and mutation evidence
+
+`tests/unit/agent-model-session-header.test.ts` (new). It does **not** inspect the config object:
+it starts a real HTTP gateway double and asserts the header on the **outbound request** captured
+by that server, driving the real provider transport (`generateText`) with no mocked `fetch`.
+Three cases: (1) the completion request carries the session id; (2) two models carry their own
+ids, never one shared constant; (3) a real `handleMessage` agent turn sends the turn's own
+conversation id with no caller supplying a header, and returns `status: 'answer'`.
+
+```
+$ npm run typecheck                     # tsc -p tsconfig.test.json --noEmit
+(clean, no output)
+$ npx vitest run tests/unit/agent-model-session-header.test.ts
+ Test Files  1 passed (1)   Tests  3 passed (3)
+```
+
+**Mutation proof.** Deleting only the `headers: { 'x-opencode-session': sessionId },` line makes
+all three cases fail by name, each on the missing header:
+
+```
+$ npx vitest run tests/unit/agent-model-session-header.test.ts   # header line removed
+ FAIL  … > sends the conversation session id as x-opencode-session on the completion request
+ FAIL  … > carries a per-session id, never one shared constant
+        - "session-one"  + undefined
+ FAIL  … > sends the agent turn's own conversation id, without any caller supplying a header
+        AssertionError: expected undefined to be 'b14c91d0-…'
+ Test Files  1 failed (1)   Tests  3 failed (3)
+# restored → 3 passed (3)
+```
+
+No regression: `npx vitest run tests/unit` → `3 failed | 1042 passed | 1 skipped`. The three
+failures are pre-existing and unrelated — they are all in the LiveKit realtime area
+(`realtime-agent-session.test.ts`, `realtime-tools.test.ts`, `realtime-tool-binding.test.ts`),
+and none of those suites imports `src/agent/model.js` or `src/agent/wallet-agent.ts`.
+
+### Live proof — which artifact carried the fix
+
+**No image rebuild.** The deployed `nana-privy-impl-backend-1` runs
+`npm run build && exec node dist/server.js` with the host worktree's `src/` bind-mounted at
+`/app/src` (verified with `docker inspect … .Mounts`). Its entrypoint therefore compiled the
+fixing `src/agent/model.ts` into **`/app/dist/agent/model.js` inside the container**, and PID 1
+loaded it. The artifact that carried the fix during the live proof is that compiled
+`dist/agent/model.js` (container copy, md5 `45ee35db…`), **not** the stale host `dist/` and
+**not** a rebuilt image. This is a source change; the image itself was not rebuilt.
+
+Switches set on the harness process so the in-process server ran no background workers against
+the shared database, as required: `RECIPIENT_POLICY_RECONCILER=disabled` and
+`NOTIFICATIONS_OUTBOX_ENABLED=false` (both names confirmed in `src/config/recipient-policy.ts`
+and `src/server.ts`). `AGENT_RUNTIME=llm` was already the container value, so the LLM path was
+the one exercised.
+
+```
+$ docker exec -i \
+    -e RECIPIENT_POLICY_RECONCILER=disabled -e NOTIFICATIONS_OUTBOX_ENABLED=false \
+    nana-privy-impl-backend-1 node --input-type=module - < /tmp/turn-trace.mjs
+[trace] -> POST https://opencode.ai/zen/go/v1/chat/completions
+           headers: ["authorization","content-type","user-agent","x-opencode-session"]
+[trace] <- 400 {"error":{…"message":"Upstream request failed: [invalid_request_error]
+           Invalid schema for function 'send_token': schema must be a JSON Schema of
+           'type: \"object\"', got 'type: null'. (request_id: …)"}}
+turn -> 422 {"status":"error","code":"internal_error","message":"No pude completar la conversación."}
+```
+
+The harness built the real server with an injected identity only —
+`buildServer({ identity: new DemoIdentityProvider('08c462d6-…e39179') })`, no `wallet`,
+`walletReads` or `privyServer` injection — created a conversation (`POST /v1/conversations` →
+200 `{"conversationId":"4d042605-…","mode":"typed"}`) and sent a turn
+(`POST /v1/conversations/{id}/turns` with `{"message":"hola"}`).
+
+An independent probe inside the same container proves the fixed model path is accepted by the
+live gateway:
+
+```
+$ docker exec -i nana-privy-impl-backend-1 node --input-type=module - < /tmp/model-direct-probe.mjs
+config -> {"baseURL":"https://opencode.ai/zen/go/v1","model":"deepseek-v4-flash","hasKey":true}
+with session header -> OK "ok"
+```
+
+**What the live proof does and does not establish.** It **does** establish, on the deployed
+stack, that the fixed module now puts `x-opencode-session` on the outbound completion request
+(the header is visible on the wire, and the same call with the header is answered `200` by the
+live gateway). It **does not** establish a working turn: `POST …/turns` still returns HTTP 422
+`internal_error`, for a **second, independent defect** discovered here.
+
+### Second defect found by this proof (NOT fixed — reported)
+
+The request now routes and is rejected on tool schema instead:
+
+> `Invalid schema for function 'send_token': schema must be a JSON Schema of 'type: "object"', got 'type: null'`
+
+`guardedSendTokenSchema` (`src/agent/definition.ts:198`) is a **top-level `z.union`**
+(`z.union([sendTokenInputSchema, internalSendTokenInputSchema])`). Converted to JSON Schema it
+becomes an `anyOf` with no top-level `type: "object"`, which the OpenAI-compatible gateway
+rejects. The header defect had masked it: before the fix the request died at `MissingSessionID`
+and never reached schema validation. This is why the live turn still fails. It is outside this
+work unit's scope and is left unfixed rather than silently expanded into it.
+
+### Task checkboxes
+
+No row in `tasks.md` covers this defect, so **no checkbox changed**: `tasks.md` is untouched and
+the two parent-owned rows (the bounded native review, and the post-apply `sdd-verify` + archive)
+remain byte-for-byte as written. This work unit is a deviation repair under the deviation
+already recorded above, not a task row.
+
+### Secrets
+
+Nothing secret was read, printed or logged. No `.env`, token, key, payload or signature appears
+in any output or in this file. The only environment inspection used
+`docker inspect … | jq -r '.[0].Config.Env[] | select(startswith("…="))'` on non-secret mode keys
+(`AGENT_RUNTIME`, `WDK_NETWORK`, `RECIPIENT_MEMORY_ENABLED`) — no full environment dump, no
+line-oriented projection. The harness printed no request headers and no credentials.
