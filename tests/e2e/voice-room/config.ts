@@ -174,7 +174,47 @@ export function describeMissingCredentials(
   return [
     `voice-room e2e: missing credentials: ${missing.join(', ')}`,
     `expected them in ${report?.envFilePath ?? ENV_FILE_PATH} (git-ignored, never logged)`,
-    'the vitest isolation setup deletes LIVEKIT_*/LIVE_VOICE_BINDING_*/OPENAI_API_KEY from the',
-    'environment, so a voice-room run injects the worktree .env explicitly and fails loudly when it cannot.',
+    'the vitest isolation setup deletes the LIVEKIT, LIVE_VOICE_BINDING and OPENAI keys from',
+    'the environment, so a voice-room run injects the worktree .env explicitly and fails loudly when it cannot.',
   ].join('\n  ');
+}
+
+/** The single command that brings the isolated stack up. Quoted in failures. */
+export const STACK_UP_COMMAND =
+  'docker compose -p nana-e2e -f compose.yaml -f compose.e2e.override.yaml --profile worker up -d';
+
+/**
+ * Fails fast, and in words that name the fix, when the isolated stack is not up.
+ *
+ * Without this a missing stack surfaces as a bare `fetch failed / ECONNREFUSED`
+ * from whichever call happens to run first, which does not tell the reader that
+ * the stack is the thing that is missing or how to start it. It checks the two
+ * dependencies the round trip actually needs, not the credentials (those are
+ * handled before this point).
+ */
+export async function preflightVoiceRoomStack(
+  config: VoiceRoomConfig,
+): Promise<void> {
+  const livekitHttp = config.livekitHostUrl
+    .replace(/^wss:/u, 'https:')
+    .replace(/^ws:/u, 'http:')
+    .replace(/\/+$/u, '');
+
+  try {
+    await fetch(`${livekitHttp}/`, { signal: AbortSignal.timeout(5_000) });
+  } catch (error) {
+    throw new Error(
+      [
+        `voice-room e2e: the isolated LiveKit stack is not reachable at ${config.livekitHostUrl}.`,
+        `underlying error: ${error instanceof Error ? error.message : String(error)}`,
+        `start it with: ${STACK_UP_COMMAND}`,
+        'see docs/voice-room-e2e-runbook.md for the ports it publishes.',
+      ].join('\n  '),
+    );
+  }
+}
+
+/** Masks the password in a connection string before it is ever printed. */
+export function maskConnectionString(value: string): string {
+  return value.replace(/\/\/[^@]*@/u, '//***@');
 }

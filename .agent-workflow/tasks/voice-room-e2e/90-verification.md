@@ -47,37 +47,54 @@ el seam suprime el resolver, y sin seam la producción queda intacta.
 primera palabra. Más una corrida negativa que falla cerrada con
 `{"ok":false,"code":"invalid_binding"}`.
 
-## Slice 3 — turno completo: **NO RESUELTO** (infraestructura entregada)
+## Slice 3 — turno completo: RESUELTO
 
-Lo que sí funciona y está verificado:
+`npm run test:e2e:voice-room-roundtrip` → **PASS 3/3**, con el worker recreado y
+sin instrumentación. Respuestas habladas reales de 2,9 a 5,9 s, latencia a la
+primera palabra ~2,3 s, y el transcript de la sala muestra el turno del usuario
+reconocido (`"Che nani, ¿me..."`), que es prueba directa de que el agente escucha.
 
-- Fixtures de voz pregrabados (3 WAV en `tests/e2e/voice-room/fixtures/`),
-  generados una sola vez con `synthesizeSpeech`.
-- `tests/e2e/voice-room/turn-detector.ts` — detección de fin de turno por
-  silencio, con **17 tests de unidad verdes**.
-- `caller.ts` / `audio.ts` / `fixture.ts` / `config.ts`: conexión, publicación,
-  captura y seed reutilizables.
-- `scripts/voice-room-roundtrip.ts`: corre 3 veces completo y escribe los WAV de
-  ambos lados.
-- El agente **sí entiende y responde** al turno inyectado. Evidencia: el
-  transcript de run3 es `"Tus balances de SOL son cuarenta y dos con cincuenta."`
-  — una respuesta directa a la pregunta, con el saldo real del fixture, y no el
-  formato del saludo.
+### La causa raíz del defecto de captura
 
-**El defecto abierto:** la captura de audio del segundo turno devuelve silencio.
-El WAV de respuesta pesa 3 MB y dura 32 s, pero su RMS máximo es **32** contra
-**9000-18000** del saludo: frames llegan, audio no. Por eso el runner reporta
-`FAIL: 3/3 round trip(s) failed` con `speech=0 ms, ended=false, timedOut=true`.
+El síntoma era que la respuesta se capturaba como 32 s de silencio. La conclusión
+previa —"el agente no responde"— era **incorrecta en la dirección opuesta**: el
+agente no tenía nada que responder porque el harness publicaba silencio.
 
-O sea: el agente habla, el harness no lo oye. El fallo es de captura, no del
-agente. Queda como el próximo trabajo concreto, y el runner **falla ruidosamente**
-en vez de dar un verde falso.
+`AudioFrame.protoInfo()` entrega al FFI `new Uint8Array(frame.data.buffer)`: el
+ArrayBuffer **completo**, ignorando `byteOffset` y `byteLength`. El loop de
+publicación construía cada frame con `samples.subarray(...)`, cuyo `.buffer` es el
+WAV entero, así que **cada frame transmitía los primeros 20 ms de la fixture** en
+lugar de su porción. Todos los receptores medían ~268 RMS constante mientras el
+loop enviaba 6263 — los primeros 20 ms de esa fixture están justo en ese nivel.
 
-## Slice 5 — vitest y runbook: **NO INICIADO**
+Se confirmó aislando el path de media con un participante monitor independiente,
+sin agente: **267 RMS antes del fix, 9742 después**.
 
-No existe `tests/e2e/voice-room/vitest.voice-room.config.ts` ni el test de
-vitest. Se quitó del `package.json` el script que apuntaba a esa config
-inexistente, para no dejar un entry point colgado.
+El fix copia cada slice a un buffer propio. Ver `tests/e2e/voice-room/caller.ts`.
+
+### Diagnóstico que vale conservar
+
+Cuando "el agente no responde", separar publish-side de subscribe-side con un
+monitor independiente es lo que resuelve la ambigüedad en un solo paso. Y medir
+el RMS dentro del loop que envía, contra el RMS que recibe el otro lado, distingue
+"envío mal" de "no llega". Las dos mediciones juntas fueron concluyentes.
+
+## Slice 5 — vitest y runbook: RESUELTO
+
+- `npm run test:e2e:voice-room` → **PASS**, ~31-40 s. Config propia en
+  `tests/e2e/voice-room/vitest.voice-room.config.ts`.
+- Excluido del suite default por glob en `vitest.config.ts`, con el motivo escrito
+  al lado. `npm test` queda **idéntico al baseline**: 16 fallos preexistentes,
+  860 pasan, 174 skipped.
+- Credenciales inyectadas explícitamente con `injectWorktreeCredentials()`; la
+  suite no hereda nada del ambiente.
+- **Falla ruidosa, nunca skip.** Verificado en los dos caminos:
+  - sin credenciales → `missing credentials: LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
+    LIVE_VOICE_BINDING_PRIVATE_KEY, LIVE_VOICE_BINDING_PUBLIC_KEY, OPENAI_API_KEY`
+  - stack caído → `the isolated LiveKit stack is not reachable at <url>`, con el
+    comando exacto para levantarlo y el runbook.
+- Runbook en `docs/voice-room-e2e-runbook.md`, incluidos los puertos del stack,
+  por qué el rango de media no es libre, y las cuatro trampas de API.
 
 ## No-regresión
 
@@ -86,6 +103,16 @@ las mismas 4 suites que en la base `feat-solana-operational` (14 de integración
 contra una DB que no está disponible, 2 unit de realtime), verificados como
 preexistentes corriendo la misma suite en ese worktree sin ningún cambio mío.
 Ningún fallo nuevo. `npm run typecheck` y `npm run lint` limpios.
+
+## Desvío: cambios en `src/`
+
+Slice 3 requirió dos cambios fuera de las superficies de solo-test, ambos
+revisables por separado:
+
+1. `src/runtime/dependencies.ts` + `src/livekit/worker.ts` — el seam de wallet
+   fixture (commit propio, apagado por defecto, con 2 tests de unidad).
+2. `vitest.config.ts` — un glob de exclusión, para que la suite de voz no entre
+   en `npm test`.
 
 ## Estado del stack
 
