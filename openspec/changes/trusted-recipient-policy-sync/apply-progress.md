@@ -3255,3 +3255,175 @@ the main checkout and the untracked `compose.privy-local.ports.yaml` were not to
 
 `feat(policy): invalidate grant bindings atomically on a proven divergence` — see the report
 envelope for the SHA.
+
+---
+
+### Task 2.14 — the slice-2 gate: **FAILED** on a regression outside both the baseline and the flake lists
+
+Status: **blocked. The 2.14 checkbox stays `- [ ]`.** The gate ran, the suite was compared by test
+name against the pristine baseline, and one **deterministic assertion failure that is not in the
+baseline's six-name list and is not a load timeout** reproduced in isolation. Per the brief, 2.14 is
+not marked complete, no assertion was touched, and no test or production file was edited by this unit.
+
+This unit adds no behaviour and changes no source file. It runs the gate, records it by test name, and
+records what the live capability state actually holds.
+
+#### The gate command and its result
+
+```text
+cd /Users/ramiro/Desktop/projects/colloseum.feat-solana-operational
+set -a; . ./.env; set +a        # DATABASE_URL is sourced, never printed
+npm run db:migrate && npm run lint && npm run typecheck && npx vitest run
+```
+
+| Command | Result |
+|---|---|
+| `npm run db:migrate` | **exit 1** — `relation "conversations" already exists`. Pre-existing environment condition, not a code defect: the container's `public` schema already holds the Supabase chain, so replaying the legacy local migration chain collides on the first table. This is the same condition the slice-1 gate documented when it skipped the command. The command did connect to the right database (host port 55470, `DATABASE_URL` sourced from `.env`, value never printed). |
+| `npm run lint` (`eslint src tests --max-warnings=0`) | **clean**, exit 0, no output |
+| `npm run typecheck` (`tsc -p tsconfig.test.json --noEmit`) | **clean**, exit 0, no output |
+| `npx vitest run` (full backend suite, DB container `colloseumfeat-solana-operational-db-1` on host port 55470) | **exit 1 — `Test Files 7 failed \| 177 passed \| 4 skipped (188)`, `Tests 9 failed \| 1356 passed \| 10 skipped (1375)`** |
+| `cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run` | **all three clean**, exit 0 — `21 passed (21)` files, `114 passed (114)` tests |
+
+Pristine baseline for reference (`.agent-workflow/tasks/trusted-recipient-policy-sync/91-test-baseline.md`,
+attempt 2 at `a121b2c`): `6 failed | 148 passed | 4 skipped (158)` files and
+`6 failed | 1028 passed | 10 skipped (1044)` tests. Skipped is unchanged at 10 tests across the same 4
+files, so no previously-running test became silently skipped. The frontend grew from `21 / 112` to
+`21 / 114` — two new tests, none removed.
+
+#### Baseline comparison **by test name** — the gate verdict table
+
+Failure families admitted by the brief: (a) the baseline's six named failures, (b) 5-second
+test/hook timeouts under parallel load against the single Postgres container.
+
+| # | Failing test (`file > describe > test`) | Failure shape | In the baseline list? | Isolated re-run on this tree | Verdict |
+|---|---|---|---|---|---|
+| 1 | `tests/unit/realtime-agent-session.test.ts` > OpenAI realtime agent session composition > allows one re-read when a confirmation is refused for an incomplete read-back | `AssertionError` (persona prompt regex) | **yes** (baseline #4) | not re-run (baseline-named, deterministic by construction) | pre-existing, unchanged |
+| 2 | `tests/unit/realtime-tools.test.ts` > `createRealtimeTools` > send_token delegates the preview to the service and strips the recipient address | `AssertionError` (spy not called) | **yes** (baseline #6) | not re-run | pre-existing, unchanged |
+| 3 | `tests/integration/conversation-preview-claim-race.test.ts` > previewTransfer real claim semantics > two simultaneous confirms broadcast exactly once (V8.5) | `AssertionError` (0 broadcast calls) | **yes** (baseline #2) | not re-run | pre-existing, unchanged |
+| 4 | `tests/unit/realtime-tool-binding.test.ts` > realtime tool binding — production execution against the fixture stack > send_token previews (no broadcast) and confirm_transfer broadcasts through the fixture spy | `AssertionError` (0 broadcast calls) | **yes** (baseline #5) | **1 failed | 8 passed (10)** — reproduces | pre-existing, unchanged |
+| 5 | `tests/unit/realtime-tool-binding.test.ts` > realtime tool binding — **declaration** > declares exactly the 5 production tools with JSON Schema parameters | `AssertionError` at `:57`, **22 ms** | **NO — not a baseline name, not a timeout** | **1 failed | 8 passed (10)** — reproduces in isolation, deterministically | **REGRESSION — blocks the gate** |
+| 6 | `tests/integration/wallets-sync.test.ts` > PEW-013: explicit activation with read-back; empty allowlist rejected (422) | `AssertionError` (422 ≠ 200) | **yes** (baseline #3) | not re-run | pre-existing, unchanged |
+| 7 | `tests/integration/notifications-webhook.test.ts` > accepts a valid signed delivery for an enrolled wallet and persists exactly one receipt row | bare `Test timed out` **15 396 ms** | flake family (b) | **1 file passed, 3 tests passed** | full-suite-load flake, not a regression |
+| 8 | `tests/integration/notifications-webhook.test.ts` > acknowledges a duplicate delivery without creating a second receipt row | bare `Test timed out` **15 588 ms** | flake family (b) | **1 file passed, 3 tests passed** | full-suite-load flake, not a regression |
+| 9 | `tests/integration/api-auth-logout.test.ts` > is idempotent: repeated logouts succeed and leave the session revoked | bare `Test timed out` **16 064 ms** | flake family (b) — not a timeout in the baseline, but the identical shape | **1 file passed, 5 tests passed** | full-suite-load flake, not a regression |
+| — | `tests/integration/api-voice-auth.test.ts` > returns the same 404 for a foreign conversation as for a missing one | — | baseline #1 (itself recorded there as *environment-shaped, root cause NOT diagnosed*) | **1 file passed, 4 tests passed** | **did not fail this run** — consistent with its recorded load-flakiness |
+
+**Verdict: the gate FAILS.** Row 5 is neither a baseline-named failure nor a load timeout. It is a
+22 ms assertion failure, it reproduces alone, and the cause is visible in the diff:
+
+```
+AssertionError: … expected
++   "stage_trusted_recipient",
++   "stage_trusted_recipient_edit",
++   "stage_trusted_recipient_removal",
+```
+
+`tests/unit/realtime-tool-binding.test.ts:57` pins the **exact, sorted tool-name list** that the voice
+realtime binding exposes from the shared definition. Commit **`3d97758`** (*feat(agent): stage
+trusted-recipient actions behind a typed confirmation arbiter*, task 4.2 work) added those three tools
+to `src/agent/definition.ts:537/543/549`, and `git merge-base --is-ancestor 3d97758 HEAD` confirms that
+commit is an ancestor of the gated HEAD (`c685d38`). `git log -S"stage_trusted_recipient"
+-- src/agent/definition.ts` names `3d97758` as the single introducing commit. The stale expectation was
+never updated alongside it.
+
+Two honest readings, both recorded:
+
+- **By test name** (the comparison the brief mandates): a **new** failure → regression.
+- **By file name** (the brief's shorthand list names `realtime-tool-binding`): the same file already
+  appears in the baseline, but with a **different** test — the baseline's failure list is explicitly
+  "complete", and this name is not in it. Whichever reading is used, the failure is deterministic and
+  causally explained, so it cannot be waived as a flake either way.
+
+The fix belongs to the unit that changed the surface (task 4.2's parity obligation) and is explicitly
+out of scope for this run: both the brief and the slice boundary forbid implementing slice-3/4 work
+here, and editing the assertion to admit the new names would be exactly the "weaken the assertion to
+make the gate pass" that the brief forbids. **Left untouched, reported as the blocker.**
+
+#### The capability probe — what the live database actually records
+
+The probe was **not executed** in this run: there is no signer sidecar in this environment
+(`PRIVY_SIGNER_URL` / `PRIVY_SIGNER_TOKEN` unset ⇒ `canSignAuthorizations()` is `false`), and the
+brief's `{ capable, code }` collection requires a reachable sidecar. Rather than assert a value, the
+live `recipient_policy_state` row was read **read-only** from the container
+(`docker exec colloseumfeat-solana-operational-db-1 psql -tAc "SELECT …"` — catalog/SELECT only, no DDL,
+no DML):
+
+| Recorded field | Observed value (48 rows) | Rows |
+|---|---|---|
+| `status` | `pending` | 48 / 48 |
+| `status_reason` | `signer_binding_unavailable` | 48 / 48 |
+| `status_detail.code` | `signer_binding_unavailable` | 3 |
+| `status_detail.code` | *(key absent)* | 45 |
+| `status_detail` also carries | `policyId`, `appliedPolicyId` (the 2.12 transition keys, both `null`) | — |
+| `empty_composition` | `unproven` | 48 / 48 |
+| `status_detail.rules_union` | **absent in every row** | 0 |
+| `status_detail.attachment_evidence` | **absent in every row** | 0 |
+| `status_detail.ownership_evidence` | **absent in every row** | 0 |
+
+So the code is **`signer_binding_unavailable`** — the equivalent of the `signer_unavailable` reason the
+brief anticipated, recorded by the recurring status writer, not by a probe run. It is a boolean/code
+only: no secret, token, key, payload or signature appears in any log, response or evidence file here.
+
+**Plainly stated: the live probe evidence remains PENDING.** Per the pending-live-evidence table in the
+2.1–2.4 section of this file (the authority for this phrasing), every one of U1–U4 is **unproven on
+this deployment** and nothing above resolves any of them: the absence of `rules_union`,
+`attachment_evidence` and `ownership_evidence` in all 48 rows, and `empty_composition = 'unproven'`
+everywhere, is the direct confirmation of that. Design §6.4's `{ capable, code }` is likewise
+uncollected. The exact collection step for each is unchanged and remains the one named in that table —
+each needs a configured sidecar (`canSignAuthorizations()` `true`) and a devnet budget, and is carried
+by tasks 5.2/5.7. **No fake-transport output is presented here as live provider evidence.**
+
+#### Commands run and results (task 2.14)
+
+| Command | Result |
+|---|---|
+| `set -a; . ./.env; set +a && npm run db:migrate` | exit 1, `relation "conversations" already exists` (pre-existing DB shape) |
+| `npm run lint` | clean, exit 0 |
+| `npm run typecheck` | clean, exit 0 |
+| `npx vitest run` | `7 failed | 177 passed | 4 skipped (188)` files, `9 failed | 1356 passed | 10 skipped (1375)` tests — the nine failures are the table above |
+| `npx vitest run tests/unit/realtime-tool-binding.test.ts` (isolation) | **1 failed, 2 failed / 8 passed (10)** — the regression **reproduces**; not a flake |
+| `npx vitest run tests/integration/notifications-webhook.test.ts` (isolation) | **1 file passed, 3 tests passed** |
+| `npx vitest run tests/integration/api-auth-logout.test.ts` (isolation) | **1 file passed, 5 tests passed** |
+| `npx vitest run tests/integration/api-voice-auth.test.ts` (isolation) | **1 file passed, 4 tests passed** |
+| `npx vitest run tests/integration/recipient-policy-repository.test.ts` (isolation) | **1 file passed, 20 tests passed** |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts tests/unit/recipient-policy-config.test.ts` (isolation) | **24 files passed, 299 tests passed** |
+| `(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)` | lint and typecheck clean; **21 files passed, 114 tests passed**, exit 0 |
+| read-only `psql` on `recipient_policy_state` | the probe-state table above |
+| `git status --porcelain` | `?? compose.privy-local.ports.yaml` — unchanged, never touched |
+
+Both sets of cases earlier units flagged pass in isolation: `recipient-policy-repository` **20/20**, and
+the `recipient-policy-*` + `policy-*` + `recipient-policy-config` set **299/299 across 24 files**. The
+`realtime-tool-binding` isolation is the one re-run that **did not** clear the suspect.
+
+#### What this unit did and did not do
+
+- Did: run the gate, compare by test name, isolate every questionable failure, read the live probe
+  state, record it here.
+- Did **not**: mark 2.14 `[x]` (the gate did not genuinely pass), edit any assertion, edit any source
+  or test file, start any bounded review, refutation, correction or delivery gate, or touch the two
+  parent-owned lifecycle rows in `tasks.md` (both still carry `<!-- sdd-owner: parent -->` and remain
+  unchecked). No `git stash`/`checkout`/`reset`/`restore`/`clean` was run at any point.
+
+#### Remaining tasks in slice 2
+
+```text
+- [ ] **2.14 Run the slice-2 gate and record the slice-2 work-unit commits.** — BLOCKED: the gate fails on a deterministic, non-baseline, non-flake assertion regression in `tests/unit/realtime-tool-binding.test.ts` introduced by `3d97758` (slice-3/4 work already on this branch). Fix belongs to that unit's parity obligation, not here.
+```
+
+Slices 3–5 remain unchecked in `tasks.md`, unchanged by this unit.
+
+#### Workload / PR boundary
+
+One bookkeeping commit: this section of `apply-progress.md` only. No source file, no test file, no
+checkbox changed. It sits inside the parent-assigned `PR 4` slice (tasks 2.1–2.14). No `size:exception`
+is requested.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit, the
+authoritative artifact paths and the delivery path directly. Readiness was resolved against the
+artifacts before any command — `tasks.md` (task 2.14, terminal `<!-- sdd-owner: implementation -->`),
+the 2.12/2.13 entries and the 1.11 gate record for shape, and the pristine baseline
+`.agent-workflow/tasks/trusted-recipient-policy-sync/91-test-baseline.md`. `actionContext`: all writes
+stayed inside the assigned worktree root; the main checkout was never entered and the untracked
+`compose.privy-local.ports.yaml` was not touched.
