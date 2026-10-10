@@ -5322,3 +5322,144 @@ two parent-owned rows are terminal `<!-- sdd-owner: parent -->` and were left un
 record. `actionContext`: one allowed edit root
 (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed inside it; no
 warning was raised by the parent and none was produced by this run.
+
+---
+
+## Slice 5 closure — executable verification and closing record (tasks 5.3, 5.4, 5.5, 5.6, 5.8, 5.9)
+
+Root `5eed078`, branch `feat/solana-operational`. This run ran the executable verification on the final
+tree, wrote the evidence set and the RPI receipt into `.agent-workflow/tasks/trusted-recipient-policy-sync/90-verification.md`,
+and closed the work-unit record. **No `src/` or `apps/` file was edited by this run** — the whole diff is
+documentation. 5.7 was left `[ ]`; 5.1 and 5.2 keep the blockers recorded above.
+
+### Task 5.3 — the suites, with a captured baseline: 0 regressions
+
+| Command | Exit | Result |
+|---|---|---|
+| `npm run lint` | 0 | clean |
+| `npm run typecheck` | 0 | clean |
+| `npx vitest run` | 1 | `Test Files 10 failed \| 186 passed \| 4 skipped (200)` / `Tests 12 failed \| 1457 passed \| 10 skipped (1479)` |
+| `npm run build` | 0 | clean |
+| `npm run eval` | 0 | 9 files / 27 evals / 98 % vs threshold 0 % |
+| `(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)` | 0/0/0 | `24 passed (24)` files, `156 passed (156)` tests, 0 failed, 0 skipped |
+
+Baseline: `91-test-baseline.md` attempt 2 at `a121b2c` — `6 failed | 1028 passed | 10 skipped (1044)`.
+
+| Baseline failure | Baseline message | This run | Isolation re-run |
+|---|---|---|---|
+| `conversation-preview-claim-race` V8.5 | `broadcastTransfer` called once, got 0 | identical | — (pristine, reproduced) |
+| `wallets-sync` PEW-013 | `expected 422 to be 200` | identical | — (pristine, reproduced) |
+| `realtime-agent-session` persona re-read | persona regex mismatch | identical | — (pristine, reproduced) |
+| `realtime-tool-binding` `send_token` | `expected [] to have a length of 1 but got +0` | identical | — (pristine, reproduced) |
+| `realtime-tools` `send_token` | `vi.fn()` arg mismatch | identical | — (pristine, reproduced) |
+| `api-voice-auth` 15 s timeout | `Test timed out in 15000ms` | **did not fail** | 4 passed (4) |
+| **outside both lists** `api-auth-logout` | — | 15 s timeout | **5 passed (5)** |
+| **outside both lists** `api-contacts-policy` | — | 409 vs 201 | **9 passed (9)** |
+| **outside both lists** `contact-action-address` ×3 | — | 5 s timeouts | **7 passed (7)** |
+| **outside both lists** `livekit-trusted-recipient.e2e` | — | 5 s timeout | **13 passed (13)** |
+| **outside both lists** `notifications-reconciliation` | — | `expected 0 to be greater than or equal to 1` | **10 passed (10)** |
+
+All five reproducible pristine failures kept byte-identical messages. The seven failures outside both
+benchmark lists are parallel-run contention (the 5 s/15 s timeout family plus two contention-shaped
+assertions) and **every one passed alone**. No assertion was weakened and no readback check was removed.
+
+**Disclosed state mutation (deviation):** `docker compose up -d db`, exactly as the task writes it,
+**recreated** `colloseumfeat-solana-operational-db-1` onto host port 5432 and could not start
+(`Bind for 127.0.0.1:5432 failed: port is already allocated`), because `DB_HOST_PORT` is set in neither
+`.env` (`grep -c '^DB_HOST_PORT='` → 0, name/presence only) nor the shell, so the `${DB_HOST_PORT:-5432}`
+default applied. Restored with `DB_HOST_PORT=55470 docker compose up -d db` → `Up (healthy)`,
+`127.0.0.1:55470->5432/tcp`; the named volume was preserved and no data was lost.
+
+### Task 5.4 — browser E2E: 20 PASS / 0 FAIL / **5 BLOCKED**
+
+`npm run test:e2e:trusted-recipient-browser` → exit 0, `SCENARIOS: 25  PASS: 20  FAIL: 0  BLOCKED: 5`.
+The five blocked scenarios are the entire authenticated browser flow; the exact blocker is that the
+frontend attaches only `usePrivy().getAccessToken()` and this environment has no Privy credentials, so
+the real API answers 401 and the recipient surface never renders. **A real, unrelated blocker — not a
+pass.** The deployed-stack half is additionally blocked by 5.1.
+
+### Task 5.5 — LiveKit session E2E: 13/13 pass, **0 skipped**
+
+`npx vitest run tests/integration/livekit-trusted-recipient.e2e.test.ts` → exit 0, 13 passed (13), 0
+skipped. `npm run test:e2e:livekit-fake` → exit 0, 3 passed (3), 0 skipped. **No skipped case exists to
+name**; every case in both suites executed. Transport is the fake one by design (§12.2) — not
+live-provider proof.
+
+### Task 5.6 — evals: 9 files / 27 evals / 98 % (threshold 0 %) → PASS, exit 0
+
+`recipient-lifecycle` (text + voice) 100 %, `tools-parity` 100 %, realtime `tools-matrix` 100 %;
+`wallet-agent` 98 % over its 18 cases. Four real-mode suites skipped by design (`EVAL_REAL` unset): real
+realtime eval, real STT round-trip, real TTS round-trip, real realtime tools matrix. `evalite` does not
+print per-case names, so per-case outcomes are named from the `evalite(...)` suite declarations in
+source; the un-smoothed `wallet-agent` 98 % is recorded rather than rounded.
+
+### Task 5.7 — deliberately NOT executed (stays `[ ]`)
+
+No recipient was named by the user and the signer capability is unavailable (`capable:false`,
+`signer_unavailable`, per 5.2). No live trusted recipient was created, `Test1` was not removed, no policy
+was written, and **no money moved**. The exact prerequisite and the exact steps are recorded in
+`tasks.md` and `90-verification.md`.
+
+### Task 5.8 — evidence set and RPI receipt
+
+`.agent-workflow/tasks/trusted-recipient-policy-sync/90-verification.md` now carries the closing evidence
+set: the command/result table, the by-test-name baseline comparison with isolation re-runs, the 5.4/5.5/5.6
+outcomes with their executed-versus-blocked/skipped breakdown, the 5.2 probe outcomes, the 5.7 pending
+state with its prerequisites and steps, 5.9's commit/push evidence, the disclosed deviations and the
+secret-safety statement, plus the RPI verification receipt table. **Later-commit facts outrank the
+earlier snapshots:** 2.14's "live probe PENDING" is superseded by 5.2's collected negative result, and
+5.1/5.2's blockers and ABSENT markers stand unchanged.
+
+### Task 5.9 — one conventional commit per work unit, no push, no PR
+
+```text
+(this commit) docs(sdd): record the closing evidence set and the verification receipt
+5eed078 docs(deploy): record the blocked rebuild and the live capability probe result
+7f53919 test(evals): prove the recipient lifecycle surface in both agent contexts
+0f39529 test(voice): prove the trusted-recipient session window end to end
+1f79e79 feat(policy): review a persisted contact proposal and version its address from the screen
+0177f3d feat(policy): publish the contact proposal card reliably and gate the voice window
+```
+
+`git status --porcelain -uall` before the closing commit: one untracked entry,
+`compose.privy-local.ports.yaml` (pre-existing, preserved, **not** committed).
+**No push:** `git rev-list --left-right --count origin/feat/solana-operational...HEAD` → `0  6`.
+**No new remote branch:** `git branch -r` lists only pre-existing remotes and nothing from this change.
+**No PR.**
+
+### Checkbox decisions and reasons
+
+| Task | Checkbox | Reason |
+|---|---|---|
+| 5.3 | `[x]` | All suites executed on the final tree with a captured baseline; 0 regressions; every non-baseline failure isolation-clean and reported. |
+| 5.4 | `[x]` | Harness executed and returned `RESULT: PASS, exit 0` (20/0/5). The 5 blocked scenarios are recorded by name with their exact blocker, and the deployed-stack half is attributed to 5.1 rather than claimed. |
+| 5.5 | `[x]` | Both runs green with **0 skipped**; the task's only remaining requirement was to name skipped cases and none exist — stated explicitly rather than silently omitted. |
+| 5.6 | `[x]` | `npm run eval` exit 0 with per-file outcomes and the real-mode skips recorded. |
+| 5.7 | stays `[ ]` | Requires user selection of the exact devnet recipient **and** an available signer; neither holds. Nothing live was attempted without them. |
+| 5.8 | `[x]` | Evidence set and RPI receipt written and self-consistent with the recorded commands. |
+| 5.9 | `[x]` | One conventional commit per work unit; no push, no PR, no new remote branch — with the exact `git log`/`rev-list`/`branch -r` evidence recorded. |
+| 5.1, 5.2 | stay `[ ]` | Their blockers are unchanged and are not this run's to resolve; nothing was rebuilt or restarted. |
+| "Freeze the candidate", both parent-owned rows | untouched | Not this run's scope; the parent rows remain byte-for-byte identical (diff shows only the six 5.3–5.9 checkbox flips and note insertions, zero parent-row deletions). |
+
+### Secret safety
+
+No `.env` value was read or printed — `.env` was inspected by key name and presence count only. No token,
+key, payload, signature or credential value appears in any command argument, in `tasks.md`, in this file,
+or in the commit. The browser harness's proxy log lines were not committed. The `.run5` scratch log
+directory created during this run was deleted before the commit.
+
+### Workload / PR boundary
+
+One documentation work unit inside the parent-assigned slice-5 boundary (PR 7, tasks 5.1–5.9):
+`tasks.md` (six checkbox flips + closure notes), `90-verification.md` (the closing evidence set),
+this section, and removal of the untracked scratch directory. No source file changed, so no normalizer or
+review boundary moves. No `size:exception`.
+
+### Structured status consumed
+
+Artifact store `openspec`; the parent's prompt supplied the resolved work units (5.3–5.6, 5.8, 5.9),
+the explicit 5.7 hold, the hard workspace root and the no-push rule. Readiness resolved against the
+artifacts directly before any edit: `tasks.md`, `spec.md`, `design.md`, the earlier `apply-progress.md`
+entries, and `91-test-baseline.md` attempt 2 as the authoritative baseline. `actionContext`: one allowed
+edit root (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed inside
+it; no warning was raised by the parent and none was produced by this run.
