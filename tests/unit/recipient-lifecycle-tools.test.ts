@@ -35,7 +35,7 @@ const CONTACT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const PROPOSAL_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
 type StageCall = Parameters<ContactActionPort["stage"]>[0];
-type ConfirmCall = NonNullable<Parameters<ContactActionPort["confirm"]>[0]>;
+type ConfirmCall = Parameters<NonNullable<ContactActionPort["confirm"]>>[0];
 
 /** A recording stand-in for the server-owned proposal service. */
 function recordingPort() {
