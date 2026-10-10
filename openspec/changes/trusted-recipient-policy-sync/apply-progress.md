@@ -2253,6 +2253,13 @@ npm run typecheck → tsc -p tsconfig.test.json --noEmit : clean, exit 0
 
 #### PENDING LIVE EVIDENCE (per probe — the parent runs these when a signer and a devnet budget exist)
 
+> **UPDATE (2026-10-10, slice-5 rebuild run) — the §6.4 capability half is no longer pending.** It was
+> collected against the live deployment and is **positive**: `verifyPolicySignerCapability()` returns
+> `{"capable":true,"code":"verified"}` in both the `backend` and the `voice-worker` sidecar, and the live
+> `GET /health` reports `policySigner:{"capable":true,"code":"verified"}`. **The U1–U4 probes below are
+> unchanged and still `unproven`** — `capable:true` is their precondition, not their evidence; each still
+> needs a live devnet policy write. Only the capability statement on this heading moved.
+
 Every probe below is implemented and unit-proven over a fake transport, and every one of them
 currently records `unproven` on this deployment. Nothing here is resolved.
 
@@ -5666,3 +5673,182 @@ documented slice-7 boundary. `actionContext`: one allowed edit root
 (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed inside it. One
 degraded-input warning: the parent prompt did not carry an explicit `actionContext` object, so the
 working root and the no-push rule from the prompt were used as the authority; no blocked reason applies.
+
+
+---
+
+## Slice-5 continuation run (2026-10-10) — tasks 5.1 and 5.2 executed against the deployed stack
+
+Root `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`, branch `feat/solana-operational`,
+HEAD `1b0e3cd` at the start. The parent had already resolved both blockers recorded in the previous
+5.1/5.2 attempt (`.env` carries `PRIVY_SIGNER_TOKEN`; `.secrets/privy-authorization-private-key` exists
+and is byte-identical to the running signer's value; `.gitignore` ignores `.secrets/`). No push, no PR,
+no `size:exception`; the main checkout was never entered, the untracked `compose.privy-local.ports.yaml`
+was never touched, no `git stash`/`checkout`/`reset`/`restore`/`clean` was run, and `--remove-orphans`
+was never passed.
+
+### The stack DB: which chain built it, what was missing, what was applied
+
+**Conclusion: this database was built from the `src/db/migrations/` chain, not the `supabase/` chain.**
+Evidence: it has `public.schema_migrations` holding rows `001_recipient_memory.sql` …
+`013_wallet_notifications.sql`, plus an `extensions` schema — but **no** `supabase_migrations`, `auth`
+or `storage` schema. The Supabase chain bookkeeps itself in `supabase_migrations`, and a Supabase-built
+database also carries `auth`/`storage`; neither is present. So the repo's own runner
+(`npm run db:migrate` → `src/db/migrate.ts`, per-file transaction plus a `schema_migrations` row) is the
+correct convention for it, and it was used unchanged.
+
+**Missing: `014_session_floor.sql`, `015_recipient_policy_sync.sql`,
+`016_contact_action_proposal_payload.sql`.** Two of those the parent named (`015`, `016`); `014` was
+missing as well.
+
+| Step | Command | Result |
+|---|---|---|
+| Apply | `DATABASE_URL='postgresql://postgres@127.0.0.1:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions' npx tsx src/db/migrate.ts` | `Applied migrations: 014_session_floor.sql, 015_recipient_policy_sync.sql, 016_contact_action_proposal_payload.sql` |
+| Idempotency | the same command, re-run | `Database schema is already current.` |
+| Verify | `docker exec nana-privy-impl-db-1 psql -U postgres -d wdk_agent -tAc "…"` | `public` tables **22 → 27**; `recipient_policy_state`, `recipient_policy_sync_intent`, `contact_action_proposals`, `recipient_policy_leases`, `recipient_policy_audit` all non-NULL; `users.session_floor_at` present; `schema_migrations` now lists `014`/`015`/`016` |
+
+Only the stack DB (`nana-privy-impl-db-1`) was touched; the worktree test DB
+(`colloseumfeat-solana-operational-db-1`, port 55470) was not.
+
+### Task 5.1 — rebuild and restart: DONE, markers verified per correct container
+
+Build: `docker compose -f compose.privy-local.yaml -f compose.privy-local.ports.yaml build backend frontend`
+→ exit 0. `nana-privy-backend-dev:local` rebuilt (`db879c341424` → `cddefe7f2026`) and
+`nana-privy-impl-frontend:latest` rebuilt (`edd8aebe4f53` → new). The shared image carries `node_modules`;
+application source is bind-mounted read-only and compiled inside each container by its own entrypoint
+(`npm run build && exec …`), so the containers themselves do the code build at start.
+
+Recreate: `… up -d --no-build backend backend-signer`, then
+`… up -d --no-build voice-worker voice-worker-signer frontend` — **no `--remove-orphans` in either**.
+
+| Container | Action | Result |
+|---|---|---|
+| `nana-privy-impl-backend-1` | Recreated | Up, **healthy**, port `127.0.0.1:32800` (convention kept) |
+| `nana-privy-impl-backend-signer-1` | **Created (new)** | Up; `privy-authorization-signer listening on http://127.0.0.1:8788/sign (loopback only)`; **no published ports** |
+| `nana-privy-impl-voice-worker-1` | Recreated | Up |
+| `nana-privy-impl-voice-worker-signer-1` | **Created (new)** | Up; `…listening on http://127.0.0.1:8789/sign (loopback only)`; **no published ports** |
+| `nana-privy-impl-frontend-1` | Recreated | Up, port `127.0.0.1:32802` (convention kept) |
+| `nana-privy-impl-authorization-signer-1` | **left alone** | Still Up (14 h); not removed, not stopped. Compose reported it as an orphan for project `nana-privy-impl`, as expected. Its namespace reference points at the pre-recreate `voice-worker`, so it is no longer reachable from the recreated stack — a fallback that is still running, not a live dependency. |
+| `nana-privy-impl-db-1`, `nana-privy-impl-livekit-1` | untouched | Running, unchanged |
+
+Marker check, **inside each correct container**, after the recreate:
+
+| Marker | `backend` | `voice-worker` | `backend-signer` / `voice-worker-signer` | `frontend` |
+|---|---|---|---|---|
+| `dist/wallet/policy/probe.js` | PRESENT | PRESENT | n/a (signer entrypoint only) | — |
+| `dist/wallet/policy/composer.js` | PRESENT | PRESENT | — | — |
+| `dist/conversations/confirmation-arbiter.js` | PRESENT | PRESENT | — | — |
+| `dist/wallet/policy/reconciler.js`, `dist/wallet/policy/service.js` | PRESENT | PRESENT | — | — |
+| `policySigner` in `dist/api/health.js` | 2 occurrences | 2 occurrences | — | — |
+| `PROPUESTA_OBSOLETA` in `dist/contracts/http.js` | 1 | 1 | — | — |
+| `dist/wallet/signer/server.js` running | — | — | PRESENT (both, listening) | — |
+| `contact_action_proposal` (topic) in the built bundle | — | — | — | PRESENT (1 asset) |
+
+Two marker-location corrections against the previous attempt's check, so a miss is not misread as
+absence: `policySigner` is built into `dist/api/health.js` (the health route's own module,
+`src/api/health.ts:74`), not `dist/server.js`; and the card publication lives in
+`src/livekit/contact-proposal-publication.ts`, so `dist/livekit/worker.js` is not the right place to
+look for it.
+
+**Frontend findings, recorded rather than rounded.** (a) The change's topic/subscription path **is** in
+the built bundle (`contact_action_proposal` matches one asset), so the recreated frontend is the new
+build. (b) The change's **card strings are NOT in the bundle**: `PROPUESTA_OBSOLETA` and
+`Esta propuesta cambió…` match 0 assets, and there is no `ContactActionProposalCard` chunk at all.
+Cause, verified in source: `apps/nana-wallet/src/features/wallet/ContactActionProposalCard.tsx` is
+**imported by nothing outside its own test** (a grep for a non-test importer returns empty), so the
+production build tree-shakes it out; the only other occurrences of those strings are the dev-only MSW
+handlers. That is a slice-4 wiring gap in the frontend, not a 5.1 deployment failure — the container,
+image and bundle are all new. It is reported here because a marker check that found nothing must not be
+recorded as if it found something. (c) `https://nana-privy.localhost` → HTTP 200 in 81 ms, so the
+portless proxy and the existing local ports convention still hold.
+
+### Task 5.2 — signer capability probe: capability half POSITIVE in both processes; U1–U4 still uncollected
+
+| Process | Exact command | Result |
+|---|---|---|
+| `backend` | `docker exec -w /app nana-privy-impl-backend-1 node -e "import('./dist/wallet/policy/probe.js').then(m=>m.verifyPolicySignerCapability()).then(r=>console.log('PROBE_RESULT='+JSON.stringify(r)))"` | **`{"capable":true,"code":"verified"}`** |
+| `backend` readiness surface | `curl -s http://127.0.0.1:32800/health \| jq -c '.policySigner'` | **`{"capable":true,"code":"verified"}`** (live health keys: `mcp,mode,network,policySigner,provider,status,wallet`) |
+| `voice-worker` sidecar | the same probe inside `nana-privy-impl-voice-worker-1`, its own namespace, its own sidecar on 8789 | **`{"capable":true,"code":"verified"}`** |
+| U1–U4 (2.1–2.4) | not run | **unproven, unchanged** — needs live devnet policy writes; U4 step iii needs a signed transfer under separate explicit user authorization |
+
+This is a **real change of state**, and the PENDING probe notes were updated **in place** to say so: the
+`#### PENDING LIVE EVIDENCE` banner in this file, and the closure notes of tasks 2.14 and 5.2 in
+`tasks.md`. The earlier negative reading is preserved as superseded, not deleted.
+
+### The worker `PRIVY_AUTHORIZATION_PUBLIC_KEY` finding
+
+**Resolved — and it was staleness, not a wiring defect.** The recreated worker declares
+`PRIVY_AUTHORIZATION_PUBLIC_KEY` (env **names only**:
+`docker inspect <c> | jq -r '.[0].Config.Env[] | split("=")[0]'` →
+`PRIVY_AUTHORIZATION_KEY_QUORUM_ID PRIVY_AUTHORIZATION_PUBLIC_KEY PRIVY_SIGNER_TIMEOUT_MS
+PRIVY_SIGNER_TOKEN PRIVY_SIGNER_URL`). The compose file declares it on `voice-worker.environment` as
+`${PRIVY_AUTHORIZATION_PUBLIC_KEY:?}`; that line was added by `a101f72` (2026-10-10 08:55 −03),
+**after** the stale container was created (01:52 −03). `PUBLIC_KEY_DECLARED=no` was that old container's
+frozen config. To answer the parent's question directly: **no service uses `env_file:`** — `.env` reaches
+containers only through `${…}` interpolation of variables that appear in an `environment:` block. The
+declaration is therefore what matters, it is present, and `docker compose config` resolves it.
+
+### Secret safety
+
+- No `.env` value and no key-file byte was read, printed, echoed, `cat`-ed or logged — not even
+  partially, not as a prefix, not as a length, not as a hash.
+- Container environment inspection used **names only**: `docker inspect <c> | jq -r '.[0].Config.Env[] |
+  split("=")[0]'`, which takes the substring before the first `=` of each array element and therefore
+  cannot emit any part of a value — including the multi-line PEM/base64 values that leaked in the
+  previous attempt's `sed 's/=.*/…/'`. That single-line-only redactor was **not** reused and no
+  replacement redactor was introduced; the name-only projection is the whole mechanism.
+- Compose values were never printed: `docker compose … config` was only ever piped through `jq` to
+  project **key names**
+  (`.services | to_entries[] | {service: .key, env: (.value.environment // {} | keys)}`). No command
+  argument, log, artifact or commit message contains a token, key, payload or signature value; the probe
+  prints only `{capable, code}`.
+- `git status --porcelain` shows **neither `.env` nor `.secrets/`**: the only entry is
+  `?? compose.privy-local.ports.yaml`, and `git check-ignore -v` confirms `.gitignore:7:.env` and
+  `.gitignore:16:.secrets/` both match. Nothing secret was staged or committed.
+
+### Checkbox decisions and reasons
+
+| Task | Checkbox | Reason |
+|---|---|---|
+| 5.1 | `[ ]` → **`[x]`** | All five affected services were genuinely rebuilt and recreated (`backend`, `voice-worker`, `backend-signer`, `voice-worker-signer`, `frontend`); each marker was checked inside the **correct** container; signer connectivity survived the network-namespace restart (`verified` from both namespaces); the ports convention is intact (`32800`/`32802`, `https://nana-privy.localhost` 200). The frontend card-wiring gap is recorded as a finding, not used to claim a marker whose string is absent. |
+| 5.2 | stays **`[ ]`** | The task's own text requires the `{capable, code}` record **plus** the recorded U1–U4 outcomes. The capability half is now collected and positive for both processes; U1–U4 cannot run without live devnet policy writes (and U4 step iii without a separately authorized signed transfer), so the unit as written is not complete. The collected half is recorded above, not withheld. |
+| 2.14, 5.7, parent-owned rows | note updated / untouched | 2.14's PENDING probe sentence was updated in place (real new evidence). 5.7 was **not** executed and its text was left unchanged — its capability prerequisite is now met, but it still needs the user to name the exact devnet recipient and a separately authorized signed transfer. Both `<!-- sdd-owner: parent -->` rows are byte-for-byte unchanged (`git diff \| grep 'sdd-owner: parent'` is empty). |
+
+### Deviations from the brief
+
+1. **Three migrations were applied, not two.** `014_session_floor.sql` was missing from the stack DB as
+   well as `015`/`016`; leaving it out would have left the database behind the code by one more revision.
+2. **The frontend marker check did not find the change's card strings.** The bundle is genuinely new
+   (topic path present) but the card component is imported by nothing outside its test, so it is
+   tree-shaken out. Recorded as a slice-4 wiring finding inside 5.1's evidence instead of being converted
+   into a pass.
+3. **The candidate-freeze row's "only check-only commands may run after this point" is in tension with
+   this run by reassignment.** The parent reassigned 5.1/5.2 after the freeze, and this run changed **no
+   source, test, migration, config or compose byte** — the entire diff is `tasks.md` plus this file — so
+   no normalizer needs to re-run and no reviewed source byte moved. Flagged so the freeze/review owner can
+   confirm the receipt still holds.
+4. **One undeclared container is left running by instruction.** `nana-privy-impl-authorization-signer-1`
+   was not stopped, not removed, and `--remove-orphans` was never passed. It is still Up, but its
+   namespace belongs to the pre-recreate `voice-worker`, so it is no longer reachable from the recreated
+   stack.
+
+### Workload / PR boundary
+
+One documentation work unit inside the parent-assigned slice-5 boundary (PR 7, tasks 5.1–5.9):
+`tasks.md` (one checkbox flip, two closure notes for 5.1, the 5.2 probe note replaced in place, the 2.14
+PENDING sentence updated in place) and this appended section. Zero source lines. No `size:exception` is
+requested or applied.
+
+### Structured status consumed
+
+Artifact store `openspec` (files under `openspec/changes/trusted-recipient-policy-sync/`), so the native
+dispatcher is not authoritative and readiness was resolved against the artifacts directly before any
+edit: `tasks.md` (5.1/5.2 carry terminal `<!-- sdd-owner: implementation -->`; both parent-owned rows are
+terminal `<!-- sdd-owner: parent -->` and were left untouched), `spec.md`, `design.md` §6.4/§11,
+`openspec/config.yaml` (`strict_tdd: false`, `formatter: false`), and the existing `apply-progress.md` for
+every blocker note. `actionContext`: one allowed edit root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed inside it. The
+Review Workload Forecast guard (`Decision needed before apply: Yes`, `Chained PRs recommended: Yes`,
+`400-line budget risk: High`) is already resolved for this change, and this unit is a two-file
+documentation commit well inside the documented boundary. No warning was raised by the parent and none
+was produced by this run.
