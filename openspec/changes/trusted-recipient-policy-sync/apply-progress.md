@@ -3726,3 +3726,110 @@ The repaired guard is the load-bearing one: it asserts the declared surface carr
 policy identifier that no current read path resolves and design §9.1's closed field set governs the
 readiness read. Adding a declared-but-never-populated field would have been the same false affordance
 the repaired guard above exists to catch.
+
+### Unit 2 — task 3.2, the backend recipient/policy routes (integration proof + idempotency replay)
+
+`[x]` in `tasks.md`. The routes themselves already existed (`src/api/contacts.ts`: `GET /v1/contacts`,
+`POST`/`PATCH`/`DELETE /v1/contacts`, `GET /v1/contacts/:id/removal-preview`,
+`POST /v1/contacts/:id/reveal-cbu`, `GET /v1/recipient-policy`, `POST /v1/recipient-policy/retry`,
+`Idempotency-Key` read at `:74-77`) and no route body was rewritten by this unit. What was missing was
+the **idempotency replay** the task's third clause requires, and the suite that pins it.
+
+**Verdict on the previous (killed) run's `src/` diff — in scope, `+70` lines, no refactor.**
+`git diff --stat` before this unit: `src/wallet/policy/repository.ts +26`,
+`src/wallet/policy/service.ts +44`, `2 files changed, 70 insertions(+)`, `0 deletions`.
+
+| Change | Why task 3.2 needs it |
+|---|---|
+| `RecipientPolicyRepository.readIntentByIdempotencyKey(userId, walletId, idempotencyKey)` | The stored-result lookup the design §9.2 replay is defined as; reads `recipient_policy_sync_intent` under the caller's RLS scope. New read, no write, no signature changed. |
+| `RecipientPolicyService.replayIdempotentMutation(...)` + its two call sites (before `runMutation` in `create` and in `edit`) | Without it, a repeated `Idempotency-Key` does not return the stored result: `create` collides with the unique `(wallet_id, idempotency_key)` index and 500s; `edit` fails the contact-version CAS and 409s (`VERSION_OBSOLETA`). Both observed as RED below. |
+
+No unrelated refactor, no commented-out code, no formatting churn, no route or contract change:
+nothing outside these two files was touched, and nothing in the diff is broader than the replay path.
+The lookup is keyed on `(wallet_id, user_id, idempotency_key)` and orders by `desired_revision DESC`,
+so a replay can only ever return the caller's own wallet's row for that exact key.
+
+**RED → GREEN, honestly.** The implementation shipped first in the killed run, so RED was obtained by
+mutation on the real file (the protocol asked for here), one guard at a time, each restored before the
+next:
+
+| Mutation (removed, observed, restored) | Expected | Observed |
+|---|---|---|
+| the `edit` replay hook only | the new edit-replay case fails by name; the create case still passes | `× replays a repeated Idempotency-Key on an edit with one mutation, one intent and one audit row` — `AssertionError: expected 409 to be 200` at the second `PATCH` (the replayed body's `expectedVersion` is stale). The create case passed in the same run (`1 failed | 1 passed | 6 skipped`), so the two guards are independently load-bearing rather than one masking the other. |
+| the `create` replay hook only | the create-replay case fails by name; the edit case still passes | `× replays a repeated Idempotency-Key with one mutation, one intent and one audit row` — `AssertionError: expected 500 to be 201` (the unique `(wallet_id, idempotency_key)` index rejects the second insert). Edit case passed. |
+
+Both hooks restored; the `src/` diff is byte-for-byte the pre-run `+70` before committing.
+
+**A guard the previous suite could not reach, found and closed.** The killed run added the `edit`
+replay hook but only tested the `create` one — a removal-only mutation protocol would have shown the
+`edit` hook as "proven" while no test ever executed it. `replays a repeated Idempotency-Key on an edit
+with one mutation, one intent and one audit row` was added to reach it, and it is the case the
+`edit`-hook mutation above fails by name. Same for the stale-revision case: its "without applying"
+half asserted only the contact projection, so it now reads `recipient_policy_state` and the wallet's
+intent count before/after, and adds the **positive control** (`PATCH` with the current
+`expectedPolicyRevision` → `200` and a bumped version) so the `409` cannot be a dead route.
+
+**Positive control for status honesty.** The integration suite can only ever observe "not `applied`"
+on this deployment (the HTTP path holds `createUnavailablePolicyApplyPort`), which alone would be a
+negative assertion that passes because no `applied` row exists. The true branch is proven with the
+same projection the route uses: `tests/unit/policy-service-contract.test.ts` builds an `applied` row
+*with* its verification and asserts `applied`, then asserts the downgrade to
+`unverified_applied_readback` / `applied_revision_behind_desired` for the two dishonest variants. The
+integration assertion `permission.appliedRevision <= permission.desiredRevision` plus the DB-level
+`verified_at`/`applied_revision`/`applied_policy_id` check then pins that the route never emits the
+state it cannot back here.
+
+**What the two suites prove** (`tests/integration/api-contacts-policy.test.ts`,
+`tests/integration/api-contacts-policy-cross-user.test.ts`): create/list/`GET /v1/recipient-policy`
+serve one closed readiness snapshot (`appliedRevision`, `desiredRevision`, `retryable`, `state`, and
+`reason` only when present) with no `secret|signature|token|appSecret`-shaped key; `POST` replay and
+`PATCH` replay each return the stored result with exactly one mutation, one intent and one
+`intent_recorded` audit row (unique names as the positive control); a stale `expectedPolicyRevision`
+returns `409 REVISION_POLITICA_OBSOLETA` with the revisions and intent count unmoved; `DELETE` returns
+`{contact, revocation:{grantIds, state}}` with `state` never `applied` and a second `DELETE` a `404
+CONTACTO_NO_ENCONTRADO`; a server-owned key is `422 DATOS_INVALIDOS` and persists nothing;
+`reveal-cbu` is unchanged; a wallet with no ready permission stays saved-and-not-enabled with no
+`applied_policy_id` anywhere; and every route (list, patch, removal-preview, delete, reveal-cbu,
+`recipient-policy`, retry) is owner-scoped, with a foreign id indistinguishable from a missing one.
+
+**Verify (exact commands and results).**
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/api-contacts-policy.test.ts tests/integration/api-contacts-policy-cross-user.test.ts` | `2 files passed, 9 tests passed` |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts tests/unit/recipient-policy-config.test.ts` | `24 files passed, 299 tests passed` (the recorded 299+ floor, re-measured after the aggregate run below) |
+| `npx vitest run tests/integration/api-contacts.test.ts tests/integration/contacts-cross-user.test.ts` (isolation) | `2 files passed, 4 tests passed` |
+| `npm run lint && npm run typecheck` | clean, clean |
+
+**Deviation and risk — aggregate cross-suite interference (reported, not hidden).** The same
+`api-contacts*` files added to the 299-test policy invocation (a 27-file single run) produced
+`1 failed | 26 passed` on the first attempt and `38 failed | 273 passed` on the second, all inside the
+pre-existing suites, with the policy set alone green immediately afterwards (299/299). Every policy
+suite serializes on the same demo wallet's `W1` lease and shares its `desired_revision` counter, so a
+27-file parallel run webs those. This is the pre-existing 15–16 s load-flaky family the change already
+records, not a regression: `api-contacts` + `contacts-cross-user` pass 4/4 in isolation, the policy set
+passes 299/299 in isolation, and this unit adds no shared state beyond the test-side hygiene below.
+New suites carry a bounded retry that fires **only** on the named `policy_lease_busy` /
+`policy_lease_unavailable` contention.
+
+**Test-side hygiene (deliberate, documented in the suite).** The suite's `beforeAll` aligns the demo
+wallet's `desired_revision` to `GREATEST(current, max(intent.desired_revision))`, because an earlier
+suite rewinds the counter and the unique `(wallet_id, desired_revision)` index still holds the
+historical rows. It is monotonic (`GREATEST`) and touches only that counter, so it cannot lower a
+revision any other suite relies on.
+
+**Removal idempotency (documented boundary).** `remove` is the one mutation with no stored-result
+replay: its second call is answered `404 CONTACTO_NO_ENCONTRADO` because the contact is archived and
+no revocation is composed, applied or audited a second time. The suite pins that outcome explicitly,
+so the route is idempotent in effect without a replay path composed of a destroyed contact's identity.
+
+**TDD Cycle Evidence (strict TDD, unit 3.2).**
+
+| Phase | What ran | Evidence |
+|---|---|---|
+| RED | The `edit` replay hook removed from `src/wallet/policy/service.ts`; `npx vitest run tests/integration/api-contacts-policy.test.ts -t "Idempotency-Key"` | `× replays a repeated Idempotency-Key on an edit …` — `AssertionError: expected 409 to be 200`; the create case passed, so the failure is attributed to the missing hook and not to the suite. |
+| GREEN | Hook restored | `2 files passed, 9 tests passed`; the policy set `24 files passed, 299 tests passed`. |
+| RED (second guard) | The `create` replay hook removed | `× replays a repeated Idempotency-Key with one mutation, one intent and one audit row` — `AssertionError: expected 500 to be 201`, the unique `(wallet_id, idempotency_key)` index; the edit case passed. |
+| GREEN | Hook restored; `src/` diff back to `+70` byte-for-byte | `2 files passed, 9 tests passed`. |
+| TRIANGULATE | A second, independent key path (an edit whose replayed body carries a now-stale `expectedVersion`) plus the stale-revision positive control | The edit case is the only one the `edit`-hook mutation breaks; the stale-revision `409` is paired with the `200` its correct revision produces on the same route and body shape. |
+| REFACTOR | None required: the replayed result is composed only from existing reads (`readActive`, `readContactPermission`) and the stored revision; no route, schema or contract changed | `npm run lint && npm run typecheck` clean. |

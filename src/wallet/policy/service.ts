@@ -730,6 +730,13 @@ export class RecipientPolicyService {
     }
 
     return this.withPolicyLease(userId, wallet.walletId, async () => {
+      const replayed = await this.replayIdempotentMutation(
+        userId,
+        wallet.walletId,
+        options,
+      );
+      if (replayed) return replayed;
+
       const outcome = await this.runMutation(
         userId,
         wallet.walletId,
@@ -790,6 +797,13 @@ export class RecipientPolicyService {
     }
 
     return this.withPolicyLease(userId, wallet.walletId, async () => {
+      const replayed = await this.replayIdempotentMutation(
+        userId,
+        wallet.walletId,
+        options,
+      );
+      if (replayed) return replayed;
+
       const outcome = await this.runMutation(
         userId,
         wallet.walletId,
@@ -823,6 +837,36 @@ export class RecipientPolicyService {
         policyRevision: outcome.revision,
       };
     });
+  }
+
+  /**
+   * Design §9.2 idempotency: a replayed `Idempotency-Key` returns the STORED
+   * result — the same desired revision and the same computed permission
+   * snapshot — and performs no second composition, no second PATCH and no second
+   * audit row. The unique `(wallet_id, idempotency_key)` index arbitrates; this
+   * lookup is what turns its rejection into the stored result instead of an
+   * internal error on the second call.
+   */
+  private async replayIdempotentMutation(
+    userId: string,
+    walletId: string,
+    options: RecipientMutationOptions,
+  ): Promise<RecipientMutationResult | null> {
+    const key = options.idempotencyKey ?? null;
+    if (!key) return null;
+    const intent = await this.repository.readIntentByIdempotencyKey(
+      userId,
+      walletId,
+      key,
+    );
+    if (!intent?.contactId) return null;
+    const contact = await this.contacts.readActive(userId, intent.contactId);
+    if (!contact) return null;
+    return {
+      contact,
+      permission: await this.readContactPermission(userId, walletId),
+      policyRevision: intent.desiredRevision,
+    };
   }
 
   /**

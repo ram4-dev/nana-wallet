@@ -1639,6 +1639,32 @@ export class RecipientPolicyRepository {
     return client ? run(client) : this.ownerTransaction(userId, run);
   }
 
+  /**
+   * The intent a given `Idempotency-Key` already produced for this wallet
+   * (design §9.2). The unique `(wallet_id, idempotency_key)` index makes this a
+   * lookup, which is what lets a replayed mutation return its STORED result
+   * instead of composing, applying and auditing a second time.
+   */
+  public async readIntentByIdempotencyKey(
+    userId: string,
+    walletId: string,
+    idempotencyKey: string,
+    client?: Queryable,
+  ): Promise<PolicyIntentRecord | null> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<PolicyIntentRow>(
+        `SELECT ${INTENT_COLUMNS}
+           FROM recipient_policy_sync_intent
+          WHERE wallet_id = $1 AND user_id = $2 AND idempotency_key = $3
+          ORDER BY desired_revision DESC
+          LIMIT 1`,
+        [walletId, userId, idempotencyKey],
+      );
+      return result.rows[0] ? mapIntent(result.rows[0]) : null;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
   // -------------------------------------------------------------------------
   // Transaction helpers
   // -------------------------------------------------------------------------
