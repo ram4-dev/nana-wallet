@@ -245,3 +245,49 @@ Comparing `npm test` against a captured baseline, name for name, caught two
 regressions that green-looking unit runs had hidden: a `grant-claim-release`
 case that flipped the transfer gate mid-flight, and the 13 enrollment failures
 above. Both were found by the comparison, not by the suites themselves.
+
+---
+
+## Final state (2026-10-10) — 28 commits
+
+    tests/unit      102 files / 751 passed / 1 skipped
+    full suite      19 failures = the shared-database baseline, zero new
+    typecheck/lint  clean on both sides
+    frontend        112 passed
+    npm run eval    green
+    /health         "network":"solana-devnet"
+
+### Arc is gone
+
+`grep -rIln "arc-testnet|ARC_TESTNET|arcscan|Arc testnet|5042002"` over `src`,
+`apps/nana-wallet/src`, `scripts`, the compose files, `.env.example` and
+`package.json` returns **nothing**. The remaining mentions are historical
+documents under `.agent-workflow/` and `openspec/changes/archive/`, which are
+records and stay.
+
+`src/wallet/embedded.ts` was the last island; it is now Solana-only. The tests
+that encoded the EVM shape were repointed, and one test was deleted because its
+subject — the EVM-vs-Solana arbitration in `preparePermission` — no longer
+exists.
+
+### Three real defects the conversion exposed
+
+None of these were visible while the EVM path existed:
+
+1. **Ethereum gated Solana.** `syncWalletLive` returned early when the Ethereum
+   wallet listing failed, so the Solana arm never ran. A Solana-only deployment
+   was hostage to a chain it does not serve.
+2. **A Solana transaction could not be reported.** `normalizeBroadcastResult`
+   only accepted a `0x`-shaped hash, so the text agent dropped every Solana
+   broadcast result.
+3. **The fixture minted an EVM address.** The Privy test double produced
+   `0x…` + `chainFamily: "arc"`, so it could never bind in a Solana-only build.
+   It now mints a real base58 address through the same codec as the provider.
+
+### Lesson worth keeping
+
+Every one of these was found by comparing the full suite against a captured
+baseline **name for name**, not by reading the code and not by a green unit run.
+Three separate regressions in this refactor — the mid-flight transfer gate, the
+13 enrollment failures, and the Ethereum-gates-Solana return — first appeared as
+a count that did not match.
