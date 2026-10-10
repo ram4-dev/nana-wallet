@@ -38,7 +38,8 @@ export type PolicyCompositionRefusalReason =
   | "empty_composition_unproven"
   | "rule_composition_semantics_unproven"
   | "ordinary_cap_unsupported"
-  | "composer_required";
+  | "composer_required"
+  | "apply_capability_unwired";
 
 /** Base class for every refusal the composition domain raises. */
 export class PolicyCompositionRefusalError extends Error {
@@ -126,5 +127,142 @@ export class PolicyComposerRequiredError extends PolicyCompositionRefusalError {
       "blocked_configuration",
       `Policy composition was attempted through '${attemptedPath}', which cannot route through the single composer. Refusing: no independent full-rule replacement may be issued.`,
     );
+  }
+}
+
+/**
+ * Design §12.1. Slice 1 ships no signed apply capability, so a service wired
+ * with one would be a service that could perform a live policy write. Refusing
+ * at construction is how "no slice-1 task performs a live PATCH" becomes a
+ * property of the wiring rather than a promise about behaviour: the signed
+ * implementation of the port is slice 2's unit, and until it lands the only
+ * representable capability is `unavailable`.
+ */
+export class PolicyApplyCapabilityUnwiredError extends PolicyCompositionRefusalError {
+  /** The capability that was refused. */
+  readonly availability: string;
+
+  constructor(availability: string) {
+    super(
+      "apply_capability_unwired",
+      "blocked_configuration",
+      `Refusing to build the recipient policy service with an '${availability}' apply capability: this slice supplies no signed implementation and must not perform a live policy write. Wire the review-era signed port in the slice that owns the apply path.`,
+    );
+    this.availability = availability;
+  }
+}
+
+/**
+ * The failure vocabulary of the recipient-policy service seam (design §9.2).
+ * Each code is a stable HTTP error code the contract already publishes, so a
+ * caller maps a typed failure onto a response without matching message text.
+ */
+export type RecipientPolicySeamErrorCode =
+  | "DATOS_INVALIDOS"
+  | "CONFLICTO_POLITICA"
+  | "REVISION_POLITICA_OBSOLETA"
+  | "VERSION_OBSOLETA"
+  | "CONTACTO_NO_ENCONTRADO";
+
+/** One bounded validation issue: the path and the code, never the value. */
+export type RecipientPolicyValidationIssue = {
+  path: string;
+  code: string;
+};
+
+/** Base class for every typed failure the service seam raises. */
+export class RecipientPolicySeamError extends Error {
+  readonly code: RecipientPolicySeamErrorCode;
+
+  constructor(input: { code: RecipientPolicySeamErrorCode; message: string }) {
+    super(input.message);
+    this.name = new.target.name;
+    this.code = input.code;
+  }
+}
+
+/**
+ * A request body that does not match the strict service seam (design §9.2, spec
+ * "Server owns identity, wallet, and network"). The issues carry paths and codes
+ * only: a rejection must not reflect an attacker-supplied identifier back.
+ */
+export class RecipientPolicyValidationError extends RecipientPolicySeamError {
+  readonly issues: RecipientPolicyValidationIssue[];
+
+  constructor(issues: RecipientPolicyValidationIssue[]) {
+    super({
+      code: "DATOS_INVALIDOS",
+      message: `The request did not match the strict recipient policy contract: ${issues
+        .map((issue) => `${issue.path || "body"} (${issue.code})`)
+        .join(", ")}`,
+    });
+    this.issues = issues;
+  }
+}
+
+/**
+ * Spec "Denying permission broadening is a validation failure, not a merge": a
+ * metadata-only edit whose recomposition would change the wallet's recorded rule
+ * set stops as a blocked conflict. Nothing is merged and the edit is not applied.
+ *
+ * It carries the status class and the reason it must be recorded with, so the
+ * stop becomes durable evidence instead of a response the caller discards.
+ */
+export class RecipientPolicyConflictError extends RecipientPolicySeamError {
+  readonly failureClass: PolicyBlockedStatus = "blocked_conflict";
+  readonly reason: string = "metadata_edit_changes_rules";
+  /** Bounded evidence: the reference and the two hashes it disagrees with. */
+  readonly detail: Record<string, unknown>;
+
+  constructor(detail: Record<string, unknown>) {
+    super({
+      code: "CONFLICTO_POLITICA",
+      message:
+        "The edit would change the wallet's recorded policy rule set. Refusing to merge or widen it: the recorded revision must be made to converge first.",
+    });
+    this.detail = detail;
+  }
+}
+
+/**
+ * The edit was composed against a desired revision the caller has not seen, so
+ * applying it would silently fold an unseen change into this one. A client-side
+ * conflict: no policy stop is recorded, because no composition was reached.
+ */
+export class RecipientPolicyRevisionConflictError extends RecipientPolicySeamError {
+  readonly detail: Record<string, unknown>;
+
+  constructor(detail: Record<string, unknown>) {
+    super({
+      code: "REVISION_POLITICA_OBSOLETA",
+      message:
+        "The wallet's desired policy revision moved since the caller read it; refusing to compose over a revision the caller has not seen.",
+    });
+    this.detail = detail;
+  }
+}
+
+/**
+ * The contact-mutation port's refusal vocabulary (design §9.2). Declared here so
+ * the service can translate the port's failures into the seam's typed codes
+ * without depending on the concrete contacts repository.
+ */
+export class RecipientContactVersionConflictError extends RecipientPolicySeamError {
+  constructor() {
+    super({
+      code: "VERSION_OBSOLETA",
+      message:
+        "The contact changed since the caller read it; refusing to overwrite a newer version.",
+    });
+  }
+}
+
+/** The named contact does not exist (or is not active) for this user. */
+export class RecipientContactMissingError extends RecipientPolicySeamError {
+  constructor() {
+    super({
+      code: "CONTACTO_NO_ENCONTRADO",
+      message: "The contact does not exist for this user.",
+    });
   }
 }

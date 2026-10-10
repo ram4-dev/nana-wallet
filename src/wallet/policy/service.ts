@@ -1,0 +1,1043 @@
+/**
+ * `RecipientPolicyService` — the single writer of trusted-recipient intent
+ * (design §3.1, §3.5, §1.6, §12.1).
+ *
+ * WHY THIS MODULE EXISTS
+ * ----------------------
+ * Slice 1 collapses three full-rule writers into one composer. This is the module
+ * that decides *what a caller is allowed to say* and *what the composer is given*,
+ * so that every other path — screen, text agent, voice agent, grant create,
+ * revoke, expiry, retry — can only ask for a mutation instead of assembling a
+ * rule set of its own.
+ *
+ * Three properties this module guarantees:
+ *
+ *  1. **Identity, wallet and network are server-owned.** The strict seam schemas
+ *     below are `.strict()`: a body carrying `policyId`, `signerId`, a cap, a
+ *     wallet id or an unknown `network` is rejected with a typed validation error
+ *     before anything is persisted (spec "Server owns identity, wallet, and
+ *     network"). The wallet comes from `user_wallets` for the acting user, and
+ *     the chain scope comes from the product's single configuration — never from
+ *     the body.
+ *  2. **The composer gets consent-derived input only.** `ComposeInput` is
+ *     assembled from the RLS-scoped contacts read, the ledger-shaped active
+ *     grants and `recipient_policy_state`, whose `consent_baseline` /
+ *     `consent_provenance` are captured ONCE from the newest active
+ *     `signer_grants` enrollment row and never re-derived (design §2.1). A remote
+ *     readback is never a consent source, so nothing here can copy observed state
+ *     into desired state.
+ *  3. **Slice 1 performs no live policy write.** The apply port is a seam slice 2
+ *     fills; the only capability this slice can be wired with is `unavailable`,
+ *     and a signed one is refused at construction rather than driven (design
+ *     §12.1). The durable intent is what makes that honest instead of lossy: the
+ *     mutation records the exact rules and hash it composed, so the reconciler
+ *     applies THAT revision later instead of recomputing one from mutable tables.
+ *
+ * STATUS HONESTY
+ * --------------
+ * `readContactPermission` is the only surface the API has, so it is a pure
+ * projection that fails closed: a row may claim `applied` only when the verified
+ * readback exists and the applied revision is current (spec "Effective status
+ * vocabulary and no premature success"). No secret, signature, token or key
+ * material can reach it, because its key set is closed.
+ */
+import { z } from "zod";
+import type { DatabaseClient, Queryable } from "../../db/client.js";
+import { isValidRecipientAddress } from "../../memory/address.js";
+import { SOLANA_MAX_PER_TRANSFER_LAMPORTS } from "../embedded.js";
+import {
+  composePolicy,
+  type ComposedPolicy,
+  type GrantPolicyInput,
+  type GrantPolicyRule,
+} from "./composer.js";
+import {
+  PolicyApplyCapabilityUnwiredError,
+  PolicyCompositionRefusalError,
+  RecipientPolicyConflictError,
+  RecipientPolicyRevisionConflictError,
+  RecipientPolicyValidationError,
+  type RecipientPolicyValidationIssue,
+} from "./errors.js";
+import {
+  RecipientPolicyRepository,
+  type PolicyIntentAction,
+  type PolicyIntentOrigin,
+  type PolicyStateRecord,
+  type PolicyStateStatus,
+} from "./repository.js";
+
+/**
+ * The refusal vocabulary a caller of this service must map: the composition
+ * refusals reported as `blocked_configuration` and the seam's own typed failures.
+ * Re-exported here — the module seam — so a caller has one import surface and the
+ * slice-2 apply path maps the same types it will raise.
+ */
+export {
+  PolicyApplyCapabilityUnwiredError,
+  PolicyComposerRequiredError,
+  PolicyCompositionRefusalError,
+  PolicyEmptyCompositionUnprovenError,
+  PolicyOrdinaryCapUnsupportedError,
+  PolicyRuleCompositionUnprovenError,
+  RecipientContactMissingError,
+  RecipientContactVersionConflictError,
+  RecipientPolicyConflictError,
+  RecipientPolicyRevisionConflictError,
+  RecipientPolicySeamError,
+  RecipientPolicyValidationError,
+} from "./errors.js";
+export type { PolicyCompositionRefusalReason } from "./errors.js";
+export type {
+  RecipientPolicySeamErrorCode,
+  RecipientPolicyValidationIssue,
+} from "./errors.js";
+
+/**
+ * The single configuration's chain scope: the product runs Solana devnet only,
+ * and it is not a switch a body or a query can set (AGENTS.md).
+ */
+export const SOLANA_POLICY_NETWORK = "solana-devnet";
+
+/**
+ * The ledger chain FAMILY the active grants are read by. It is the same value
+ * `privy-policy-runtime.ts` passes, and `listActiveGrants` already refuses any
+ * other value — so a wrong constant here fails closed instead of reading a
+ * different family's grants.
+ */
+const SOLANA_LEDGER_CHAIN = "solana";
+
+/** Bounded validation evidence: a body may not turn its own rejection into a dump. */
+const MAX_VALIDATION_ISSUES = 8;
+
+// ---------------------------------------------------------------------------
+// The strict service seam (design §9.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * The Solana recipient scope every contact is validated and written with. The
+ * network is NOT a parameter: it is the derived scope, and the shared validator is
+ * asked about that scope rather than about whatever the body claimed.
+ */
+const derivedAddressSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((value) => isValidRecipientAddress(value, SOLANA_POLICY_NETWORK), {
+    message: `address must be a canonical ${SOLANA_POLICY_NETWORK} address`,
+  });
+
+const derivedNetworkSchema = z.literal(SOLANA_POLICY_NETWORK);
+
+/**
+ * `POST /v1/contacts` (design §9.2). `.strict()` — precedent `src/memory/tools.ts`
+ * — so an extra key is a rejection rather than a silently ignored field: the
+ * contract's whole point is that identity, cap and chain scope cannot be supplied.
+ */
+export const recipientCreateInputSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    description: z.string().trim().default(""),
+    address: derivedAddressSchema,
+    network: derivedNetworkSchema.optional(),
+  })
+  .strict();
+
+/**
+ * `PATCH /v1/contacts/:id` (design §9.2). `expectedVersion` is required: an edit
+ * that does not say which version it read is an overwrite, and the service must be
+ * able to refuse it. At least one editable field must be present, so an edit is
+ * never a no-op that still advances a revision.
+ */
+export const recipientEditInputSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
+    address: derivedAddressSchema.optional(),
+    network: derivedNetworkSchema.optional(),
+    expectedVersion: z.number().int().positive(),
+    expectedPolicyRevision: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.address !== undefined,
+    {
+      message: "an edit must carry at least one of name, description or address",
+      path: [],
+    },
+  );
+
+export type RecipientCreateInput = z.output<typeof recipientCreateInputSchema>;
+export type RecipientEditInput = z.output<typeof recipientEditInputSchema>;
+
+/**
+ * The route parameter and the wallet identifier, validated before either can
+ * reach a UUID-typed query: a malformed identifier must be a typed refusal, not a
+ * driver error.
+ */
+const uuidSchema = z.string().uuid();
+
+/**
+ * The route parameter wrapped so its refusal names the field it came from. A
+ * top-level scalar schema reports an empty path, which would leave the caller
+ * unable to tell a bad contact id from a bad body.
+ */
+const contactIdInputSchema = z.object({ contactId: uuidSchema }).strict();
+
+// ---------------------------------------------------------------------------
+// Injected ports
+// ---------------------------------------------------------------------------
+
+/** One contact as the mutation port reports it back. */
+export type RecipientContactRecord = {
+  id: string;
+  name: string;
+  description: string;
+  address: string;
+  network: typeof SOLANA_POLICY_NETWORK | null;
+  version: number;
+};
+
+/** The create shape the port writes. The network is always the derived scope. */
+export type RecipientContactWriteInput = {
+  name: string;
+  description: string;
+  address: string;
+  network: typeof SOLANA_POLICY_NETWORK;
+};
+
+/** The patch shape the port writes; `expectedVersion` is its compare-and-set. */
+export type RecipientContactPatchInput = {
+  name?: string;
+  description?: string;
+  address?: string;
+  network?: typeof SOLANA_POLICY_NETWORK;
+  expectedVersion: number;
+};
+
+/**
+ * The contact-mutation port (design §3.3, §1.6 step 7): the ONLY way this service
+ * writes a contact.
+ *
+ * It receives the caller's transaction `client`, so the contact write, the
+ * desired revision, the durable intent and the audit rows commit together. That
+ * is not a convenience: a mutation that persisted a contact without its revision
+ * would leave the policy silently behind the user's intent, and one that recorded
+ * a revision without the contact would compose a rule set the user never asked
+ * for.
+ *
+ * The production adapter lives with the HTTP vertical (it needs the embedding
+ * provider that `recipients.embedding` requires); this port is the seam, and it
+ * is also why nothing in `src/wallet/policy/**` imports `ContactsRepository`.
+ */
+export type RecipientContactMutationPort = {
+  create(
+    userId: string,
+    input: RecipientContactWriteInput,
+    client: Queryable,
+  ): Promise<RecipientContactRecord>;
+  update(
+    userId: string,
+    contactId: string,
+    input: RecipientContactPatchInput,
+    client: Queryable,
+  ): Promise<RecipientContactRecord>;
+  /** Owner-scoped read, inside the caller's transaction when one is given. */
+  readActive(
+    userId: string,
+    contactId: string,
+    client?: Queryable,
+  ): Promise<RecipientContactRecord | null>;
+};
+
+/**
+ * The ledger-shaped active grants read (design §3.1). The existing
+ * `PrivyPolicyAdminClient.listActiveGrants` satisfies it, including its refusal
+ * to read any chain family other than this one.
+ */
+export type ActiveGrantLister = (
+  walletId: string,
+  userId: string,
+  chain: string,
+) => Promise<GrantPolicyInput[]>;
+
+/** What a signed apply capability would receive (design §3.5 steps 4-10). */
+export type PolicyApplyRequest = {
+  userId: string;
+  walletId: string;
+  desiredRevision: number;
+  /** The policy the revision is expected to be attached to, when one is known. */
+  appliedPolicyId: string | null;
+  composedHash: string;
+  rules: GrantPolicyRule[];
+};
+
+/** What a signed apply capability would report back. */
+export type PolicyApplyOutcome =
+  | { readonly kind: "verified" }
+  | { readonly kind: "unverified"; readonly reason: string }
+  | { readonly kind: "blocked"; readonly reason: string };
+
+/**
+ * The apply seam (design §3.5 steps 4-10). Slice 1 can only be wired with the
+ * `unavailable` arm: no signed implementation exists yet and no slice-1 task may
+ * perform a live PATCH, so the service refuses the other arm at construction
+ * (design §12.1). The signed arm's request/outcome shape is fixed here so slice 2
+ * fills exactly this seam instead of redefining it.
+ */
+export type PolicyApplyUnavailablePort = {
+  readonly kind: "unavailable";
+  /** Why this deployment cannot apply: recorded as the pending status reason. */
+  readonly reason: string;
+};
+
+export type PolicyApplySignedPort = {
+  readonly kind: "signed";
+  apply(request: PolicyApplyRequest): Promise<PolicyApplyOutcome>;
+};
+
+export type PolicyApplyPort = PolicyApplyUnavailablePort | PolicyApplySignedPort;
+
+/** The shipped slice-1 capability: the durable intent is left for the reconciler. */
+export function createUnavailablePolicyApplyPort(
+  reason: string,
+): PolicyApplyUnavailablePort {
+  return { kind: "unavailable", reason };
+}
+
+export type RecipientPolicyServiceDependencies = {
+  database: DatabaseClient;
+  repository: RecipientPolicyRepository;
+  contacts: RecipientContactMutationPort;
+  listActiveGrants: ActiveGrantLister;
+  provider: PolicyApplyPort;
+};
+
+/** Per-mutation context a caller owns (the HTTP layer supplies the header value). */
+export type RecipientMutationOptions = {
+  /** Design §2.2 `origin`: which surface asked for the mutation. */
+  origin?: PolicyIntentOrigin;
+  /**
+   * Design §9.1: stored on the intent so a replay can be answered from durable
+   * state. Detecting the replay and returning the stored result is the contract
+   * vertical's unit — this service only makes the key durable in the same
+   * transaction as the intent it names.
+   */
+  idempotencyKey?: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Read projection (design §9.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * The closed `permission` shape the contract publishes (design §9.1). Nothing
+ * else may appear: no policy id, no signer, no signature, no token.
+ */
+export type ContactPermissionSnapshot = {
+  state: PolicyStateStatus;
+  desiredRevision: number;
+  appliedRevision: number;
+  retryable: boolean;
+  reason?: string;
+};
+
+/** The readiness values that mean "the reconciler still has work to do". */
+const RETRIABLE_STATUSES: readonly PolicyStateStatus[] = [
+  "pending",
+  "syncing",
+  "retryable_failure",
+];
+
+/**
+ * Project a state row onto the contract's `permission` (design §9.1).
+ *
+ * Fail closed on `applied`: the row may only report it when a verified readback
+ * exists (`verified_at`) AND the applied revision is the current desired one.
+ * A successful call is not evidence, so a row claiming otherwise is reported as
+ * `pending` — never as success (spec "Status honesty is contractual").
+ */
+export function projectContactPermission(
+  state: PolicyStateRecord | null,
+): ContactPermissionSnapshot {
+  if (!state) {
+    return {
+      state: "saved_not_configured",
+      desiredRevision: 0,
+      appliedRevision: 0,
+      retryable: false,
+    };
+  }
+
+  const base = {
+    state: state.status,
+    desiredRevision: state.desiredRevision,
+    appliedRevision: state.appliedRevision,
+  };
+
+  if (state.status === "applied") {
+    if (state.verifiedAt === null) {
+      return {
+        ...base,
+        state: "pending",
+        retryable: true,
+        reason: "unverified_applied_readback",
+      };
+    }
+    if (state.appliedRevision !== state.desiredRevision) {
+      return {
+        ...base,
+        state: "pending",
+        retryable: true,
+        reason: "applied_revision_behind_desired",
+      };
+    }
+    return { ...base, retryable: false };
+  }
+
+  const reason = state.statusReason;
+  return {
+    ...base,
+    retryable: RETRIABLE_STATUSES.includes(state.status),
+    ...(reason ? { reason } : {}),
+  };
+}
+
+/** What a mutation returns: the persisted contact and the honest status. */
+export type RecipientMutationResult = {
+  contact: RecipientContactRecord;
+  permission: ContactPermissionSnapshot;
+  /** The desired revision this mutation recorded; `0` when none was recorded. */
+  policyRevision: number;
+};
+
+// ---------------------------------------------------------------------------
+// The service
+// ---------------------------------------------------------------------------
+
+export class RecipientPolicyService {
+  private readonly database: DatabaseClient;
+  private readonly repository: RecipientPolicyRepository;
+  private readonly contacts: RecipientContactMutationPort;
+  private readonly listActiveGrants: ActiveGrantLister;
+  /**
+   * Only ever the `unavailable` arm: the constructor refuses anything else, so
+   * the post-mutation step below cannot be reached with a live capability.
+   */
+  private readonly provider: PolicyApplyUnavailablePort;
+
+  public constructor(dependencies: RecipientPolicyServiceDependencies) {
+    const provider = dependencies.provider;
+    if (provider.kind !== "unavailable") {
+      throw new PolicyApplyCapabilityUnwiredError(provider.kind);
+    }
+    this.database = dependencies.database;
+    this.repository = dependencies.repository;
+    this.contacts = dependencies.contacts;
+    this.listActiveGrants = dependencies.listActiveGrants;
+    this.provider = provider;
+  }
+
+  // -------------------------------------------------------------------------
+  // Mutations
+  // -------------------------------------------------------------------------
+
+  /**
+   * Design §3.5 step 1-3 for a new trusted recipient: validate strictly, resolve
+   * the wallet server-side, then compose and record one desired revision.
+   *
+   * A user with no ready Solana wallet still gets the contact persisted, saved and
+   * not enabled, with no state row, no intent and no policy write (spec "Wallet
+   * without a ready permission stays saved and not enabled").
+   */
+  public async create(
+    userId: string,
+    body: unknown,
+    options: RecipientMutationOptions = {},
+  ): Promise<RecipientMutationResult> {
+    const input = parseStrict(recipientCreateInputSchema, body);
+    const contactInput: RecipientContactWriteInput = {
+      name: input.name,
+      description: input.description,
+      address: input.address,
+      // The derived scope, never the body's: the body may only agree with it.
+      network: SOLANA_POLICY_NETWORK,
+    };
+
+    const wallet = await this.repository.readReadySolanaWallet(userId);
+    if (!wallet) {
+      const contact = await this.database.withUserTransaction(userId, (client) =>
+        this.contacts.create(userId, contactInput, client),
+      );
+      return {
+        contact,
+        permission: projectContactPermission(null),
+        policyRevision: 0,
+      };
+    }
+
+    const outcome = await this.runMutation(
+      userId,
+      wallet.walletId,
+      options,
+      async (client) => {
+        const contact = await this.contacts.create(userId, contactInput, client);
+        return { contact, action: "create" as const };
+      },
+    );
+    if (outcome.kind === "blocked") throw outcome.error;
+
+    await this.recordApplyPending(userId, wallet.walletId);
+    return {
+      contact: outcome.contact,
+      permission: await this.readContactPermission(userId, wallet.walletId),
+      policyRevision: outcome.revision,
+    };
+  }
+
+  /**
+   * Design §3.5 for an existing trusted recipient, plus the spec's metadata rule:
+   * an edit that changes only a name or a description MUST NOT change the
+   * composed rule set, and one whose recomposition WOULD change it is a
+   * `blocked_conflict` validation failure, never a silent merge.
+   *
+   * An address edit is a real composition change and recomposes both addresses'
+   * semantics from the recorded consent (the old address leaves the allowlist
+   * because the contact no longer carries it).
+   */
+  public async edit(
+    userId: string,
+    contactId: string,
+    body: unknown,
+    options: RecipientMutationOptions = {},
+  ): Promise<RecipientMutationResult> {
+    const input = parseStrict(recipientEditInputSchema, body);
+    const targetId = parseStrict(contactIdInputSchema, { contactId }).contactId;
+    const patch: RecipientContactPatchInput = {
+      ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.description !== undefined ? { description: input.description } : {}),
+      ...(input.address !== undefined ? { address: input.address } : {}),
+      network: SOLANA_POLICY_NETWORK,
+      expectedVersion: input.expectedVersion,
+    };
+    const metadataOnly = input.address === undefined;
+
+    const wallet = await this.repository.readReadySolanaWallet(userId);
+    if (!wallet) {
+      const contact = await this.database.withUserTransaction(userId, (client) =>
+        this.contacts.update(userId, targetId, patch, client),
+      );
+      return {
+        contact,
+        permission: projectContactPermission(null),
+        policyRevision: 0,
+      };
+    }
+
+    const outcome = await this.runMutation(
+      userId,
+      wallet.walletId,
+      options,
+      async (client, state) => {
+        if (
+          input.expectedPolicyRevision !== undefined &&
+          input.expectedPolicyRevision !== state.desiredRevision
+        ) {
+          throw new RecipientPolicyRevisionConflictError({
+            expectedPolicyRevision: input.expectedPolicyRevision,
+            desiredRevision: state.desiredRevision,
+          });
+        }
+        const contact = await this.contacts.update(userId, targetId, patch, client);
+        return {
+          contact,
+          action: metadataOnly ? ("rename" as const) : ("address_change" as const),
+          // Only a metadata-only edit has to prove rule-identity; an address edit
+          // is expected to change the rule set.
+          ruleReference: metadataOnly ? recordedRuleReference(state) : undefined,
+        };
+      },
+    );
+    if (outcome.kind === "blocked") throw outcome.error;
+
+    await this.recordApplyPending(userId, wallet.walletId);
+    return {
+      contact: outcome.contact,
+      permission: await this.readContactPermission(userId, wallet.walletId),
+      policyRevision: outcome.revision,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // The composition seam (design §3.1, §3.5 step 2/step 7)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Assemble `ComposeInput` and compose the wallet's one rule set.
+   *
+   * Public because it is the seam every other writer must route through: the
+   * removal transaction composes from this, and the reconciler re-uses the same
+   * assembly when it re-applies a recorded revision. Pass the caller's `client`
+   * to compose inside an open transaction; omit it to open a read transaction.
+   *
+   * The consent baseline is read from `recipient_policy_state`, never from the
+   * enrollment row directly and never from a remote readback: a wallet that has
+   * been composed with captures it once, and this method is not allowed to bypass
+   * that record (design §2.1).
+   *
+   * KNOWN BOUNDARY: `listActiveGrants` opens its own user transaction (it is the
+   * existing ledger read and validates the owner scope itself), so the grants are
+   * read outside an enclosing mutation transaction's snapshot. Nothing in this
+   * unit mutates grants, and the apply path that does owns moving the read onto
+   * the caller's client.
+   */
+  public async composeRevision(
+    userId: string,
+    walletId: string,
+    options: { client?: Queryable } = {},
+  ): Promise<ComposedPolicy> {
+    const grants = await this.listActiveGrants(
+      walletId,
+      userId,
+      SOLANA_LEDGER_CHAIN,
+    );
+
+    const read = async (client: Queryable) => {
+      const contacts = await this.repository.listComposerContacts(userId, client);
+      const state = await this.repository.readPolicyState(userId, walletId, client);
+      return { contacts, state };
+    };
+    const { contacts, state } = options.client
+      ? await read(options.client)
+      : await this.database.withUserTransaction(userId, read);
+
+    return composePolicy({
+      walletId,
+      userId,
+      baseline: {
+        addresses: state?.consentBaseline ?? [],
+        provenance: state?.consentProvenance ?? {},
+      },
+      contacts,
+      grants,
+      // The single lamport ceiling; the composer refuses anything else, so a
+      // caller here cannot re-author the consented 0.01 SOL cap.
+      ordinaryCapLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
+      // Both probe results are read from the wallet's recorded evidence and
+      // default to the fail-closed value (design §11 U1/U4).
+      emptyComposition: state?.emptyComposition ?? "unproven",
+      ruleComposition: recordedRuleComposition(state),
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Reads
+  // -------------------------------------------------------------------------
+
+  /**
+   * Design §9.1. The owner scope is explicit (`userId`) so the design's shorthand
+   * `readContactPermission(walletId)` is always executed with the server-owned
+   * identity bound to it — a caller can never read a wallet it does not own.
+   */
+  public async readContactPermission(
+    userId: string,
+    walletId: string,
+  ): Promise<ContactPermissionSnapshot> {
+    if (!uuidSchema.safeParse(walletId).success) {
+      // Not an identifier this database could hold: there is no such wallet, and
+      // the honest answer is the same one a stranger gets.
+      return projectContactPermission(null);
+    }
+    return projectContactPermission(
+      await this.repository.readPolicyState(userId, walletId),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Internals
+  // -------------------------------------------------------------------------
+
+  /**
+   * The one mutation transaction (design §1.6 step 7 / §3.5 steps 2-3):
+   * `W0(U)` → consent capture → the contact write → composition → revision,
+   * durable intent and audit, all in ONE transaction.
+   *
+   * Two stops are distinguished, and the difference is the whole point of
+   * separating them:
+   *
+   *   * a **composition refusal** (`blocked_configuration`) happens after the
+   *     contact write and the transaction COMMITS — the recipient change is
+   *     persisted as saved-not-enabled (design §11 U1) with the stop recorded and
+   *     no revision, no intent and no PATCH.
+   *   * a **metadata conflict** (`blocked_conflict`) means the edit itself must
+   *     not be applied, so it is thrown from inside the transaction: the contact
+   *     write rolls back with everything else, and only the recorded stop
+   *     survives — in its own transaction. Nothing is merged.
+   */
+  private async runMutation(
+    userId: string,
+    walletId: string,
+    options: RecipientMutationOptions,
+    step: (
+      client: Queryable,
+      state: PolicyStateRecord,
+    ) => Promise<MutationStepResult>,
+  ): Promise<MutationOutcome> {
+    try {
+      return await this.database.withUserTransaction(userId, async (client) => {
+        // W0(U): the wallet's own state row, locked for the rest of this
+        // transaction, created if this is its first mutation.
+        const state = await this.repository.lockPolicyState(
+          userId,
+          walletId,
+          client,
+        );
+        // Before the contact write: an unreadable consent record must not be able
+        // to leave a half-mutated wallet behind, so it throws here and the whole
+        // transaction rolls back.
+        await this.captureConsentBaselineOnce(userId, walletId, client);
+
+        const mutated = await step(client, state);
+
+        let composed: ComposedPolicy;
+        try {
+          composed = await this.composeRevision(userId, walletId, { client });
+        } catch (error) {
+          if (!(error instanceof PolicyCompositionRefusalError)) throw error;
+          const stop = {
+            failureClass: error.failureClass,
+            reason: error.reason,
+            detail: { code: error.reason },
+          };
+          await this.recordStop(userId, walletId, stop, client);
+          return {
+            kind: "blocked",
+            contact: mutated.contact,
+            error,
+          };
+        }
+
+        // Spec "Denying permission broadening is a validation failure, not a
+        // merge": a metadata-only edit must leave the RECORDED rule set exactly
+        // as it is. The comparison runs on the post-mutation composition, so a
+        // change that landed between the read and this transaction is caught by
+        // the same guard.
+        const reference = mutated.ruleReference;
+        if (reference && reference.hash !== composed.hash) {
+          throw new RecipientPolicyConflictError({
+            reference: reference.source,
+            referenceHash: reference.hash,
+            composedHash: composed.hash,
+          });
+        }
+
+        const revision = await this.repository.bumpDesiredRevision(
+          userId,
+          { walletId, desiredRulesHash: composed.hash },
+          client,
+        );
+        // The one-in-flight index allows a single intent per wallet: the previous
+        // revision is superseded in the SAME transaction, so the wallet is never
+        // left with two in-flight intents or with none.
+        await this.supersedeInFlightIntent(userId, walletId, client);
+        await this.repository.insertIntent(
+          userId,
+          {
+            walletId,
+            desiredRevision: revision,
+            origin: options.origin ?? "screen",
+            action: mutated.action,
+            contactId: mutated.contact.id,
+            contactVersion: mutated.contact.version,
+            // The EXACT rules this revision was composed from: recovery re-applies
+            // these instead of recomputing from mutable tables (design §2.2).
+            composedRules: composed.rules,
+            composedHash: composed.hash,
+            idempotencyKey: options.idempotencyKey ?? null,
+          },
+          client,
+        );
+        await this.repository.appendPolicyAudit(
+          userId,
+          {
+            walletId,
+            event: "intent_recorded",
+            desiredRevision: revision,
+            detail: {
+              origin: options.origin ?? "screen",
+              action: mutated.action,
+            },
+          },
+          client,
+        );
+
+        return { kind: "recorded", contact: mutated.contact, revision };
+      });
+    } catch (error) {
+      if (error instanceof RecipientPolicyConflictError) {
+        // The transaction is gone; the stop must not be. Record it separately so
+        // the caller's conflict is visible on the next status read instead of
+        // being assumed away.
+        await this.database.withUserTransaction(userId, (client) =>
+          this.recordStop(
+            userId,
+            walletId,
+            {
+              failureClass: error.failureClass,
+              reason: error.reason,
+              detail: error.detail,
+            },
+            client,
+          ),
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Capture the consent baseline, once, and only while the wallet is still
+   * pristine.
+   *
+   * {@link needsConsentRead} decides whether to look at all — a wallet that already
+   * holds a baseline is never read again, so a later malformed enrollment cannot
+   * break it. The repository's predicate independently decides whether the write
+   * itself is allowed.
+   */
+  private async captureConsentBaselineOnce(
+    userId: string,
+    walletId: string,
+    client: Queryable,
+  ): Promise<void> {
+    const state = await this.repository.readPolicyState(userId, walletId, client);
+    if (!state || !needsConsentRead(state)) return;
+
+    const consent = await this.repository.readActiveEnrollmentConsent(
+      userId,
+      walletId,
+      client,
+    );
+    if (!consent) return;
+    await this.repository.captureConsentBaselineOnce(
+      userId,
+      walletId,
+      consent,
+      client,
+    );
+  }
+
+  private async supersedeInFlightIntent(
+    userId: string,
+    walletId: string,
+    client: Queryable,
+  ): Promise<void> {
+    const inFlight = await this.repository.readInFlightIntent(
+      userId,
+      walletId,
+      client,
+    );
+    if (!inFlight) return;
+    await this.repository.supersedeIntent(
+      userId,
+      { walletId, intentId: inFlight.id },
+      client,
+    );
+  }
+
+  /** Record a stop in `recipient_policy_state` and append-only audit evidence. */
+  private async recordStop(
+    userId: string,
+    walletId: string,
+    stop: { failureClass: StopStatus; reason: string; detail: Record<string, unknown> },
+    client?: Queryable,
+  ): Promise<void> {
+    const updated = await this.repository.setPolicyStatus(
+      userId,
+      {
+        walletId,
+        status: stop.failureClass,
+        reason: stop.reason,
+        detail: stop.detail,
+      },
+      client,
+    );
+    // No visible state row means there is nothing to record the stop against;
+    // never fabricate one.
+    if (!updated) return;
+    await this.repository.appendPolicyAudit(
+      userId,
+      {
+        walletId,
+        event: stop.failureClass,
+        reason: stop.reason,
+        detail: stop.detail,
+      },
+      client,
+    );
+  }
+
+  /**
+   * The post-mutation apply step. Slice 1's capability is `unavailable`, so the
+   * recorded revision stays `pending` with the reason this deployment could not
+   * apply it — the durable intent is left for the reconciler instead of being
+   * reported as anything resembling success (design §3.5, spec "Timeout is
+   * reported as unverified").
+   */
+  private async recordApplyPending(
+    userId: string,
+    walletId: string,
+  ): Promise<void> {
+    await this.repository.setPolicyStatus(userId, {
+      walletId,
+      status: "pending",
+      reason: this.provider.reason,
+      detail: { code: "provider_unavailable" },
+    });
+  }
+}
+
+/** The service's documented wiring entry point. */
+export function createRecipientPolicyService(
+  dependencies: RecipientPolicyServiceDependencies,
+): RecipientPolicyService {
+  return new RecipientPolicyService(dependencies);
+}
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
+
+type StopStatus = Extract<
+  PolicyStateStatus,
+  "blocked_conflict" | "blocked_configuration"
+>;
+
+type MutationStepResult = {
+  contact: RecipientContactRecord;
+  action: PolicyIntentAction;
+  /**
+   * Present only when the mutation must prove it left the recorded rule set
+   * alone. `undefined` means "not applicable", `null` means "no recorded revision
+   * exists to compare against" (there is no deployed rule set a metadata edit
+   * could broaden).
+   */
+  ruleReference?: { source: string; hash: string } | null;
+};
+
+type MutationOutcome =
+  | {
+      kind: "recorded";
+      contact: RecipientContactRecord;
+      revision: number;
+    }
+  | {
+      kind: "blocked";
+      contact: RecipientContactRecord;
+      error: PolicyCompositionRefusalError;
+    };
+
+/**
+ * Whether the enrollment row still needs to be READ to capture the baseline.
+ *
+ * This is the read-aversion decision, not the write authority: every recorded
+ * composition outcome moves the status off `saved_not_configured` (a revision
+ * leaves `pending`; a stop leaves a blocked status), so a wallet that already
+ * holds a baseline is never read again. The write itself is guarded by the
+ * repository's own `desired_revision = 0 AND applied_revision = 0` predicate, so
+ * a wallet cannot be re-captured even by a caller that skips this check —
+ * deliberately a different clause in a different place, so each one is provable on
+ * its own instead of masking the other.
+ */
+function needsConsentRead(state: PolicyStateRecord): boolean {
+  return state.status === "saved_not_configured";
+}
+
+/**
+ * The recorded rule set a metadata-only edit must not change (spec "Renaming an
+ * existing contact changes no rule").
+ *
+ * The settled applied revision is preferred: when nothing is in flight, "the
+ * previously applied rules" IS the applied hash. While a revision is in flight the
+ * applied hash is a stale comparison for a metadata-only edit — a rename would be
+ * blocked by an unrelated pending change — so the recorded desired revision is the
+ * reference instead. With neither recorded there is no deployed rule set to
+ * broaden, so the guard does not apply.
+ */
+function recordedRuleReference(
+  state: PolicyStateRecord,
+): { source: string; hash: string } | null {
+  if (
+    state.appliedRevision > 0 &&
+    state.appliedRevision === state.desiredRevision &&
+    state.appliedRulesHash
+  ) {
+    return { source: "applied_revision", hash: state.appliedRulesHash };
+  }
+  if (state.desiredRevision > 0 && state.desiredRulesHash) {
+    return { source: "desired_revision", hash: state.desiredRulesHash };
+  }
+  return null;
+}
+
+/**
+ * The U1 rule-composition probe result (design §11 U1), read from the wallet's
+ * recorded evidence. Anything other than a recorded `union` keeps the composer's
+ * fail-closed refusal, so this can only ever relax a stop that was explicitly
+ * proven.
+ */
+function recordedRuleComposition(
+  state: PolicyStateRecord | null,
+): "union" | "unproven" {
+  const observed = state?.statusDetail?.["rules_union"];
+  return observed === "union" ? "union" : "unproven";
+}
+
+/** The slice of a zod issue this module reads: never its message or its input. */
+type ZodIssueLike = {
+  path: ReadonlyArray<PropertyKey>;
+  code: string;
+  /** Present on `unrecognized_keys`: a rejected key carries an EMPTY path. */
+  keys?: unknown;
+};
+
+/**
+ * Bounded, value-free evidence for a rejected body: the paths and codes of at most
+ * {@link MAX_VALIDATION_ISSUES} issues.
+ *
+ * A rejected unknown key is reported at the path of the key itself — zod reports
+ * it on the OBJECT with an empty path and the key names in `keys`, which would
+ * otherwise make every forbidden field look like the same body-level failure.
+ */
+function validationIssues(error: {
+  issues: ReadonlyArray<ZodIssueLike>;
+}): RecipientPolicyValidationIssue[] {
+  const collected: RecipientPolicyValidationIssue[] = [];
+  for (const issue of error.issues) {
+    const base = issue.path.map((segment) => String(segment)).join(".");
+    const keys = Array.isArray(issue.keys) ? issue.keys.map((key) => String(key)) : [];
+    if (keys.length === 0) {
+      collected.push({ path: base, code: issue.code });
+      continue;
+    }
+    for (const key of keys) {
+      collected.push({
+        path: base.length > 0 ? `${base}.${key}` : key,
+        code: issue.code,
+      });
+    }
+  }
+  return collected.slice(0, MAX_VALIDATION_ISSUES);
+}
+
+/**
+ * Reject a body that does not match the strict seam. Only paths and codes are
+ * reported: a rejection must never reflect a supplied value back.
+ */
+function parseStrict<T extends z.ZodType>(schema: T, body: unknown): z.output<T> {
+  const parsed = schema.safeParse(body);
+  if (parsed.success) return parsed.data;
+  throw new RecipientPolicyValidationError(validationIssues(parsed.error));
+}

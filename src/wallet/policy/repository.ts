@@ -289,6 +289,23 @@ export interface RefreshSignerGrantProjectionInput {
   policyHash: string;
 }
 
+/** One `ready` Solana wallet binding, resolved server-side. */
+export interface ReadyPolicyWallet {
+  walletId: string;
+  chainFamily: string;
+}
+
+/**
+ * The wallet's retained enrollment consent (design §2.1), read from its newest
+ * `state='active'` `signer_grants` row: the allowlist the user consented to when
+ * the enrollment permission was created, plus the enrollment snapshot that
+ * proves where it came from.
+ */
+export interface EnrollmentConsent {
+  baseline: string[];
+  provenance: Record<string, unknown>;
+}
+
 /**
  * No visible `recipient_policy_state` row for this user and wallet. Raised
  * instead of returning a fabricated default, so a caller can never serialize or
@@ -323,6 +340,19 @@ export class ContactActionProposalConflictError extends Error {}
  * planted inside the caller's own scope.
  */
 export class PolicyWalletNotOwnedError extends Error {}
+
+/**
+ * The wallet's newest active `signer_grants` row carries an enrollment consent
+ * record that cannot be read as a consent baseline (a non-array
+ * `allowlisted_recipients`, or a `signer_enrollment_snapshot` that is not an
+ * object).
+ *
+ * Raised instead of coercing it: the baseline is durable consent provenance, and
+ * a partially-readable consent record would silently compose a NARROWER or
+ * WIDER allowlist than the user consented to. Fail closed and let the caller stop
+ * visibly.
+ */
+export class PolicyConsentRecordUnreadableError extends Error {}
 
 const STATE_COLUMNS = `wallet_id, user_id, desired_revision, applied_revision,
   desired_rules_hash, applied_rules_hash, applied_policy_id, applied_signer_id,
@@ -1086,6 +1116,161 @@ export class RecipientPolicyRepository {
         ],
       );
       return result.rows[0]?.id ?? null;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  // -------------------------------------------------------------------------
+  // Service seam — design §3.1, §3.5, §1.6 (task 1.6)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Resolve the wallet a mutation composes for, server-side and owner-scoped:
+   * the user's `ready` Solana binding. `null` when they have none, which is the
+   * honest "saved and not enabled" answer rather than a fabricated wallet.
+   *
+   * The one-active-per-`(user, chain_family)` unique index from `006` makes more
+   * than one impossible, so there is nothing to disambiguate here (the same
+   * contract `createSolanaWalletForUser` relies on). A client never names this
+   * wallet and never names the chain scope it implies.
+   */
+  public async readReadySolanaWallet(
+    userId: string,
+    client?: Queryable,
+  ): Promise<ReadyPolicyWallet | null> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<{ id: string; chain_family: string }>(
+        `SELECT id, chain_family
+           FROM user_wallets
+          WHERE user_id = $1 AND chain_family = 'solana' AND state = 'ready'
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1`,
+        [userId],
+      );
+      const row = result.rows[0];
+      return row ? { walletId: row.id, chainFamily: row.chain_family } : null;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * The consent source the baseline is captured from ONCE (design §2.1): the
+   * newest `state='active'` enrollment row, by the same ordering
+   * {@link refreshSignerGrantProjection} refreshes. `null` when the wallet has no
+   * active enrollment — nothing has been consented yet, which is not an error.
+   *
+   * Owner-scoped: `signer_grants` is owner-isolated with no system policy, so an
+   * anonymous read would return zero rows silently.
+   */
+  public async readActiveEnrollmentConsent(
+    userId: string,
+    walletId: string,
+    client?: Queryable,
+  ): Promise<EnrollmentConsent | null> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<{
+        allowlisted_recipients: unknown;
+        signer_enrollment_snapshot: unknown;
+      }>(
+        `SELECT allowlisted_recipients, signer_enrollment_snapshot
+           FROM signer_grants
+          WHERE user_id = $1 AND wallet_id = $2 AND state = 'active'
+          ORDER BY created_at DESC, id DESC
+          LIMIT 1`,
+        [userId, walletId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+
+      const recipients = row.allowlisted_recipients;
+      if (
+        !Array.isArray(recipients) ||
+        !recipients.every((entry) => typeof entry === "string")
+      ) {
+        throw new PolicyConsentRecordUnreadableError(
+          `Wallet ${walletId} has an active enrollment whose allowlisted_recipients is not a list of addresses; refusing to record a consent baseline from it.`,
+        );
+      }
+      const snapshot = row.signer_enrollment_snapshot ?? {};
+      if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) {
+        throw new PolicyConsentRecordUnreadableError(
+          `Wallet ${walletId} has an active enrollment whose signer_enrollment_snapshot is not an object; refusing to record a consent baseline from it.`,
+        );
+      }
+      return {
+        baseline: recipients,
+        provenance: snapshot as Record<string, unknown>,
+      };
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * Record the consent baseline ONCE. Returns `true` only when this statement is
+   * what wrote it.
+   *
+   * The "once" is the WHERE clause, not a convention: `desired_revision` and
+   * `applied_revision` are both still 0 only while no composition outcome has been
+   * recorded for this wallet. That is what makes the baseline durable consent
+   * provenance instead of "whatever the enrollment currently says" (design §2.1,
+   * spec "Consent provenance for the retained baseline").
+   *
+   * A caller that has not yet read the enrollment row additionally wants to avoid
+   * the READ once a baseline exists — a later malformed enrollment must not break
+   * a wallet whose consent was recorded long ago — and that decision belongs to
+   * the caller, from the status, because it is about whether to look rather than
+   * about what may be written.
+   */
+  public async captureConsentBaselineOnce(
+    userId: string,
+    walletId: string,
+    consent: EnrollmentConsent,
+    client?: Queryable,
+  ): Promise<boolean> {
+    const run = async (query: Queryable) => {
+      const result = await query.query(
+        `UPDATE recipient_policy_state
+            SET consent_baseline = $3::jsonb,
+                consent_provenance = $4::jsonb,
+                updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2
+            AND desired_revision = 0
+            AND applied_revision = 0
+          RETURNING wallet_id`,
+        [
+          walletId,
+          userId,
+          JSON.stringify(consent.baseline),
+          JSON.stringify(consent.provenance),
+        ],
+      );
+      return result.rowCount === 1;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * The wallet's in-flight intent, if any (design §2.2). The one-in-flight
+   * partial unique index allows at most one, so this is a lookup rather than a
+   * selection; a new mutation must supersede it before recording its own, and it
+   * is owner-scoped because superseding is an owner write.
+   */
+  public async readInFlightIntent(
+    userId: string,
+    walletId: string,
+    client?: Queryable,
+  ): Promise<PolicyIntentRecord | null> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<PolicyIntentRow>(
+        `SELECT ${INTENT_COLUMNS}
+           FROM recipient_policy_sync_intent
+          WHERE wallet_id = $1 AND user_id = $2
+            AND state IN ('pending', 'applying')
+          ORDER BY desired_revision DESC
+          LIMIT 1`,
+        [walletId, userId],
+      );
+      return result.rows[0] ? mapIntent(result.rows[0]) : null;
     };
     return client ? run(client) : this.ownerTransaction(userId, run);
   }

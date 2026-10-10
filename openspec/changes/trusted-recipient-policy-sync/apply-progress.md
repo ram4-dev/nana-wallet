@@ -858,3 +858,207 @@ untracked `compose.privy-local.ports.yaml` were not touched.
 
 `feat(policy): compare a policy readback against the composed revision` — see the report envelope
 for the SHA.
+
+### Task 1.6 — add `RecipientPolicyService` with server-owned identity, wallet, and network, plus the strict service-seam types
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+This unit was resumed after a hard-timeout kill that wrote the implementation and both suites but
+never verified, persisted or committed them. The interrupted work was **verified, not adopted**: its
+diff was read line by line, every guard was proved load-bearing by mutation, and no assertion was
+weakened. No code repair turned out to be necessary — the two probes below are the only edits I made
+to the working tree, and both were restored (verified by a leftover-mutation scan and by the
+`errors.ts` / `repository.ts` diffstat returning to its pre-probe `140/-1` and `185/+185` shape).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/service.ts` | New (1043 lines). The service, the strict seam schemas, the injected ports, the read projection. |
+| `src/wallet/policy/errors.ts` | Modified (additive: `+140/-1`). The seam's typed failure vocabulary + `apply_capability_unwired`. |
+| `src/wallet/policy/repository.ts` | Modified (additive: `+185`, 0 deletions). The four service-seam queries. |
+| `tests/unit/policy-service-contract.test.ts` | New (550 lines). Seam shape, refusals, projection, the non-driven apply port. |
+| `tests/integration/recipient-policy-service.test.ts` | New (1302 lines). Real tables, real RLS, real transaction. |
+
+#### What the unit delivers
+
+- **`RecipientPolicyService`** with `create`, `edit`, `composeRevision(userId, walletId, { client? })`
+  and `readContactPermission(userId, walletId)`.
+- **Server-owned identity, wallet and network.** `recipientCreateInputSchema` /
+  `recipientEditInputSchema` are `.strict()` and the address is validated as a canonical
+  `solana-devnet` recipient; `network` is a `z.literal("solana-devnet")` echo, so a body may only
+  agree with the derived scope. The wallet comes from `user_wallets` (`readReadySolanaWallet`,
+  `chain_family = 'solana' AND state = 'ready'`), never from the body.
+- **`ComposeInput` assembly** from the RLS-scoped `listComposerContacts`, the ledger-shaped
+  `listActiveGrants(walletId, userId, "solana")` and `recipient_policy_state`; `emptyComposition` and
+  the U1 `ruleComposition` are read from the wallet's recorded evidence and default to the
+  fail-closed values, and the ordinary ceiling comes from `SOLANA_MAX_PER_TRANSFER_LAMPORTS`.
+- **One-time consent capture.** `consent_baseline` / `consent_provenance` are read from the newest
+  `state='active'` `signer_grants` row and written once, guarded twice: the service's read-aversion
+  (`needsConsentRead`) and, independently, the repository statement's own
+  `desired_revision = 0 AND applied_revision = 0` predicate. Each is proved on its own below.
+- **The `composeRevision` seam** and the durable intent: the exact composed rules and hash are
+  recorded per revision, so a later apply re-applies THAT revision instead of recomputing from
+  mutable tables.
+- **The apply port is a seam slice 1 cannot drive.** `PolicyApplyPort` is
+  `unavailable | signed`; the service constructor refuses the `signed` arm
+  (`PolicyApplyCapabilityUnwiredError`), so "slice 1 performs no live PATCH" is a property of the
+  wiring rather than a promise about behaviour. The signed request/outcome shape is fixed for slice 2
+  to fill.
+- **Metadata-only edits never merge.** An edit whose post-mutation recomposition disagrees with the
+  recorded rule reference throws `RecipientPolicyConflictError` (`blocked_conflict`,
+  `metadata_edit_changes_rules`) from inside the transaction, so the contact write rolls back with
+  everything else and only the recorded stop survives.
+- **`readContactPermission`** fails closed: `applied` is only reported behind a verified readback at
+  the current desired revision, and the projected key set is closed (`state`, `desiredRevision`,
+  `appliedRevision`, `retryable`, optional `reason`) — no policy id, signer, signature or token.
+
+#### Diff verdict on the two modified files (the additive-seam check)
+
+- **`errors.ts` — the seam this unit needs and nothing broader.** `+140/-1`: the single changed
+  existing line is the `PolicyCompositionRefusalReason` union gaining `"apply_capability_unwired"`.
+  Everything else is appended: `PolicyApplyCapabilityUnwiredError`, the
+  `RecipientPolicySeamErrorCode` vocabulary, `RecipientPolicyValidationIssue`, and the four typed
+  seam errors (`RecipientPolicyValidationError`, `RecipientPolicyConflictError`,
+  `RecipientPolicyRevisionConflictError`, and the contact-version/missing pair the injected contact
+  port needs so the service can translate its failures without importing the contacts repository).
+  No existing class, message or classifier was altered.
+- **`repository.ts` — additive, zero deletions.** The diff is `+185` lines and no `-` line at all:
+  two new exported types (`ReadyPolicyWallet`, `EnrollmentConsent`), one new error
+  (`PolicyConsentRecordUnreadableError`), and four new methods
+  (`readReadySolanaWallet`, `readActiveEnrollmentConsent`, `captureConsentBaselineOnce`,
+  `readInFlightIntent`) placed under a `Service seam — task 1.6` marker. No existing statement,
+  predicate, column list or mapping was touched, so units 1.1–1.5 keep their proof unaltered (172
+  slice-1 tests still green).
+
+#### TDD Cycle Evidence
+
+Honest disclosure first: the killed run left no test transcript, so I cannot attest an original
+RED-first ordering for its 55 tests, and I do not claim one. What I can attest is the substantive
+RED evidence: for this resume I re-established a failing (RED) run for each required guard by
+**mutation**, observed the attributed failure, and restored the clause — and every negative assertion
+is preceded by a positive control on the same fixture.
+
+| # | Mutation applied | Observed RED (unmocked run, exact failing tests) | Verdict |
+|---|---|---|---|
+| M1 | `recipientCreateInputSchema`: removed `.strict()` | 5 `rejects a create body carrying {policyId,signerId,a cap,a lamport cap,a wallet id}` — `expected a typed rejection, but nothing was thrown` | strictness is load-bearing |
+| M2 | `derivedNetworkSchema`: `z.literal(...)` → `z.string()` | 4 `rejects a {create,edit} body carrying an {unknown network,a mainnet network}` | the derived-scope literal is load-bearing (a known key is not caught by `.strict()`) |
+| M3 | `needsConsentRead` → always true | `does not re-capture the baseline after a stop that recorded no revision`, `refuses to compose from an enrollment consent record it cannot read` | the service-side read-aversion is load-bearing and independently attributed |
+| M4 | `captureConsentBaselineOnce`: dropped `desired_revision = 0 AND applied_revision = 0` | `refuses to capture the baseline again once a revision is recorded` | the DB predicate is load-bearing on its own, as the code claims |
+| M5 | metadata conflict guard `reference.hash !== composed.hash` → `!== reference.hash` (disabled) | `blocks a metadata edit whose recomposition would change the recorded rule set`, `compares a settled wallet's metadata edit against its APPLIED rule set` | the conflict guard is load-bearing; the "not a silent merge" requirement is genuinely asserted |
+| M6 | `PolicyApplyPort` construction refusal disabled (`if (false)`) | `refuses a signed capability instead of driving a live policy write`, `classifies the refusal as a blocking configuration stop` | the no-live-PATCH property is load-bearing |
+| M7 | `validationIssues` unknown-key path attribution flattened to the object path | 10 `rejects a {create,edit} body carrying {policyId,…}` — the path no longer names the key | the assertion is the clause that catches the case (unit 1.5's lesson: the intended clause is what fails) |
+
+Post-restore controls: leftover-mutation scan for all seven mutated strings returns no hits, the
+`repository.ts`/`errors.ts` diffstat is back to `185`/`140-1`, and both suites are green again
+(55/55, then 172/172 for the whole slice).
+
+#### Commands run and results
+
+```text
+npx vitest run tests/unit/policy-service-contract.test.ts
+  Test Files 1 passed (1) | Tests 33 passed (33) | 330ms
+
+npx vitest run tests/integration/recipient-policy-service.test.ts
+  Test Files 1 passed (1) | Tests 22 passed (22) | 985ms
+
+npx vitest run tests/unit/policy-service-contract.test.ts tests/integration/recipient-policy-service.test.ts
+  Test Files 2 passed (2) | Tests 55 passed (55) | 968ms
+
+npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts
+  Test Files 9 passed (9) | Tests 172 passed (172) | 2.35s      ← units 1.1–1.5 stayed green
+
+npm run lint        → eslint src tests --max-warnings=0 : clean, no output
+npm run typecheck   → tsc -p tsconfig.test.json --noEmit : clean, no output
+```
+
+The integration suite runs against the **Supabase** chain in container
+`colloseumfeat-solana-operational-db-1` (host port 55470) using the worktree `.env`; it self-cleans
+the state/intent/proposal/grant/recipient rows it provisions so it does not consume the windowed
+due-intent scan that task 1.3's suite depends on, and it leaves audit rows alone because the table is
+append-only by trigger.
+
+#### Deviations from the design
+
+1. **`readContactPermission(userId, walletId)`, not the design's shorthand `readContactPermission(walletId)`.**
+   The owner scope is an explicit argument so a caller can never read a wallet it does not own: the
+   repository read is RLS/owner-scoped and the design's shorthand would have had to re-derive the
+   user from ambient state. Same guarantee, one more argument.
+2. **The construction refusal of the signed apply arm.** Design §12.1 says slice 1 performs no live
+   PATCH; this unit makes that structural instead of behavioural, at the cost of slice 2 having to
+   remove the guard when it wires the signed port. Recorded as a deliberate stop-gap, not an
+   interface the signed port is expected to keep.
+3. **The contact-mutation port is injected, not `ContactsRepository`.** `recipients.embedding` needs
+   the embedding provider, which belongs to the HTTP vertical (slice 3), and design §3.3 keeps
+   `src/wallet/policy/**` free of `ContactsRepository` imports. The integration suite therefore
+   supplies a real-SQL adapter with the documented contract (create / version-CAS update / read)
+   rather than the production one.
+4. **A metadata conflict is recorded in a second transaction.** The edit itself must not be applied,
+   so the conflict is thrown from inside the mutation transaction and only the stop is written
+   afterwards; the alternative (committing the metadata write and recording the stop) is exactly the
+   silent merge the spec forbids.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **Task 1.5's `not_acquired` requirement lands in slice 2, and this service does not violate it.**
+  The service never calls `compareComposedRules`, so it cannot pass an `acquired` listing it has not
+  read. The signed apply port (`PolicyApplyRequest` carries `appliedPolicyId` plus the recorded
+  rules) is where `ownerVerifiedSigners` / `ownerVerifiedWallets` must arrive as `not_acquired` with
+  a reason until task 2.2/2.3 perform the owner-verified read.
+- **`listActiveGrants` opens its own user transaction**, so the grants are read outside an enclosing
+  mutation transaction's snapshot. Nothing in this unit mutates grants (documented in the code under
+  a `KNOWN BOUNDARY` note); the apply/removal paths that do own moving that read onto the caller's
+  client.
+- **`apply_capability_unwired` must be removed, not relaxed, by the slice-2 wiring.** While it stands,
+  a deployment that accidentally wires a real capability fails closed at construction — which also
+  means slice 2's capability tests must construct the service with the signed arm and therefore have
+  to update this unit's unit-test expectations deliberately.
+- **`recordApplyPending` is a second transaction after the mutation commit.** A failure there leaves
+  the intent durable with the `pending` status `bumpDesiredRevision` already wrote, so the reconciler
+  still sees the work; a caller that wants one-transaction atomicity must move the status write into
+  the mutation before slice 2 relies on it.
+- **`empty_composition` and `rules_union` are read from `recipient_policy_state`**, so no composition
+  can relax a fail-closed stop without a recorded probe result (design §11 U1/U4). The reconciler
+  (2.7/2.9) is what will write them.
+
+#### Remaining tasks in slice 1
+
+```text
+- [ ] **1.7 Implement the atomic removal transaction with whole-grant revocation.**
+- [ ] **1.8 Delete the legacy full-rule writer entry points and route their callers through the composer.**
+- [ ] **1.9 Document and install the single lock order, prepending `W0` to the claim path.**
+- [ ] **1.10 Extend the structural guard suite to make a second full-rule writer unreachable by construction.**
+- [ ] **1.11 Run the slice-1 gate and record the slice-1 work-unit commits.**
+```
+
+Parent-owned lifecycle rows in `tasks.md` (the bounded native review and the post-apply
+verify/archive rows) were left byte-for-byte untouched, and no review, receipt or delivery gate was
+started by this phase.
+
+#### Workload / PR boundary
+
+One commit, one work unit: one new module (1043 lines), two suite files (1852 lines) and the additive
+repository/error seams — **~3 235 new lines**, above the 400-line review budget and reported, not
+hidden. It cannot be split without breaking the unit: the service, the strict schemas it is the
+boundary for and the integration proof that a rejection persists nothing are one artifact, and
+`gentle-ai-work-unit-commits` forbids shrinking a diff by dropping tests, comments or documentation.
+It sits inside the parent-assigned `PR 2` slice (tasks 1.4–1.6, rollback boundary
+`src/wallet/policy/{composer,readback,service,errors}.ts` plus the additive `repository.ts` seam
+block), needs no migration change, and no `size:exception` is requested. No push, no PR, and no
+slice-2 work started.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit,
+the authoritative artifact paths and the delivery path directly. Readiness was resolved against the
+artifacts before any edit — `tasks.md` (task 1.6, terminal `<!-- sdd-owner: implementation -->`),
+`design.md` §0 C6, §2.1–§2.5, §3.1, §3.5, §9.1, §11 U1, §12.1 and the 1.1–1.5 apply-progress.
+`actionContext`: all writes stayed inside the assigned worktree root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout and the
+untracked `compose.privy-local.ports.yaml` were not touched.
+
+#### Commit
+
+`feat(policy): add the recipient policy service with server-owned identity and a strict seam` — see
+the report envelope for the SHA.
