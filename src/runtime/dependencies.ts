@@ -211,11 +211,17 @@ export function createWorkerDependencies(
   // worker has no signing path at all — exactly the previous fail-closed
   // behaviour. The key itself is read only by the sidecar entrypoint.
   const authorizationSigner = createWorkerPayloadSigner(environment);
+  // Design §0 C4: the signer must REACH the client. It was built one line above
+  // and then never passed here, so `canSignAuthorizations()` stayed false even
+  // with the sidecar configured and every signed policy write from this process
+  // failed closed as `unavailable` — the pre-existing defect this closes. The
+  // shape matches `src/server.ts`, which passed it all along.
   const privyServer = privyServerConfig
     ? new PrivyServerClient({
         appId: privyServerConfig.appId,
         appSecret: privyServerConfig.appSecret,
         baseUrl: privyServerConfig.baseUrl,
+        ...(authorizationSigner ? { authorizationSigner } : {}),
       })
     : undefined;
   const walletForUser = createConfiguredWalletForUser(

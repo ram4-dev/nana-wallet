@@ -2304,3 +2304,79 @@ any semantic, and the shipped behaviour on this deployment is the refusal.
   transition that wants to clear `status_detail.confirmedBy` must pass that key explicitly.
 - **`empty_composition='unsupported'` remains representable** in the schema and is refused by the
   composer exactly like `unproven`; no probe writes it.
+
+### Task 2.5 — fix the pre-existing worker signer defect (design §0 C4)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (2.5 → `- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/runtime/dependencies.ts` | Two-line behavioural fix: the already-built `authorizationSigner` is now passed into the worker's `PrivyServerClient` (the shape `src/server.ts` already used), instead of constructing the client with `appId`/`appSecret`/`baseUrl` only. The wallet-resolver passing immediately below is untouched. |
+| `tests/unit/worker-dependencies.test.ts` | Extended with the `createWorkerDependencies signed-authorization capability` suite (two cases). |
+
+#### What the unit delivers
+
+The worker built its signing sidecar client at `:213` and then never handed it to
+`PrivyServerClient`, so `canSignAuthorizations()` was structurally `false` in the worker even with a
+sidecar configured: `createGrantPolicySyncService` therefore returned `kind: "unavailable"` and every
+signed policy write from the worker failed closed. The fix is the same `...(authorizationSigner ?
+{ authorizationSigner } : {})` spread `src/server.ts` uses, and nothing else changed.
+
+Both directions are asserted, and the positive control comes FIRST so a `false` assertion cannot pass
+because nothing was observed:
+
+- With `PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` plus the server config and quorum: the client the
+  worker actually constructed reports `canSignAuthorizations() === true`, and
+  `createGrantPolicySyncService({ database, privyServer: <that client>, quorumId }).kind` is
+  `"runtime"` — the signed policy write is no longer `unavailable`.
+- Without a sidecar: the same client reports `false` and the same call returns `"unavailable"`, i.e.
+  the fail-closed default is intact.
+
+The client instance is observed through `PrivyServerClient.prototype.canSignAuthorizations` (a spy
+that records `this` and delegates to the real method), NOT through a mocked constructor's argument
+list: the test proves the capability decision the real client makes, not that an object literal
+contains a key.
+
+#### TDD Cycle Evidence
+
+| Step | What was run | Result |
+|---|---|---|
+| RED (fix removed) | `npx vitest run tests/unit/worker-dependencies.test.ts` with the `authorizationSigner` spread deleted | **Failed by name**: `createWorkerDependencies signed-authorization capability > hands the sidecar signer to the worker client, so grant policy sync is not unavailable` — `AssertionError: expected false to be true` at the `canSignAuthorizations()` assertion. `1 failed | 2 passed`. |
+| GREEN (fix restored) | same command | `Test Files 1 passed (1)`, `Tests 3 passed (3)` — the case that was red by name is green, and the two pre-existing cases are unchanged. |
+| Types | `npx tsc --noEmit -p tsconfig.json` | no diagnostics. |
+
+#### Commands run and results
+
+```text
+npx vitest run tests/unit/worker-dependencies.test.ts      # 3 passed (after RED-by-name proof)
+npx tsc --noEmit -p tsconfig.json                          # clean
+```
+
+#### Deviations from the design
+
+1. **The capability is observed at the seam, not by exposing the worker's client.** `WorkerDependencies`
+   does not (and now still does not) export `privyServer`. The test reaches the real instance through
+   a prototype spy instead of widening the worker's public type for a test, and it asserts the
+   *behaviour* (`canSignAuthorizations()`, and the `runtime` vs `unavailable` decision) rather than the
+   constructor's argument list.
+2. **No comment block was added around the fix beyond two lines of rationale** — the comment names the
+   defect and the reference implementation, because a later reader seeing the spread removed would
+   reintroduce C4.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **2.5 is now discharged for the worker side.** With a reachable sidecar, the worker-side
+  `canSignAuthorizations()` is `true`; the probes' `signer_unavailable` reasons can now become real
+  observations once a sidecar exists (2.6 provides one in compose).
+- **The worker still ends in a typed refusal rather than a PATCH**: `createRuntimeGrantPolicyProvisioner`
+  delegates to the composer and throws `PolicyApplyCapabilityUnwiredError` (task 1.6's
+  `apply_capability_unwired`, deleted — not relaxed — by 2.8). 2.5 removes the *first* refusal layer
+  (`unavailable`) and exposes the second one, which is the intended sequencing.
+
+#### Commit
+
+`fix(runtime): hand the worker's authorization signer to its Privy client` — see the report envelope
+for the SHA.
