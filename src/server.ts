@@ -42,8 +42,18 @@ import { createRecipientContactMutationPort } from "./memory/contact-policy-adap
 import {
   createRecipientPolicyService,
   createUnavailablePolicyApplyPort,
+  type ActiveGrantLister,
 } from "./wallet/policy/service.js";
 import { RecipientPolicyRepository } from "./wallet/policy/repository.js";
+import {
+  createSignedPolicyApplyPort,
+  createPrivyServerApplyTransport,
+} from "./wallet/policy/apply.js";
+import {
+  isRecipientPolicyReconcilerEnabled,
+  startRecipientPolicyReconciler,
+  type PolicyReconcilerLoop,
+} from "./wallet/policy/reconciler.js";
 import { EmbeddingService } from "./memory/embedding.js";
 import { FinancialTaskRegistry } from "./conversations/financial-task-registry.js";
 import { readApiProcessConfig } from "./config/process.js";
@@ -362,28 +372,72 @@ export function buildServer(options: {
     // admin client reads them. This deployment still wires no signed
     // policy-apply capability, so the composer records the desired revision and
     // the reconciler applies it instead of reporting a policy nobody created.
+    const policyContactsPort = createRecipientContactMutationPort({
+      contacts: contactsRepository,
+      embedder: createContactsEmbedder(),
+    });
+    const listActivePolicyGrants: ActiveGrantLister = (
+      walletId,
+      userId,
+      chain,
+    ) => {
+      const client = database;
+      if (!client) throw new Error("Contacts require a database client.");
+      return client.withUserTransaction(userId, (transaction) =>
+        policyRepository.listActiveLedgerGrants(
+          userId,
+          walletId,
+          chain,
+          transaction,
+        ),
+      );
+    };
     const recipientPolicy = createRecipientPolicyService({
       database,
       repository: policyRepository,
-      contacts: createRecipientContactMutationPort({
-        contacts: contactsRepository,
-        embedder: createContactsEmbedder(),
-      }),
-      listActiveGrants: (walletId, userId, chain) => {
-        const client = database;
-        if (!client) throw new Error("Contacts require a database client.");
-        return client.withUserTransaction(userId, (transaction) =>
-          policyRepository.listActiveLedgerGrants(
-            userId,
-            walletId,
-            chain,
-            transaction,
-          ),
-        );
-      },
+      contacts: policyContactsPort,
+      listActiveGrants: listActivePolicyGrants,
       provider: createUnavailablePolicyApplyPort(
         "provider_unavailable: this deployment has no signed apply capability wired into the HTTP API; the composer records the desired revision and the reconciler applies it.",
       ),
+    });
+    // Task 2.9: the 30 s reconciler loop, behind RECIPIENT_POLICY_RECONCILER.
+    // It applies the revisions the mutation surface records durably, so the HTTP
+    // path never needs the signer and the two processes cannot both own a wallet
+    // (the lease arbitrates). Started inside onReady — never at build time — and
+    // stopped, awaiting the in-flight pass, in onClose.
+    const policyReconcilerEnabled =
+      isRecipientPolicyReconcilerEnabled(process.env) && !process.env.VITEST;
+    let policyReconciler: PolicyReconcilerLoop | null = null;
+    app.addHook("onReady", async () => {
+      if (!policyReconcilerEnabled || !privyServer || !authorizationSigner) return;
+      const transport = createPrivyServerApplyTransport({
+        database: database!,
+        server: privyServer,
+      });
+      const reconcilerService = createRecipientPolicyService({
+        database: database!,
+        repository: policyRepository,
+        contacts: policyContactsPort,
+        listActiveGrants: listActivePolicyGrants,
+        provider: createSignedPolicyApplyPort({
+          transport,
+          signAuthorization: (payload) => authorizationSigner(payload),
+        }),
+      });
+      policyReconciler = startRecipientPolicyReconciler({
+        database: database!,
+        repository: policyRepository,
+        service: reconcilerService,
+        transport,
+        lease: { ownerId: "backend-provider-wallet" },
+        onError: (error) => {
+          app.log.error({ err: error }, "recipient policy reconcile pass failed");
+        },
+      });
+    });
+    app.addHook("onClose", async () => {
+      await policyReconciler?.stop();
     });
     app.register(registerContactsRoutes, {
       resolveUserId,

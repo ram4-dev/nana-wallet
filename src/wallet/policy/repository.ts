@@ -249,6 +249,28 @@ export interface SupersedePolicyIntentInput {
   intentId: string;
 }
 
+/**
+ * Design §5.2 step 3/step 5: the reconciler's two intent transitions.
+ *
+ * `state` is the INTENT state this attempt ends in: `applied` after a verified
+ * readback, `failed` for a proven divergence or an exhausted attempt budget, and
+ * `pending` for a retryable failure (which is also what the next attempt
+ * claims).
+ */
+export interface SettlePolicyIntentInput {
+  walletId: string;
+  desiredRevision: number;
+  state: "pending" | "applied" | "failed";
+  /** Bounded provider reason, never a secret or a raw provider body. */
+  lastError?: string | null;
+  /** Absolute deadline for the next attempt; `null` leaves the row due now. */
+  nextAttemptAt?: Date | null;
+  /** Design §5.2 step 5: `attempt_count + 1` on a retryable failure. */
+  incrementAttempt?: boolean;
+  /** Stamp `applied_at = now()` (§5.2 step 5), only on a verified apply. */
+  recordAppliedAt?: boolean;
+}
+
 export interface AppendPolicyAuditInput {
   walletId: string;
   event: PolicyAuditEvent;
@@ -955,6 +977,73 @@ export class RecipientPolicyRepository {
       return result.rows[0] ? mapIntent(result.rows[0]) : null;
     };
     return client ? run(client) : this.systemTransaction(run);
+  }
+
+  /**
+   * Restart recovery (design §5.2 step 3): return a reclaimed intent to the due
+   * set, clearing the in-flight marker left by the holder that died.
+   *
+   * Owner-scoped and meant to run in the resolved owner's transaction together
+   * with its `lease_reclaimed` audit: the reclaim evidence and the marker it
+   * explains must commit together, or the audit would describe a clear that never
+   * happened. Returns `false` when the row is not in flight (already settled or
+   * foreign).
+   */
+  public async clearIntentInFlight(
+    userId: string,
+    input: { walletId: string; desiredRevision: number },
+    client?: Queryable,
+  ): Promise<boolean> {
+    const run = async (query: Queryable) => {
+      const result = await query.query(
+        `UPDATE recipient_policy_sync_intent
+            SET state = 'pending', updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2 AND desired_revision = $3
+            AND state = 'applying'
+          RETURNING id`,
+        [input.walletId, userId, input.desiredRevision],
+      );
+      return result.rowCount === 1;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * Design §5.2 step 5: close one reconciler attempt with its intent transition
+   * and the retry schedule it implies. Owner-scoped, and the attempt counters live
+   * on the intent because that is the row the due scan reads.
+   */
+  public async settleIntent(
+    userId: string,
+    input: SettlePolicyIntentInput,
+    client?: Queryable,
+  ): Promise<boolean> {
+    const run = async (query: Queryable) => {
+      await this.assertWalletOwned(query, userId, input.walletId);
+      const result = await query.query(
+        `UPDATE recipient_policy_sync_intent
+            SET state = $4,
+                last_error = $5,
+                next_attempt_at = $6,
+                attempt_count = attempt_count + $7,
+                applied_at = CASE WHEN $8 THEN now() ELSE applied_at END,
+                updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2 AND desired_revision = $3
+          RETURNING id`,
+        [
+          input.walletId,
+          userId,
+          input.desiredRevision,
+          input.state,
+          input.lastError ?? null,
+          input.nextAttemptAt ?? null,
+          input.incrementAttempt ? 1 : 0,
+          input.recordAppliedAt ?? false,
+        ],
+      );
+      return result.rowCount === 1;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
   }
 
   /**

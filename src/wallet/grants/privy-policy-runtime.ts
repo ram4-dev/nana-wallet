@@ -237,8 +237,13 @@ function createRuntimePolicyComposer(
 /**
  * No contact mutation can be routed through the grant-sync port. Every member
  * throws a typed service refusal rather than silently doing nothing.
+ *
+ * Exported for the reconciler's service in `src/runtime/dependencies.ts`: the
+ * apply path also never reaches the contact port (composition reads contacts
+ * through the repository), and keeping ONE refusing port means a future caller
+ * cannot silently get a second, weaker placeholder.
  */
-const refusingContactPort: RecipientContactMutationPort = {
+export const refusingContactPort: RecipientContactMutationPort = {
   create: () => {
     throw new PolicyComposerRequiredError("grant_policy_sync.contacts.create");
   },

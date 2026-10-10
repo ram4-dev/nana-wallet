@@ -34,6 +34,13 @@
 import { isDeepStrictEqual } from "node:util";
 import type { DatabaseClient } from "../../db/client.js";
 import {
+  PrivyServerError,
+  type PrivyPolicyRecord,
+  type PrivyPolicyRule,
+  type PrivyChainType,
+  type PrivyServerClient,
+} from "../privy-server-client.js";
+import {
   comparePolicyReadback,
   type OwnerVerifiedSignerListing,
   type OwnerVerifiedWalletListing,
@@ -822,6 +829,56 @@ export function createPrivyPolicyApplyTransport(
       return { id: policy.id, rules: normalizeProviderReadbackRules(policy.rules) };
     },
   };
+}
+
+/**
+ * The production transport over the real `PrivyServerClient`, with the one
+ * narrowing the SDK boundary needs: `PrivyPolicyRecord` carries an index
+ * signature, so its `rules` are `unknown` until they are proven to be an array.
+ * A readback without a rules array is refused (fail closed) instead of being
+ * compared against an empty composition.
+ */
+export function createPrivyServerApplyTransport(dependencies: {
+  database: DatabaseClient;
+  server: PrivyServerClient;
+}): PolicyApplyTransport {
+  const readback = (record: PrivyPolicyRecord) => {
+    if (!Array.isArray(record.rules)) {
+      throw new PrivyServerError(
+        500,
+        null,
+        "Policy readback returned no rules array.",
+      );
+    }
+    return { id: record.id, rules: record.rules as readonly unknown[] };
+  };
+  return createPrivyPolicyApplyTransport({
+    database: dependencies.database,
+    server: {
+      // The adapter only ever asks for `POLICY_APPLY_CHAIN`; the client's chain
+      // union is narrower than the transport's open `string`, so the narrowing is
+      // explicit here instead of at every call site.
+      listWalletsForChain: (privyDid, chain) =>
+        dependencies.server.listWalletsForChain(
+          privyDid,
+          chain as PrivyChainType,
+        ),
+      getPolicy: (policyId) =>
+        dependencies.server.getPolicy(policyId).then(readback),
+      createPolicy: (name, rules, options) =>
+        dependencies.server.createPolicy(
+          name,
+          [...rules] as PrivyPolicyRule[],
+          options as { chainType?: PrivyChainType },
+        ),
+      patchPolicy: (policyId, rules) =>
+        dependencies.server
+          .patchPolicy(policyId, [...rules] as PrivyPolicyRule[])
+          .then(readback),
+      addPolicyToSigner: (walletId, signerId, policyId) =>
+        dependencies.server.addPolicyToSigner(walletId, signerId, policyId),
+    },
+  });
 }
 
 /** True when two rule sets are structurally equal (the §5.1 comparator's basis). */

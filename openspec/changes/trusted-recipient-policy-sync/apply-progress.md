@@ -2749,3 +2749,136 @@ the artifacts before any edit — `tasks.md` (2.8, terminal `<!-- sdd-owner: imp
 `design.md` §1.5, §3.5, §5.1, §5.3, §5.4, and the 1.3–2.7 apply-progress. `actionContext`: all writes
 stayed inside `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`; the main checkout and
 the untracked `compose.privy-local.ports.yaml` were untouched; no `git stash` was run.
+
+## Task 2.9 — the reconciler (durable intent, backoff, restart recovery, GET-before-retry)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (2.9 → `- [x]`).
+
+### Files changed (task 2.9)
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/reconciler.ts` | **New** (~560 lines). Due scan, `W1` claim, restart-recovery reclaim with the `lease_reclaimed` audit, the §5.3 GET-before-retry table, `applied`/`failed`/backoff transitions, the published schedule and the attempt cap, `isRecipientPolicyReconcilerEnabled`, and the 30 s loop. |
+| `src/wallet/policy/repository.ts` | Two additive owner-scoped methods: `clearIntentInFlight` (§5.2 step 3's marker clear) and `settleIntent` (§5.2 step 5's intent transition, counter, deadline and `applied_at`). |
+| `src/wallet/policy/service.ts` | `PolicyApplyBookkeepingOptions.confirmedBy` threaded through `applyRecordedRevision` → `applyRevision` → `commitApplyOutcome`, so a promoted apply records `confirmedBy='get_after_timeout'` on its `applied` audit. No other behaviour change. |
+| `src/wallet/policy/apply.ts` | `createPrivyServerApplyTransport`: the production transport over the real `PrivyServerClient`, narrowing the SDK's `{id, [key:string]: unknown}` readback to `{id, rules[]}` fail-closed (a record without a rules array is refused instead of compared against an empty composition). |
+| `src/server.ts` | The 30 s loop, behind `RECIPIENT_POLICY_RECONCILER`, started in `onReady` with a signed-apply service built from the same repository/lease/contacts seams, stopped in `onClose`. |
+| `src/runtime/dependencies.ts` | `startWorkerPolicyReconciler`: the same loop where the signing sidecar actually is, stopped in the worker's `close()`. |
+| `src/wallet/grants/privy-policy-runtime.ts` | `refusingContactPort` is now exported so the worker's reconciler service reuses the ONE refusing port instead of importing `ContactsRepository` into a second writer path (which the task 1.10 structural guard refuses — see deviations). |
+| `tests/integration/recipient-policy-reconciler.test.ts` | **New**, 13 cases: the schedule and the switch, due-intent selection, the stored-composition resume, duplicate events, `busy`, restart recovery, the four §5.3 branches, backoff + cap, and the lock/transaction contract measured at the PATCH. |
+
+### What the unit delivers
+
+- **Restart recovery is structural.** The due scan's row is in flight ⇒ the holder that set that
+  marker is gone (this process holds the lease) ⇒ one owner-scoped transaction clears the marker and
+  appends `lease_reclaimed` together. Nothing in memory is authoritative, so a process that died
+  between the intent commit and the readback is resumed by the next process.
+- **The four §5.3 branches** are decided by a GET before any retry, and the discriminator is the
+  service's own outcome REASON (`patch_unverified`, `policy_create_unverified`,
+  `policy_attach_unverified`, `verification_readback_unavailable`,
+  `verification_listing_unavailable`). Rules equal the composed set ⇒ applied with
+  `detail.confirmedBy='get_after_timeout'`; equal to the previous applied set (hash comparison)
+  ⇒ retry the same revision; a third set ⇒ `blocked_conflict` + the 2.12 fallback path; a failing
+  GET ⇒ `syncing` with `next_attempt_at` and **no** PATCH.
+- **The schedule is durable and published**: `min(5 s × 2^n, 5 min)` ±20 % jitter stamped from the
+  incremented attempt count, `attempt_count` capped at 12, after which the wallet's status becomes
+  `retryable_failure` and the intent leaves the due set.
+- **One apply path.** Steps 4–10 run through `RecipientPolicyApplier.applyRecordedRevision`, so the
+  reconciler owns durable intent, timing and evidence only — never a second copy of the PATCH/verify
+  orchestration.
+
+### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED (module) | The suite was written before `reconciler.ts` existed; the run could not import it, and the two repository seams it needs did not exist either. |
+| RED (mutation: restart recovery) | `reclaimed = intent.state === "applying"` → `false`: **2 failed** — `reclaims an expired holder's in-flight intent, audits lease_reclaimed, and resumes it` and `treats a readback equal to the composed rules as applied…`. The reclaim is the guard, not decoration. |
+| RED (mutation: the GET gate) | `decideBeforeRetry` short-circuited to `proceed`: **3 failed** — the composed-readback promotion, the third-set block and the failing-GET branch. Removing it is caught by exactly the three branches that depend on it. |
+| RED (mutation: the attempt cap) | `exhausted = nextAttempt >= RECONCILER_ATTEMPT_CAP` → `false`: **1 failed** — `schedules a retryable failure with the published backoff and stops at the cap`. |
+| RED (mutation: the W1 hold) | The lease released BEFORE steps 4–9: **1 failed** — `holds NO transaction and no row lock across the provider PATCH, while holding W1` (the second connection then sees no lease row). |
+| GREEN | **13 passed / 13**; `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` → **22 files passed, 284 tests passed**; `npm run lint` clean; `npm run typecheck` clean. |
+| TRIANGULATE | Added after GREEN: the schedule is asserted at both jitter bounds AND at its centre with an injected `random`, plus 5 s/10 s/20 s/cap steps so it cannot pass as a constant; the resume case asserts the PATCH body equals the RECORDED `composed_rules` and that both hashes match it; the duplicate-event case asserts the second pass finds nothing due; the cap case asserts the attempt count is exactly 12 and that no later pass resumes it. |
+| False-green guard | Every negative assertion has a positive control: the PATCH count is asserted before the "no blind retry" claim; the `busy` case compares the whole state row before/after; the probe discriminator case seeds a REAL recorded reason rather than a bare flag; the lock case asserts `patchPolicy` happened before asserting what was observed at that moment. |
+
+### Commands run and results
+
+```text
+npx vitest run tests/integration/recipient-policy-reconciler.test.ts            → 13 passed (13)
+npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts
+                                                                              → 22 files passed, 284 tests passed
+npm run lint                                                                  → clean (eslint --max-warnings=0)
+npm run typecheck                                                             → clean (tsc -p tsconfig.test.json --noEmit)
+```
+
+### Deviations from the design
+
+1. **Two additive repository methods.** §5.2's step 3 "clear the intent's in-flight marker" and step 5
+   need two owner-scoped statements the 1.3 repository did not have (`clearIntentInFlight`,
+   `settleIntent`). Task 1.3 handed forward that §5.2 refers to a "lease_token" column that does not
+   exist: the in-flight marker IS `state`, and the holder is the `recipient_policy_leases` row, so the
+   reclaim is decided from the scanned `state` plus the lease this process now owns.
+2. **The composed-readback branch compares the RECORDED hash, not object identity.** The intent's
+   `composed_rules` are a jsonb round-trip of the in-memory composition, so a structural comparison
+   against a provider readback refuses to recognise the very write it is looking at (observed while
+   writing this suite: the same strict comparison inside the service also decides whether to skip the
+   PATCH). `composedRulesHash(observed) === intent.composedHash` is the canonical form §5.2 already
+   persists for exactly this decision.
+3. **The W1 hold.** The parent brief said the reconciler "must not hold `W1` across provider I/O".
+   The authoritative design says the opposite for this writer: §1.3 gives the reconciler the chain
+   `W1 → tx{ W0(U) → L2 → L5 } → R`, §1.2 forbids holding `W1` across remote I/O only for writers that
+   also hold `L1..L5`, and §10(d) shows `release lease` AFTER the PATCH. Releasing the lease before
+   steps 4–9 would let two processes PATCH one wallet concurrently, and the loser's verification
+   readback would see the winner's rules and record a false `blocked_conflict`. This unit therefore
+   holds W1 across the provider I/O and keeps NO transaction and NO L1..L5 row lock open at that
+   moment — both measured in the suite (open-transaction counter + a second connection updating the
+   state row). Flagged rather than silently chosen.
+4. **The worker's reconciler service uses the shared refusing contact port.** Building a real one
+   meant importing `ContactsRepository` into `src/runtime/dependencies.ts`, which the task-1.10
+   structural guard caught (`ContactsRepository gained a new importer`). The apply path never mutates a
+   contact, so the port is the existing shared refusal — reusing it is strictly narrower than
+   allow-listing a new importer.
+5. **The `busy` outcome touches nothing.** §5.2 step 1 says so; this unit asserts the whole state row
+   is byte-identical after a busy pass.
+
+### The audit-policy decision (the second carried prerequisite)
+
+**No migration, no new policy.** `recipient_policy_audit` stays owner-only and the `lease_reclaimed`
+append is re-scoped to the resolved owner inside the owner's transaction (the
+`reconciliation-worker.ts:199-215` precedent): the system-scoped due scan supplies `user_id`, and the
+marker clear plus its audit commit together. Adding a system-access policy would have been authority
+the design does not describe, so it was not added; the task-1.3 assertion that a system-context append
+is REFUSED is left in place as the guard. Consequence: the carried "add the minimum additive system
+policy" branch was **not** taken, so there is no separate additive-audit commit.
+
+### Observations handed to later tasks (not defects in this unit)
+
+- **2.12 owns the destructive fallback.** The third-set branch records `blocked_conflict` and a
+  terminal intent; it clears no `delegated_grants.provider_policy_id`.
+- **The create-timeout case stalls by design.** An UNVERIFIED `createPolicy` has no policy id to GET,
+  so the gate returns `syncing` (`readback_target_unavailable`) and the attempt cap eventually stops
+  the loop. Recovering it needs the create-retry decision, which no task has yet claimed — recorded
+  rather than invented.
+- **The live signed path stays unproven in this environment**: 5.2/5.7 still own the capability probe
+  and the devnet verification; this unit's loop is exercised over the fake transport.
+- **`startWorkerPolicyReconciler` returns `null` without a signer or switch**, so a deployment that
+  cannot apply never writes statuses nobody asked for.
+
+### Workload / PR boundary
+
+One commit, one work unit: the new module + its integration suite + the two repository seams + the
+service bookkeeping option + the production transport adapter + the two loop wirings (~1 500 changed
+lines), above the 400-line review budget and reported, not hidden. It cannot be split without breaking
+the unit: the table, the reclaim and the schedule are only provable together against the real tables,
+and the wiring is what makes the loop reachable. It sits inside the parent-assigned `PR 4` slice
+(tasks 2.1–2.14). No push beyond `origin/feat/solana-operational`.
+
+### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit (task
+2.9), the authoritative artifact paths and the delivery path directly. Readiness was resolved against
+the artifacts before any edit — `tasks.md` (2.9, terminal `<!-- sdd-owner: implementation -->`),
+`design.md` §1.2/§1.3, §3.5, §5.1–§5.4, §10(d), §13, and the 1.3/2.8 apply-progress. `actionContext`:
+all writes stayed inside `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`; the main
+checkout and the untracked `compose.privy-local.ports.yaml` were untouched; no `git stash`, `checkout`,
+`reset`, `restore` or `clean` was run.

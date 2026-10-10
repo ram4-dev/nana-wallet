@@ -439,6 +439,17 @@ export type RecipientMutationOptions = {
   expectedRevokedGrantIds?: readonly string[];
 };
 
+/**
+ * Bookkeeping a caller may attach to the apply path (design §3.5 step 10).
+ *
+ * `confirmedBy` exists for exactly one caller: the reconciler's §5.3
+ * GET-before-retry, where the composition was never observed being written and
+ * the readback is what proves it landed. Persisting that provenance is the
+ * difference between a verified apply and a promoted one.
+ */
+export type PolicyApplyBookkeepingOptions = {
+  confirmedBy?: "get_after_timeout";
+};
 // ---------------------------------------------------------------------------
 // Read projection (design §9.1)
 // ---------------------------------------------------------------------------
@@ -645,11 +656,12 @@ export class RecipientPolicyService {
   public async applyRecordedRevision(
     userId: string,
     walletId: string,
+    options: PolicyApplyBookkeepingOptions = {},
   ): Promise<{
     permission: ContactPermissionSnapshot;
     appliedPolicyId: string | null;
   }> {
-    await this.applyRevision(userId, walletId);
+    await this.applyRevision(userId, walletId, options);
     const state = await this.repository.readPolicyState(userId, walletId);
     return {
       permission: projectContactPermission(state),
@@ -1628,7 +1640,11 @@ export class RecipientPolicyService {
    * answer rather than anything resembling success (spec "Timeout is reported as
    * unverified").
    */
-  private async applyRevision(userId: string, walletId: string): Promise<void> {
+  private async applyRevision(
+    userId: string,
+    walletId: string,
+    options: PolicyApplyBookkeepingOptions = {},
+  ): Promise<void> {
     const provider = this.provider;
     if (provider.kind !== "signed") {
       await this.recordApplyPending(userId, walletId, provider.reason);
@@ -1672,7 +1688,13 @@ export class RecipientPolicyService {
       provenance: composed.provenance as ComposedProvenance,
     });
 
-    await this.commitApplyOutcome(userId, walletId, state.desiredRevision, outcome);
+    await this.commitApplyOutcome(
+      userId,
+      walletId,
+      state.desiredRevision,
+      outcome,
+      options,
+    );
   }
 
   /**
@@ -1690,6 +1712,7 @@ export class RecipientPolicyService {
     walletId: string,
     desiredRevision: number,
     outcome: PolicyApplyOutcome,
+    options: PolicyApplyBookkeepingOptions = {},
   ): Promise<void> {
     await this.database.withUserTransaction(userId, async (client) => {
       if (outcome.kind === "verified") {
@@ -1755,6 +1778,11 @@ export class RecipientPolicyService {
             appliedRevision: desiredRevision,
             detail: {
               ...outcome.detail,
+              // Design §5.3: the one path allowed to record `applied` without
+              // having observed the write itself says so, by name.
+              ...(options.confirmedBy
+                ? { confirmedBy: options.confirmedBy }
+                : {}),
               appliedPolicyId: outcome.appliedPolicyId,
               // Clears a stale provider failure left by an earlier attempt.
               operation: null,

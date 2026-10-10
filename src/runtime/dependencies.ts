@@ -9,6 +9,21 @@ import {
   createConfiguredDatabaseClient,
   type DatabaseClient,
 } from "../db/client.js";
+import { RecipientPolicyRepository } from "../wallet/policy/repository.js";
+import {
+  createRecipientPolicyService,
+  type ActiveGrantLister,
+} from "../wallet/policy/service.js";
+import {
+  createSignedPolicyApplyPort,
+  createPrivyServerApplyTransport,
+} from "../wallet/policy/apply.js";
+import { refusingContactPort } from "../wallet/grants/privy-policy-runtime.js";
+import {
+  isRecipientPolicyReconcilerEnabled,
+  startRecipientPolicyReconciler,
+  type PolicyReconcilerLoop,
+} from "../wallet/policy/reconciler.js";
 import { PostgresConversationRepository } from "../conversations/postgres-repository.js";
 import {
   createWalletConversationService,
@@ -241,6 +256,16 @@ export function createWorkerDependencies(
   // actual user, so it wires the per-user factory and no fixed-tenant runtime.
   // Voice tools do NOT use this seam — they build a shared per-binding service
   // in src/livekit/worker.ts and pass binding.sub as userId.
+  // Task 2.9: the worker's reconciler loop. The worker is the process that owns
+  // the signing sidecar, so it is where the apply capability exists; it runs the
+  // same 30 s loop behind RECIPIENT_POLICY_RECONCILER and the wallet lease makes
+  // the backend and the worker safe to run side by side.
+  const policyReconciler = startWorkerPolicyReconciler({
+    database,
+    privyServer,
+    authorizationSigner,
+    environment,
+  });
   const conversationService = createWalletConversationService({
     conversations,
     wallet: core.wallet,
@@ -261,11 +286,57 @@ export function createWorkerDependencies(
     financialTasks,
     grantCreator,
     async close() {
+      await policyReconciler?.stop();
       if (core.walletReads !== core.wallet) await core.walletReads.close();
       await core.wallet.close();
       await database.close();
     },
   };
+}
+
+/**
+ * The worker-side reconciler loop (task 2.9), or `null` when this deployment has
+ * no signed capability or the switch is off. Never a fabricated loop: without a
+ * signer the apply path is `unavailable`, and a loop that cannot apply anything
+ * would only write statuses nobody asked for.
+ */
+export function startWorkerPolicyReconciler(input: {
+  database: DatabaseClient;
+  privyServer?: PrivyServerClient;
+  authorizationSigner?: PayloadSigner;
+  environment: NodeJS.ProcessEnv;
+}): PolicyReconcilerLoop | null {
+  if (!isRecipientPolicyReconcilerEnabled(input.environment)) return null;
+  if (input.environment.VITEST) return null;
+  if (!input.privyServer || !input.authorizationSigner) return null;
+  const repository = new RecipientPolicyRepository(input.database);
+  const transport = createPrivyServerApplyTransport({
+    database: input.database,
+    server: input.privyServer,
+  });
+  const service = createRecipientPolicyService({
+    database: input.database,
+    repository,
+    // The reconciler applies a recorded revision; it never mutates a contact, so
+    // the shared refusing port keeps the structural guard true instead of
+    // importing the contacts repository into a second writer path.
+    contacts: refusingContactPort,
+    listActiveGrants: ((walletId, userId, chain) =>
+      input.database.withUserTransaction(userId, (transaction) =>
+        repository.listActiveLedgerGrants(userId, walletId, chain, transaction),
+      )) as ActiveGrantLister,
+    provider: createSignedPolicyApplyPort({
+      transport,
+      signAuthorization: (payload) => input.authorizationSigner!(payload),
+    }),
+  });
+  return startRecipientPolicyReconciler({
+    database: input.database,
+    repository,
+    service,
+    transport,
+    lease: { ownerId: "voice-worker" },
+  });
 }
 
 /**
