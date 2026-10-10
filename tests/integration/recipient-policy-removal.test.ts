@@ -896,6 +896,122 @@ suite("recipient policy removal (task 1.7)", () => {
     expect(result.permission.state).toBe("saved_not_configured");
     expect(result.revocation).toEqual({ grantIds: [], state: "pending" });
   });
+  // -------------------------------------------------------------------------
+  // The address-change disclosure (design §1.6, applied to the edit path)
+  // -------------------------------------------------------------------------
+
+  async function contactAddress(contactId: string): Promise<string> {
+    const result = await database.query<{ address: string }>(
+      `SELECT address FROM recipients WHERE id = $1`,
+      [contactId],
+    );
+    return result.rows[0]!.address;
+  }
+
+  it("refuses an address replacement whose disclosed set is not the set it affects", async () => {
+    const { userId, walletId, contactId, version, grantIds } = await scenario({
+      grants: [[ADDRESS_A]],
+    });
+    const grantId = grantIds[0]!;
+    // Positive control: the fixture really created an ACTIVE affected grant.
+    expect((await grantRow(grantId)).state).toBe("active");
+    const revisionBefore = await desiredRevision(userId, walletId);
+
+    const { service: svc } = service();
+    // The disclosure says nothing will be revoked; under lock this replacement
+    // retires one grant. Accepting it would apply a revocation the user never
+    // confirmed, so the whole mutation has to be refused.
+    const refusal = await svc
+      .edit(userId, contactId, {
+        address: ADDRESS_B,
+        expectedVersion: version,
+        expectedRevokedGrantIds: [],
+      })
+      .then(
+        () => null,
+        (error: { code?: string; detail?: { reference?: string } }) => error,
+      );
+
+    expect(refusal?.code).toBe("CONFLICTO_POLITICA");
+    expect(refusal?.detail?.reference).toBe("revocation_disclosure");
+
+    // Nothing moved: not the address, not the contact, not the grant, not the
+    // revision, and no revoke audit was appended for a revocation that never ran.
+    expect(await contactAddress(contactId)).toBe(ADDRESS_A);
+    expect(await contactState(contactId)).toBe("active");
+    const grant = await grantRow(grantId);
+    expect(grant.state).toBe("active");
+    expect(grant.revoked_at).toBeNull();
+    expect(await grantRevokeAudits(grantId)).toHaveLength(0);
+    expect(await desiredRevision(userId, walletId)).toBe(revisionBefore);
+  });
+
+  it("retires the affected whole grant when the disclosure matches, in one transaction", async () => {
+    const { userId, walletId, contactId, version, grantIds } = await scenario({
+      grants: [[ADDRESS_A]],
+    });
+    const grantId = grantIds[0]!;
+
+    const { service: svc } = service();
+    const result = await svc.edit(userId, contactId, {
+      address: ADDRESS_B,
+      expectedVersion: version,
+      expectedRevokedGrantIds: [grantId],
+    });
+
+    expect(result.contact.address).toBe(ADDRESS_B);
+    const grant = await grantRow(grantId);
+    expect(grant.state).toBe("revoked");
+    expect(grant.revoked_at).not.toBeNull();
+    // Whole-grant semantics preserved: the recipients projection is never
+    // rewritten towards the replacement address.
+    expect(grant.recipients).toEqual([ADDRESS_A]);
+
+    const audits = await grantRevokeAudits(grantId);
+    expect(audits.map((row) => row.event)).toEqual(["revoked"]);
+    expect(audits[0]!.reason).toBe("last_active_alias_replaced");
+
+    const disclosure = (await policyAudits(userId, walletId)).filter(
+      (row) => row.event === "revocation_disclosed",
+    );
+    expect(disclosure).toHaveLength(1);
+    expect(
+      (disclosure[0]!.detail as { revokedGrantIds: string[] }).revokedGrantIds,
+    ).toEqual([grantId]);
+
+    // The recorded revision composes the POST-retirement projection: it may not
+    // carry a rule for the scope this transaction just revoked.
+    const recorded = await database.query<{ composed_rules: unknown }>(
+      `SELECT composed_rules FROM recipient_policy_sync_intent
+        WHERE wallet_id = $1 ORDER BY desired_revision DESC LIMIT 1`,
+      [walletId],
+    );
+    const rules = recorded.rows[0]!.composed_rules as Array<{ name?: string }>;
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.map((rule) => rule.name)).not.toContain(`solana-grant-${grantId}`);
+  });
+
+  it("accepts an address replacement that affects no grant and revokes nothing", async () => {
+    const { userId, contactId, version, grantIds } = await scenario({
+      extraAlias: true,
+      grants: [[ADDRESS_A]],
+    });
+    const grantId = grantIds[0]!;
+
+    const { service: svc } = service();
+    // The surviving alias means this address is still authorized, so nothing is
+    // affected and the honest disclosure is the empty one.
+    const result = await svc.edit(userId, contactId, {
+      address: ADDRESS_B,
+      expectedVersion: version,
+      expectedRevokedGrantIds: [],
+    });
+
+    expect(result.contact.address).toBe(ADDRESS_B);
+    expect((await grantRow(grantId)).state).toBe("active");
+    expect(await grantRevokeAudits(grantId)).toHaveLength(0);
+  });
+
 });
 
 /**
@@ -999,4 +1115,5 @@ describe("projectRevocationDisclosure (task 1.7)", () => {
       state: "applied",
     });
   });
+
 });

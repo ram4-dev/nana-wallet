@@ -340,10 +340,12 @@ export const updateContactInputSchema = z
     expectedVersion: z.number().int().positive(),
     expectedPolicyRevision: z.number().int().nonnegative().optional(),
     /**
-     * Accepted for the address-change path only, exactly as before this
-     * contract mirror: the removal/pre-flight channel already carries it, and
-     * making the PATCH body strict must not newly reject a body the mirrored
-     * frontend already sends (`AddTrustedRecipient.tsx`).
+     * The address-change disclosure (design §1.6): the automatic-payment grants
+     * the user was told this replacement retires, as read from
+     * `GET /v1/contacts/:id/removal-preview?action=address_change`.
+     * The service re-derives the set under lock and REFUSES the mutation with
+     * `409 CONFLICTO_POLITICA` when the disclosed set is not the set it affects —
+     * the field is never merely tolerated, and an absent one discloses nothing.
      */
     expectedRevokedGrantIds: z.array(z.string().uuid()).optional(),
   })

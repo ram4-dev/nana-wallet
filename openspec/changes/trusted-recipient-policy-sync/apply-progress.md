@@ -4078,3 +4078,113 @@ executable.
 
 `test(e2e): drive the trusted-recipient screen vertical through a real browser harness` — see the
 report envelope for the SHA.
+
+---
+
+## Follow-up fix — the address-change disclosure seam (tasks 3.2 / 3.3, cross-boundary defect)
+
+**Root cause (found by the browser harness, not inferred).** The disclosure a user confirms before an
+address replacement had no reaching side on the backend seam. `src/contracts/http.ts`
+(`updateContactInputSchema`) accepted `expectedRevokedGrantIds`, and
+`apps/nana-wallet/src/features/wallet/AddTrustedRecipient.tsx:160` sent it, but
+`recipientEditInputSchema` in `src/wallet/policy/service.ts` is `.strict()` and did not declare it, so
+every disclosed address edit died as `422 DATOS_INVALIDOS (unrecognized_keys)`. The contract comment
+admitted the field was only *tolerated* ("making the PATCH body strict must not newly reject a body the
+mirrored frontend already sends") — which is the exact failure the requirement forbids: an
+accepted-but-unchecked disclosure reports a revocation consequence nobody verified.
+
+### Resolution and the design citation that decided it
+
+The field stays on the **edit** channel and is now **used**, exactly as the removal channel uses its
+own copy. Citations:
+
+- `spec.md` → "Last-active-alias removal semantics and disclosure": *"When a removal **or address
+  replacement** eliminates the last active alias for an address, that address's affected delegated
+  grants SHALL be revoked whole… The revocation consequence MUST be disclosed to the user … before the
+  mutation executes"*; scenario *"No grant is migrated to a replacement address"* → *"grants for A are
+  retired under the approved semantics"*.
+- `design.md` **§1.6** (steps 3–7) — the established precedent for how a disclosed revocation set is
+  verified against the plan under lock, and the retirement itself (`W1 → tx{ W0(U) → L1 asc → L2 → L3
+  → L5 }`, whole-grant `state='revoked'`, `revoked` audit, `revocation_disclosed` audit).
+- `design.md` **§9.2** — the PATCH row carries the address change; the removal/pre-flight read
+  (`GET /v1/contacts/:id/removal-preview?action=address_change`) is the disclosure channel both paths
+  read before submitting. §9.2's PATCH row is silent on the field while the requirement above is not,
+  so removing the field (the "removal-only" reading) would leave the address-change disclosure
+  unverifiable and the confirmed edit permanently impossible. That reading was rejected; this note is
+  the citation for keeping it.
+- `tasks.md` **3.2/3.3** — the intended ownership of this surface: the route maps the contract, the UI
+  shows the disclosure before submit. Both sides were already in place; only the seam between them was
+  missing.
+
+**Why the retirement had to ship with the check (not just the comparison).** If the edit path accepted
+the field and compared it against an affected set it never acted on, a disclosure-confirmed last-alias
+replacement would either be refused forever (the case the requirement exists for) or report a
+disclosure it did not honour. So the edit path now performs the same retirement: Phase A reads the plan
+from the address the contact is **leaving**, the transaction re-derives it under `L1 → L2 → L3` and
+refuses on a widened or mismatched scope, the affected grants are revoked whole with their `revoked`
+audit, and the recorded revision composes the **post-retirement** projection through
+`repository.listActiveLedgerGrants(...)` on the caller's client — otherwise the runtime's own snapshot
+would still read the revoked grant as `active` and re-apply its rule (design §1.6 step 7).
+
+Refusals are the removal path's own vocabulary, so both channels report a disagreement identically:
+`revocation_disclosure` (disclosed set ≠ set this transaction affects, including the absent set which
+discloses nothing) and `revocation_set_widened` (a grant appeared between the read and the lock), both
+`RecipientPolicyConflictError` → `409 CONFLICTO_POLITICA` with nothing persisted.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `src/wallet/policy/service.ts` | `recipientEditInputSchema` declares `expectedRevokedGrantIds`; `edit()` reads the Phase A replacement plan, `verifyReplacementDisclosure()` re-derives it under lock and enforces both refusals, the step retires the affected grants whole with `grant_audit_log` rows, `runMutation` composes from `listActiveLedgerGrants` and appends the `revocation_disclosed` policy audit; `MutationStepResult` carries `retiredGrantIds` / `revocationDisclosure` |
+| `src/contracts/http.ts` | the PATCH field's comment now documents the enforced behaviour (accepted **and used**; `409` on mismatch) instead of tolerating it |
+| `tests/integration/recipient-policy-removal.test.ts` | 3 new cases at the service seam |
+| `tests/integration/api-contacts-policy.test.ts` | 1 new route case, `409` mismatch **plus** the disclosed-set positive control |
+
+Frontend unchanged: `api-types.ts` and `AddTrustedRecipient.tsx` already sent the field on the
+address-change path, which is why the two sides now agree without a mirrored-type edit.
+
+### RED → GREEN and mutation evidence
+
+| Step | Command | Result |
+|---|---|---|
+| RED (the seam declaration absent) | `npx vitest run tests/integration/api-contacts-policy.test.ts -t "disclosed revocation set"` | `× accepts the disclosed revocation set on an address change and refuses the mutation when it does not match` — `AssertionError: expected 422 to be 409` (`1 failed \| 8 skipped`): the harness's live `422 DATOS_INVALIDOS (unrecognized_keys)`, reproduced as a test |
+| GREEN | same | `1 passed \| 8 skipped` |
+| GREEN (service seam) | `npx vitest run tests/integration/recipient-policy-removal.test.ts` | `20 passed (20)` (from 17) |
+| mutation: the disclosure comparison neutralised (`if (false && !sameIdSet(...))`) | `npx vitest run tests/integration/recipient-policy-removal.test.ts` | `× refuses an address replacement whose disclosed set is not the set it affects` — `1 failed \| 19 passed (20)`; restored |
+| mutation: the retirement loop neutralised (`if (false && retirement)`) | same | `× retires the affected whole grant when the disclosure matches, in one transaction` — `1 failed \| 19 passed (20)`; restored |
+
+Both mutations were removed and restored one at a time, each failing by name; the reintroduced guard is
+what makes its test pass.
+
+### Verification
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/{recipient-policy-removal,api-contacts,api-contacts-policy,api-contacts-policy-cross-user,recipient-policy-service,contacts-cross-user}.test.ts` | `6 files passed, 56 tests passed` |
+| `npm run lint && npm run typecheck` (root) | clean |
+| `(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)` | clean; `21 files passed, 128 tests passed` |
+
+### Harness re-run (the scenario this fix owns)
+
+`npm run test:e2e:trusted-recipient-browser` — **before** `19 PASS / 1 FAIL / 5 BLOCKED`; **after**
+`SCENARIOS: 25 PASS: 20 FAIL: 0 BLOCKED: 5`, exit 0, `RESULT: PASS (no failed scenario)`. The scenario
+that failed with `422 DATOS_INVALIDOS (unrecognized_keys)` — *"edit: an address replacement carrying
+the contract-approved pre-flight disclosure is accepted"* — now reports `[PASS] http=200`. The 5
+BLOCKED scenarios are unchanged and are **not** claimed as passing: they are blocked by the absence of
+a Privy session (the frontend attaches only `usePrivy().getAccessToken()`), which is unrelated to this
+defect. No assertion was widened.
+
+### Deviation
+
+The removal path aborts and retries (bounded, 3 attempts) when the plan widens under lock; the edit
+path refuses instead (`revocation_set_widened`). The caller's confirmed disclosure *is* the plan it
+read, so re-deriving a wider scope cannot be reconciled with a disclosure that never named it, and
+`runMutation` has no retry wrapper. The refusal is fail-closed and mutates nothing; recorded as a
+handed-forward observation for verify, not as a design conformance claim.
+
+### Workload / PR boundary
+
+One work unit, one commit: the seam fix, its tests, and the contract comment (~150 authored lines
+across four files), inside the parent-assigned `PR 5` slice (tasks 3.1–3.4). No production behaviour
+outside the address-change mutation changed; no review, receipt, or delivery gate is started by this
+phase.

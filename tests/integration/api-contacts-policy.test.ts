@@ -468,6 +468,66 @@ suite("/v1/contacts + /v1/recipient-policy routes (task 3.2)", () => {
     }
   });
 
+  it("accepts the disclosed revocation set on an address change and refuses the mutation when it does not match", {
+    timeout: 60_000,
+  }, async () => {
+    const app = buildTestServer({ userId: USER_A });
+    try {
+      const created = await createContact(app, {
+        name: `Reemplazo ${randomUUID()}`,
+        description: "",
+        address: ADDRESS_1,
+      });
+      expect(created.statusCode).toBe(201);
+      const contact = created.json().data;
+
+      // The disclosure channel the screen reads BEFORE submitting: the grants the
+      // address change would retire.
+      const preview = await app.inject({
+        method: "GET",
+        url: `/v1/contacts/${contact.id}/removal-preview?expectedVersion=${contact.version}&action=address_change`,
+      });
+      expect(preview.statusCode).toBe(200);
+      const disclosed = preview.json().data.revokedGrantIds as string[];
+
+      // A disclosed set that is not the set this transaction affects is refused,
+      // never applied: the contact must not move and no revocation may be invented.
+      const mismatched = await app.inject({
+        method: "PATCH",
+        url: `/v1/contacts/${contact.id}`,
+        payload: {
+          address: ADDRESS_2,
+          expectedVersion: contact.version,
+          expectedRevokedGrantIds: [...disclosed, randomUUID()],
+        },
+      });
+      expect(mismatched.statusCode).toBe(409);
+      expect(mismatched.json().error.code).toBe("CONFLICTO_POLITICA");
+      const stillThere = (
+        (await app.inject({ method: "GET", url: "/v1/contacts" })).json()
+          .data as { id: string; address: string; version: number }[]
+      ).find((item) => item.id === contact.id);
+      expect(stillThere?.address).toBe(ADDRESS_1);
+      expect(stillThere?.version).toBe(contact.version);
+
+      // Positive control: the SAME body with the disclosed set accepted, so the
+      // refusal above is the disclosure guard and not a dead route.
+      const accepted = await app.inject({
+        method: "PATCH",
+        url: `/v1/contacts/${contact.id}`,
+        payload: {
+          address: ADDRESS_2,
+          expectedVersion: contact.version,
+          expectedRevokedGrantIds: disclosed,
+        },
+      });
+      expect(accepted.statusCode).toBe(200);
+      expect(accepted.json().data.address).toBe(ADDRESS_2);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("keeps a wallet without a ready permission saved-and-not-enabled with no policy write", {
     timeout: 60_000,
   }, async () => {

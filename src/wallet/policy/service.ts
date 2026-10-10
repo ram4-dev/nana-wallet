@@ -78,6 +78,7 @@ import {
   type PolicyIntentOrigin,
   type PolicyStateRecord,
   type PolicyStateStatus,
+  type RemovalAffectedGrantRow,
 } from "./repository.js";
 
 /**
@@ -164,6 +165,15 @@ export const recipientCreateInputSchema = z
  * that does not say which version it read is an overwrite, and the service must be
  * able to refuse it. At least one editable field must be present, so an edit is
  * never a no-op that still advances a revision.
+ *
+ * `expectedRevokedGrantIds` is the address-change disclosure (design §1.6, the
+ * same guard a removal carries; spec "Last-active-alias removal semantics and
+ * disclosure"). It is NOT decoration: an address replacement eliminates the
+ * alias for the address it is leaving, so the grants that address was reachable
+ * through are re-derived under lock and revoked whole, and the mutation is
+ * refused — never applied — when the set the caller disclosed differs from the
+ * set this transaction actually affects. An accepted-but-ignored field would
+ * report a disclosure that was never checked.
  */
 export const recipientEditInputSchema = z
   .object({
@@ -173,6 +183,7 @@ export const recipientEditInputSchema = z
     network: derivedNetworkSchema.optional(),
     expectedVersion: z.number().int().positive(),
     expectedPolicyRevision: z.number().int().nonnegative().optional(),
+    expectedRevokedGrantIds: z.array(z.string().uuid()).optional(),
   })
   .strict()
   .refine(
@@ -783,6 +794,10 @@ export class RecipientPolicyService {
       expectedVersion: input.expectedVersion,
     };
     const metadataOnly = input.address === undefined;
+    // The disclosure the caller confirmed before submitting. Absent means "nothing
+    // was disclosed", which must then match the retired set (see the guard below).
+    const disclosedGrantIds =
+      input.expectedRevokedGrantIds ?? options.expectedRevokedGrantIds;
 
     const wallet = await this.repository.readReadySolanaWallet(userId);
     if (!wallet) {
@@ -804,6 +819,14 @@ export class RecipientPolicyService {
       );
       if (replayed) return replayed;
 
+      // Phase A (design §1.6 steps 2-5) for an address replacement: the plan is
+      // read from the address the contact is LEAVING, because replacing it
+      // eliminates that alias — the same event a removal performs, and the same
+      // disclosure the user has to confirm first.
+      const plan = metadataOnly
+        ? null
+        : await this.readAddressReplacementPlan(userId, wallet.walletId, targetId);
+
       const outcome = await this.runMutation(
         userId,
         wallet.walletId,
@@ -818,13 +841,69 @@ export class RecipientPolicyService {
             desiredRevision: state.desiredRevision,
           });
         }
+        // BEFORE the contact write: the replaced address's last-alias grants are
+        // re-derived under lock and checked against the disclosure. A widened or
+        // mismatched scope refuses the whole mutation instead of revoking a grant
+        // the caller never named.
+        const retirement = plan
+          ? await this.verifyReplacementDisclosure(
+              userId,
+              wallet.walletId,
+              plan,
+              disclosedGrantIds,
+              client,
+            )
+          : null;
         const contact = await this.contacts.update(userId, targetId, patch, client);
+        const revokedGrantIds: string[] = [];
+        if (retirement) {
+          for (const grant of retirement.grants) {
+            const revoked = await this.repository.revokeGrantWhole(
+              userId,
+              grant.id,
+              client,
+            );
+            // Already revoked by a concurrent revoke/claim: the scope is gone, but
+            // this call did not revoke it, so it is not audited as its own.
+            if (!revoked) continue;
+            revokedGrantIds.push(grant.id);
+            await appendGrantAudit(
+              this.database,
+              {
+                grantId: grant.id,
+                userId,
+                event: "revoked",
+                reason: "last_active_alias_replaced",
+                detail: {
+                  contactId: targetId,
+                  contactVersion: contact.version,
+                  address: plan!.address,
+                  grantRecipients: grant.recipients,
+                },
+              },
+              client,
+            );
+          }
+        }
         return {
           contact,
           action: metadataOnly ? ("rename" as const) : ("address_change" as const),
           // Only a metadata-only edit has to prove rule-identity; an address edit
           // is expected to change the rule set.
           ruleReference: metadataOnly ? recordedRuleReference(state) : undefined,
+          ...(plan
+            ? {
+                retiredGrantIds: revokedGrantIds,
+                revocationDisclosure: {
+                  action: "address_change",
+                  contactId: contact.id,
+                  contactVersion: contact.version,
+                  address: plan.address,
+                  affectedGrantIds: plan.affectedGrantIds,
+                  revokedGrantIds,
+                },
+              }
+            : {}),
         };
         },
       );
@@ -1092,6 +1171,101 @@ export class RecipientPolicyService {
    * this is the last alias: a grant covered by a second active alias is not
    * affected at all and must not appear in a disclosure.
    */
+  /**
+   * Phase A for an address replacement. The contact is read at its CURRENT
+   * address: that address is the one whose alias the replacement eliminates, and
+   * therefore the one whose grants the disclosure has to cover.
+   */
+  private async readAddressReplacementPlan(
+    userId: string,
+    walletId: string,
+    contactId: string,
+  ): Promise<RemovalPlan | null> {
+    const target = await this.contacts.readActive(userId, contactId);
+    // A missing contact is the seam's own not-found refusal; returning no plan here
+    // would turn it into a mutation with nothing to check against.
+    if (!target) throw new RecipientContactMissingError();
+    return this.readRemovalPlan(userId, walletId, target);
+  }
+
+  /**
+   * Design §1.6 steps 2-6, applied to the address-replacement path: re-derive the
+   * plan under the canonical chain (`L1` → `L2` → `L3`) and refuse a scope the
+   * caller did not disclose.
+   *
+   * Two distinct refusals, both `blocked_conflict`:
+   *
+   *   * `revocation_set_widened` — a grant appeared between the read and the lock,
+   *     so this transaction would revoke something no disclosure ever named. The
+   *     removal path aborts and retries here; an edit is refused, because the
+   *     caller's confirmed disclosure is the plan it read.
+   *   * `revocation_disclosure` — the disclosed set is not the set this transaction
+   *     affects (including the absent case, which discloses nothing). Same refusal
+   *     the removal path raises, so both channels report the disagreement the same
+   *     way.
+   */
+  private async verifyReplacementDisclosure(
+    userId: string,
+    walletId: string,
+    plan: RemovalPlan,
+    disclosedGrantIds: readonly string[] | undefined,
+    client: Queryable,
+  ): Promise<{ grantIds: string[]; grants: RemovalAffectedGrantRow[] }> {
+    // L1: one advisory lock per affected grant, ascending — the SAME key the claim
+    // and removal paths take, so a replacement serializes against both.
+    await this.repository.lockGrantAdvisoryKeys(plan.affectedGrantIds, client);
+    // L2: the affected rows, locked ascending.
+    const locked = await this.repository.lockAffectedGrants(
+      userId,
+      walletId,
+      plan.affectedGrantIds,
+      client,
+    );
+    // L3: the aliases of the address being replaced, locked ascending.
+    const aliasesUnderLock = await this.repository.lockActiveAliases(
+      userId,
+      plan.address,
+      client,
+    );
+
+    const affectedUnderLock = await this.repository.listAffectedActiveGrants(
+      userId,
+      walletId,
+      plan.address,
+      client,
+    );
+    const lockedIds = new Set(locked.map((grant) => grant.id));
+    if (
+      !sameIdSet(
+        aliasesUnderLock.map((alias) => alias.id),
+        plan.aliasIds,
+      ) ||
+      affectedUnderLock.some((grant) => !lockedIds.has(grant.id))
+    ) {
+      throw new RecipientPolicyConflictError({
+        reference: "revocation_set_widened",
+        disclosedGrantIds: [...(disclosedGrantIds ?? [])],
+        actualGrantIds: affectedUnderLock.map((grant) => grant.id),
+      });
+    }
+
+    const lastAlias = aliasesUnderLock.length === 1;
+    const finalAffectedIds = lastAlias
+      ? affectedUnderLock.map((grant) => grant.id)
+      : [];
+    if (!sameIdSet([...(disclosedGrantIds ?? [])], finalAffectedIds)) {
+      throw new RecipientPolicyConflictError({
+        reference: "revocation_disclosure",
+        expectedGrantIds: [...(disclosedGrantIds ?? [])],
+        actualGrantIds: finalAffectedIds,
+      });
+    }
+    return {
+      grantIds: finalAffectedIds,
+      grants: lastAlias ? affectedUnderLock : [],
+    };
+  }
+
   private async readRemovalPlan(
     userId: string,
     walletId: string,
@@ -1525,7 +1699,23 @@ export class RecipientPolicyService {
 
         let composed: ComposedPolicy;
         try {
-          composed = await this.composeRevision(userId, walletId, { client });
+          // A step that retired grants must compose from the POST-retirement
+          // projection, read on THIS client: `listActiveGrants` opens its own
+          // transaction, so the revoked rows would still read as `active` there and
+          // the recorded revision would re-apply a rule for a scope this
+          // transaction just revoked (design §1.6 step 7).
+          const grants = mutated.retiredGrantIds
+            ? await this.repository.listActiveLedgerGrants(
+                userId,
+                walletId,
+                SOLANA_LEDGER_CHAIN,
+                client,
+              )
+            : undefined;
+          composed = await this.composeRevision(userId, walletId, {
+            client,
+            ...(grants ? { grants } : {}),
+          });
         } catch (error) {
           if (!(error instanceof PolicyCompositionRefusalError)) throw error;
           const stop = {
@@ -1594,6 +1784,21 @@ export class RecipientPolicyService {
           },
           client,
         );
+        // A disclosed revocation is durable evidence, not just a response body: the
+        // plan the caller confirmed plus the grants this transaction actually
+        // revoked (design §1.6 step 7).
+        if (mutated.revocationDisclosure) {
+          await this.repository.appendPolicyAudit(
+            userId,
+            {
+              walletId,
+              event: "revocation_disclosed",
+              desiredRevision: revision,
+              detail: mutated.revocationDisclosure,
+            },
+            client,
+          );
+        }
 
         await options.beforeCommit?.(client);
 
@@ -1979,6 +2184,14 @@ type MutationStepResult = {
    * could broaden).
    */
   ruleReference?: { source: string; hash: string } | null;
+  /**
+   * Grants this step revoked in the same transaction. Present only on the
+   * address-replacement path; its presence is what tells `runMutation` to compose
+   * from the post-retirement projection instead of the runtime's own snapshot.
+   */
+  retiredGrantIds?: readonly string[];
+  /** The disclosure the caller confirmed, plus what was actually revoked. */
+  revocationDisclosure?: Record<string, unknown>;
 };
 
 type MutationOutcome =
