@@ -1285,12 +1285,18 @@ Q3 (D11 → v3 approved), Q9 (dedicated `SNS_RPC_URL`, now configured in `.env` 
 - Allowed mutation by this artifact: read-only. **No code, no dependency install, no spec edit, no
   migration, no remote mutation, no `src/` write.** The only file created is this one.
 - Decision owner: Ramiro.
-- **The blocking decision is D1: the spec revision in §1.3.** Everything else in this document is
-  design work that follows from it, and none of it should be implemented before that text is
-  approved — a partial implementation would ship an alias path against a spec that still says the
-  address is never derived from a name.
-- Secondary decisions awaiting Ramiro: **none.** D11 (SDK version) approved, D13 resolved to
-  disclose, Q9 resolved to a dedicated `SNS_RPC_URL` (configured).
+- **D1 — THE SPEC REVISION IS APPROVED.** Ramiro approved the revision of the
+  `Voice permission creation requires a published proposal and a verified address` requirement on
+  2026-10-10 (answer: "si"). The approved text is §1.3 as reproduced in
+  `openspec/changes/sns-alias-recipients/spec.md`: forbid **model inference** of an address,
+  permit **server-side resolution of an explicit `.sns` name the user supplied** under the eight
+  mandatory conditions M1–M8 (§1.5). The unconditional "no address is ever derived from a name"
+  is thereby superseded.
+- ~~The blocking decision is D1~~ — **resolved.** Implementation of the stages below is now
+  authorised to proceed against the revised text.
+- Secondary decisions: **all resolved** — D11 (SDK v3) approved, D13 (§6) resolved to disclose,
+  §11 Q9 resolved to a dedicated `SNS_RPC_URL` (configured in `.env` and documented in
+  `.env.example`).
 - Explicit exclusions: no send-time resolution; no other name services; `.sol` is not supported; no
   subdomain support; no change to the delegated-grant or transfer-policy model; no alias for the
   wallet's own address; no name registration or primary-domain write of any kind.
