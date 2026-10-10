@@ -5463,3 +5463,32 @@ artifacts directly before any edit: `tasks.md`, `spec.md`, `design.md`, the earl
 entries, and `91-test-baseline.md` attempt 2 as the authoritative baseline. `actionContext`: one allowed
 edit root (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed inside
 it; no warning was raised by the parent and none was produced by this run.
+
+---
+
+## Appended pointer — independent post-apply verification (`sdd-verify`), 2026-10-10
+
+**Read the verify report: `openspec/changes/trusted-recipient-policy-sync/verify-report.md`.**
+
+One commit, report only. No production code, test, migration or container was touched by that pass.
+
+- Verdict: **PARTIAL PASS** — code and fake-transport behaviour verify; the live provider half is
+  UNPROVEN; **the change is not archive-ready**.
+- Requirement counts: **PASS 18 · PARTIAL 6 · FAIL 0 · UNPROVEN 1** (26 rows, `spec.md` requirement by
+  requirement, each cited to a `path:line` or a named test).
+- Findings: **3 CRITICAL** (4 unchecked implementation rows → archive blocker; the live provider half has
+  no evidence and cannot be produced here; the deployed stack contradicts the declared compose services),
+  **4 WARNING**, **7 SUGGESTION**.
+- Spot-checks run independently in that pass (three separate invocations, sequential): pure guards
+  **54 passed (54)**; `recipient-policy-removal` **20 passed (20)**; `livekit-trusted-recipient.e2e`
+  **13 passed (13)**. The full suite and evals were deliberately not re-run — 5.3–5.6 already cover them.
+- Two claims checked directly and **confirmed**: task 4.1's gate really is the chain-aware validator
+  (`src/memory/address.ts:43-47` → `isValidSolanaAddress`), not a message string; and the voice lifecycle
+  tools hold a real port (`src/livekit/worker.ts:185,255` → `create-realtime-tools.ts:104-106`).
+- Deviations: all six declared deviations are **consistent** with the spec/design; two (D2 `status_detail`
+  merge, D5 edit-refuses-vs-removal-retries) were paired with a deliberate, stricter assertion update.
+- Two checkbox-integrity warnings on this record: **2.14** is `[x]` on evidence that does not support its
+  live-probe half (deferred to 5.2, still `[ ]`), and **5.4** is `[x]` with 5 of 25 scenarios never
+  executed and its deployed-stack half blocked by 5.1.
+- Stale record flagged: the "**Task 4.9 — NOT STARTED (budget cap reached)**" block earlier in this file
+  is superseded — 4.9 is committed at `7f53919` and its checkbox is `[x]`.
