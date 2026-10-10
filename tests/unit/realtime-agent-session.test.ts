@@ -220,6 +220,45 @@ describe("OpenAI realtime agent session composition", () => {
     expect(h.MockAgentSession.instances[0].generateReplyCalls).toHaveLength(1);
   });
 
+  it("sends a single resolved candidate to the read-back instead of asking its own yes/no", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    createAgentSession({ tools: [] });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    // The single-candidate branch used to tell the model to ask "is this the
+    // contact you meant?". confirm_transfer told it to fire on a user "yes".
+    // The model asked, the user said "sí", and it read that as the transfer
+    // confirmation: confirm_transfer ran with no preview in the conversation
+    // and the user heard "no pending transfer to confirm or cancel".
+    //
+    // A single candidate now goes straight to send_token, whose read-back
+    // already names the recipient and is the only thing a decision binds to.
+    // Asking twice is not extra safety, it is a second question the model can
+    // mistake for the one confirmation is allowed to answer.
+    expect(persona).not.toMatch(/ask whether that is the contact/iu);
+  });
+
+  it("only lets a send_token read-back authorize confirm_transfer", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    createAgentSession({ tools: [] });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    // The preview is scoped to the conversation, so the contract has to say so:
+    // otherwise the model cannot know that a preview from another session, or
+    // no preview at all, is a dead end.
+    expect(persona).toContain(
+      "confirm_transfer: it acts ONLY on a preview that send_token created in THIS SAME conversation",
+    );
+    // The exact conflation that broke the flow, named and forbidden.
+    expect(persona).toContain(
+      'A "yes" answering any other question of yours is NOT a transfer confirmation',
+    );
+    // A refusal must name the way forward instead of dead-ending the user.
+    expect(persona).toContain("call send_token instead");
+  });
+
   it("spends the greeting even when the provider rejects it, so it cannot loop", () => {
     process.env.OPENAI_API_KEY = "test-key";
 

@@ -393,3 +393,53 @@ A `catch {}` with no binding is not defensive, it is a **blind spot**: it
 preserves the outcome the author wanted to prevent ("don't crash") while
 destroying the only thing needed to fix it ("what broke"). Two of them in a row,
 amplified.
+
+## Sixth defect: two questions, one answer
+
+Found in the voice worker's logs after the fee fix, on a session that still
+failed. Not a code defect: a **self-contradicting instruction set**. `e73f808`.
+
+The tool sequence was:
+
+```
+03:33:21  get_balance        {}
+03:33:42  search_recipients  {"query":"test1"}   -> resolved, 1 candidate
+03:34:03  confirm_transfer   {}                  -> stale_preview
+```
+
+`send_token` was never called, so no preview existed and there was nothing to
+confirm. The guard was right. The conversation records confirm it: no
+`conversation_state` row and no `conversation_transfer_attempts` row for that
+conversation, whose newest attempt was five days old.
+
+### Why the model skipped the preview
+
+The two instructions contradicted each other:
+
+- `search_recipients`: with a single candidate, *"ask whether that is the
+  contact the user meant"*.
+- `confirm_transfer`: fire when the user *"explicitly says an exact confirmation
+  such as 'yes'"*.
+
+So the model asked its own yes/no question, the user answered **"sí"** — and the
+model read that as the transfer confirmation. Two questions had the same answer,
+and only one of them is allowed to authorize a transfer.
+
+### The fix removes the second question
+
+It does not try to make the model tell the two affirmations apart. A single
+resolved candidate now goes straight to `send_token`, whose read-back already
+names the recipient, the amount, the network and the fee — and that read-back is
+the only thing a decision binds to. Clarification stays where a guess would be
+worse: a genuinely ambiguous search with several candidates.
+
+`confirm_transfer` also states its scope (a preview from `send_token` in this
+same conversation) and names the recovery, in **both** channels the model reads:
+the session instructions and the tool description.
+
+### Lesson
+
+A prompt is a specification, and an over-specified branch is a defect like any
+other. Asking twice felt safer and cost the whole flow: the extra question was a
+second place a "yes" could land. When two instructions can be satisfied by the
+same user answer, one of them is wrong.

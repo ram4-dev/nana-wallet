@@ -872,7 +872,7 @@ function createVoiceDecisionOperations(context: WalletAgentContext): AgentToolDe
     {
       name: 'confirm_transfer',
       description:
-        'Confirms the current transfer only after a fresh final exact spoken confirmation following the server read-back. A model tool call is not authorization. Takes no parameters.',
+        'Confirms the current transfer only after a fresh final exact spoken confirmation following the server read-back. It acts ONLY on a preview that send_token created in THIS SAME conversation: without that preview it fails, and the recovery is to call send_token, never to insist. A "yes" answering any other question is not a transfer confirmation. A model tool call is not authorization. Takes no parameters.',
       inputSchema: emptyInputSchema,
       execute: () => decideTransfer('confirm', context),
     },
