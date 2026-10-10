@@ -1280,11 +1280,15 @@ export class RecipientPolicyRepository {
       const result = await query.query<{
         allowlisted_recipients: unknown;
         signer_enrollment_snapshot: unknown;
+        wallet_address: string;
       }>(
-        `SELECT allowlisted_recipients, signer_enrollment_snapshot
-           FROM signer_grants
-          WHERE user_id = $1 AND wallet_id = $2 AND state = 'active'
-          ORDER BY created_at DESC, id DESC
+        `SELECT sg.allowlisted_recipients, sg.signer_enrollment_snapshot,
+                uw.address AS wallet_address
+           FROM signer_grants AS sg
+           JOIN user_wallets AS uw
+             ON uw.id = sg.wallet_id AND uw.user_id = sg.user_id
+          WHERE sg.user_id = $1 AND sg.wallet_id = $2 AND sg.state = 'active'
+          ORDER BY sg.created_at DESC, sg.id DESC
           LIMIT 1`,
         [userId, walletId],
       );
@@ -1306,10 +1310,15 @@ export class RecipientPolicyRepository {
           `Wallet ${walletId} has an active enrollment whose signer_enrollment_snapshot is not an object; refusing to record a consent baseline from it.`,
         );
       }
-      return {
-        baseline: recipients,
-        provenance: snapshot as Record<string, unknown>,
-      };
+      // An enrollment allowlist can contain trusted contacts selected at that
+      // time. Treating that whole list as an immutable baseline makes later
+      // removal of one of those contacts ineffective. The only retained address
+      // this schema can prove independently of the contacts table is the wallet
+      // itself, and only when it was explicitly part of the enrollment consent.
+      const baseline = recipients.includes(row.wallet_address)
+        ? [row.wallet_address]
+        : [];
+      return { baseline, provenance: snapshot as Record<string, unknown> };
     };
     return client ? run(client) : this.ownerTransaction(userId, run);
   }
@@ -1437,7 +1446,8 @@ export class RecipientPolicyRepository {
       const result = await query.query<{ id: string; version: string | number }>(
         `SELECT id, version
            FROM recipients
-          WHERE user_id = $1 AND status = 'active' AND address = $2
+          WHERE user_id = $1 AND status = 'active'
+            AND network = 'solana-devnet' AND address = $2
           ORDER BY id ASC${lock ? " FOR UPDATE" : ""}`,
         [userId, address],
       );
