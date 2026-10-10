@@ -4454,3 +4454,41 @@ explicitly as the intended divergence from legacy behaviour.
 
 One commit: the two invalidation fixes in `src/livekit/voice-decision-gate.ts` plus the adapter suite.
 Inside the parent-assigned `PR 6` slice (tasks 4.1–4.9). No push beyond the assigned branch, no PR.
+
+---
+
+## Slice 4 verification gate (tasks 4.1–4.4)
+
+Run after all four units were committed, on the tree at `df5d033`.
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/recipient-address-solana-validation.test.ts tests/unit/recipient-address-handoff.test.ts` | **2 files passed, 12 tests passed** |
+| `npx vitest run tests/unit/recipient-lifecycle-tools.test.ts tests/unit/agent-tools-parity.test.ts` | **2 files passed, 15 tests passed** |
+| `npx vitest run tests/unit/confirmation-arbiter.test.ts` | **1 file passed, 11 tests passed** |
+| `npx vitest run tests/unit/livekit/voice-decision-gate.test.ts tests/unit/livekit/voice-decision-gate-wait.test.ts tests/unit/livekit/voice-decision-transcripts.test.ts tests/unit/livekit/voice-decision-gate-arbiter-adapter.test.ts` | **4 files passed, 41 tests passed** — the pre-existing gate suites untouched and green |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts` | **9 files passed, 119 tests passed** |
+| `npx vitest run tests/unit/policy-*.test.ts` | **14 files passed, 174 tests passed** |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`, exit 0) — after one test-file type fix (`df5d033`: `Parameters<NonNullable<Port["confirm"]>>[0]` in the 4.2 recorder) |
+| `(cd apps/nana-wallet && npx vitest run)` | **21 files passed, 128 tests passed** — the frontend is unchanged by this run |
+
+The policy counts are reported as observed (119 integration + 174 unit = 293 across 23 files); the
+earlier "299+" figure in the brief was not reproduced, and no suite failed, so the difference is a count
+of files rather than a regression. The known cross-suite lease/revision interference was avoided by
+running the integration and unit policy sets separately, as instructed. The pristine baseline failures
+(`conversation-preview-claim-race`, `wallets-sync` PEW-013, `realtime-agent-session`,
+`realtime-tool-binding` `send_token`, `realtime-tools`) were not re-run in a full-suite invocation by
+this slice; no slice-4 suite depends on them.
+
+### Workload / PR boundary
+
+Four work units, five commits (`c07ff90`, `304882b`, `7105982`, `5ce02d0`, `df5d033`) inside the
+parent-assigned `PR 6` slice (tasks 4.1–4.9). Tasks 4.5–4.9 were **not** started.
+
+### Delivery
+
+The branch update was **refused by the harness** ("Gentle AI safety policy requires interactive
+confirmation before this command"). No remote branch was created or updated by this run; the five
+commits stay local on `feat/solana-operational`, which is now 5 commits ahead of its remote at
+`984dd04`.
