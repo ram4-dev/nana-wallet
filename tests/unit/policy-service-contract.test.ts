@@ -34,7 +34,6 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import {
-  PolicyApplyCapabilityUnwiredError,
   RecipientPolicyValidationError,
   RecipientPolicyService,
   createUnavailablePolicyApplyPort,
@@ -466,7 +465,7 @@ describe("readContactPermission never reports an unverified success", () => {
   });
 });
 
-describe("the apply port is a seam slice 1 does not drive", () => {
+describe("the apply port is a seam slice 2 drives", () => {
   it("ships an unavailable capability and performs no I/O", () => {
     const port = createUnavailablePolicyApplyPort("no signed apply capability");
 
@@ -475,7 +474,17 @@ describe("the apply port is a seam slice 1 does not drive", () => {
     expect(Object.keys(port).sort()).toEqual(["kind", "reason"]);
   });
 
-  it("refuses a signed capability instead of driving a live policy write", () => {
+  it("accepts the signed capability instead of refusing it at construction", () => {
+    /**
+     * Task 2.8 CHANGED THIS CASE. It asserted that the constructor REFUSED a
+     * signed arm (`PolicyApplyCapabilityUnwiredError`, reason
+     * `apply_capability_unwired`). Both were DELETED, not relaxed: the
+     * implementation they claimed did not exist is `src/wallet/policy/apply.ts`,
+     * so the unimplemented state is no longer representable at all. The half of
+     * the original assertion that still has to hold is kept and strengthened —
+     * construction consults nothing and performs no I/O, so the signed arm cannot
+     * be driven before a mutation happens.
+     */
     const apply = vi.fn();
     const contacts = {
       create: vi.fn(),
@@ -493,33 +502,13 @@ describe("the apply port is a seam slice 1 does not drive", () => {
           listActiveGrants,
           provider: { kind: "signed", apply },
         }),
-    ).toThrow(PolicyApplyCapabilityUnwiredError);
+    ).not.toThrow();
 
-    // The refusal is the guard: no request reaches the injected capability, and
-    // the guard fires before any collaborator is consulted.
     expect(apply).not.toHaveBeenCalled();
     expect(contacts.create).not.toHaveBeenCalled();
+    expect(contacts.update).not.toHaveBeenCalled();
+    expect(contacts.readActive).not.toHaveBeenCalled();
     expect(listActiveGrants).not.toHaveBeenCalled();
-  });
-
-  it("classifies the refusal as a blocking configuration stop", () => {
-    let refusal: unknown;
-    try {
-      new RecipientPolicyService({
-        database: {} as never,
-        repository: {} as never,
-        contacts: {} as never,
-        listActiveGrants: vi.fn(),
-        provider: { kind: "signed", apply: vi.fn() },
-      });
-    } catch (error) {
-      refusal = error;
-    }
-
-    expect(refusal).toBeInstanceOf(PolicyApplyCapabilityUnwiredError);
-    const typed = refusal as PolicyApplyCapabilityUnwiredError;
-    expect(typed.failureClass).toBe("blocked_configuration");
-    expect(typed.reason).toBe("apply_capability_unwired");
   });
 
   it("builds a service from the unavailable capability", () => {

@@ -16,9 +16,10 @@ import {
   type GrantPolicyRule,
 } from "./policy/composer.js";
 import {
-  PolicyApplyCapabilityUnwiredError,
+  PolicyApplyUnavailableError,
   PolicyComposerRequiredError,
 } from "./policy/errors.js";
+import type { ContactPermissionSnapshot } from "./policy/service.js";
 
 /**
  * The one ordinary trusted-contact transfer ceiling, in lamports (0.01 SOL).
@@ -267,6 +268,19 @@ export type EnrollmentPolicyComposer = {
     userId: string,
     walletId: string,
   ): Promise<{ revision: number; composedHash: string }>;
+  /**
+   * Task 2.8: run the apply path (design §3.5 steps 4-10) for the revision just
+   * recorded and report what the database says afterwards. The applied policy id
+   * is returned from the row, so a caller cannot build a response body out of a
+   * revision nobody verified.
+   */
+  applyRecordedRevision(
+    userId: string,
+    walletId: string,
+  ): Promise<{
+    permission: ContactPermissionSnapshot;
+    appliedPolicyId: string | null;
+  }>;
 };
 
 type WalletRow = {
@@ -984,7 +998,33 @@ export class EmbeddedWalletService {
       throw new PolicyComposerRequiredError("enrollment.prepare");
     }
     await this.enrollmentComposer.recordEnrollmentIntent(userId, wallet.id);
-    throw new PolicyApplyCapabilityUnwiredError("enrollment");
+    // Task 2.8: the apply orchestration runs inside the composer service (§3.5
+    // steps 4-10), so this path no longer stops at an implementation stage; it
+    // stops, if it stops, on what the database actually recorded. The response
+    // body is built from the APPLIED readback only: a preparation carrying a
+    // policy id must never be assembled from a composed revision (spec
+    // "Unsupported writer path fails visibly").
+    const { permission, appliedPolicyId } =
+      await this.enrollmentComposer.applyRecordedRevision(userId, wallet.id);
+    if (permission.state !== "applied" || !appliedPolicyId) {
+      throw new PolicyApplyUnavailableError(
+        "enrollment",
+        `the composed revision is recorded as '${permission.state}' with no verified policy id`,
+      );
+    }
+    return {
+      walletId: wallet.id,
+      walletAddress: wallet.address,
+      walletChainFamily: "solana",
+      policyId: appliedPolicyId,
+      quorumId: this.enrollment.keyQuorumId,
+      perTransferUsdc: atomic6ToUsdc(input.perTransferAtomic6),
+      perTransferSol: lamportsToSol(String(SOLANA_MAX_PER_TRANSFER_LAMPORTS)),
+      rollingTotalUsdc: atomic6ToUsdc(input.rollingTotalAtomic6),
+      windowSeconds: input.rollingWindowSeconds,
+      aggregationReady: false,
+      aggregateBlockReason: AGGREGATION_BLOCK_REASON,
+    };
   }
 
   /**

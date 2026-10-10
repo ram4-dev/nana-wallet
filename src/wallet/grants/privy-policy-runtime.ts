@@ -15,7 +15,7 @@ import {
   createUnavailablePolicyApplyPort,
   type RecipientContactMutationPort,
 } from "../policy/service.js";
-import { PolicyApplyCapabilityUnwiredError } from "../policy/errors.js";
+import { PolicyApplyUnavailableError, PolicyComposerRequiredError } from "../policy/errors.js";
 import {
   createUnavailableGrantPolicyProvisioner,
   GrantPolicyProvisioner,
@@ -182,7 +182,16 @@ export function createRuntimeGrantPolicyProvisioner(
     // unproven rule union, an unsupported ceiling) is reported as its own typed
     // stop instead of being masked by this one.
     await composer.composeRevision(userId, walletId);
-    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync");
+    // Task 2.8 removed `apply_capability_unwired`: the implementation now exists
+    // (`src/wallet/policy/apply.ts`), so what remains true for THIS path is that
+    // the runtime dependencies carry no payload signer and no owner-verified
+    // listing surface, i.e. no signed capability to wire. The composer service
+    // below therefore still holds the `unavailable` arm, and this refusal names
+    // that deployment fact instead of an implementation stage.
+    throw new PolicyApplyUnavailableError(
+      "grant_policy_sync",
+      "no payload signer is wired into the grant-sync runtime",
+    );
   };
 
   return {
@@ -220,7 +229,7 @@ function createRuntimePolicyComposer(
     listActiveGrants: (walletId, userId, chain) =>
       admin.listActiveGrants(walletId, userId, chain),
     provider: createUnavailablePolicyApplyPort(
-      "The signed apply capability is unwired in this slice; the composer records the desired revision and the reconciler applies it.",
+      "provider_unavailable: this deployment has no signed apply capability wired into the grant-sync runtime; the composer records the desired revision and the reconciler applies it.",
     ),
   });
 }
@@ -231,16 +240,16 @@ function createRuntimePolicyComposer(
  */
 const refusingContactPort: RecipientContactMutationPort = {
   create: () => {
-    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.create");
+    throw new PolicyComposerRequiredError("grant_policy_sync.contacts.create");
   },
   update: () => {
-    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.update");
+    throw new PolicyComposerRequiredError("grant_policy_sync.contacts.update");
   },
   archive: () => {
-    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.archive");
+    throw new PolicyComposerRequiredError("grant_policy_sync.contacts.archive");
   },
   readActive: () => {
-    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.readActive");
+    throw new PolicyComposerRequiredError("grant_policy_sync.contacts.readActive");
   },
 };
 

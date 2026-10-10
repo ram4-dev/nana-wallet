@@ -27,7 +27,7 @@
  * embedding provider) is the HTTP vertical's unit; the seam itself is this
  * unit's.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   createDatabaseClient,
@@ -40,7 +40,6 @@ import {
   type PolicyStateRecord,
 } from "../../src/wallet/policy/repository.js";
 import {
-  PolicyApplyCapabilityUnwiredError,
   PolicyRuleCompositionUnprovenError,
   RecipientContactMissingError,
   RecipientContactVersionConflictError,
@@ -1251,33 +1250,41 @@ suite("recipient policy service (task 1.6)", () => {
   // -------------------------------------------------------------------------
 
   describe("the apply seam", () => {
-    it("refuses a signed capability and persists nothing at all", async () => {
+    it("accepts a signed capability and still refuses to apply without a verified signer binding", async () => {
+      /**
+       * Task 2.8 CHANGED THIS CASE. It asserted that constructing the service with
+       * a signed arm THREW `PolicyApplyCapabilityUnwiredError` and persisted
+       * nothing. That class is deleted (the implementation is
+       * `src/wallet/policy/apply.ts`), so the case now drives the signed arm to its
+       * first real guard instead: the fixture wallet has a `ready` row but NO
+       * verified `provider_signer_id`, so there is no policy target and the
+       * provider must not be consulted at all. The stop is recorded, typed, and
+       * carries no applied revision — never an inferred binding (design §0 C5).
+       */
       const { userId, walletId } = await provision();
       await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
-      const before = await counts(userId, walletId);
+      const apply = vi.fn(async () => ({
+        kind: "retryable_failure" as const,
+        reason: "never called",
+        detail: { code: "never_called" },
+      }));
 
-      let refusal: unknown;
-      try {
-        harness({
-          kind: "signed",
-          apply: async () => ({ kind: "unverified", reason: "never called" }),
-        });
-      } catch (error) {
-        refusal = error;
-      }
-      expect(refusal).toBeInstanceOf(PolicyApplyCapabilityUnwiredError);
-
-      // Nothing was requested, so nothing changed — and the positive control is
-      // the unavailable capability, which DOES record a revision.
-      expect(await counts(userId, walletId)).toEqual(before);
-      const { service } = harness();
+      const { service } = harness({ kind: "signed", apply });
       const created = await service.create(userId, {
         name: "Uno",
         description: "",
         address: ADDRESS_A,
       });
+
+      // Positive control: the mutation itself happened and recorded its revision.
       expect(created.policyRevision).toBe(1);
       expect(await readState(userId, walletId)).not.toBeNull();
+      // ...and the apply step refused to guess a binding.
+      expect(apply).not.toHaveBeenCalled();
+      const state = await readState(userId, walletId);
+      expect(state!.status).toBe("pending");
+      expect(state!.statusReason).toBe("signer_binding_unavailable");
+      expect(state!.appliedRevision).toBe(0);
     });
   });
 });

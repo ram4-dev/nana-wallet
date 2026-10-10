@@ -495,8 +495,11 @@ describe("runtime grant policy provisioner (task 2.3, RED)", () => {
       .provisionPolicy(RUNTIME_INPUT)
       .then(() => null, (error: unknown) => error);
     expect(refusal).toBeInstanceOf(PolicyCompositionRefusalError);
+    // Task 2.8 DELETED `apply_capability_unwired`: the implementation exists, so
+    // the refusal now names the deployment fact (no payload signer in this
+    // runtime) rather than an unwritten slice.
     expect((refusal as PolicyCompositionRefusalError).reason).toBe(
-      "apply_capability_unwired",
+      "provider_unavailable",
     );
   });
 

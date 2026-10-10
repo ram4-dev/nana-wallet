@@ -49,11 +49,11 @@ import { appendGrantAudit } from "../grants/consumption.js";
 import {
   composePolicy,
   type ComposedPolicy,
+  type ComposedProvenance,
   type GrantPolicyInput,
   type GrantPolicyRule,
 } from "./composer.js";
 import {
-  PolicyApplyCapabilityUnwiredError,
   PolicyCompositionRefusalError,
   RecipientContactMissingError,
   RecipientPolicyConflictError,
@@ -83,7 +83,6 @@ import {
  * slice-2 apply path maps the same types it will raise.
  */
 export {
-  PolicyApplyCapabilityUnwiredError,
   PolicyComposerRequiredError,
   PolicyCompositionRefusalError,
   PolicyEmptyCompositionUnprovenError,
@@ -305,29 +304,89 @@ export type ActiveGrantLister = (
   chain: string,
 ) => Promise<GrantPolicyInput[]>;
 
-/** What a signed apply capability would receive (design §3.5 steps 4-10). */
+/**
+ * What the signed apply capability receives (design §3.5 steps 4-9).
+ *
+ * The owner-verified binding is NOT a positional guess: `providerWalletId` and
+ * `canonicalSignerId` are the recorded `user_wallets` binding, and the adapter is
+ * what re-reads them through the owner-verified listing (checks (e)-(g), §5.1).
+ * `appliedSignerIds` is the last verified readback's signer set, so a lost
+ * sibling signer is detectable. `provenance` is the recorded consent map the
+ * address check (d) is decided against.
+ */
 export type PolicyApplyRequest = {
   userId: string;
   walletId: string;
+  /** `user_wallets.provider_wallet_id` for the owner-verified comparison. */
+  providerWalletId: string;
+  /** `user_wallets.provider_signer_id` through `resolvePolicyTarget`. */
+  canonicalSignerId: string;
   desiredRevision: number;
   /** The policy the revision is expected to be attached to, when one is known. */
   appliedPolicyId: string | null;
+  /** `recipient_policy_state.applied_signer_ids` of the last verified readback. */
+  appliedSignerIds: string[];
   composedHash: string;
   rules: GrantPolicyRule[];
+  provenance: ComposedProvenance;
 };
 
-/** What a signed apply capability would report back. */
-export type PolicyApplyOutcome =
-  | { readonly kind: "verified" }
-  | { readonly kind: "unverified"; readonly reason: string }
-  | { readonly kind: "blocked"; readonly reason: string };
+/** Bounded, secret-free evidence for `status_detail` (never a signature). */
+export type PolicyApplyDetail = Record<
+  string,
+  string | number | boolean | null
+>;
 
 /**
- * The apply seam (design §3.5 steps 4-10). Slice 1 can only be wired with the
- * `unavailable` arm: no signed implementation exists yet and no slice-1 task may
- * perform a live PATCH, so the service refuses the other arm at construction
- * (design §12.1). The signed arm's request/outcome shape is fixed here so slice 2
- * fills exactly this seam instead of redefining it.
+ * What the signed apply capability reports back, and nothing else.
+ *
+ * `unverified` and `retryable_failure` are DIFFERENT answers (design §5.3,
+ * spec "Timeout is reported as unverified"): an `unverified` outcome means the
+ * remote write may have landed and only a GET can decide, while `retryable_-
+ * failure` means nothing was sent or the provider rejected the request outright.
+ * Collapsing them would either retry a landed write or refuse a safe one.
+ */
+export type PolicyApplyOutcome =
+  | {
+      readonly kind: "verified";
+      readonly appliedPolicyId: string;
+      readonly appliedSignerId: string;
+      readonly appliedSignerIds: string[];
+      readonly appliedRulesHash: string;
+      readonly appliedRecipients: string[];
+      readonly detail: PolicyApplyDetail;
+    }
+  | {
+      readonly kind: "unverified";
+      readonly reason: string;
+      readonly detail: PolicyApplyDetail;
+    }
+  | {
+      readonly kind: "retryable_failure";
+      readonly reason: string;
+      readonly detail: PolicyApplyDetail;
+    }
+  | {
+      readonly kind: "blocked";
+      /** §5.1 failure class: a conflict about the remote rules or the binding. */
+      readonly failureClass: "blocked_conflict" | "blocked_configuration";
+      readonly reason: string;
+      readonly detail: PolicyApplyDetail;
+    };
+
+/**
+ * The apply seam (design §3.5 steps 4-10).
+ *
+ * Two arms, and the difference is a deployment fact, not a test convenience:
+ * `unavailable` is a deployment whose signed-authorization capability is not
+ * configured (no sidecar), so the durable intent is left for the reconciler and
+ * the recorded status says so. `signed` is the real path
+ * (`src/wallet/policy/apply.ts`), which performs steps 4-9 over the provider and
+ * returns the evidence step 10 commits.
+ *
+ * Slice 1 refused the `signed` arm at construction because no implementation
+ * existed. Task 2.8 supplies it, so that refusal is DELETED — not relaxed: the
+ * unimplemented state is no longer representable at all.
  */
 export type PolicyApplyUnavailablePort = {
   readonly kind: "unavailable";
@@ -540,25 +599,22 @@ export class RecipientPolicyService {
   private readonly contacts: RecipientContactMutationPort;
   private readonly listActiveGrants: ActiveGrantLister;
   /**
-   * Only ever the `unavailable` arm: the constructor refuses anything else, so
-   * the post-mutation step below cannot be reached with a live capability.
+   * Either arm (design §3.5). Task 2.8 supplies the signed implementation, so
+   * the constructor no longer refuses it; the two arms differ only in whether
+   * steps 4-9 can run in this deployment.
    */
-  private readonly provider: PolicyApplyUnavailablePort;
+  private readonly provider: PolicyApplyPort;
   /** The `W1` slot's bounded wait (design §1.4). */
   private readonly leaseWaitBudgetMs: number;
   /** Who is asking, recorded on the lease row for diagnostics. */
   private readonly leaseOwnerId: string;
 
   public constructor(dependencies: RecipientPolicyServiceDependencies) {
-    const provider = dependencies.provider;
-    if (provider.kind !== "unavailable") {
-      throw new PolicyApplyCapabilityUnwiredError(provider.kind);
-    }
     this.database = dependencies.database;
     this.repository = dependencies.repository;
     this.contacts = dependencies.contacts;
     this.listActiveGrants = dependencies.listActiveGrants;
-    this.provider = provider;
+    this.provider = dependencies.provider;
     this.leaseWaitBudgetMs =
       dependencies.policyLease?.waitBudgetMs ?? POLICY_LEASE_DEFAULT_WAIT_BUDGET_MS;
     this.leaseOwnerId = dependencies.policyLease?.ownerId ?? "backend";
@@ -576,6 +632,30 @@ export class RecipientPolicyService {
    * not enabled, with no state row, no intent and no policy write (spec "Wallet
    * without a ready permission stays saved and not enabled").
    */
+  /**
+   * Run the apply path for a revision this caller just recorded and report what
+   * the database says afterwards (design §3.5 steps 4-10). The enrollment path
+   * needs exactly this: record the intent, apply it, then report the recorded
+   * result rather than a hoped-for one.
+   */
+  public async applyRecordedRevision(
+    userId: string,
+    walletId: string,
+  ): Promise<{
+    permission: ContactPermissionSnapshot;
+    appliedPolicyId: string | null;
+  }> {
+    await this.applyRevision(userId, walletId);
+    const state = await this.repository.readPolicyState(userId, walletId);
+    return {
+      permission: projectContactPermission(state),
+      // Read back from the row, never carried over from the composition: a caller
+      // building a response body must not be able to assemble it from a revision
+      // nobody verified.
+      appliedPolicyId: state?.appliedPolicyId ?? null,
+    };
+  }
+
   public async create(
     userId: string,
     body: unknown,
@@ -613,7 +693,7 @@ export class RecipientPolicyService {
     );
     if (outcome.kind === "blocked") throw outcome.error;
 
-    await this.recordApplyPending(userId, wallet.walletId);
+    await this.applyRevision(userId, wallet.walletId);
     return {
       contact: outcome.contact,
       permission: await this.readContactPermission(userId, wallet.walletId),
@@ -686,7 +766,7 @@ export class RecipientPolicyService {
     );
     if (outcome.kind === "blocked") throw outcome.error;
 
-    await this.recordApplyPending(userId, wallet.walletId);
+    await this.applyRevision(userId, wallet.walletId);
     return {
       contact: outcome.contact,
       permission: await this.readContactPermission(userId, wallet.walletId),
@@ -807,7 +887,7 @@ export class RecipientPolicyService {
         // already committed with the stop recorded. Throwing here means the caller
         // reports a blocked status, never a success.
         if (outcome.kind === "blocked") throw outcome.error;
-        await this.recordApplyPending(userId, wallet.walletId);
+        await this.applyRevision(userId, wallet.walletId);
         const permission = await this.readContactPermission(userId, wallet.walletId);
         return {
           contact: outcome.contact,
@@ -1424,21 +1504,234 @@ export class RecipientPolicyService {
   }
 
   /**
-   * The post-mutation apply step. Slice 1's capability is `unavailable`, so the
-   * recorded revision stays `pending` with the reason this deployment could not
-   * apply it — the durable intent is left for the reconciler instead of being
-   * reported as anything resembling success (design §3.5, spec "Timeout is
-   * reported as unverified").
+   * The post-mutation apply step, design §3.5 steps 4-10.
+   *
+   * Step 10 is the ONLY transaction this method opens, and it is opened after the
+   * provider work has returned: no transaction is held across steps 4-9 (the unit
+   * suite asserts this against a counting client, so an edit that wraps the PATCH
+   * in a transaction fails by name instead of by review).
+   *
+   * A deployment without a signed capability stays in the durable-intent path:
+   * the recorded revision is left `pending` with the reason, which is the honest
+   * answer rather than anything resembling success (spec "Timeout is reported as
+   * unverified").
+   */
+  private async applyRevision(userId: string, walletId: string): Promise<void> {
+    const provider = this.provider;
+    if (provider.kind !== "signed") {
+      await this.recordApplyPending(userId, walletId, provider.reason);
+      return;
+    }
+
+    const state = await this.repository.readPolicyState(userId, walletId);
+    if (!state) {
+      // No recorded revision means there is nothing to apply; never invent one.
+      await this.recordApplyPending(userId, walletId, "no_recorded_revision");
+      return;
+    }
+    // The recorded binding, resolved fail-closed: a wallet whose canonical signer
+    // was never verified has no policy target, and inventing one would be the
+    // exact inference design §0 C5 forbids. No provider I/O happens on this path.
+    let target: { providerWalletId: string; providerSignerId: string };
+    try {
+      const { resolvePolicyTarget } = await import(
+        "../grants/privy-policy-admin.js"
+      );
+      target = await resolvePolicyTarget(this.database, walletId);
+    } catch {
+      await this.recordApplyPending(userId, walletId, "signer_binding_unavailable");
+      return;
+    }
+    // Composed from the RECORDED state (consent baseline, contacts, grants), which
+    // is the same authority the mutation used and the same input the reconciler
+    // recomposes from — never from a remote readback (design §5.1 (c)/(d)).
+    const composed = await this.composeRevision(userId, walletId);
+
+    const outcome = await provider.apply({
+      userId,
+      walletId,
+      providerWalletId: target.providerWalletId,
+      canonicalSignerId: target.providerSignerId,
+      desiredRevision: state.desiredRevision,
+      appliedPolicyId: state.appliedPolicyId,
+      appliedSignerIds: [...state.appliedSignerIds],
+      composedHash: composed.hash,
+      rules: composed.rules,
+      provenance: composed.provenance as ComposedProvenance,
+    });
+
+    await this.commitApplyOutcome(userId, walletId, state.desiredRevision, outcome);
+  }
+
+  /**
+   * Step 10: one transaction that either commits the verified revision with its
+   * compare-and-set (§1.5) and refreshes `signer_grants` (§5.4), or records the
+   * outcome without ever writing an applied revision.
+   *
+   * `status_detail` MERGES (`jsonb ||`), so every transition below names the keys
+   * it owns explicitly — including the `null`s that clear a previous
+   * transition's stale evidence, which would otherwise survive as if it still
+   * described this outcome.
+   */
+  private async commitApplyOutcome(
+    userId: string,
+    walletId: string,
+    desiredRevision: number,
+    outcome: PolicyApplyOutcome,
+  ): Promise<void> {
+    await this.database.withUserTransaction(userId, async (client) => {
+      if (outcome.kind === "verified") {
+        const committed = await this.repository.commitAppliedRevision(
+          userId,
+          {
+            walletId,
+            desiredRevision,
+            appliedRulesHash: outcome.appliedRulesHash,
+            appliedPolicyId: outcome.appliedPolicyId,
+            appliedSignerId: outcome.appliedSignerId,
+            appliedSignerIds: [...outcome.appliedSignerIds],
+            appliedRecipients: [...outcome.appliedRecipients],
+          },
+          client,
+        );
+        if (!committed) {
+          // §1.5: zero rows means the desired revision moved while this holder was
+          // applying. The stale writer records `superseded` and writes NO applied
+          // revision, so it cannot downgrade `applied_revision`.
+          const inFlight = await this.repository.readInFlightIntent(
+            userId,
+            walletId,
+            client,
+          );
+          if (inFlight) {
+            await this.repository.supersedeIntent(
+              userId,
+              { walletId, intentId: inFlight.id },
+              client,
+            );
+          }
+          await this.repository.appendPolicyAudit(
+            userId,
+            {
+              walletId,
+              event: "superseded",
+              desiredRevision,
+              reason: "desired_revision_moved",
+              detail: { code: "desired_revision_moved", desiredRevision },
+            },
+            client,
+          );
+          return;
+        }
+        // §5.4 post-apply bookkeeping, in the SAME transaction as the CAS: the
+        // two representations of one intent agree or neither moves.
+        await this.repository.refreshSignerGrantProjection(
+          userId,
+          {
+            walletId,
+            allowlistedRecipients: [...outcome.appliedRecipients],
+            policyHash: outcome.appliedRulesHash,
+          },
+          client,
+        );
+        await this.repository.appendPolicyAudit(
+          userId,
+          {
+            walletId,
+            event: "applied",
+            desiredRevision,
+            appliedRevision: desiredRevision,
+            detail: {
+              ...outcome.detail,
+              appliedPolicyId: outcome.appliedPolicyId,
+              // Clears a stale provider failure left by an earlier attempt.
+              operation: null,
+              status: null,
+              message: null,
+            },
+          },
+          client,
+        );
+        return;
+      }
+
+      if (outcome.kind === "unverified" || outcome.kind === "retryable_failure") {
+        // Neither class touches a binding or the applied revision: an unknown
+        // remote outcome must not clear a binding (design §4.3), and only the
+        // reconciler may retry (§5.2/§5.3).
+        await this.repository.setPolicyStatus(
+          userId,
+          {
+            walletId,
+            status: "pending",
+            reason: outcome.reason,
+            detail: { ...outcome.detail, policyId: null, appliedPolicyId: null },
+          },
+          client,
+        );
+        await this.repository.appendPolicyAudit(
+          userId,
+          {
+            walletId,
+            event: "apply_failed",
+            desiredRevision,
+            reason: outcome.reason,
+            detail: outcome.detail,
+          },
+          client,
+        );
+        return;
+      }
+
+      // Proven divergence: recorded as the stop class the comparator returned.
+      // The atomic binding invalidation fallback is task 2.12, so this transition
+      // deliberately clears no `delegated_grants.provider_policy_id`.
+      await this.repository.setPolicyStatus(
+        userId,
+        {
+          walletId,
+          status: outcome.failureClass,
+          reason: outcome.reason,
+          detail: { ...outcome.detail, policyId: null, appliedPolicyId: null },
+        },
+        client,
+      );
+      await this.repository.appendPolicyAudit(
+        userId,
+        {
+          walletId,
+          event: outcome.failureClass,
+          desiredRevision,
+          reason: outcome.reason,
+          detail: outcome.detail,
+        },
+        client,
+      );
+    });
+  }
+
+  /**
+   * The `unavailable` arm's honest record: the revision stays `pending` with the
+   * reason this deployment could not apply it, and the durable intent is left for
+   * the reconciler.
    */
   private async recordApplyPending(
     userId: string,
     walletId: string,
+    reason: string,
   ): Promise<void> {
     await this.repository.setPolicyStatus(userId, {
       walletId,
       status: "pending",
-      reason: this.provider.reason,
-      detail: { code: "provider_unavailable" },
+      reason,
+      detail: {
+        code: reason === "provider_unavailable" ? "provider_unavailable" : reason,
+        // Both keys are named explicitly: `status_detail` merges (`jsonb ||`), so
+        // a previous transition's evidence would otherwise survive as if it
+        // still described this outcome.
+        policyId: null,
+        appliedPolicyId: null,
+      },
     });
   }
 }

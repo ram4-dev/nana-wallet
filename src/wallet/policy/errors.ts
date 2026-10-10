@@ -39,7 +39,15 @@ export type PolicyCompositionRefusalReason =
   | "rule_composition_semantics_unproven"
   | "ordinary_cap_unsupported"
   | "composer_required"
-  | "apply_capability_unwired";
+  /**
+   * Task 2.8. A path that needs a verified remote rule set but is wired without a
+   * signed apply capability stops here. It replaces
+   * `apply_capability_unwired`, which named a slice-1 implementation stage and is
+   * DELETED (not relaxed) by the unit that supplied the implementation: this code
+   * names the actual deployment fact, so it stays true after the implementation
+   * exists.
+   */
+  | "provider_unavailable";
 
 /** Base class for every refusal the composition domain raises. */
 export class PolicyCompositionRefusalError extends Error {
@@ -144,22 +152,28 @@ export class PolicyComposerRequiredError extends PolicyCompositionRefusalError {
 }
 
 /**
- * Design §12.1. Slice 1 ships no signed apply capability, so a service wired
- * with one would be a service that could perform a live policy write. Refusing
- * at construction is how "no slice-1 task performs a live PATCH" becomes a
- * property of the wiring rather than a promise about behaviour: the signed
- * implementation of the port is slice 2's unit, and until it lands the only
- * representable capability is `unavailable`.
+ * Task 2.8. A caller that needs the remote rule set to have been verified, in a
+ * deployment whose signed apply capability is not configured, stops visibly
+ * here.
+ *
+ * This is the DELIBERATE successor of slice 1's
+ * `PolicyApplyCapabilityUnwiredError`, which task 2.8 removed: that class
+ * reported an implementation stage ("unwired") that no longer exists, so keeping
+ * it would have made a wiring fact look like unfinished work. The refusal itself
+ * is not relaxed — it still refuses, still as `blocked_configuration`, and still
+ * never fabricates a policy id (spec "Unsupported writer path fails visibly").
+ * What changed is that the reason now names why THIS deployment cannot apply
+ * instead of claiming the code has not been written.
  */
-export class PolicyApplyCapabilityUnwiredError extends PolicyCompositionRefusalError {
-  /** The capability that was refused. */
+export class PolicyApplyUnavailableError extends PolicyCompositionRefusalError {
+  /** The capability the caller needed, for the operator-facing message. */
   readonly availability: string;
 
-  constructor(availability: string) {
+  constructor(availability: string, cause: string) {
     super(
-      "apply_capability_unwired",
+      "provider_unavailable",
       "blocked_configuration",
-      `Refusing to build the recipient policy service with an '${availability}' apply capability: this slice supplies no signed implementation and must not perform a live policy write. Wire the review-era signed port in the slice that owns the apply path.`,
+      `Refusing to bind a policy for '${availability}': this deployment has no signed apply capability (${cause}). The desired revision is recorded and the reconciler applies it once the capability is configured.`,
     );
     this.availability = availability;
   }

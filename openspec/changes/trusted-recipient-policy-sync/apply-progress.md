@@ -2560,3 +2560,192 @@ it would mean deleting another unit's rows. No readback assertion was removed or
 
 `feat(policy): probe the signed-authorization capability and publish it on /health` — see the report
 envelope for the SHA.
+
+---
+
+## Task 2.8 — the signed apply path with revision CAS and post-apply bookkeeping
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (2.8 → `- [x]`).
+
+### Prerequisite first: the task 1.3 due-intent suite was polluted (committed separately)
+
+`tests/integration/recipient-policy-repository.test.ts > claims a due intent from the system context`
+was failing for a **test-isolation** reason: the shared local database had accumulated **196**
+`recipient_policy_sync_intent` rows (163 of them `desired_revision = 1` with `next_attempt_at IS
+NULL`), the reconciler's scan is `ORDER BY next_attempt_at ASC, desired_revision ASC LIMIT 50`, and the
+suite had no teardown. The suite now owns its rows: the assertion anchors its own row's
+`next_attempt_at` (a fresh `NULL` sorts LAST under `ASC`, the anchor sorts first) and `afterAll` sweeps
+its own rows from the four mutable policy tables. `recipient_policy_audit` is append-only by trigger
+and is deliberately not swept.
+
+**Guarantee preserved and mutation-proved** (each mutation fails the same case by name,
+`expected undefined to be defined`, and is restored):
+
+| Mutation | Result |
+|---|---|
+| anchor set to a future deadline (row no longer inside the scan) | `1 failed \| 19 passed` — the due scan no longer reaches the row |
+| `claimIntent` loses its `wallet_id` scoping | `1 failed \| 19 passed` — at the `mine` assertion |
+| `claimIntent` stops transitioning `state='applying'` | `1 failed \| 19 passed` — at the `mine` assertion |
+| the due scan moves out of the system context | `2 failed \| 18 passed` — the cross-user case *and* the due case |
+
+**Baseline by name, same table state:** with 60 older due rows seeded, the pre-fix form (anchor
+removed) failed at `claims a due intent from the system context and leaves a foreign user unable to
+see it` with `AssertionError: expected undefined to be defined`; the fixed form passed. Seeds purged
+afterwards.
+
+**Rows deleted from the local dev database** (`wdk_agent`, container
+`colloseumfeat-solana-operational-db-1`, test data only): `recipient_policy_sync_intent` **196**,
+`recipient_policy_state` **215**, `recipient_policy_leases` **98**, `contact_action_proposals` **168**.
+`recipient_policy_audit` kept its 1 547 rows — the append-only trigger refuses `DELETE`, and audits
+cannot affect the due scan. Nothing else was touched; the 60 temporary baseline seeds were removed in
+the same unit of work.
+
+Commit: `test(policy): isolate the due-intent suite from accumulated shared-database rows` (see the
+envelope for the SHA).
+
+### Files changed (task 2.8)
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/apply.ts` | **New** (~600 lines). The signed apply capability: §3.5 steps 4–9, the §5.3 classification, the signer-authorization payload, `allowedAddressUnion`, and the real `createPrivyPolicyApplyTransport` over `PrivyServerClient` + the owner-verified listing. |
+| `src/wallet/policy/service.ts` | The apply orchestration: the deleted construction refusal, the widened seam (`PolicyApplyRequest` carries the owner-verified binding + provenance; `PolicyApplyOutcome` gains `verified` evidence, `retryable_failure` and the `blocked` failure class), `applyRevision`, `commitApplyOutcome` (the single step-10 transaction), `applyRecordedRevision`, and `recordApplyPending(reason)` for the `unavailable` arm and the two no-binding stops. |
+| `src/wallet/policy/errors.ts` | `apply_capability_unwired` and `PolicyApplyCapabilityUnwiredError` **deleted**; `provider_unavailable` + `PolicyApplyUnavailableError` added for the paths that genuinely have no capability. |
+| `src/wallet/embedded.ts` | `preparePermission` runs `recordEnrollmentIntent` → `applyRecordedRevision` and returns a preparation **only** from an `applied` readback with a verified policy id. |
+| `src/wallet/grants/privy-policy-runtime.ts` | The grant-sync refusal now names the deployment fact; the refusing contact port uses `PolicyComposerRequiredError`. |
+| `tests/unit/policy-apply-transport.test.ts` | **New**, 17 cases: the signature (verified, not byte-compared), the idempotent skip with zero PATCHes, create/attach only when the signer has none, and the §5.3 table. |
+| `tests/unit/helpers/policy-apply-fakes.ts` | **New**: a fake transport whose mutation check is a real `crypto.verify` against the configured public key, with a mutable owner-verified listing. |
+| `tests/integration/recipient-policy-apply.test.ts` | **New**, 4 cases against the real database: verified commit + §5.4 grant refresh + the counting-client transaction assertion, the stale-writer CAS, the unreachable signer, and the proven divergence. |
+
+### What the unit delivers
+
+- **`applyRevision` (steps 4–10).** The composition is read from the RECORDED state
+  (`composeRevision`), the binding from `resolvePolicyTarget` (fail-closed: a wallet with no verified
+  signer records `signer_binding_unavailable` and performs **no** provider I/O), then the provider
+  runs steps 4–9 with **no transaction open**, and step 10 opens exactly one `withUserTransaction`.
+- **`commitApplyOutcome` (step 10).** `commitAppliedRevision` is the §1.5 compare-and-set
+  (`WHERE wallet_id = $1 AND user_id = $2 AND desired_revision = $3 RETURNING wallet_id`); **zero
+  rows** ⇒ the in-flight intent is `superseded` + a `superseded` audit and **no applied write and no
+  grant refresh**. On success the same transaction refreshes `signer_grants`
+  (`allowlisted_recipients` + `policy_hash`, §5.4) and appends the `applied` audit. `unverified` and
+  `retryable_failure` record `pending` + `apply_failed` and touch no binding; a comparator `blocked`
+  records its own failure class + audit and clears no `delegated_grants.provider_policy_id` (2.12).
+- **`status_detail` merges.** Every transition names its own keys explicitly, including the `null`s
+  that clear a previous transition's stale `policyId`/`operation`/`status`/`message` (the carried
+  note from 1.6/1.7).
+- **The adapter never re-implements a rule check.** Both comparisons go through
+  `comparePolicyReadback`, and the verification comparison re-reads the owner-verified listing, so
+  checks (e)–(g) are judged against the state AT that readback.
+
+### The `apply_capability_unwired` refusal was DELETED, not relaxed
+
+`PolicyApplyCapabilityUnwiredError` and the `apply_capability_unwired` member of
+`PolicyCompositionRefusalReason` no longer exist anywhere in `src/`. The constructor no longer refuses
+the `signed` arm, because the implementation it claimed did not exist is `src/wallet/policy/apply.ts`.
+
+Six assertion sites depended on it, plus a seventh found while doing this work. Each was changed
+deliberately:
+
+| # | Site | Was | Now | Why |
+|---|---|---|---|---|
+| 1 | `tests/unit/policy-service-contract.test.ts` `refuses a signed capability instead of driving a live policy write` | `expect(() => new RecipientPolicyService({provider:{kind:"signed"}})).toThrow(PolicyApplyCapabilityUnwiredError)` | `not.toThrow()`, plus the original no-I/O half kept and **strengthened** (no collaborator is consulted at construction) | The refusal is gone; the property worth keeping is that construction performs no I/O. |
+| 2 | `tests/unit/policy-service-contract.test.ts` `classifies the refusal as a blocking configuration stop` | `instanceof PolicyApplyCapabilityUnwiredError`, `failureClass === "blocked_configuration"`, `reason === "apply_capability_unwired"` | case deleted; its subject (the refusal) no longer exists | A test for a deleted class can only be deleted; the classification it asserted is now covered on the real path by the apply suites. |
+| 3 | `tests/unit/policy-provisioner-delegation.test.ts` (provision) | `refusal.reason === "apply_capability_unwired"` | `=== "provider_unavailable"` | The grant-sync runtime carries no payload signer, so it still refuses — with the reason that names that deployment fact. |
+| 4 | `tests/unit/policy-provisioner-delegation.test.ts` (revoke) | same | same | same |
+| 5 | `tests/unit/grants-policy-runtime.test.ts` | `refusal.reason === "apply_capability_unwired"` | `=== "provider_unavailable"` | same |
+| 6 | `tests/integration/enrollment-composed.test.ts` (assertion + its fixture string) | `refusal.reason === "apply_capability_unwired"`, port reason "unwired in this slice" | `=== "provider_unavailable"`, port reason "provider_unavailable: no signed apply capability in this deployment." | Enrollment now RUNS the apply orchestration; it stops on what the deployment recorded. |
+| 7 | `tests/integration/recipient-policy-service.test.ts` `refuses a signed capability and persists nothing at all` | `expect(refusal).toBeInstanceOf(PolicyApplyCapabilityUnwiredError)` | the signed arm is accepted and driven to its first real guard: with no verified `provider_signer_id` the provider is never called and the state records `signer_binding_unavailable` | Same intent (fail closed, no fabricated binding), now asserted on the path that exists. |
+
+### TDD Cycle Evidence
+
+RED for the new behaviour: neither `createSignedPolicyApplyPort` nor `createPrivyPolicyApplyTransport`
+existed at the start of this unit, so `tests/unit/policy-apply-transport.test.ts` and
+`tests/integration/recipient-policy-apply.test.ts` failed at import. That is the trivial half of RED,
+so the load-bearing proof is the mutation table below: every guard was removed, its attributed failure
+observed by name, and restored.
+
+GREEN: `Tests 21 passed (21)` (17 unit + 4 integration).
+
+| Mutation (removed / replaced) | Result | Guard it proves |
+|---|---|---|
+| `commitAppliedRevision` loses its `desired_revision = $3` predicate | `1 failed \| 20 passed` — `records a stale writer's CAS as superseded and never lowers applied_revision` | The §1.5 compare-and-set is the guard, not the surrounding code. |
+| the provider `apply(...)` is moved INSIDE `withUserTransaction` | `1 failed \| 20 passed` — `commits the verified revision, refreshes the grant projection, and holds NO transaction across the PATCH` (the transport observed `openTransactions === 1`) | "No transaction across steps 4–9" is measured, not intended. |
+| the idempotent skip is disabled (`if (false && decision === "verified")`) | `1 failed \| 20 passed` — `SKIPS the PATCH entirely when the pristine readback already equals the composed rules` | The skip is real: zero PATCHes. |
+| the verification comparison reuses the step-4 listing capture | `1 failed \| 20 passed` — `creates and attaches only when the signer has no policy at all` | Checks (e)–(g) are judged against the live readback; a stale capture would accept an unverified attachment. |
+| the authorization signature becomes an empty string | `8 failed \| 13 passed` — every mutation case plus the signature case | The signature is load-bearing and the fake's check is a real verification. |
+
+### Commands run and results
+
+```text
+npx vitest run tests/unit/policy-apply-transport.test.ts tests/integration/recipient-policy-apply.test.ts
+  → Test Files 2 passed (2), Tests 21 passed (21)
+npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts
+  → Test Files 21 passed (21), Tests 269 passed (269)
+npx vitest run tests/unit/grants-policy-runtime.test.ts tests/unit/policy-provisioner-delegation.test.ts \
+                 tests/unit/policy-service-contract.test.ts tests/integration/enrollment-composed.test.ts \
+                 tests/integration/recipient-policy-service.test.ts
+  → Test Files 5 passed (5), Tests 45 passed (45)
+npm run lint        → clean (eslint --max-warnings=0)
+npm run typecheck   → clean (tsc -p tsconfig.test.json --noEmit)
+```
+
+### Deviations from the design
+
+1. **The verification comparison re-reads the owner-verified listing.** §3.5 lists one owner-verified
+   read at step 4. Reusing that capture for the step-9 comparison would judge post-PATCH rules against
+   the pre-PATCH attachment, i.e. an attachment this unit just created would look unproven — the extra
+   read is what makes check (e) mean something on the create path (mutation 4).
+2. **A verification readback that still differs is `blocked_conflict` (`rules_mismatch`), not
+   `unverified`.** That is the comparator's own phase rule: §5.1 (b) is a `blocked_conflict` and a
+   `converge` is only reachable in the pristine phase. The "equal to the previous applied rules ⇒
+   retry the same revision" branch of §5.3 is the reconciler's (2.9), which owns GET-before-retry.
+   `readback_not_converged` remains as the defensive branch for a `patch_required` verification
+   decision, which `readback.ts` documents as unreachable.
+3. **The grant-sync runtime still wires the `unavailable` arm.** The signed port is implemented and
+   service-wired, but `PrivyPolicyRuntimeDependencies` carries no `PayloadSigner`, no
+   `listWalletsForChain` and no `addPolicyToSigner`, so wiring the real transport there would mean
+   inventing a signer for that path. The refusal now names that fact (`provider_unavailable`) instead
+   of an implementation stage. **Handed to the parent**: the reconciler (2.9) owns the apply loop and
+   is where the transport/signer should be wired.
+4. **`preparePermission` builds the preparation body from the applied readback.** Its success shape
+   was removed in 1.8, so this unit restores it from the verified row (`appliedPolicyId`, the ordinary
+   cap and the aggregate caveat) rather than from a composed revision — a body carrying a policy id
+   must never be assembled from something nobody verified.
+5. **`applyRecordedRevision` is a new public seam on the service** so the enrollment path can record
+   and apply in one call and read the result back. Its `appliedPolicyId` comes from the row, not from
+   the composition.
+6. **The fake transport's owner listing is mutable across an attach.** A fake returning the pre-attach
+   state would have made the post-attach verification unreachable, i.e. a guard nobody could test.
+
+### Observations handed to later tasks (not defects in this unit)
+
+- **2.9 owns the retry/backoff and the UNVERIFIED table.** This unit returns the outcomes; the
+  reconciler decides `confirmedBy='get_after_timeout'`, "retry the same revision", and
+  `syncing`-with-`next_attempt_at`.
+- **2.12 owns the binding invalidation fallback.** A `blocked` outcome here records the stop class and
+  the audit and clears nothing, which is exactly the "unknown outcome must not touch bindings"
+  boundary the fallback task is defined against.
+- **The live signed path stays unproven in this environment.** There is no signer sidecar running, so
+  the live evidence remains pending with its exact step: run `verifyPolicySignerCapability()` against
+  the deployed stack and record `{capable, code}` (5.2), then perform the 5.7 devnet verification.
+  Nothing in this unit claims a live observation.
+- **`state.appliedSignerIds` seeds check (f).** It is `[]` until the first verified apply, so
+  "a sibling signer went missing" becomes observable only from the second apply onward.
+
+### Workload / PR boundary
+
+One commit, one work unit: one new module (600 lines), two new suites + one helper (1 300 lines), and
+the service/errors/embedded/runtime seams (~400 lines changed) — above the 400-line review budget and
+reported, not hidden. It cannot be split without breaking the unit: the adapter, its classification
+table and the orchestration that commits what it returns are one behaviour. It sits inside the
+parent-assigned `PR 4` slice (tasks 2.1–2.14, rollback boundary `src/wallet/policy/apply.ts` plus the
+service seam block), needs no migration change, and no `size:exception` is requested.
+
+### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit (task
+2.8), the authoritative artifact paths and the delivery path directly. Readiness was resolved against
+the artifacts before any edit — `tasks.md` (2.8, terminal `<!-- sdd-owner: implementation -->`),
+`design.md` §1.5, §3.5, §5.1, §5.3, §5.4, and the 1.3–2.7 apply-progress. `actionContext`: all writes
+stayed inside `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`; the main checkout and
+the untracked `compose.privy-local.ports.yaml` were untouched; no `git stash` was run.

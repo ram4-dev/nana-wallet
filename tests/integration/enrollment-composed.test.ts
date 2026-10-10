@@ -203,7 +203,7 @@ suite("enrollment composes through the single service (task 1.8)", () => {
       contacts: refusingContacts,
       listActiveGrants: async () => [],
       provider: createUnavailablePolicyApplyPort(
-        "The signed apply capability is unwired in this slice.",
+        "provider_unavailable: no signed apply capability in this deployment.",
       ),
     });
   }
@@ -265,7 +265,10 @@ suite("enrollment composes through the single service (task 1.8)", () => {
     const refusal = (outcome as { error: PolicyCompositionRefusalError }).error;
     expect(refusal).toBeInstanceOf(PolicyCompositionRefusalError);
     expect(refusal.failureClass).toBe("blocked_configuration");
-    expect(refusal.reason).toBe("apply_capability_unwired");
+    // Task 2.8 DELETED `apply_capability_unwired`; the enrollment path now RUNS
+    // the apply orchestration and stops on what the deployment recorded, which
+    // here is the unavailable capability's own reason.
+    expect(refusal.reason).toBe("provider_unavailable");
 
     // NO INDEPENDENT POLICY CREATOR: the provider policy surface was reachable
     // and was not used.

@@ -146,7 +146,12 @@ describe("the grant policy provisioner delegates to the composer (task 1.8)", ()
     expect(error).toBeInstanceOf(PolicyCompositionRefusalError);
     const refusal = error as PolicyCompositionRefusalError;
     expect(refusal.failureClass).toBe("blocked_configuration");
-    expect(refusal.reason).toBe("apply_capability_unwired");
+    // Task 2.8 DELETED `apply_capability_unwired` (the class and its reason code
+    // are gone from `errors.ts`) because the signed implementation now exists:
+    // what stays true for THIS path is that the grant-sync runtime carries no
+    // payload signer, so it still refuses — with the reason that names that
+    // deployment fact instead of an implementation stage.
+    expect(refusal.reason).toBe("provider_unavailable");
 
     // NO SECOND FULL-RULE WRITER: no provider or signer mutation was issued.
     expect(surface.server.createPolicy).not.toHaveBeenCalled();
@@ -175,7 +180,7 @@ describe("the grant policy provisioner delegates to the composer (task 1.8)", ()
     expect(statements.some((sql) => sql.includes("FROM recipients"))).toBe(true);
     expect(outcome.kind).toBe("rejected");
     expect((outcome as { error: PolicyCompositionRefusalError }).error.reason).toBe(
-      "apply_capability_unwired",
+      "provider_unavailable",
     );
     expect(surface.server.patchPolicy).not.toHaveBeenCalled();
   });
