@@ -10,11 +10,15 @@ import {
   type PrivyWalletApiClient,
   type ProviderWallet,
 } from "./privy-client.js";
+import { AGGREGATION_BLOCK_REASON } from "./enrollment-policy.js";
 import {
-  AGGREGATION_BLOCK_REASON,
-  ENROLLMENT_WINDOW_SECONDS,
-} from "./enrollment-policy.js";
-import { buildSolanaEnrollmentRules } from "./grants/solana-enrollment-rules.js";
+  composedRulesHash,
+  type GrantPolicyRule,
+} from "./policy/composer.js";
+import {
+  PolicyApplyCapabilityUnwiredError,
+  PolicyComposerRequiredError,
+} from "./policy/errors.js";
 
 /**
  * The one ordinary trusted-contact transfer ceiling, in lamports (0.01 SOL).
@@ -247,6 +251,24 @@ export type RevokeResult = {
   remote: "revoked" | "unavailable";
 };
 
+/**
+ * The composer seam enrollment routes through (design §3.3/§3.4). The only
+ * implementation is `RecipientPolicyService`; a structural type keeps the wallet
+ * service from importing the whole policy subsystem and makes the seam's shape
+ * the contract.
+ */
+export type EnrollmentPolicyComposer = {
+  /**
+   * Composes the wallet's desired revision and records it as a durable
+   * `origin='enrollment'` intent. It creates no policy and returns no policy id:
+   * a caller that used to obtain a policy here can no longer be handed one.
+   */
+  recordEnrollmentIntent(
+    userId: string,
+    walletId: string,
+  ): Promise<{ revision: number; composedHash: string }>;
+};
+
 type WalletRow = {
   id: string;
   user_id: string;
@@ -335,6 +357,13 @@ export class EmbeddedWalletService {
     private readonly privy: PrivyWalletApiClient,
     private readonly privyServer?: PrivyServerClient,
     private readonly enrollment?: { keyQuorumId: string },
+    /**
+     * The single composer seam enrollment MUST route through (design §3.3/§3.4).
+     * Absent means this deployment has NOT been given a policy composer, and
+     * enrollment fails visibly with `PolicyComposerRequiredError` rather than
+     * falling back to a direct provider `createPolicy` call.
+     */
+    private readonly enrollmentComposer?: EnrollmentPolicyComposer,
   ) {}
 
   private usesUnverifiedLivePolicy(): boolean {
@@ -908,74 +937,54 @@ export class EmbeddedWalletService {
     const input = defaultGrantInput(recipients);
     validateSolanaGrantInput(input);
 
-    // Reuse an existing pending grant's immutable policy id instead of
-    // recreating a policy on every retry (idempotent prepare).
-    const existing = await this.database.withUserTransaction(
-      userId,
-      async (client) => {
-        const result = await client.query<GrantRow>(
-          `SELECT ${GRANT_COLUMNS} FROM signer_grants
-               WHERE user_id = $1 AND wallet_id = $2 AND state = 'pending'
-               ORDER BY updated_at DESC LIMIT 1`,
-          [userId, wallet.id],
-        );
-        return result.rows[0];
-      },
-    );
+    // Design §3.4: prepare NO LONGER creates or reuses a policy. It keeps a
+    // `pending` grant carrying the durable pre-consent signer snapshot (so
+    // completion can diff against it) but with NO provider policy id, and it
+    // records the enrollment consent as a durable `recipient_policy_sync_intent`
+    // with `origin='enrollment'` composed by the single composer. Retry-idempotency
+    // is preserved by reusing the pending row instead of creating a policy per
+    // attempt.
+    await this.database.withUserTransaction(userId, async (client) => {
+      const existing = await client.query<GrantRow>(
+        `SELECT ${GRANT_COLUMNS} FROM signer_grants
+             WHERE user_id = $1 AND wallet_id = $2 AND state = 'pending'
+             ORDER BY updated_at DESC LIMIT 1`,
+        [userId, wallet.id],
+      );
+      if (existing.rows[0]) return;
+      await client.query(
+        `INSERT INTO signer_grants
+             (user_id, wallet_id, provider_policy_id, policy_hash, allowlisted_recipients, per_transfer_atomic6, per_transfer_lamports, rolling_total_atomic6, rolling_window_seconds, gas_ceiling, state, signer_enrollment_snapshot)
+             VALUES ($1, $2, NULL, $3, $4::jsonb, $5, $6, $7, $8, $9, 'pending', $10::jsonb)`,
+        [
+          userId,
+          wallet.id,
+          deterministicPolicyHash(input, {
+            unit: "solana-lamports",
+            amount: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
+          }),
+          JSON.stringify(input.recipients),
+          input.perTransferAtomic6,
+          SOLANA_MAX_PER_TRANSFER_LAMPORTS,
+          input.rollingTotalAtomic6,
+          input.rollingWindowSeconds,
+          input.gasCeiling,
+          snapshotJson,
+        ],
+      );
+    });
 
-    let policyId: string;
-    if (existing?.provider_policy_id) {
-      policyId = existing.provider_policy_id;
-    } else {
-          const created = await this.privyServer!.createPolicy(
-            `nana-${wallet.address.slice(-10)}`,
-            buildSolanaEnrollmentRules({
-              recipients,
-              maxLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
-            }),
-            { chainType: "solana" },
-          );
-      policyId = created.id;
-      await this.database.withUserTransaction(userId, async (client) => {
-        await client.query(
-          `INSERT INTO signer_grants
-               (user_id, wallet_id, provider_policy_id, policy_hash, allowlisted_recipients, per_transfer_atomic6, per_transfer_lamports, rolling_total_atomic6, rolling_window_seconds, gas_ceiling, state, signer_enrollment_snapshot)
-               VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, 'pending', $11::jsonb)`,
-          [
-            userId,
-            wallet.id,
-            policyId,
-            deterministicPolicyHash(input, {
-              unit: "solana-lamports",
-              amount: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
-            }),
-            JSON.stringify(input.recipients),
-            input.perTransferAtomic6,
-            SOLANA_MAX_PER_TRANSFER_LAMPORTS,
-            input.rollingTotalAtomic6,
-            input.rollingWindowSeconds,
-            input.gasCeiling,
-            snapshotJson,
-          ],
-        );
-      });
+    // The composer is the ONLY policy creator (design §3.3). This slice ships no
+    // signed apply capability, so a caller that used to obtain a policy here can
+    // no longer be handed one and MUST fail visibly: never a fabricated policy
+    // id, never a silent success, never a direct provider fallback. Enrollment
+    // can therefore never report a permission with nothing attached (spec
+    // "Unsupported writer path fails visibly"; design §3.4 step 1).
+    if (!this.enrollmentComposer) {
+      throw new PolicyComposerRequiredError("enrollment.prepare");
     }
-
-    return {
-      walletId: wallet.id,
-      walletAddress: wallet.address,
-      walletChainFamily: "solana",
-      policyId,
-      quorumId: this.enrollment.keyQuorumId,
-      // Solana grant surface: the USDC columns carry no meaning on this chain.
-      perTransferUsdc: "",
-      perTransferSol: "0.01",
-      rollingTotalUsdc: "",
-      windowSeconds: ENROLLMENT_WINDOW_SECONDS,
-      aggregationReady: false,
-      aggregateBlockReason:
-        "El límite acumulado en SOL todavía no está activo. El máximo por transferencia es 0.01 SOL.",
-    };
+    await this.enrollmentComposer.recordEnrollmentIntent(userId, wallet.id);
+    throw new PolicyApplyCapabilityUnwiredError("enrollment");
   }
 
   /**
@@ -1229,15 +1238,30 @@ export class EmbeddedWalletService {
         observedPolicyIds: string[],
         observedSignerIds: string[],
       ): Promise<EnrollmentVerification> {
-        const policyId = grant.provider_policy_id;
-        if (!policyId) {
-          // A pending grant without a policy id can never activate.
+        // Design §3.4 step 3: activation is proven against the wallet's APPLIED
+        // revision — `recipient_policy_state.applied_policy_id` plus a rule
+        // readback equal to `applied_rules_hash` — and never against the pending
+        // row's stored id, which can predate a later contact change. A pending
+        // row whose id no longer matches the applied revision can no longer
+        // activate: with no verified apply on record there is nothing to
+        // activate against, so enrollment fails closed (design §0 C6).
+        const applied = await this.appliedPolicyRevision(
+          userId,
+          grant.wallet_id,
+        );
+        if (
+          !applied ||
+          !applied.applied_policy_id ||
+          !applied.applied_rules_hash ||
+          applied.applied_revision !== applied.desired_revision
+        ) {
           return this.unverifiedSolanaOutcome(
             grant,
             observedPolicyIds,
             observedSignerIds,
           );
         }
+        const policyId = applied.applied_policy_id;
 
         const signers = serverWallet.additional_signers;
 
@@ -1258,6 +1282,18 @@ export class EmbeddedWalletService {
           const canonical = matches[0]!;
           if (
             !PrivyServerClient.signerPolicyIds(canonical).includes(policyId)
+          ) {
+            return this.unverifiedSolanaOutcome(
+              grant,
+              observedPolicyIds,
+              observedSignerIds,
+            );
+          }
+          if (
+            !(await this.appliedRulesReadbackMatches(
+              policyId,
+              applied.applied_rules_hash,
+            ))
           ) {
             return this.unverifiedSolanaOutcome(
               grant,
@@ -1354,12 +1390,86 @@ export class EmbeddedWalletService {
           }
         }
 
+        // The remote rules must still hash to the applied revision before any
+        // binding is persisted: an attached policy is not proof of the rules it
+        // carries.
+        if (
+          !(await this.appliedRulesReadbackMatches(
+            policyId,
+            applied.applied_rules_hash,
+          ))
+        ) {
+          return this.unverifiedSolanaOutcome(
+            grant,
+            observedPolicyIds,
+            observedSignerIds,
+          );
+        }
+
         return this.activateSolanaGrant(
           userId,
           grant,
           candidateId,
           observedPolicyIds,
           observedSignerIds,
+        );
+      }
+
+      /**
+       * Design §3.4 step 3. The applied revision this wallet must be verified
+       * against: `recipient_policy_state.applied_policy_id` together with
+       * `applied_rules_hash` at the applied revision. A missing row means no
+       * composition is on record — "nothing applied", never "assume ok".
+       */
+      private async appliedPolicyRevision(
+        userId: string,
+        walletId: string,
+      ): Promise<
+        | {
+            applied_policy_id: string | null;
+            applied_rules_hash: string | null;
+            applied_revision: string;
+            desired_revision: string;
+          }
+        | undefined
+      > {
+        return this.database.withUserTransaction(userId, async (client) => {
+          const result = await client.query<{
+            applied_policy_id: string | null;
+            applied_rules_hash: string | null;
+            applied_revision: string;
+            desired_revision: string;
+          }>(
+            `SELECT applied_policy_id, applied_rules_hash, applied_revision, desired_revision
+               FROM recipient_policy_state
+              WHERE wallet_id = $1 AND user_id = $2`,
+            [walletId, userId],
+          );
+          return result.rows[0];
+        });
+      }
+
+      /**
+       * Design §3.4 step 3. The rule readback the applied revision must carry:
+       * the policy's own rules, hashed with the composer's canonical hash, must
+       * equal `applied_rules_hash`. An attached policy carrying other rules can
+       * therefore never activate enrollment, and an unreadable policy is a
+       * failure, not a pass.
+       */
+      private async appliedRulesReadbackMatches(
+        policyId: string,
+        appliedRulesHash: string,
+      ): Promise<boolean> {
+        let rules: unknown;
+        try {
+          rules = (await this.privyServer!.getPolicy(policyId)).rules;
+        } catch {
+          return false;
+        }
+        if (!Array.isArray(rules)) return false;
+        return (
+          composedRulesHash(rules as readonly GrantPolicyRule[]) ===
+          appliedRulesHash
         );
       }
 

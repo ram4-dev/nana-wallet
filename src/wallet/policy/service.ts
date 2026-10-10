@@ -1058,6 +1058,65 @@ export class RecipientPolicyService {
     return { kind: "recorded", contact: archived, revision, revokedGrantIds };
   }
 
+  /**
+   * Design §3.4 step 1. The enrollment consent intent: compose the wallet's
+   * desired revision and record it as a durable
+   * `recipient_policy_sync_intent` with `origin='enrollment'` — and NOTHING
+   * else. This method deliberately does not create, attach or PATCH a policy,
+   * and it returns no policy id, so a caller can never mistake it for a
+   * completed enrollment: the policy exists only once the composer's apply path
+   * (slice 2) has verified it.
+   *
+   * Retry-idempotency of `prepare` is preserved here rather than by a policy: a
+   * retried prepare recomposes the SAME desired revision and supersedes the
+   * previous in-flight intent in one transaction, so the wallet is never left
+   * with two intents or with none.
+   */
+  public async recordEnrollmentIntent(
+    userId: string,
+    walletId: string,
+  ): Promise<{ revision: number; composedHash: string }> {
+    return this.database.withUserTransaction(userId, async (client) => {
+      // W0(U): the wallet's own state row, locked for the rest of this
+      // transaction, created if this is its first mutation.
+      await this.repository.lockPolicyState(userId, walletId, client);
+      await this.captureConsentBaselineOnce(userId, walletId, client);
+      const composed = await this.composeRevision(userId, walletId, { client });
+      const revision = await this.repository.bumpDesiredRevision(
+        userId,
+        { walletId, desiredRulesHash: composed.hash },
+        client,
+      );
+      await this.supersedeInFlightIntent(userId, walletId, client);
+      await this.repository.insertIntent(
+        userId,
+        {
+          walletId,
+          desiredRevision: revision,
+          origin: "enrollment",
+          action: "create",
+          // The EXACT rules this revision was composed from, so the reconciler
+          // compares two persisted artifacts instead of recomputing (design §2.2).
+          composedRules: composed.rules,
+          composedHash: composed.hash,
+          idempotencyKey: null,
+        },
+        client,
+      );
+      await this.repository.appendPolicyAudit(
+        userId,
+        {
+          walletId,
+          event: "intent_recorded",
+          desiredRevision: revision,
+          detail: { origin: "enrollment", action: "create" },
+        },
+        client,
+      );
+      return { revision, composedHash: composed.hash };
+    });
+  }
+
   // -------------------------------------------------------------------------
   // The composition seam (design §3.1, §3.5 step 2/step 7)
   // -------------------------------------------------------------------------

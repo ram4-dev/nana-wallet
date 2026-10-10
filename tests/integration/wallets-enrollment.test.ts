@@ -22,6 +22,10 @@ import {
   type PrivyWalletRecord,
   type PrivyWalletSigner,
 } from "../../src/wallet/privy-server-client.js";
+import {
+  composedRulesHash,
+  type GrantPolicyRule,
+} from "../../src/wallet/policy/composer.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -99,6 +103,7 @@ type ListCall = { user_id: string; chain_type: string };
  */
 function mockServerClient(options: {
   policyId?: string;
+  policyRules?: unknown[];
   list?: PrivyWalletRecord[];
   lists?: PrivyWalletRecord[][];
   listStatuses?: number[];
@@ -110,6 +115,7 @@ function mockServerClient(options: {
   client: PrivyServerClient;
   listCalls: ListCall[];
   createPolicy: ReturnType<typeof vi.fn>;
+  getPolicy: ReturnType<typeof vi.fn>;
 } {
   let listCall = 0;
   let solanaListCall = 0;
@@ -139,16 +145,23 @@ function mockServerClient(options: {
     throw new Error("single-wallet SDK surface is unused in this scenario");
   };
   const createPolicy = vi.fn(async () => ({ id: options.policyId ?? "pol_1" }));
+  // The applied-revision rule readback (design §3.4 step 3): the wallet's
+  // applied policy must read back the rules `applied_rules_hash` was composed
+  // from. Defaulting to an empty rule set keeps the negative cases negative.
+  const getPolicy = vi.fn(async (id: string) => ({
+    id,
+    rules: options.policyRules ?? [],
+  }));
   const wallets: PrivySdkWallets = { list, get: unused, update: unused };
   const client = new PrivyServerClient({
     appId: APP_ID,
     appSecret: APP_SECRET,
     client: {
       wallets: () => wallets,
-      policies: () => ({ create: createPolicy, get: unused, update: unused }),
+      policies: () => ({ create: createPolicy, get: getPolicy, update: unused }),
     } as unknown as PrivySdkClient,
   });
-  return { client, listCalls, createPolicy };
+  return { client, listCalls, createPolicy, getPolicy };
 }
 
 suite(
@@ -441,7 +454,7 @@ suite(
       expect(result.state).toBe("conflict");
     });
 
-    it("prepare creates the per-transfer provider policy and a pending grant (user-authorized scope)", {
+    it("prepare records no policy and fails visibly instead of reporting a permission nobody attached", {
       timeout: 60_000,
     }, async () => {
       const did = `did:privy:prep-${randomUUID()}`;
@@ -457,18 +470,26 @@ suite(
       );
       await service.syncWallet(userId);
 
-      const prep = await service.preparePermission(userId, [SOL_RECIPIENT]);
-      // Per-transfer policy created server-side; the rolling-hour aggregate
-      // stays a pending feature (never enforced, never hidden).
-      expect(prep.policyId).toBe("pol_1");
-      expect(prep.aggregationReady).toBe(false);
-      expect(prep.aggregateBlockReason).toMatch(/0\.01 SOL/u);
-      expect(createPolicy).toHaveBeenCalledTimes(1);
-      const rows = await database.query<{ state: string }>(
-        "SELECT state FROM signer_grants WHERE user_id = $1 LIMIT 1",
+      // The composer is the only policy creator (task 1.8). A caller that used
+      // to obtain a policy here and now cannot MUST fail visibly: never a
+      // fabricated id, never a silent success, never a direct provider call.
+      await expect(
+        service.preparePermission(userId, [SOL_RECIPIENT]),
+      ).rejects.toMatchObject({ failureClass: "blocked_configuration" });
+      expect(createPolicy).not.toHaveBeenCalled();
+      // Positive control: the enrollment DID persist its pending grant, so the
+      // refusal happened after the durable enrollment record, not before it.
+      const rows = await database.query<{
+        state: string;
+        provider_policy_id: string | null;
+      }>(
+        "SELECT state, provider_policy_id FROM signer_grants WHERE user_id = $1 LIMIT 1",
         [userId],
       );
-      expect(rows.rows[0]?.state).toBe("pending");
+      expect(rows.rows[0]).toEqual({
+        state: "pending",
+        provider_policy_id: null,
+      });
     });
 
     it("does not activate when the attached signer policy differs from the stored grant", {
@@ -636,7 +657,7 @@ suite(
       ).rejects.toBeInstanceOf(WalletUnavailableError);
     });
 
-    it("authenticated prepare endpoint activates enrollment with the pending hourly limit surfaced", {
+    it("authenticated prepare endpoint fails visibly instead of reporting an enabled enrollment", {
       timeout: 60_000,
     }, async () => {
       const did = `did:privy:route-${randomUUID()}`;
@@ -665,9 +686,11 @@ suite(
             recipients: [SOL_RECIPIENT],
           },
         });
-        expect(prepare.statusCode).toBe(200);
-        expect(prepare.json().data.policyId).toBe("pol_route_1");
-        expect(prepare.json().data.aggregationReady).toBe(false);
+        // No policy can be composed in this slice, so the endpoint reports the
+        // typed configuration conflict instead of a 200 with a permission the
+        // caller would mistake for ready.
+        expect(prepare.statusCode).toBe(409);
+        expect(prepare.json().error.code).toBe("CONFLICTO_POLITICA");
         expect(JSON.stringify(prepare.json())).not.toContain(APP_SECRET);
       } finally {
         await app.close();
@@ -867,6 +890,36 @@ suite(
     }
 
     /**
+     * The applied revision completion is verified against (design §3.4 step 3):
+     * `applied_policy_id` plus the hash of the exact rules the policy reads
+     * back, at `applied_revision = desired_revision`.
+     */
+    async function insertAppliedPolicyState(
+      userId: string,
+      walletId: string,
+      policyId: string,
+      rules: GrantPolicyRule[],
+    ): Promise<void> {
+      await database.query(
+        `INSERT INTO recipient_policy_state
+           (wallet_id, user_id, desired_revision, applied_revision, applied_policy_id,
+            applied_rules_hash, applied_signer_id, status, verified_at)
+         VALUES ($1, $2, 1, 1, $3, $4, 'signer-verified', 'applied', now())`,
+        [walletId, userId, policyId, composedRulesHash(rules)],
+      );
+    }
+
+    /** The rule set the applied policy reads back (one ordinary allowance rule). */
+    const APPLIED_RULES: GrantPolicyRule[] = [
+      {
+        name: "Solana transfer allowlist",
+        method: "signAndSendTransaction",
+        action: "ALLOW",
+        conditions: [],
+      },
+    ];
+
+    /**
      * Inserts the ready Solana wallet row DIRECTLY (bypassing syncWallet,
      * which does not yet provision Solana rows — that is task 2.6's GREEN
      * step) and returns the local wallet UUID. The mock Privy client must
@@ -923,16 +976,21 @@ suite(
       );
       await insertReadySolanaWallet(userId, wallet.id);
 
-      const prep = await service.preparePermission(userId, [
-        "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-      ]);
+      // Prepare records the durable snapshot and then refuses visibly (the
+      // composer owns the policy write, which this slice cannot perform).
+      await expect(
+        service.preparePermission(userId, [
+          "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        ]),
+      ).rejects.toMatchObject({ failureClass: "blocked_configuration" });
       // The pending grant must carry a persisted snapshot of the CURRENT
       // remote signer ids (pre-consent), so complete can diff against it.
       const rows = await database.query<{
         signer_enrollment_snapshot: unknown;
         per_transfer_lamports: string | null;
+        provider_policy_id: string | null;
       }>(
-        `SELECT signer_enrollment_snapshot, per_transfer_lamports FROM signer_grants WHERE user_id = $1 LIMIT 1`,
+        `SELECT signer_enrollment_snapshot, per_transfer_lamports, provider_policy_id FROM signer_grants WHERE user_id = $1 LIMIT 1`,
         [userId],
       );
       expect(rows.rows[0]?.signer_enrollment_snapshot).toEqual(
@@ -941,7 +999,8 @@ suite(
         }),
       );
       expect(rows.rows[0]?.per_transfer_lamports).toBe("10000000");
-      expect(prep).toMatchObject({ perTransferSol: "0.01", perTransferUsdc: "" });
+      // No policy id: the composer is the only policy creator.
+      expect(rows.rows[0]?.provider_policy_id).toBeNull();
     });
 
     it("prepare retry preserves the original snapshot and pending grant (restart-safe)", {
@@ -960,9 +1019,11 @@ suite(
         { keyQuorumId: "key-quorum-1" },
       );
       await insertReadySolanaWallet(userId, wallet.id);
-      await service.preparePermission(userId, [
-        "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-      ]);
+      await expect(
+        service.preparePermission(userId, [
+          "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        ]),
+      ).rejects.toMatchObject({ failureClass: "blocked_configuration" });
 
       // Consent happens between prepare calls: the remote signer list now
       // contains a NEW signer. A retried prepare must NOT overwrite the
@@ -983,9 +1044,11 @@ suite(
         retryClient,
         { keyQuorumId: "key-quorum-1" },
       );
-      await retryService.preparePermission(userId, [
-        "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-      ]);
+      await expect(
+        retryService.preparePermission(userId, [
+          "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        ]),
+      ).rejects.toMatchObject({ failureClass: "blocked_configuration" });
 
       const rows = await database.query<{
         signer_enrollment_snapshot: unknown;
@@ -1017,6 +1080,12 @@ suite(
       );
       const localWalletId = await insertReadySolanaWallet(userId, wallet.id);
       await insertPendingGrant(userId, localWalletId, "pol_solana_1");
+      await insertAppliedPolicyState(
+        userId,
+        localWalletId,
+        "pol_solana_1",
+        APPLIED_RULES,
+      );
 
       // After consent: the pre-existing signer plus EXACTLY ONE new signer
       // carrying the pending policy.
@@ -1032,6 +1101,7 @@ suite(
       );
       const { client: completeClient } = mockServerClient({
         list: [postConsentWallet],
+        policyRules: APPLIED_RULES,
       });
       const completeService = new EmbeddedWalletService(
         database,
@@ -1069,7 +1139,10 @@ suite(
           override_policy_ids: ["pol_solana_1"],
         },
       ]);
-      const { client } = mockServerClient({ list: [wallet] });
+      const { client } = mockServerClient({
+        list: [wallet],
+        policyRules: APPLIED_RULES,
+      });
       const service = new EmbeddedWalletService(
         database,
         createPrivyWalletApiClient(process.env, {}),
@@ -1083,6 +1156,12 @@ suite(
         [localWalletId],
       );
       await insertPendingGrant(userId, localWalletId, "pol_solana_1");
+      await insertAppliedPolicyState(
+        userId,
+        localWalletId,
+        "pol_solana_1",
+        APPLIED_RULES,
+      );
 
       const result = await service.completePermission(userId, localWalletId);
       expect(result.verified).toBe(true);

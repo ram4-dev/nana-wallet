@@ -1462,3 +1462,156 @@ writes stayed inside the assigned worktree root
 (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout
 (`/Users/ramiro/Desktop/projects/colloseum`) and the untracked `compose.privy-local.ports.yaml` were
 not touched. No review, receipt or delivery gate was started.
+
+---
+
+## Task 1.8 — deliverables 2 and 3 (enrollment composed; completion verified on the applied revision)
+
+Continuation of the same work unit. Deliverable 1 (the grant provisioner delegation) landed in
+`f0308cc`; this run completes the dangerous half — removing `preparePermission`'s direct
+`createPolicy` — and closes the unit. One commit.
+
+### What landed in this commit
+
+| File | Role |
+|---|---|
+| `src/wallet/embedded.ts` | `preparePermission` no longer creates or reuses a policy: it persists the pending `signer_grants` row (snapshot preserved, `provider_policy_id` NULL), records the enrollment intent through the composer, then REFUSES VISIBLY. `completeSolanaPermission` now verifies against `recipient_policy_state.applied_policy_id` + a rule readback equal to `applied_rules_hash` instead of the pending row's stored id. New `EnrollmentPolicyComposer` seam + `appliedPolicyRevision` / `appliedRulesReadbackMatches` helpers. |
+| `src/wallet/policy/service.ts` | New `recordEnrollmentIntent(userId, walletId)` (design §3.4 step 1): compose the desired revision and record it as a durable `origin='enrollment'` intent, superseding the previous in-flight intent in the same transaction. Creates no policy and returns no policy id. |
+| `src/api/wallets.ts` | `PolicyCompositionRefusalError` maps to `409 CONFLICTO_POLITICA` so the fail-visible stop is a typed conflict, not a generic 500. |
+| `tests/integration/enrollment-composed.test.ts` | New (3 cases). |
+| `tests/integration/wallets-enrollment.test.ts` | 6 cases CHANGED (see below). |
+
+### The safety framing, resolved
+
+The forbidden failure mode was *enrollment completing while no policy is attached at all*. Removal of
+the direct `createPolicy` makes the composer the only policy creator; because slice 1 ships the
+`apply_capability_unwired` capability (task 1.6), the composer cannot hand back a policy. The contract
+is therefore: **a caller that used to obtain a policy and now cannot fails visibly.**
+
+* `preparePermission` records the durable enrollment intent (positive control: the intent row exists,
+  carrying the composed rules) and then throws a typed `PolicyCompositionRefusalError`
+  (`failureClass: blocked_configuration`). When no composer is wired at all it throws
+  `PolicyComposerRequiredError` (same class) instead of falling back to a provider call.
+* `completePermission` activates ONLY when `recipient_policy_state` records an applied revision whose
+  `applied_policy_id` the signer carries AND whose policy reads back rules hashing to
+  `applied_rules_hash`. With no verified apply on record it fails closed — a pending row can never
+  activate on the strength of its own stored id.
+* `signer_enrollment_snapshot` is untouched (the retention path at `signer_enrollment_snapshot`
+  is byte-identical; only the `provider_policy_id` column of the same INSERT became NULL).
+
+### The fail-visible test (the structural guard)
+
+`tests/integration/enrollment-composed.test.ts` → *"fails visibly instead of reporting an enrollment
+with no policy attached"* asserts `preparePermission` REJECTS with a
+`PolicyCompositionRefusalError`, that `createPolicy`/`addPolicyToSigner` were reachable and uncalled,
+and that no `provider_policy_id` exists for the wallet. It fails the instant an edit lets enrollment
+resolve while no policy is attached (see mutation A below).
+
+### TDD cycle evidence (RED → GREEN → MUTATION)
+
+| Phase | Evidence |
+|---|---|
+| RED | The new suite was authored against the new contract. Honest RED was produced by MUTATION rather than by the pre-edit tree (deliverable 1 had already edited the tree in `f0308cc`): each guard was removed and the attributed failure observed by name — see below. |
+| GREEN | `npx vitest run tests/integration/enrollment-composed.test.ts` → **1 file passed, 3 tests passed** (363 ms). |
+| MUTATION A (fail-visible guard, deliverable 2) | `throw new PolicyApplyCapabilityUnwiredError("enrollment")` → a fabricated `return { policyId: "pol_fabricated", … } as never`. Result: **2 failed / 1 passed (3)**: exactly *"records the enrollment intent through the service and creates no independent policy"* and *"fails visibly instead of reporting an enrollment with no policy attached"*. Restored from a pristine copy; re-run green. |
+| MUTATION B (applied-revision guard, deliverable 3) | The whole `appliedPolicyRevision` gate → `const policyId = grant.provider_policy_id;` (the deleted behaviour). Result: **1 failed / 2 passed (3)**: exactly *"cannot activate a permission from a pending row whose id is not the applied revision"*. Restored; re-run green (`grep -c` confirms the throw and both `applied.applied_policy_id` reads are back). |
+
+Positive control for the negative (mutation B) case: the same applied-revision gate is exercised in the
+POSITIVE direction by the two rewritten `wallets-enrollment` cases *"complete binds exactly-one new
+signer vs snapshot…"* and *"complete reuses the canonical stored signer id…"* (both seed
+`recipient_policy_state` and assert `verified === true`), so the stale-id refusal is not passing
+because a relation or row set is missing.
+
+### Existing tests changed, and why (none deleted)
+
+In `tests/integration/wallets-enrollment.test.ts`:
+
+1. *"prepare creates the per-transfer provider policy and a pending grant (user-authorized scope)"* →
+   *"prepare records no policy and fails visibly instead of reporting a permission nobody attached"*.
+   The old case asserted exactly the removed behaviour (`createPolicy` called once, `prep.policyId`).
+   The new case asserts the design's replacement: zero provider policy writes, a pending row with no
+   policy id, and a typed `blocked_configuration` refusal. The `aggregationReady:false` /
+   `aggregateBlockReason` intent has no subject left (there is no preparation payload), so it moved to
+   the honest-reporting case *"reports a legacy active row honestly with the pending hourly limit"*,
+   which still asserts `aggregationReady:false` + `aggregateOvershootCaveat:true`.
+2. *"authenticated prepare endpoint activates enrollment with the pending hourly limit surfaced"* →
+   *"authenticated prepare endpoint fails visibly instead of reporting an enabled enrollment"*: the
+   route now returns `409 CONFLICTO_POLITICA` instead of `200 { policyId }`. Same route, same token,
+   same no-secret assertion; the honest end state replaced the optimistic one.
+3. *"prepare persists a durable signer snapshot on the pending grant"*: prepare now rejects, so the
+   call is wrapped in `.rejects.toMatchObject({ failureClass: "blocked_configuration" })`; the snapshot
+   assertion (the case's real intent) is unchanged, plus a new `provider_policy_id IS NULL` assertion.
+   The `prep.perTransferSol` assertion has no subject left and is covered by the honest-reporting case.
+4. *"prepare retry preserves the original snapshot and pending grant (restart-safe)"*: same wrapping on
+   both prepare calls; the restart-safety assertion is unchanged.
+5. *"complete binds exactly-one new signer vs snapshot and stores the canonical id"* and
+6. *"complete reuses the canonical stored signer id when present after remote readback"*: these drove
+   the OLD completion contract (activate on the pending row's id). They now seed the APPLIED revision
+   (`insertAppliedPolicyState`) and configure the policy readback (`policyRules`), because that is what
+   completion is verified against. The activation and "reuse never re-select" assertions are unchanged.
+   The shared `mockServerClient` gained a `getPolicy` (previously the throwing `unused` stub) for the
+   applied-rules readback.
+
+All other completion cases (stale policy, ownership loss, provider failure, race, zero/multiple new
+signers, missing policy readback) already asserted `verified:false` and stay green unchanged: with no
+applied revision on record they now fail closed even earlier.
+
+### Commands run and results
+
+```text
+# the unit's own suite
+npx vitest run tests/integration/enrollment-composed.test.ts        → 3 passed (3)
+
+# slice-1 regression (units 1.1-1.7 + 1.8a stay green)
+npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts
+  → Test Files 11 passed (11) | Tests 194 passed (194)
+
+# PRE-CHANGE CONTROL (recorded before any edit) and POST-CHANGE, SAME SET, by test name
+npx vitest run tests/integration/wallets-enrollment.test.ts tests/integration/privy-policy-admin-migration.test.ts \
+  tests/integration/wallets-sync.test.ts tests/unit/grants-policy-runtime.test.ts tests/unit/policy-provisioner-delegation.test.ts
+  PRE  → Test Files 1 failed | 4 passed (5) | Tests 1 failed | 62 passed (63)
+  POST → Test Files 1 failed | 4 passed (5) | Tests 1 failed | 62 passed (63)
+  IDENTICAL BY TEST NAME. The ONLY failure in both runs is the pre-existing baseline failure
+  `wallets-sync.test.ts > PEW-013: explicit activation with read-back; empty allowlist rejected (422)`
+  (named in .agent-workflow/tasks/trusted-recipient-policy-sync/91-test-baseline.md). No new failure.
+
+# suites that reference the changed contract
+npx vitest run tests/unit/wallet-chain-http.test.ts tests/unit/policy-composer.test.ts → 2 files, 34 passed
+
+npm run lint      → eslint src tests --max-warnings=0 : clean, exit 0
+npm run typecheck → tsc -p tsconfig.test.json --noEmit : clean, exit 0
+```
+
+### Workload / PR boundary
+
+One commit, closing the task-1.8 work unit (deliverables 1–3): `solana-policy-provisioner.ts` +
+`privy-policy-runtime.ts` + the new delegation suite (from `f0308cc`), plus `embedded.ts`,
+`policy/service.ts`, `api/wallets.ts`, the new `enrollment-composed` suite and the 6 changed
+`wallets-enrollment` cases. It sits inside the parent-assigned `PR 3` slice (tasks 1.7–1.11). No push,
+no PR, and no work started on tasks 1.9–1.11.
+
+### Deviations from design
+
+1. **`errorReply` mapping added.** The design does not name an HTTP code for the legacy
+   `/permission/prepare` route; a typed `blocked_configuration` stop would otherwise surface as a
+   generic 500. It now maps to `409 CONFLICTO_POLITICA`.
+2. **`EnrollmentPreparation` is now unreachable on the success path.** `preparePermission` always
+   throws in this slice (no signed apply), so the response schema and `policyId` field remain declared
+   but are never produced. Slice 2/3 replaces the enrollment surface with the mirrored recipient
+   contract; the removed `perTransferSol`/`aggregationReady` preparation payload was re-homed to the
+   honest-reporting case rather than dropped silently.
+3. **The composer is injected, not built in place.** `EmbeddedWalletService` takes an optional
+   `EnrollmentPolicyComposer`; `server.ts` does not wire one yet, so production `prepare` stops at
+   `PolicyComposerRequiredError` (same `blocked_configuration` class). Wiring the real service is
+   slice 2/3's job — the service is not constructed anywhere in production yet.
+
+### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit, the
+authoritative artifact paths and the delivery path directly. Readiness was resolved against the
+artifacts before any edit — `tasks.md` (task 1.8, terminal `<!-- sdd-owner: implementation -->`),
+`design.md` §0 C1/C6, §3.3, §3.4, §3.5, and the prior 1.1–1.8 apply-progress. `actionContext`: all
+writes stayed inside the assigned worktree root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout
+(`/Users/ramiro/Desktop/projects/colloseum`) and the untracked `compose.privy-local.ports.yaml` were
+not touched. No review, receipt or delivery gate was started.

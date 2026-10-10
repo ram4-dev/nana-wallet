@@ -22,6 +22,7 @@ import {
   type WalletSyncResponse,
 } from "../contracts/http.js";
 import { WalletBalancesError } from "../wallet/balances.js";
+import { PolicyCompositionRefusalError } from "../wallet/policy/errors.js";
 import {
   GrantNotFoundError,
   GrantValidationError,
@@ -99,6 +100,17 @@ function errorReply(reply: WalletReply, error: unknown): WalletApiError {
     return {
       ok: false,
       error: { code: "WALLET_CONFLICTO", message: error.message },
+    };
+  }
+  // Design §3.3/§3.4: a writer path that cannot route through the single policy
+  // composer must fail VISIBLY. Enrollment used to obtain a policy directly and
+  // can no longer be handed one, so the stop is reported as the typed
+  // configuration conflict it is instead of a generic 500 — never a success.
+  if (error instanceof PolicyCompositionRefusalError) {
+    reply.code(409);
+    return {
+      ok: false,
+      error: { code: "CONFLICTO_POLITICA", message: error.message },
     };
   }
   if (error instanceof WalletUnavailableError) {
