@@ -6708,3 +6708,32 @@ inspection was the sanctioned projection
 `printenv`, `--format '{{println .}}'` and no line-oriented projection anywhere. The harness
 printed HTTP **header names** only, never values, and never the request or response body's
 credentials; the traced body excerpts are tool-schema shapes and user-visible copy.
+
+---
+
+## Unit — fix: voice could never authorize a trusted-recipient card (2026-10-10)
+
+**Reported by the user:** "intenté agregar un contacto desde la voz y no me dejó."
+
+**Root cause (found in the live worker logs + the persisted rows).** `src/livekit/voice-decision-transcripts.ts` was the shared listener that records final user speech as confirmation evidence, and it early-returned whenever there was no **transfer** preview:
+
+```ts
+const previewId = gate.currentPreviewId();
+if (!previewId) return;   // dropped final speech for every non-transfer window
+```
+
+A trusted-recipient card has no transfer preview, so a spoken "sí" never reached `gate.recordTranscript` → never reached `arbiter.recordEvidence` → `confirm_trusted_recipient_action` always ended with `{"status":"confirmation_required","message":"Todavía no tengo tu confirmación para esta tarjeta."}`. **Voice authorization of a contact card was impossible.**
+
+Live evidence: proposal `94f7f262` (origin `voice`, action `create`, address NULL) staged 21:16:20 → card published → the user pasted the address, creating the correct new immutable version `5145ff29` (v2, real address) at 21:16:51, superseding v1 → the user said yes → the model confirmed **v1** at 21:17:22 → refused.
+
+**Spec clause that mandated the fix:** `spec.md` → "Explicit confirmation is authorized by final user speech": *"The LiveKit session MUST record final user transcript evidence **independently of model tool selection**."* That listener *is* that mechanism, so it must work for whichever window is open, regardless of kind.
+
+**Fix.** The listener now offers the event to whichever window the gate holds and calls `gate.recordDecisionTranscript(...)`, which binds it to that window's own identity. The arbiter keeps every safety rule (typed `{kind, actionId, userId, version}` exact match, post-window ordering, authenticated speaker, final-only, one-use), and a stale or mismatched version still fails closed.
+
+**Second half — make a stale refusal actionable.** The paste happens over HTTP in the `backend` process, so the agent cannot learn v2 on its own; it kept confirming v1. The refusal now carries the conversation's current open handle (`currentProposalId`/`currentProposalVersion`) so the next turn can confirm the right one in one step. It does **not** auto-confirm a different version.
+
+**Tests.** `tests/integration/livekit-trusted-recipient.e2e.test.ts` was extended to drive the **real** `attachVoiceDecisionTranscripts` listener for a **CONTACT** window — it previously called `arbiter.recordEvidence` directly for the contact case, which is exactly why this bug shipped with a green suite. Suites run: `voice-decision-transcripts` + `confirmation-arbiter` + `contact-proposal-publication` (25 passed), and the three LiveKit/contact integration suites (25 passed). `npm run lint` and `npm run typecheck` clean.
+
+**Stack restarted** with `docker compose restart voice-worker backend` (not a bare `docker restart`, which orphans the `*-signer` sidecars that join via `network_mode: service:<name>`).
+
+**Freeze note.** This is a **source change**, so frozen candidate `ca4fdb2` is further superseded: a re-freeze plus a new review candidate are owed.

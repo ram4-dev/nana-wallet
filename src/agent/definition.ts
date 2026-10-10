@@ -94,7 +94,20 @@ export type ContactActionPort = {
     name?: string;
     description?: string;
   }): Promise<{ status: 'staged' | 'confirmation_required' | 'conflict_active_window' | 'address_review_required' | 'proposal_not_published'; proposalId?: string; proposalVersion?: number; message: string }>;
-  confirm?(input: { userId: string; conversationId: string; proposalId: string; proposalVersion: number; source: 'text' | 'voice' }): Promise<{ status: string; message: string }>;
+  /**
+   * Confirms one server-owned proposal. Stale or unknown ids fail closed and the
+   * refusal names the proposal that is actually open (`currentProposalId` +
+   * `currentProposalVersion`, read from the persisted row), so the model can
+   * recover in one step instead of repeating the id it staged. The model still
+   * supplies only `proposalId`/`proposalVersion` — never an address, phrase,
+   * timestamp or turn count.
+   */
+  confirm?(input: { userId: string; conversationId: string; proposalId: string; proposalVersion: number; source: 'text' | 'voice' }): Promise<{
+    status: string;
+    message: string;
+    currentProposalId?: string;
+    currentProposalVersion?: number;
+  }>;
 };
 
 const contactCreateInputSchema = z.object({
@@ -576,7 +589,7 @@ function createContactActionOperations(context: WalletAgentContext): AgentToolDe
     },
     {
       name: 'confirm_trusted_recipient_action',
-      description: 'Consumes only the exact secure proposal after authenticated user evidence. It takes proposal id and version, never an address, confirmation phrase, timestamp, or turn count.',
+      description: 'Consumes only the exact secure proposal after authenticated user evidence. It takes proposal id and version, never an address, confirmation phrase, timestamp, or turn count. If the refusal reports a currentProposalId and currentProposalVersion, that is the proposal actually open: retry once with that exact handle instead of reusing the id you staged.',
       inputSchema: contactConfirmInputSchema,
       execute: async (input) => {
         if (!context.contactActions?.confirm) return unavailable;

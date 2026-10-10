@@ -58,6 +58,8 @@ function harness(input: {
   publish?: (payload: Published) => Promise<void>;
   markPublished?: () => Promise<ContactActionProposal | null>;
   consumed?: boolean;
+  /** Stands in for the persisted row the card renders. */
+  currentOpenProposal?: () => Promise<{ proposalId: string; proposalVersion: number } | null>;
 } = {}) {
   const published: Published[] = [];
   const stageCalls: Array<Record<string, unknown>> = [];
@@ -66,14 +68,22 @@ function harness(input: {
   // AFTER the delivery resolved: `["publish", "markPublished"]`, never the reverse.
   const order: string[] = [];
   const arbiter = createConfirmationArbiter({ isConfirmation, isCancellation, boundedWaitMs: 5 });
+  // The row the seam last wrote: unpublished until `markPublished` succeeds, which
+  // is what makes the default `currentOpenProposal` below faithful rather than a
+  // convenient stub.
+  let persisted: ContactActionProposal | null = null;
   const actions = {
     stage: async (call: Record<string, unknown>) => {
       stageCalls.push(call);
-      return proposal();
+      persisted = proposal();
+      return persisted;
     },
     markPublished: async () => {
       order.push("markPublished");
-      return input.markPublished ? input.markPublished() : proposal({ publishedAt: new Date().toISOString() });
+      persisted = input.markPublished
+        ? await input.markPublished()
+        : proposal({ publishedAt: new Date().toISOString() });
+      return persisted;
     },
     read: async () => proposal(),
     consumeInTransaction: async () => proposal({ status: "consumed" as const }),
@@ -89,6 +99,12 @@ function harness(input: {
       order.push("publish");
     },
     arbiter,
+    currentOpenProposal:
+      input.currentOpenProposal ??
+      (async () =>
+        persisted && persisted.status === "open" && persisted.publishedAt
+          ? { proposalId: persisted.proposalId, proposalVersion: persisted.proposalVersion }
+          : null),
     consume: async (call) => {
       consumedCalls.push(call);
       return input.consumed ?? true;
@@ -197,6 +213,49 @@ describe("voice contact proposal publication", () => {
     evidence(refusedHarness.arbiter, refusedHarness.arbiter.current()!.createdAt + 1);
     expect((await refusedHarness.port.confirm!({ userId: USER_ID, conversationId: CONVERSATION_ID, proposalId: PROPOSAL_ID, proposalVersion: 1, source: "voice" })).status)
       .toBe("confirmation_required");
+  });
+
+  it("answers a stale or unknown proposal with the current open handle and never consumes it", async () => {
+    // The handle is read from the persisted row, so the stub is the row the card
+    // renders: version 2, superseding the version 1 the model staged.
+    const CURRENT = "66666666-6666-4666-8666-666666666666";
+    const h = harness({
+      currentOpenProposal: async () => ({ proposalId: CURRENT, proposalVersion: 2 }),
+    });
+    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    const window = h.arbiter.current()!;
+    evidence(h.arbiter, window.createdAt + 1);
+
+    const stale = await h.port.confirm!({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      proposalId: PROPOSAL_ID,
+      proposalVersion: 1,
+      source: "voice",
+    });
+    // Stale fails closed: nothing is consumed, neither through the arbiter nor
+    // through the persisted one-use consume...
+    expect(stale.status).toBe("confirmation_required");
+    expect(h.consumedCalls).toHaveLength(0);
+    // ...and the refusal names the proposal that IS open, so the next turn can
+    // confirm the right one instead of repeating the superseded id.
+    expect(stale).toMatchObject({ currentProposalId: CURRENT, currentProposalVersion: 2 });
+
+    // With no open proposal at all, the refusal says so and offers no handle.
+    const missing = harness({ currentOpenProposal: async () => null });
+    await missing.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    evidence(missing.arbiter, missing.arbiter.current()!.createdAt + 1);
+    const gone = await missing.port.confirm!({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      proposalId: PROPOSAL_ID,
+      proposalVersion: 1,
+      source: "voice",
+    });
+    expect(gone).toMatchObject({ status: "confirmation_required" });
+    expect(gone).not.toHaveProperty("currentProposalId");
+    expect(gone).not.toHaveProperty("currentProposalVersion");
+    expect(missing.consumedCalls).toHaveLength(0);
   });
 
   it("refuses permission creation and requests the review channel when no bound visual client exists", async () => {
