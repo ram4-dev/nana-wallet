@@ -3637,3 +3637,36 @@ stayed inside the assigned worktree root `/Users/ramiro/Desktop/projects/collose
 the main checkout was never entered, the untracked `compose.privy-local.ports.yaml` was never touched,
 no `.env` value was read or printed, and no `git stash`/`checkout`/`reset`/`restore`/`clean` was run at
 any point.
+
+---
+
+## Continuation run (2026-10-10) — slices 3.1/3.2 and the 2.14 close
+
+### Unit 0 — close 2.14 with its pending live evidence documented
+
+Task **2.14** moves to `[x]` in `tasks.md`, with an inline closure note. The two halves are recorded as
+they actually are:
+
+- **Suite half: PASSED** at `2ffaf47`. No failure outside the pristine baseline remains; every
+  non-baseline failure was a 5 s/15 s load timeout that clears in isolation (recorded in the section
+  above, run 2: `12 failed | 1366 passed | 4 skipped (190 files)`, every failure named and classified).
+- **Live probe half: PENDING.** This environment has **no signer sidecar**
+  (`PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` unset ⇒ `canSignAuthorizations()` is `false`). The only
+  §6.4 record obtainable here is the fail-closed *absence* result
+  `{ capable: false, code: "signer_unavailable" }`, and live **U1–U4 evidence remains PENDING**: all
+  three `status_detail` evidence keys (`rules_union`, `attachment_evidence`, `ownership_evidence`) are
+  absent in 45/45 rows and `empty_composition = 'unproven'` in 45/45.
+
+**Plainly: the live U1–U4 / §6.4 evidence is PENDING, with its exact collection step being task 5.2**,
+run against a deployment whose `backend-signer`/`voice-worker-signer` services are up (so
+`canSignAuthorizations()` is `true`) and with a devnet budget, reading `{ capable, code }` and the
+U1–U4 outcomes back from `recipient_policy_state.status_detail`. Per the change owner's standing
+instruction, a probe that needs credentials or a real deployment is documented as pending and the work
+continues; nothing here refuses to proceed on that account.
+
+**No fake-transport output is presented as live provider proof.** The `{capable:false,
+code:"signer_unavailable"}` record above is an in-process absence result, and the fake-transport
+adapter tests of tasks 2.2/2.8 stay labelled as adapter tests, never as live evidence.
+
+Agreement with the change owner's standing instruction: probes requiring credentials or a real
+deployment are documented as pending, and the work continues.
