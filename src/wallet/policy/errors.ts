@@ -47,16 +47,26 @@ export class PolicyCompositionRefusalError extends Error {
   readonly failureClass: PolicyBlockedStatus;
   /** The reason code this refusal must be recorded with. */
   readonly reason: PolicyCompositionRefusalReason;
+  /**
+   * The HTTP status and stable code the caller stops visibly with. Carried on the
+   * refusal so a route maps a stop from its typed class instead of matching
+   * message text, which is what makes each blocking stop assertable by name.
+   */
+  readonly httpStatus: number;
+  readonly stopCode: string;
 
   constructor(
     reason: PolicyCompositionRefusalReason,
     failureClass: PolicyBlockedStatus,
     message: string,
+    stop: { httpStatus?: number; code?: string } = {},
   ) {
     super(message);
     this.name = new.target.name;
     this.reason = reason;
     this.failureClass = failureClass;
+    this.httpStatus = stop.httpStatus ?? 409;
+    this.stopCode = stop.code ?? "CONFLICTO_POLITICA";
   }
 }
 
@@ -77,6 +87,9 @@ export class PolicyEmptyCompositionUnprovenError extends PolicyCompositionRefusa
       "empty_composition_unproven",
       "blocked_configuration",
       `Refusing to compose an empty rule set: empty_composition is '${emptyComposition}' and only a recorded 'proven_deny' probe result may emit rules: []. The previous restrictive policy stays attached and the last recipient is kept.`,
+      // Design §11 U4 names the exact visible stop, so it is carried on the
+      // refusal rather than reassembled by whichever route happens to catch it.
+      { httpStatus: 409, code: "COMPOSICION_VACIA_NO_SOPORTADA" },
     );
     this.emptyComposition = emptyComposition;
   }

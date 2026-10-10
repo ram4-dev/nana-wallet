@@ -2147,3 +2147,160 @@ list appeared in either run, and no baseline-passing test changed state. The one
 WARNING to carry forward is the fresh-database timeout contention (`users-db`, and the same class as the
 task-1.3 due-intent residue note): the container now serves ~172 files including slice 1's new
 integration suites, so pre-existing marginal timeouts fire more often.
+
+---
+
+## Slice 2 — Apply and reconcile the signed remote policy
+
+### Tasks 2.1–2.4 — the four unproven-provider-semantics probes (one coherent unit: the probe module)
+
+Status: **completed for the implementable part**. Persisted checkboxes updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (2.1–2.4 → `- [x]`). Every probe
+semantic stays **unresolved**: this environment has no signer service and no reachable
+signed-authorization capability (design §0 C3), so no probe can reach a provider here. What is
+delivered is the real, testable probe code with the pending live observation documented below —
+not a fabricated result, not a weakened refusal.
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/probe.ts` | New (700 lines). The four probes over an injected `PolicyProbeTransport`, the injected evidence writer, and the two production wiring factories. |
+| `src/wallet/policy/errors.ts` | Modified (additive). `PolicyCompositionRefusalError` carries the visible stop (`httpStatus` + `stopCode`); `PolicyEmptyCompositionUnprovenError` pins `409 COMPOSICION_VACIA_NO_SOPORTADA`. |
+| `src/wallet/policy/repository.ts` | Modified. `setPolicyStatus` now MERGES `status_detail` (jsonb `||`) instead of replacing it, plus two additive methods: `mergePolicyStatusDetail` and `setEmptyComposition`. |
+| `tests/unit/policy-probe-u1.test.ts` … `-u4.test.ts` | New. 23 cases across the four probes. |
+| `tests/unit/policy-composer-unproven-refusal.test.ts` | New. The composer's refusal against an unproven deployment, and its positive control. |
+| `tests/unit/helpers/policy-probe-fakes.ts` | New. The fake transport + fake evidence writer (not a `.test.ts`, so it is not a suite). |
+| `tests/integration/recipient-policy-repository.test.ts` | One case CHANGED and one ADDED: the old `statusDetail).toEqual({})` assertion pinned the replacement defect; it now asserts the merge, with the probe-evidence survival and the cross-user denial as its evidence. |
+
+#### What each probe delivers
+
+- **2.1 U1 `probeRuleComposition()`** — one policy write with two ALLOW rules over disjoint
+  `Transfer.to` allowlists, then one signed transfer covered by only ONE rule. `union` is recorded
+  only when that transfer is observed as permitted. No signer, no signed-send port, an unreachable
+  provider or a refusal records `unproven` with the reason; nothing is inferred from the readback.
+- **2.2 U2 `assertPolicyTargetCapability(userId, walletId)`** — the owner-verified readback through
+  `listOwnerWallets` (the `privyDid` + `listWalletsForChain` path) and **not**
+  `server.getWallet`; the canonical signer must be present exactly once with our policy id in its
+  `override_policy_ids`. Failure is `blocked_configuration` / `signer_attachment_unproven` with
+  `patchIssued: false`.
+- **2.3 U3 `assertPolicyOwnership(userId, walletId)`** — resolves the wallet only through the
+  owner-verified listing and compares it with the recorded `provider_wallet_id`. The mismatch
+  signature (owner listing empty, unfiltered read present) stops with `ownership_drift`; the remote
+  owner is neither adopted nor overwritten, and this module has no write path to
+  `user_wallets.provider_signer_id` at all (`bindingRewritten: false` is a structural property).
+- **2.4 U4 `probeEmptyComposition()`** — `createPolicy(name, [])` + `getPolicy`, `patchPolicy(id,
+  [])` + `getPolicy`, and step (iii) when a signed-send port exists. `proven_deny` requires an
+  observed signed REFUSAL; a successful zero-rule PATCH alone records `unproven`
+  (`signed_denial_unobserved`), and an empty policy that would ALLOW an uncovered transfer records
+  `unproven` (`signed_transfer_permitted`) rather than the most dangerous false positive.
+
+The probe transport has **no detach and no delete member**, so "the policy is never detached,
+deleted, or left with an absent recipient rule" (design §11 U4) is a property of the seam rather than
+a promise, and no probe ever patches a wallet's attached policy (asserted: `patchPolicy` uncalled).
+
+#### The carried defect (task 1.7's handover): FIXED, not worked around
+
+`setPolicyStatus` used to write `status_detail = $5::jsonb`, so the next mutation's status write
+destroyed a recorded probe result. It now writes
+`status_detail = COALESCE(status_detail, '{}'::jsonb) || $5::jsonb`: probe evidence survives, and a
+transition's own keys override only those keys. `mergePolicyStatusDetail` is the path for evidence
+recorded outside a status transition (design §11 names `status_detail` as the recording site).
+The integration case asserts both directions: a foreign user cannot merge or set the columns, and
+after a later status write the recorded `rules_union` / `empty_composition` are still there.
+
+#### TDD Cycle Evidence
+
+Honest disclosure: the implementation was written before its suites in this run, so no
+implementation-free RED was captured for the module as a whole — the module-level RED is *reported as
+absent* rather than claimed. The substantive RED is **mutation**-based: every guard was removed, the
+attributed failure observed by name, and the clause restored (script `/tmp/probe-mutation-harness.py`,
+backups via `cp` — **no `git stash` was run at any point**).
+
+| # | Mutation | Observed failures (by name) | Verdict |
+|---|---|---|---|
+| M1 | U1 signer-capability gate → `if (false)` | `probeRuleComposition … records unproven without attempting any write when no signer capability exists` + `the composer refuses … never issues a PATCH` | gate load-bearing |
+| M2 | U1 `permitted = send.permitted` → `= true` | `records unproven when the single-rule transfer is refused` | the observed permit is the only thing that upgrades U1 |
+| M3 | U2 "exactly once" `> 1` → `> 5` | `stops when the canonical signer appears more than once` | the occurrence clause is load-bearing |
+| M4 | U2 owner-verified listing → the unfiltered `getWallet` | 5 U2 cases (including the `calls.getWallet` must-be-empty assertion) | the read path is asserted, not decorative |
+| M5 | U3 `drift = unfilteredObservedId !== null` → `false` | `stops with ownership_drift on the mismatch signature` | the mismatch signature is genuinely detected |
+| M6 | U4 infers `proven_deny` from the zero-rule PATCH | `records unproven — never proven_deny — from a successful zero-rule PATCH alone` + the composer's U4 refusal case | "nothing infers deny from a PATCH" is enforced |
+| M7 | U4 signer-capability gate → `if (false)` | `records unproven without any write when no signer capability exists` | gate load-bearing |
+| M8 | empty-composition refusal loses its stop code | `stops with 409 COMPOSICION_VACIA_NO_SOPORTADA and issues no write when unproven` | the visible stop is carried by the refusal |
+
+Post-restore control: the full five-suite run reports **0 failing** after every restore.
+
+Every negative assertion has a positive control on the same fixture: the U1 no-signer case shares
+its transport with the configured-signer case; the U2 success case proves the listing port is live
+before the absent-wallet case asserts the stop; the U3 mismatch case asserts `getWallet` WAS called
+while the proven case asserts it was not; the U4 "unproven from a PATCH alone" case asserts both
+writes really ran and returned zero rules before asserting the refusal; the composer's refusal case
+asserts the attached policy reads back non-empty before and after the refusal.
+
+#### Commands run and results
+
+```text
+npx vitest run tests/unit/policy-probe-u1.test.ts … -u4.test.ts tests/unit/policy-composer-unproven-refusal.test.ts
+  → Test Files 5 passed (5) | Tests 23 passed (23)
+python3 /tmp/probe-mutation-harness.py   → the eight mutation rows above; post-restore 0 failing
+npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts
+  → Test Files 17 passed (17) | Tests 231 passed (231)          ← slice 1 stayed green (203 → 231)
+npx vitest run <the task-1.8 + lock-order named regression set, 10 files>
+  → Test Files 10 passed (10) | Tests 109 passed (109)
+npm run lint      → eslint src tests --max-warnings=0 : clean, exit 0
+npm run typecheck → tsc -p tsconfig.test.json --noEmit : clean, exit 0
+```
+
+#### PENDING LIVE EVIDENCE (per probe — the parent runs these when a signer and a devnet budget exist)
+
+Every probe below is implemented and unit-proven over a fake transport, and every one of them
+currently records `unproven` on this deployment. Nothing here is resolved.
+
+| # | What is genuinely missing | Exact step that collects it | Exact evidence shape to record | Exact place it must be recorded |
+|---|---|---|---|---|
+| U1 | A live devnet policy with two ALLOW rules over disjoint `Transfer.to` allowlists, and one SIGNED `signAndSendTransaction` covered by only one rule, observed permitted. Requires `PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` (so `canSignAuthorizations()` is `true`) and a signed-send capability bound to the probe policy. | With a configured sidecar and a devnet wallet: `probeRuleComposition({ transport, evidence, walletId, ordinaryAddress, grantAddress })` from the capability probe run (2.7). No manual step is needed beyond the sidecar being reachable; the probe writes its own policy and never touches the wallet's policy. | `{ rules_union: "union", rules_union_evidence: { before: [...2 ALLOW rules...], after: [...getPolicy readback...], permitted: true, probePolicyId: "pol_…", at: "<ISO>" } }` — and `{ rules_union: "unproven", rules_union_evidence: { …, reason: "signer_unavailable" \| "signed_transfer_unavailable" \| "transfer_not_permitted" \| "provider_unreachable" } }` when it cannot resolve. | `recipient_policy_state.status_detail.rules_union` (+ `.rules_union_evidence`) via `mergePolicyStatusDetail`; the composer reads `status_detail.rules_union` as its `ruleComposition` input (design §11 U1). |
+| U2 | One owner-verified readback (`privyDid` + `listWalletsForChain(did,'solana')`) showing the canonical signer present exactly once carrying our policy id. Needs a wallet whose `provider_signer_id` is bound and a policy actually attached to that signer. | `assertPolicyTargetCapability(userId, walletId, policyId)` before any PATCH (wired by 2.7/2.8). | `{ attachment_evidence: { providerWalletId, providerSignerId, policyId, observedOwnerWalletIds, observedSignerIds, observedPolicyIds, readPath: "owner_verified_listing", occurrences: 1, at: "<ISO>", detail: null } }`; on failure `proven: false`, `blocked_configuration`, `signer_attachment_unproven`, `detail ∈ { owner_listing_failed, wallet_absent_from_owner_listing, signer_absent, signer_duplicated, policy_not_attached_to_signer, binding_unresolved }`. | `recipient_policy_state.status_detail.attachment_evidence` via `mergePolicyStatusDetail` (design §11 U2). |
+| U3 | (i) A live observation of the mismatch signature (owner listing empty WHILE the unfiltered read returns the wallet) and (ii) the provider's error code for a signed mutation against such a wallet. Deliberately NOT produced by this unit: manufacturing an ownership conflict against a real account is not something a test run may do. | (i) `assertPolicyOwnership(userId, walletId)` against a deliberately mismatched binding (a wallet row whose `provider_wallet_id` belongs to another identity). (ii) A signed `patchPolicy`/`addPolicyToSigner` attempt against that wallet with the sidecar configured, recording the provider's error code. | `{ ownership_evidence: { providerWalletId, observedOwnerWalletIds, unfilteredObservedId, signature: "owner_listing_empty_unfiltered_present" \| "absent_everywhere" \| "owner_listing_present", at: "<ISO>", detail } }` plus the provider error code for (ii) recorded in `.detail` (code only, never the provider body). | `recipient_policy_state.status_detail.ownership_evidence` via `mergePolicyStatusDetail` (design §11 U3). |
+| U4 | Step (iii): a signed transfer attempt against an empty-rules policy observed as REFUSED, which requires a user-authorized wallet action. Steps (i)/(ii) alone stay `unproven` by construction. | `probeEmptyComposition({ … })` with the sidecar configured and a signed-send port bound; the protocol steps (i)/(ii) run automatically and (iii) is the only omitted step while `uncoveredAddress` cannot be attempted. | `{ empty_composition: "proven_deny" }` + `status_detail.empty_composition_evidence = { createdPolicyId, rulesAfterCreate: 0, rulesAfterPatch: 0, signedDenialObserved: true, at }`; while step (iii) is missing: `empty_composition: "unproven"` with `reason: "signed_denial_unobserved"` (or `signed_transfer_permitted` if an empty policy ALLOWED, which must block, and `provider_unreachable`/`signer_unavailable`). | `recipient_policy_state.empty_composition` (column) via `setEmptyComposition`, plus `status_detail.empty_composition_evidence` (design §11 U4). |
+
+Provider documentation (union of ALLOW rules, DENY precedence, default DENY, a method absent from
+`rules` being denied) is recorded in design §11 as **partial** evidence only. It was not used to flip
+any semantic, and the shipped behaviour on this deployment is the refusal.
+
+#### Deviations from the design
+
+1. **The probes take an injected transport and an injected evidence writer.** Design §11 names the
+   probe functions and the recording site, not a seam. The seam is what makes each probe provable
+   without a provider (and what makes "cannot observe ⇒ records `unproven`" testable at all); the
+   production factories (`createRepositoryProbeEvidenceWriter`, `createPolicyProbeBindingResolver`)
+   are in the same module, so 2.7/2.9 wire rather than write.
+2. **`status_detail` merge replaces replacement semantics in `setPolicyStatus`**, and one slice-1
+   assertion that pinned the old behaviour was updated deliberately (recorded above, with the
+   cross-user denial as its positive control). This is the parent's "fix, do not work around" option.
+3. **The refusal carries its stop (`httpStatus` + `stopCode`).** Design §11 U4 names
+   `409 COMPOSICION_VACIA_NO_SOPORTADA` but the design's error classes carry only `failureClass` and
+   `reason`, so a route would have had to reassemble the code from prose. The stop now travels with
+   the refusal; slice 3's contract mirror maps from the typed class. The pre-existing
+   `409 CONFLICTO_POLITICA` mapping is untouched, so no earlier behaviour changed.
+4. **The probe rule builder is local and synthetic.** `probeAllowRule` builds a one-address ALLOW
+   rule for a policy that is never attached to a wallet; it imports the single lamport ceiling rather
+   than restating it. It is deliberately not `buildSolanaEnrollmentRules` (which task 1.10 freezes to
+   the composer) and not `composeGrantRules`, so no second full-rule composer exists.
+5. **The signed-send port is optional** and its absence is a recorded reason rather than a skipped
+   step, so "we could not run step (iii)" is distinguishable from "step (iii) ran and denied".
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **2.5 (worker signer defect) is the first prerequisite for any live probe run.** With
+  `authorizationSigner` not passed into the worker's `PrivyServerClient`, the worker-side
+  `canSignAuthorizations()` stays `false` and every probe there records `signer_unavailable`. The
+  probe code is correct in that state; it is the wiring that must land first.
+- **2.7 must call these probes from `verifyPolicySignerCapability()`'s capability run** and keep the
+  recorded values boolean/code only — the evidence objects above contain ids, timestamps and integer
+  counts, and no token, key, payload or signature.
+- **2.8/2.9 own the transition that CONSUMES the probes.** The composer reads
+  `status_detail.rules_union`, and now that `setPolicyStatus` merges, a probe result cannot be
+  erased by an intervening status write. `status_detail` still accumulates keys, so a reconciler
+  transition that wants to clear `status_detail.confirmedBy` must pass that key explicitly.
+- **`empty_composition='unsupported'` remains representable** in the schema and is refused by the
+  composer exactly like `unproven`; no probe writes it.

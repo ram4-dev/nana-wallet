@@ -405,10 +405,68 @@ suite("recipient policy repository (task 1.3)", () => {
       });
       // The increment is relative, so a second attempt must not report 1 again.
       expect(retried!.attemptCount).toBe(2);
-      // ...and a transition that carries no detail does not borrow the previous
-      // one: the caller either passes evidence or writes none.
-      expect(retried!.statusDetail).toEqual({});
+      // ...and the transition no longer erases the stored detail: `status_detail`
+      // is MERGED (jsonb `||`), because probe evidence recorded in it must survive
+      // a status write (the defect task 1.7 handed forward; design §11).
+      expect(retried!.statusDetail).toEqual({
+        code: "provider_timeout",
+        policyId: "policy-1",
+      });
       expect(retried!.statusReason).toBeNull();
+    });
+
+    it("records the U1 rules_union and U4 empty_composition probe evidence so neither survives only until the next write", async () => {
+      const { userId, walletId } = await provision();
+      await database.withUserTransaction(userId, (client) =>
+        repository.lockPolicyState(userId, walletId, client),
+      );
+
+      // The probe paths (design §11): `status_detail` for the U1/U2/U3 evidence
+      // and the `empty_composition` column for U4.
+      expect(
+        await repository.mergePolicyStatusDetail(userId, walletId, {
+          rules_union: "union",
+          rules_union_evidence: { at: "2026-10-05T12:00:00.000Z" },
+          attachment_evidence: { occurrences: 1 },
+        }),
+      ).toBe(true);
+      expect(
+        await repository.setEmptyComposition(userId, walletId, "proven_deny"),
+      ).toBe(true);
+
+      const recorded = await repository.readPolicyState(userId, walletId);
+      expect(recorded!.statusDetail["rules_union"]).toBe("union");
+      expect(recorded!.emptyComposition).toBe("proven_deny");
+
+      // A foreign user can neither record nor overwrite this wallet's evidence.
+      const foreign = await provision();
+      expect(
+        await repository.mergePolicyStatusDetail(foreign.userId, walletId, {
+          rules_union: "unproven",
+        }),
+      ).toBe(false);
+      expect(
+        await repository.setEmptyComposition(
+          foreign.userId,
+          walletId,
+          "unproven",
+        ),
+      ).toBe(false);
+
+      // A later status write merges: the recorded probe evidence is still there
+      // and the transition's own key overrides only its own key.
+      const afterWrite = await repository.setPolicyStatus(userId, {
+        walletId,
+        status: "pending",
+        detail: { code: "provider_unavailable" },
+      });
+      expect(afterWrite!.statusDetail).toEqual({
+        code: "provider_unavailable",
+        rules_union: "union",
+        rules_union_evidence: { at: "2026-10-05T12:00:00.000Z" },
+        attachment_evidence: { occurrences: 1 },
+      });
+      expect(afterWrite!.emptyComposition).toBe("proven_deny");
     });
 
     it("denies cross-user reads and writes on recipient_policy_state", async () => {

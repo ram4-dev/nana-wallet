@@ -757,6 +757,12 @@ export class RecipientPolicyRepository {
    * `applied` is intentionally reachable only through
    * {@link commitAppliedRevision}: this method can set the status but never the
    * applied revision, so it cannot manufacture a verified readback.
+   *
+   * `detail` is MERGED into `status_detail` (jsonb `||`), not written over it:
+   * probe evidence recorded by {@link mergePolicyStatusDetail} (design §11) must
+   * survive the next status write, which is the defect task 1.7 handed forward.
+   * Keys carried by this transition override the stored ones; nothing else is
+   * erased.
    */
   public async setPolicyStatus(
     userId: string,
@@ -768,7 +774,7 @@ export class RecipientPolicyRepository {
         `UPDATE recipient_policy_state
             SET status = $3,
                 status_reason = $4,
-                status_detail = $5::jsonb,
+                status_detail = COALESCE(status_detail, '{}'::jsonb) || $5::jsonb,
                 next_attempt_at = $6,
                 attempt_count = attempt_count + $7,
                 updated_at = now()
@@ -785,6 +791,64 @@ export class RecipientPolicyRepository {
         ],
       );
       return result.rows[0] ? mapState(result.rows[0]) : null;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  // -------------------------------------------------------------------------
+  // Probe evidence — design §11 U1–U4
+  // -------------------------------------------------------------------------
+
+  /**
+   * Merge a probe-evidence fragment into `recipient_policy_state.status_detail`
+   * (design §11: each probe records its observation in `status_detail`).
+   *
+   * It MERGES (`||`) rather than replaces, and it touches neither `status` nor
+   * `status_reason`: a recorded probe result must survive the next mutation's
+   * status write (task 1.7's carried observation) and must never be able to
+   * change what the wallet is reporting.
+   */
+  public async mergePolicyStatusDetail(
+    userId: string,
+    walletId: string,
+    patch: Record<string, unknown>,
+    client?: Queryable,
+  ): Promise<boolean> {
+    const run = async (query: Queryable) => {
+      const result = await query.query(
+        `UPDATE recipient_policy_state
+            SET status_detail = COALESCE(status_detail, '{}'::jsonb) || $3::jsonb,
+                updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2
+          RETURNING wallet_id`,
+        [walletId, userId, JSON.stringify(patch)],
+      );
+      return result.rows.length > 0;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * Record the U4 probe outcome in `recipient_policy_state.empty_composition`
+   * (design §11 U4). It is the only writer of that column besides the schema
+   * default, and the composer reads it before every composition.
+   */
+  public async setEmptyComposition(
+    userId: string,
+    walletId: string,
+    value: PolicyEmptyComposition,
+    client?: Queryable,
+  ): Promise<boolean> {
+    const run = async (query: Queryable) => {
+      const result = await query.query(
+        `UPDATE recipient_policy_state
+            SET empty_composition = $3,
+                updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2
+          RETURNING wallet_id`,
+        [walletId, userId, value],
+      );
+      return result.rows.length > 0;
     };
     return client ? run(client) : this.ownerTransaction(userId, run);
   }
