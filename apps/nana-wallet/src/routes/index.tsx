@@ -22,6 +22,7 @@ import { useConversationState } from "@/features/agent/useConversationState";
 import { createLiveKitWebClient } from "@/features/agent/voice/livekit-web-client";
 import type { LiveVoiceEvent } from "@/features/agent/voice/live-voice-reducer";
 import { useNotificationsFeed } from "@/features/notifications/useNotificationsFeed";
+import { ContactActionProposalReview } from "@/features/wallet/ContactActionProposalReview";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -458,6 +459,13 @@ function AgentePage() {
             </p>
           </section>
         ) : null}
+        {/*
+          The review channel the backend publishes to (task 4.7): a card for the
+          bound participant's own conversation, rendered from the persisted row.
+          Mounted here so it is reachable — and therefore built — on the live
+          conversation screen.
+        */}
+        <ContactActionProposalReview conversationId={conversationId} userId={userId ?? null} />
         {displayedTurn ? (
           <section className="surface-card p-4">
             {lastTranscript && !liveSessionActive && turn?.status === "confirmation_required" ? (

@@ -345,4 +345,36 @@ describe("contact action proposal card (task 4.7)", () => {
     expect(await screen.findByText(`Dirección de esta versión: ${ADDRESS}`)).toBeTruthy();
     expect(screen.getByText(/Versión 2/)).toBeTruthy();
   });
+
+  it("releases the topic subscription when the card unmounts", async () => {
+    mocks.getContactAction.mockResolvedValue(proposal());
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn(() => unsubscribe);
+    const { unmount } = renderCard({ subscribe });
+    await screen.findByText("Esperando tu revisión");
+    // The effect re-subscribes whenever the row it renders changes, so the
+    // assertion is about releases, not about one single subscribe call.
+    const subscriptions = subscribe.mock.calls.length;
+    expect(subscriptions).toBeGreaterThan(0);
+
+    // A card that keeps listening after it is gone would wake a query nobody
+    // renders, so every subscription has to be released with the component.
+    unmount();
+    expect(unsubscribe).toHaveBeenCalledTimes(subscriptions);
+  });
+
+  it("reports a generic replacement failure instead of the stale-proposal wording", async () => {
+    mocks.getContactAction.mockResolvedValue(proposal());
+    mocks.replaceContactActionAddress.mockRejectedValue(
+      apiError("ERROR_INTERNO", "No pudimos guardar la dirección."),
+    );
+    renderCard();
+    await userEvent.type(await screen.findByLabelText(/Pegá o escaneá la dirección/), ADDRESS);
+    await userEvent.click(screen.getByRole("button", { name: /usar esta dirección/i }));
+
+    expect(await screen.findByText("No pudimos guardar la dirección.")).toBeTruthy();
+    expect(
+      screen.queryByText("Esta propuesta cambió. Recargá la tarjeta y probá de nuevo."),
+    ).toBeNull();
+  });
 });

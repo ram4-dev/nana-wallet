@@ -5852,3 +5852,95 @@ Review Workload Forecast guard (`Decision needed before apply: Yes`, `Chained PR
 `400-line budget risk: High`) is already resolved for this change, and this unit is a two-file
 documentation commit well inside the documented boundary. No warning was raised by the parent and none
 was produced by this run.
+
+---
+
+## Continuation run (2026-10-10) — Unit 1: make the review card reachable (task 4.7)
+
+**Why this unit exists.** Task 5.1's bundle check found the review card absent from the
+deployed bundle: `Esta propuesta cambió` and `No pudimos verificar el permiso` matched 0
+frontend assets and there was no `ContactActionProposalCard` chunk, because
+`apps/nana-wallet/src/features/wallet/ContactActionProposalCard.tsx` was imported by
+nothing outside its own test and was therefore tree-shaken. The card was built and
+tested; the review channel the backend publishes to had no listener. This unit closes
+that gap on the source side and leaves the artifact-level proof behind.
+
+**Status: completed. No checkbox flipped** — task 4.7 was already `[x]`; the remediation
+is recorded as a closure note on 4.7 in `tasks.md` (a new note, not a rewrite of any
+earlier entry). The two `<!-- sdd-owner: parent -->` rows were left byte-for-byte
+untouched.
+
+### What was implemented, and what was only reused
+
+| Piece | State |
+|---|---|
+| `apps/nana-wallet/src/features/wallet/ContactActionProposalReview.tsx` | **New** — the surface: subscribes to the existing `contact-action-topic` bus, keys on `proposalId` only, gates on the bound `conversationId` AND a resolved `userId`, renders the existing card. |
+| `apps/nana-wallet/src/routes/index.tsx` | **Edited** — one import and one mount inside the live conversation screen's scroll region (`<ContactActionProposalReview conversationId={conversationId} userId={userId ?? null} />`). Mounted here, not in `AgentScreen.tsx`, because `AgentScreen` is itself imported by nothing at runtime — mounting the card there would have reproduced the same tree-shaking gap. |
+| `apps/nana-wallet/src/features/wallet/ContactActionProposalReview.test.tsx` | **New** — mount/render/gating coverage for the hosting surface (8 cases). |
+| `apps/nana-wallet/src/features/wallet/contact-action-review-wiring.test.ts` | **New** — structural reachability guard on `route → surface → card` (pattern: `features/agent/live-voice-wiring.test.ts`). |
+| `apps/nana-wallet/src/features/wallet/ContactActionProposalCard.test.tsx` | **Extended** — 2 added cases (unmount releases the topic subscription; a generic replacement failure reports the server message and not the stale-proposal wording). |
+| `contact-action-topic.ts`, `livekit-web-client.ts`, `api.ts`, `api-types.ts`, MSW handlers, backend, contract | **Untouched.** `contact-action-topic.ts` was already fed by `RoomEvent.DataReceived` in `livekit-web-client.ts`, and the card already read `GET /v1/contact-actions/:proposalId` and posted to `…/address`. Nothing to mirror: no contract byte changed, so the front/back mirror rule is not engaged. |
+
+**Executed vs only implemented (stated plainly).** I executed: the frontend lint,
+typecheck, the full vitest suite, a real `npm run build:mobile` and the bundle string
+assertion (positive and negative), all three mutation runs, and their restores.
+I **did not** rebuild or redeploy the stack's `frontend` container: the deployed bundle
+still carries the pre-fix build, because unit 1's assigned verification was the host
+build plus the bundle assertion, and redeploying is slice-5/5.1 territory. The wiring is
+therefore proven at source and at build-artifact level, not yet at deployed-container
+level.
+
+### Requirements check (task 4.7 / design §8.1–§8.4, §9.2)
+
+| Requirement | Evidence |
+|---|---|
+| Renders only for the bound authenticated participant | Packet must match the bound `conversationId` and a resolved `userId` resolve, else nothing renders. Tests: `ignores a card published to a different conversation`, `renders no card for an unauthenticated visitor`. The publication itself already targets only the identity resolved by `verifyLiveVoiceBinding` (§8.1). |
+| A reload re-renders the same persisted row (not client state) | The surface hands the card an id and reads nothing else from the packet; the card renders `GET /v1/contact-actions/:proposalId`. Test: `renders the persisted row and never a value carried by the packet` (packet carries a different address and version 7; only the persisted v1 row and its address reach the DOM). |
+| An expired or superseded row renders its real state and cannot be confirmed | Test: `renders an expired version as expired and offers no way to confirm it`; `follows the newest announcement in the same conversation` renders a superseded row's own state. The card's own `it.each(STATUS_CASES)` keeps every status in the closed vocabulary covered. |
+| The paste/scan path stays available | Test: `keeps the paste path available for the row the user is reviewing`. |
+
+### Commands and results (Unit 1)
+
+| # | Command | Result |
+|---|---|---|
+| 1 | `cd apps/nana-wallet && npx vitest run src/features/wallet/ContactActionProposalReview.test.tsx src/features/wallet/contact-action-review-wiring.test.ts` (RED, before the surface existed) | **2 files FAILED** — `Failed to resolve import "./ContactActionProposalReview"` (0 tests collected) and `mounts the review surface on the live conversation screen` (`expected '<ContactActionProposalReview …' to contain …`). |
+| 2 | same two files after the surface + mount (GREEN) | `Test Files 2 passed (2)` / `Tests 10 passed (10)`. |
+| 3 | `npm run lint` | `eslint .` → 0 problems. |
+| 4 | `npm run typecheck` | `tsc --noEmit` → 0 errors. |
+| 5 | `npx vitest run` (full frontend suite) | `Test Files 26 passed (26)` / `Tests 168 passed (168)` — 26 files/168 tests, i.e. +2 files/+12 tests over the previously recorded 24/156. |
+| 6 | `npm run build:mobile` (the deployed build) | built; `dist/client/assets` has 330 assets. |
+| 7 | `grep -rl '<string>' dist/client` for `Tarjeta de revisión`, `Esta propuesta cambió`, `Esperando tu revisión`, `PROPUESTA_OBSOLETA`, `Usar esta dirección` | each matches exactly 1 asset: **`assets/routes-BXHe_Pe3.js`** (557 486 bytes, written at build time). This is the evidence the previous gap lacked. |
+| 8 | Negative control: remove the route mount, rebuild, re-grep | **0 of 329 assets** match any of those strings — byte-for-byte the state 5.1 recorded. The assertion detects precisely the gap it closes. |
+
+### Mutation evidence (tests are load-bearing)
+
+| Mutation | Applied to | Observed failure by name | Restored |
+|---|---|---|---|
+| M1 — `return null;` instead of rendering the card | `ContactActionProposalReview.tsx` | `Tests 7 failed \| 3 passed` — 6 named failures in `ContactActionProposalReview.test.tsx` (`mounts nothing until…`, `ignores a card published to a different conversation`, `renders the persisted row and never a value carried by the packet`, `keeps the paste path available…`, `renders an expired version as expired…`, `follows the newest announcement…`) plus `contact-action-review-wiring.test.ts > renders the card from the review surface` | file copied back; all 10 green |
+| M2 — delete the `<ContactActionProposalReview … />` mount line | `src/routes/index.tsx` | `Tests 1 failed \| 9 passed` — `contact action review wiring > mounts the review surface on the live conversation screen` | file copied back; `diff` against the backup empty |
+| M3 — drop the card's `useEffect` cleanup (`return subscribe(...)` → bare `subscribe(...)`) | `ContactActionProposalCard.tsx` | `Tests 1 failed \| 18 passed` — `contact action proposal card (task 4.7) > releases the topic subscription when the card unmounts` | file copied back; 19/19 green |
+
+Mutation residue check after restore: `grep -rn 'MUTATION' apps/nana-wallet/src` → **0**.
+
+### Structured status consumed
+
+Artifact store `openspec` (files under `openspec/changes/trusted-recipient-policy-sync/`),
+so the native dispatcher is not authoritative and readiness was resolved directly
+against `tasks.md` (4.7 terminal `<!-- sdd-owner: implementation -->`; both parent rows
+terminal `<!-- sdd-owner: parent -->`), `design.md` §8.1–§8.4 and §9.2, `spec.md`
+("Voice permission creation requires a published proposal and a verified address"), and
+`openspec/config.yaml` (`strict_tdd: false`, `formatter: false` — note that
+`apps/nana-wallet` is a separate package with ESLint + Prettier wired through the
+frontend `lint` script, so `npx prettier --write` was run on the four touched files and
+`npm run lint` is the authoritative convergent check; a second `lint` run is a no-op).
+`actionContext`: one allowed root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed
+inside it. The Review Workload Forecast guard is already resolved for this change; this
+unit is a small frontend work unit inside the existing slice-4/5 boundary and no
+`size:exception` is requested or applied. No `actionContext` warning was raised.
+
+### Workload / PR boundary
+
+One frontend work unit: 3 new files, 2 edited files, 40 insertions/deletions in the two
+edited files plus the new files (~250 authored lines including tests), well under the
+400-line budget. No push, no PR.
