@@ -275,6 +275,21 @@ secuencia, algo que los unit tests directos no ven. Se documentaron en vez de
 reestructurarlos: renombrar el segundo dejaría huérfano el script
 `test:simulation`, que existe solo para ese archivo.
 
+## Registro en `openspec/` (etapa 2)
+
+AGENTS.md pide dos etapas: diseño en `.agent-workflow/` e implementación SDD en
+`openspec/`. La etapa 1 está en este directorio; la etapa 2 se completó **al
+final**, no antes, porque el trabajo se ejecutó en el mismo hilo que lo diseñaba.
+
+`openspec/changes/voice-room-e2e-harness/` contiene ahora proposal, spec (7
+requerimientos, 16 escenarios con GIVEN/WHEN/THEN y RFC 2119), design con su
+diagrama de secuencia, tasks y verify-report. `state.yaml` marca `archive: pending`
+a propósito: el trabajo vive en `feat/voice-e2e-harness` y no se mergeó.
+
+**Desvío registrado:** lo canónico era escribir esos artefactos antes de
+implementar. El resultado es el mismo contrato, pero el registro es retrospectivo y
+conviene decirlo en vez de aparentar que siguió el orden previsto.
+
 ## No-regresión
 
 Suite completa: **860 pasan, 174 skipped, 16 fallan**. Los mismos 16 fallos en
