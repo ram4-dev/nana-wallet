@@ -3833,3 +3833,83 @@ so the route is idempotent in effect without a replay path composed of a destroy
 | GREEN | Hook restored; `src/` diff back to `+70` byte-for-byte | `2 files passed, 9 tests passed`. |
 | TRIANGULATE | A second, independent key path (an edit whose replayed body carries a now-stale `expectedVersion`) plus the stale-revision positive control | The edit case is the only one the `edit`-hook mutation breaks; the stale-revision `409` is paired with the `200` its correct revision produces on the same route and body shape. |
 | REFACTOR | None required: the replayed result is composed only from existing reads (`readActive`, `readContactPermission`) and the stored revision; no route, schema or contract changed | `npm run lint && npm run typecheck` clean. |
+
+### Unit 3 — task 3.3, the trusted-recipients UI coverage (per-state rendering + the address-replacement disclosure)
+
+`[x]` in `tasks.md`. This unit was mostly **coverage plus one real component gap**.
+
+**The gap map was accurate, with one correction.** The component already handled six of the seven
+readiness states, the fixed Solana scope with no chain picker, the removal disclosure, and the retry
+from `retryable_failure`. What it genuinely could **not** express was the **frozen-writer state**
+(design §13): a frozen deployment records `pending` with `reason: "policy_writer_frozen"`
+(`src/wallet/policy/service.ts` `recordApplyPending` + `RECIPIENT_POLICY_WRITER_FROZEN_REASON` in
+`src/config/recipient-policy.ts`), and `permissionLabel` read `permission.state` only — so the surface
+reported a normal "Guardado, esperando verificación" and never "reported the frozen state" as §13
+requires. The address-replacement disclosure gate (`pendingAddressChange` + the `action=address_change`
+pre-flight read) already existed; it had **no test at all**, which is why it is proven here by mutation.
+
+**Minimal component diff** (`AddTrustedRecipient.tsx`, +14 lines, no other behaviour touched):
+
+- a reason-aware branch in `permissionLabel` returning
+  `"Guardado, con los pagos automáticos pausados"` for `POLICY_WRITER_FROZEN_REASON`, declared as a
+  local `const` with a comment naming the deliberate front/back duplication (`AGENTS.md`: the frontend
+  may not import from the root `src/`);
+- the wording deliberately contains no `habilitad` stem, so the "never render as enabled" guard below
+  is not satisfied by an accident of vocabulary.
+
+**What the extended suite proves** (`AddTrustedRecipient.test.tsx`, 6 → 20 tests, +14):
+
+- **one case per readiness state**, table-driven: `saved_not_configured`, `pending`, `syncing`,
+  `applied`, `retryable_failure`, `blocked_conflict`, `blocked_configuration`, plus the frozen-writer
+  row (`pending` + `policy_writer_frozen`) — each asserting its exact Spanish rioplatense label;
+- **never enabled before a verified readback**: every non-`applied` row asserts
+  `document.body.textContent` does not match `/habilitad/i`, and the `applied` row asserts it **does**
+  — the positive control that keeps the negative from passing on an unrendered tree;
+- **the save reports the returned state**: a create whose response is `retryable_failure` renders
+  "No pudimos verificar el permiso todavía" and never the enabled wording (no local success flag);
+- **retry is offered iff the backend says `retryable`**: present for `pending`/`syncing`/
+  `retryable_failure`, absent for `applied`/`blocked_conflict`/`blocked_configuration` (each case waits
+  for the row first, so "no button" cannot pass on an unrendered list);
+- **no chain picker**: no `Red de la dirección`, no `combobox` role, and the fixed-scope notice;
+- **the address-replacement disclosure before submit**: editing the address calls
+  `getContactRemovalPreview("c1", 1, "address_change")`, submits **nothing**
+  (`updateContact` not called), renders "revocará 2 pagos automáticos", and only the confirmation
+  posts `expectedRevokedGrantIds: ["grant-1","grant-2"]` with the contact's `expectedVersion` and
+  `expectedPolicyRevision`; the empty-preview variant renders "No hay pagos automáticos que revocar.";
+  a name-only edit takes no pre-flight read at all.
+
+**RED → GREEN and mutation evidence (one guard at a time, each restored before the next).** The frozen
+label is the only behaviour that did not exist before this unit, so its RED is the new case against the
+pre-change component.
+
+| Mutation (removed, observed, restored) | Expected | Observed |
+|---|---|---|
+| the frozen-reason branch in `permissionLabel` | the frozen case fails by name | **RED** `× renders the honest label for 'the frozen writer …'` — `1 failed \| 19 passed (20)` |
+| `case "pending"` returns the enabled wording | the pending case fails by name | `× renders the honest label for 'pending'` — `1 failed \| 19 passed (20)` |
+| the address-change disclosure gate (`if (cleanAddress !== …)` → `if (false)`) | both address-replacement cases fail by name | `× discloses the automatic-payment revocation before an address replacement`, `× discloses that an address replacement revokes nothing rather than staying silent` — `2 failed \| 18 passed (20)`. This is the guard that had no test before this unit. |
+| `retryable` forced to `true` | the retry-gating case fails by name | `× offers the retry only while the backend calls the revision retryable` — `1 failed \| 19 passed (20)` |
+
+All four restored; green again at `20 passed (20)`. No false green: the "never enabled" negative has
+its `applied` positive control, and every "not called" assertion is paired with the call the same test
+requires to happen.
+
+**Verify (exact commands and results).**
+
+| Command | Result |
+|---|---|
+| `npx vitest run src/features/wallet/AddTrustedRecipient.test.tsx` | `1 file passed, 20 tests passed` (from 6) |
+| `(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)` | lint clean, typecheck clean, `21 files passed, 128 tests passed` (from 114 — no drop) |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts tests/unit/recipient-policy-config.test.ts` | `24 files passed, 299 tests passed` |
+| `npm run lint && npm run typecheck` (repo root) | clean, clean |
+
+**Deviation from the design/brief (reported, not silent).** The brief asks the retry affordance to be
+hidden when the writer is frozen. `retryable` is server-authored (`RETRIABLE_STATUSES` in
+`src/wallet/policy/service.ts`), so this unit leaves the gate exactly as the contract states it and
+does **not** second-guess it with a frontend-only reason check. The visible outcome is honest (the row
+says the payments are paused) but the button still shows while a frozen deployment reports `pending`
+as retryable. Recorded as an observation for the backend owner, not silently "fixed" in the UI.
+
+**Not touched.** No backend file, no contract file, no MSW fixture, no `WalletLifecycle.tsx` change:
+the contact surface is `AddTrustedRecipient`, which `WalletLifecycle` renders, and that component
+reports wallet readiness — a different concern (PEW-005) — with no contact permission wording to
+correct.

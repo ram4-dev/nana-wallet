@@ -22,7 +22,21 @@ function isPlausibleSolanaAddress(address: string): boolean {
   return solanaAddressPattern.test(address);
 }
 
+/**
+ * Deliberately duplicated across the front/back boundary (`AGENTS.md`): the
+ * backend names this status reason in `src/config/recipient-policy.ts`, and the
+ * frontend may not import from the root `src/`.
+ */
+const POLICY_WRITER_FROZEN_REASON = "policy_writer_frozen";
+
 function permissionLabel(permission: ContactPermission): string {
+  // Design §13: a frozen writer still persists the recipient as saved-not-enabled
+  // and "every surface reports the frozen state". The state alone cannot say it —
+  // a frozen deployment records `pending` with this reason — so the reason is
+  // read here and the wording never claims the recipient is on.
+  if (permission.reason === POLICY_WRITER_FROZEN_REASON) {
+    return "Guardado, con los pagos automáticos pausados";
+  }
   switch (permission.state) {
     case "saved_not_configured":
       return "Guardado, sin permiso configurado";
