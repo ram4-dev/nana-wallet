@@ -103,6 +103,8 @@ services:
     command: ["npm run build && exec node dist/livekit/worker.js dev"]
     environment:
       <<: *identity
+      PRIVY_AUTHORIZATION_KEY_QUORUM_ID: ${PRIVY_AUTHORIZATION_KEY_QUORUM_ID:?}
+      PRIVY_AUTHORIZATION_PUBLIC_KEY: ${PRIVY_AUTHORIZATION_PUBLIC_KEY:?}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?}
       LIVEKIT_AGENT_RUNTIME: native-livekit
       AGENT_RUNTIME: llm
