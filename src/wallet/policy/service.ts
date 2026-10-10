@@ -433,6 +433,10 @@ export type RecipientMutationOptions = {
    * transaction as the intent it names.
    */
   idempotencyKey?: string | null;
+  /** Runs inside the same committed mutation transaction (for proposal CAS). */
+  beforeCommit?: (client: Queryable) => Promise<void>;
+  /** Immutable disclosure supplied by a proposal/UI preflight. */
+  expectedRevokedGrantIds?: readonly string[];
 };
 
 // ---------------------------------------------------------------------------
@@ -682,23 +686,25 @@ export class RecipientPolicyService {
       };
     }
 
-    const outcome = await this.runMutation(
-      userId,
-      wallet.walletId,
-      options,
-      async (client) => {
-        const contact = await this.contacts.create(userId, contactInput, client);
-        return { contact, action: "create" as const };
-      },
-    );
-    if (outcome.kind === "blocked") throw outcome.error;
+    return this.withPolicyLease(userId, wallet.walletId, async () => {
+      const outcome = await this.runMutation(
+        userId,
+        wallet.walletId,
+        options,
+        async (client) => {
+          const contact = await this.contacts.create(userId, contactInput, client);
+          return { contact, action: "create" as const };
+        },
+      );
+      if (outcome.kind === "blocked") throw outcome.error;
 
-    await this.applyRevision(userId, wallet.walletId);
-    return {
-      contact: outcome.contact,
-      permission: await this.readContactPermission(userId, wallet.walletId),
-      policyRevision: outcome.revision,
-    };
+      await this.applyRevision(userId, wallet.walletId);
+      return {
+        contact: outcome.contact,
+        permission: await this.readContactPermission(userId, wallet.walletId),
+        policyRevision: outcome.revision,
+      };
+    });
   }
 
   /**
@@ -740,11 +746,12 @@ export class RecipientPolicyService {
       };
     }
 
-    const outcome = await this.runMutation(
-      userId,
-      wallet.walletId,
-      options,
-      async (client, state) => {
+    return this.withPolicyLease(userId, wallet.walletId, async () => {
+      const outcome = await this.runMutation(
+        userId,
+        wallet.walletId,
+        options,
+        async (client, state) => {
         if (
           input.expectedPolicyRevision !== undefined &&
           input.expectedPolicyRevision !== state.desiredRevision
@@ -762,16 +769,70 @@ export class RecipientPolicyService {
           // is expected to change the rule set.
           ruleReference: metadataOnly ? recordedRuleReference(state) : undefined,
         };
-      },
-    );
-    if (outcome.kind === "blocked") throw outcome.error;
+        },
+      );
+      if (outcome.kind === "blocked") throw outcome.error;
 
-    await this.applyRevision(userId, wallet.walletId);
-    return {
-      contact: outcome.contact,
-      permission: await this.readContactPermission(userId, wallet.walletId),
-      policyRevision: outcome.revision,
-    };
+      await this.applyRevision(userId, wallet.walletId);
+      return {
+        contact: outcome.contact,
+        permission: await this.readContactPermission(userId, wallet.walletId),
+        policyRevision: outcome.revision,
+      };
+    });
+  }
+
+  /**
+   * The wallet's serialized writer for the two non-removal mutations.
+   *
+   * WHY `create` AND `edit` NEED IT TOO
+   * ----------------------------------
+   * A create promotes the whole allowlist and an edit rewrites one address's
+   * semantics, and both compose from the grants and the contacts they read. Two
+   * writers that interleave would each compose from the other's stale snapshot,
+   * so the composed revision, its intent and the provider apply would describe a
+   * rule set that no read ever saw.
+   *
+   * The lease is therefore acquired the same way `remove` acquires it: `W1`, held
+   * OUTSIDE the transaction, with the bounded wait and never across provider I/O.
+   * A wallet this caller cannot serialize is left untouched and reports the typed
+   * refusal instead of mutating on an unproven snapshot.
+   */
+  private async withPolicyLease<T>(
+    userId: string,
+    walletId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const lease = await acquirePolicyLease({
+      database: this.database,
+      walletId,
+      userId,
+      ownerId: this.leaseOwnerId,
+      waitBudgetMs: this.leaseWaitBudgetMs,
+    });
+    if (lease.status !== "acquired") {
+      const reason =
+        lease.status === "busy"
+          ? ("policy_lease_busy" as const)
+          : ("policy_lease_unavailable" as const);
+      await this.recordStop(userId, walletId, {
+        failureClass: "blocked_conflict",
+        reason,
+        detail: { code: reason },
+      });
+      throw new RecipientPolicyNotSerializedError(reason);
+    }
+
+    try {
+      return await run();
+    } finally {
+      // The lease is always released, success or failure: a stuck holder would
+      // make the wallet unwritable for a full TTL.
+      await releasePolicyLease(
+        { database: this.database },
+        { walletId, token: lease.token },
+      );
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -920,6 +981,22 @@ export class RecipientPolicyService {
     }
   }
 
+  /** Read-only removal preflight used to bind a UI/voice proposal to its effect. */
+  public async previewRemoval(
+    userId: string,
+    contactId: string,
+    expectedVersion: unknown,
+  ): Promise<{ contact: RecipientContactRecord; revokedGrantIds: string[]; lastAlias: boolean }> {
+    const parsed = parseStrict(recipientRemovalInputSchema, { expectedVersion });
+    const targetId = parseStrict(contactIdInputSchema, { contactId }).contactId;
+    const contact = await this.contacts.readActive(userId, targetId);
+    if (!contact || contact.version !== parsed.expectedVersion) throw new RecipientContactMissingError();
+    const wallet = await this.repository.readReadySolanaWallet(userId);
+    if (!wallet) return { contact, revokedGrantIds: [], lastAlias: false };
+    const plan = await this.readRemovalPlan(userId, wallet.walletId, contact);
+    return { contact, revokedGrantIds: plan.lastAlias ? plan.affectedGrantIds : [], lastAlias: plan.lastAlias };
+  }
+
   /**
    * Phase A (design §1.6 steps 2-5), read with NO locks.
    *
@@ -1011,6 +1088,19 @@ export class RecipientPolicyService {
       affectedUnderLock.some((grant) => !lockedIds.has(grant.id))
     ) {
       throw new RemovalRetrySignal();
+    }
+    const finalAffectedIds = aliasesUnderLock.length === 1
+      ? affectedUnderLock.map((grant) => grant.id)
+      : [];
+    if (
+      options.expectedRevokedGrantIds &&
+      !sameIdSet([...options.expectedRevokedGrantIds], finalAffectedIds)
+    ) {
+      throw new RecipientPolicyConflictError({
+        reference: "revocation_disclosure",
+        expectedGrantIds: [...options.expectedRevokedGrantIds],
+        actualGrantIds: finalAffectedIds,
+      });
     }
 
     // The version-CAS archive. Zero rows means the contact moved or disappeared
@@ -1134,6 +1224,8 @@ export class RecipientPolicyService {
       },
       client,
     );
+
+    await options.beforeCommit?.(client);
 
     return { kind: "recorded", contact: archived, revision, revokedGrantIds };
   }
@@ -1280,6 +1372,24 @@ export class RecipientPolicyService {
     );
   }
 
+  /** Resolve the user's ready Solana wallet internally for HTTP projections. */
+  public async readPermissionForUser(
+    userId: string,
+  ): Promise<ContactPermissionSnapshot> {
+    const wallet = await this.repository.readReadySolanaWallet(userId);
+    return wallet
+      ? this.readContactPermission(userId, wallet.walletId)
+      : projectContactPermission(null);
+  }
+
+  /** Retry the current recorded revision for the user's ready Solana wallet. */
+  public async retryForUser(userId: string): Promise<ContactPermissionSnapshot> {
+    const wallet = await this.repository.readReadySolanaWallet(userId);
+    if (!wallet) return projectContactPermission(null);
+    await this.applyRevision(userId, wallet.walletId);
+    return this.readContactPermission(userId, wallet.walletId);
+  }
+
   // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
@@ -1397,6 +1507,8 @@ export class RecipientPolicyService {
           },
           client,
         );
+
+        await options.beforeCommit?.(client);
 
         return { kind: "recorded", contact: mutated.contact, revision };
       });
