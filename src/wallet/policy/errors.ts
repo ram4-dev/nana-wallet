@@ -243,6 +243,54 @@ export class RecipientPolicyRevisionConflictError extends RecipientPolicySeamErr
 }
 
 /**
+ * Design §1.6 step 6 (task 1.7). The affected scope widened under lock: the
+ * alias set the removal was planned from changed, or a grant that was not locked
+ * in the `L1`/`L2` slots now contains the address. The transaction is rolled back
+ * and the operation restarted; after the bounded attempt budget it stops here
+ * rather than revoking a scope the planning read never saw.
+ *
+ * It carries the status class and reason it must be recorded with, so an
+ * exhausted retry budget becomes durable evidence instead of a lost error.
+ */
+export class RecipientPolicyRemovalConflictError extends RecipientPolicySeamError {
+  readonly failureClass: PolicyBlockedStatus = "blocked_conflict";
+  readonly reason: string = "revocation_set_widened";
+  readonly detail: Record<string, unknown>;
+
+  constructor(detail: Record<string, unknown>) {
+    super({
+      code: "CONFLICTO_POLITICA",
+      message:
+        "The set of grants affected by this removal changed while it was locked, and the bounded restart budget is exhausted. Nothing was removed.",
+    });
+    this.detail = detail;
+  }
+}
+
+/**
+ * Design §1.4/§1.6 step 1 (task 1.7). `W1` could not be acquired, so this
+ * operation is not the wallet's serialized writer and must not mutate: a removal
+ * that proceeded without the lease could compose and commit concurrently with the
+ * applying writer and revoke a scope the apply read as active.
+ *
+ * `busy` (another holder) and `unavailable` (the lease could not be read) are
+ * different reasons with the same answer — do nothing and say so.
+ */
+export class RecipientPolicyNotSerializedError extends RecipientPolicySeamError {
+  readonly failureClass: PolicyBlockedStatus = "blocked_conflict";
+  readonly reason: "policy_lease_busy" | "policy_lease_unavailable";
+
+  constructor(reason: "policy_lease_busy" | "policy_lease_unavailable") {
+    super({
+      code: "CONFLICTO_POLITICA",
+      message:
+        "Another writer holds this wallet's policy lease (or it could not be read); refusing to mutate outside the wallet's serialized writer.",
+    });
+    this.reason = reason;
+  }
+}
+
+/**
  * The contact-mutation port's refusal vocabulary (design §9.2). Declared here so
  * the service can translate the port's failures into the seam's typed codes
  * without depending on the concrete contacts repository.

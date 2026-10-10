@@ -45,6 +45,7 @@ import { z } from "zod";
 import type { DatabaseClient, Queryable } from "../../db/client.js";
 import { isValidRecipientAddress } from "../../memory/address.js";
 import { SOLANA_MAX_PER_TRANSFER_LAMPORTS } from "../embedded.js";
+import { appendGrantAudit } from "../grants/consumption.js";
 import {
   composePolicy,
   type ComposedPolicy,
@@ -54,11 +55,19 @@ import {
 import {
   PolicyApplyCapabilityUnwiredError,
   PolicyCompositionRefusalError,
+  RecipientContactMissingError,
   RecipientPolicyConflictError,
+  RecipientPolicyNotSerializedError,
+  RecipientPolicyRemovalConflictError,
   RecipientPolicyRevisionConflictError,
   RecipientPolicyValidationError,
   type RecipientPolicyValidationIssue,
 } from "./errors.js";
+import {
+  acquirePolicyLease,
+  releasePolicyLease,
+  POLICY_LEASE_DEFAULT_WAIT_BUDGET_MS,
+} from "./lease.js";
 import {
   RecipientPolicyRepository,
   type PolicyIntentAction,
@@ -83,6 +92,8 @@ export {
   RecipientContactMissingError,
   RecipientContactVersionConflictError,
   RecipientPolicyConflictError,
+  RecipientPolicyNotSerializedError,
+  RecipientPolicyRemovalConflictError,
   RecipientPolicyRevisionConflictError,
   RecipientPolicySeamError,
   RecipientPolicyValidationError,
@@ -174,6 +185,20 @@ export type RecipientCreateInput = z.output<typeof recipientCreateInputSchema>;
 export type RecipientEditInput = z.output<typeof recipientEditInputSchema>;
 
 /**
+ * `DELETE /v1/contacts/:id` (design §1.6, §9.2). `expectedVersion` is the
+ * version-CAS the archive statement carries, so a removal that did not say which
+ * version it read cannot overwrite a newer one. `idempotencyKey` is the optional
+ * `Idempotency-Key` header, made durable on the intent row in the same
+ * transaction (detecting the replay is the contract vertical's unit).
+ */
+export const recipientRemovalInputSchema = z
+  .object({
+    expectedVersion: z.number().int().positive(),
+    idempotencyKey: z.string().trim().min(1).max(200).nullish(),
+  })
+  .strict();
+
+/**
  * The route parameter and the wallet identifier, validated before either can
  * reach a UUID-typed query: a malformed identifier must be a typed refusal, not a
  * driver error.
@@ -245,6 +270,22 @@ export type RecipientContactMutationPort = {
     input: RecipientContactPatchInput,
     client: Queryable,
   ): Promise<RecipientContactRecord>;
+  /**
+   * Design §1.6 step 7: the version-CAS archive
+   * (`SET status='inactive' WHERE user_id=$1 AND id=$2 AND version=$3`).
+   *
+   * Zero rows means the contact moved or disappeared since the caller read it,
+   * and that is a conflict — never a silent success. The port reports it as
+   * {@link RecipientContactVersionConflictError} (the seam's `409 VERSION_OBSOLETA`),
+   * exactly as `update` reports its own version CAS; the production adapter is
+   * where `ContactsRepository`'s `ContactsConflictError` is translated.
+   */
+  archive(
+    userId: string,
+    contactId: string,
+    expectedVersion: number,
+    client: Queryable,
+  ): Promise<RecipientContactRecord>;
   /** Owner-scoped read, inside the caller's transaction when one is given. */
   readActive(
     userId: string,
@@ -314,6 +355,12 @@ export type RecipientPolicyServiceDependencies = {
   contacts: RecipientContactMutationPort;
   listActiveGrants: ActiveGrantLister;
   provider: PolicyApplyPort;
+  /**
+   * The `W1` slot's bounded wait (design §1.4/§1.6 step 1). Injectable so the
+   * lease budget is asserted deterministically and so a test can contend for the
+   * wallet without paying the production 3 000 ms budget.
+   */
+  policyLease?: { waitBudgetMs?: number; ownerId?: string };
 };
 
 /** Per-mutation context a caller owns (the HTTP layer supplies the header value). */
@@ -414,6 +461,75 @@ export type RecipientMutationResult = {
   policyRevision: number;
 };
 
+/**
+ * Design §9.2's `revocation` object: which grants the removal revoked, and how far
+ * the REMOTE revocation has got. The vocabulary has no "verified" shortcut —
+ * `applied` means a signed readback confirmed the new rules and the signer
+ * attachment, which is why it can only be reached through
+ * {@link projectContactPermission}'s already-fail-closed projection.
+ */
+export type RecipientRevocationDisclosure = {
+  grantIds: string[];
+  state: "pending" | "applied" | "retryable_failure";
+};
+
+/**
+ * Project the revoked grant ids and the wallet's permission onto the disclosure
+ * the removal reports (design §9.2, §12, spec "A pending removal is not announced
+ * as a verified revocation").
+ *
+ * This is the ONE place the `applied` claim can be produced, and it defers
+ * entirely to {@link projectContactPermission}: a state row that claims `applied`
+ * without `verified_at`, or whose applied revision is behind the desired one, has
+ * already collapsed to `pending` there — so a removal can never report its
+ * revocation as verified before a readback, no matter what the row says about
+ * itself.
+ */
+export function projectRevocationDisclosure(
+  grantIds: readonly string[],
+  permission: ContactPermissionSnapshot,
+): RecipientRevocationDisclosure {
+  const ids = [...grantIds];
+  if (permission.state === "applied") {
+    return { grantIds: ids, state: "applied" };
+  }
+  if (permission.state === "retryable_failure") {
+    return { grantIds: ids, state: "retryable_failure" };
+  }
+  return { grantIds: ids, state: "pending" };
+}
+
+/** What a removal returns: the archived contact, the status, and the disclosure. */
+export type RecipientRemovalResult = RecipientMutationResult & {
+  revocation: RecipientRevocationDisclosure;
+};
+
+/**
+ * The immutable Phase A proposal payload (design §1.6 step 5).
+ *
+ * It is built from the UNLOCKED read on purpose: it is what the user is shown
+ * before the mutation runs, so it must be a frozen statement of what was planned,
+ * not something the transaction can move. The locked re-derivation is compared
+ * against it (see {@link RecipientPolicyService.remove}) and a difference aborts
+ * the transaction instead of revoking a scope the disclosure never named.
+ */
+type RemovalProposalPayload = {
+  action: "remove";
+  contactId: string;
+  contactVersion: number;
+  address: string;
+  affectedGrantIds: string[];
+};
+
+/** The Phase A read the transaction is planned from and audited against. */
+type RemovalPlan = {
+  address: string;
+  aliasIds: string[];
+  lastAlias: boolean;
+  affectedGrantIds: string[];
+  payload: RemovalProposalPayload;
+};
+
 // ---------------------------------------------------------------------------
 // The service
 // ---------------------------------------------------------------------------
@@ -428,6 +544,10 @@ export class RecipientPolicyService {
    * the post-mutation step below cannot be reached with a live capability.
    */
   private readonly provider: PolicyApplyUnavailablePort;
+  /** The `W1` slot's bounded wait (design §1.4). */
+  private readonly leaseWaitBudgetMs: number;
+  /** Who is asking, recorded on the lease row for diagnostics. */
+  private readonly leaseOwnerId: string;
 
   public constructor(dependencies: RecipientPolicyServiceDependencies) {
     const provider = dependencies.provider;
@@ -439,6 +559,9 @@ export class RecipientPolicyService {
     this.contacts = dependencies.contacts;
     this.listActiveGrants = dependencies.listActiveGrants;
     this.provider = provider;
+    this.leaseWaitBudgetMs =
+      dependencies.policyLease?.waitBudgetMs ?? POLICY_LEASE_DEFAULT_WAIT_BUDGET_MS;
+    this.leaseOwnerId = dependencies.policyLease?.ownerId ?? "backend";
   }
 
   // -------------------------------------------------------------------------
@@ -572,6 +695,370 @@ export class RecipientPolicyService {
   }
 
   // -------------------------------------------------------------------------
+  // The removal transaction (design §1.6)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Design §1.6. Remove one trusted recipient, revoking every grant the address
+   * was reachable through when it was the address's LAST active alias.
+   *
+   * WHY THIS IS NOT `edit` WITH A DIFFERENT ACTION
+   * ---------------------------------------------
+   * A removal is the only mutation that DESTROYS authorization, and it destroys
+   * two different kinds of it: the contact (its version-CAS archive) and the
+   * delegated grants whose allowlist contains the address (whole-grant revoke).
+   * Both, their audits, the desired revision and the durable intent commit in ONE
+   * transaction, and the bounded remote apply happens only after that commit — so
+   * no database lock is ever held across provider I/O and no partial removal can
+   * exist.
+   *
+   * Phase A reads what the user is about to lose (unlocked) and freezes it as the
+   * proposal payload; Phase B re-derives it under the canonical chain
+   * `W1 → tx{ W0(U) → L1(asc) → L2 → L3 → L5 } → R`. A Phase B that finds MORE
+   * affected grants than Phase A disclosed aborts and restarts instead of
+   * revoking a scope the disclosure never named; after the bounded budget the
+   * operation stops as `blocked_conflict` with `revocation_set_widened`.
+   */
+  public async remove(
+    userId: string,
+    contactId: string,
+    expectedVersion: unknown,
+    idempotencyKey?: string | null,
+    options: RecipientMutationOptions = {},
+  ): Promise<RecipientRemovalResult> {
+    const input = parseStrict(recipientRemovalInputSchema, {
+      expectedVersion,
+      idempotencyKey: idempotencyKey ?? null,
+    });
+    const targetId = parseStrict(contactIdInputSchema, { contactId }).contactId;
+
+    // Phase A step 1: the target contact (its address is what the alias and grant
+    // reads are keyed on) and the server-owned wallet.
+    const target = await this.contacts.readActive(userId, targetId);
+    if (!target) throw new RecipientContactMissingError();
+    const wallet = await this.repository.readReadySolanaWallet(userId);
+    if (!wallet) {
+      // No ready permission: there is no wallet to serialize, so there is no
+      // grant that could be revoked and no remote policy to update. The contact is
+      // archived and reported saved-not-enabled (spec "Wallet without a ready
+      // permission stays saved and not enabled").
+      const contact = await this.database.withUserTransaction(userId, (client) =>
+        this.contacts.archive(userId, targetId, input.expectedVersion, client),
+      );
+      return {
+        contact,
+        permission: projectContactPermission(null),
+        policyRevision: 0,
+        revocation: { grantIds: [], state: "pending" },
+      };
+    }
+
+    // W1: the wallet's serialized writer, held OUTSIDE the transaction (bounded
+    // wait, never held across provider I/O). Without it this removal would not be
+    // the wallet's writer at all, so nothing is mutated.
+    const lease = await acquirePolicyLease({
+      database: this.database,
+      walletId: wallet.walletId,
+      userId,
+      ownerId: this.leaseOwnerId,
+      waitBudgetMs: this.leaseWaitBudgetMs,
+    });
+    if (lease.status !== "acquired") {
+      const reason =
+        lease.status === "busy"
+          ? ("policy_lease_busy" as const)
+          : ("policy_lease_unavailable" as const);
+      await this.recordStop(userId, wallet.walletId, {
+        failureClass: "blocked_conflict",
+        reason,
+        detail: { code: reason },
+      });
+      throw new RecipientPolicyNotSerializedError(reason);
+    }
+
+    try {
+      for (
+        let attempt = 1;
+        attempt <= RECIPIENT_REMOVAL_MAX_ATTEMPTS;
+        attempt += 1
+      ) {
+        const plan = await this.readRemovalPlan(userId, wallet.walletId, target);
+        let outcome: RemovalOutcome;
+        try {
+          outcome = await this.database.withUserTransaction(userId, (client) =>
+            this.applyRemoval(
+              userId,
+              wallet.walletId,
+              targetId,
+              input.expectedVersion,
+              input.idempotencyKey ?? null,
+              options,
+              plan,
+              client,
+            ),
+          );
+        } catch (error) {
+          if (!(error instanceof RemovalRetrySignal)) throw error;
+          if (attempt < RECIPIENT_REMOVAL_MAX_ATTEMPTS) continue;
+          break;
+        }
+        // A composition refusal is a STOP, not a rollback: the removal and its
+        // revocations are the safe direction (they destroy authority) and are
+        // already committed with the stop recorded. Throwing here means the caller
+        // reports a blocked status, never a success.
+        if (outcome.kind === "blocked") throw outcome.error;
+        await this.recordApplyPending(userId, wallet.walletId);
+        const permission = await this.readContactPermission(userId, wallet.walletId);
+        return {
+          contact: outcome.contact,
+          permission,
+          policyRevision: outcome.revision,
+          revocation: projectRevocationDisclosure(
+            outcome.revokedGrantIds,
+            permission,
+          ),
+        };
+      }
+
+      const conflict = new RecipientPolicyRemovalConflictError({
+        attempts: RECIPIENT_REMOVAL_MAX_ATTEMPTS,
+        contactId: targetId,
+      });
+      await this.recordStop(userId, wallet.walletId, {
+        failureClass: conflict.failureClass,
+        reason: conflict.reason,
+        detail: conflict.detail,
+      });
+      throw conflict;
+    } finally {
+      // The lease is always released, success or failure: a stuck holder would
+      // make the wallet unwritable for a full TTL.
+      await releasePolicyLease(
+        { database: this.database },
+        { walletId: wallet.walletId, token: lease.token },
+      );
+    }
+  }
+
+  /**
+   * Phase A (design §1.6 steps 2-5), read with NO locks.
+   *
+   * The result is both the disclosure the user sees and the invariant Phase B is
+   * checked against, which is why the payload lists the affected grants only when
+   * this is the last alias: a grant covered by a second active alias is not
+   * affected at all and must not appear in a disclosure.
+   */
+  private async readRemovalPlan(
+    userId: string,
+    walletId: string,
+    target: RecipientContactRecord,
+  ): Promise<RemovalPlan> {
+    const aliases = await this.repository.listActiveAliases(userId, target.address);
+    const affected = await this.repository.listAffectedActiveGrants(
+      userId,
+      walletId,
+      target.address,
+    );
+    const aliasIds = aliases.map((alias) => alias.id);
+    const lastAlias = aliasIds.length === 1;
+    const affectedGrantIds = affected.map((grant) => grant.id);
+    return {
+      address: target.address,
+      aliasIds,
+      lastAlias,
+      affectedGrantIds,
+      payload: {
+        action: "remove",
+        contactId: target.id,
+        contactVersion: target.version,
+        address: target.address,
+        affectedGrantIds: lastAlias ? affectedGrantIds : [],
+      },
+    };
+  }
+
+  /**
+   * Phase B (design §1.6 steps 2-7), all inside ONE transaction, in the canonical
+   * order. A throw rolls the whole thing back: contact, revocations, audits,
+   * revision and intent move together or not at all.
+   */
+  private async applyRemoval(
+    userId: string,
+    walletId: string,
+    contactId: string,
+    expectedVersion: number,
+    idempotencyKey: string | null,
+    options: RecipientMutationOptions,
+    plan: RemovalPlan,
+    client: Queryable,
+  ): Promise<RemovalOutcome> {
+    // W0(U): the wallet's state row, locked for the rest of this transaction.
+    await this.repository.lockPolicyState(userId, walletId, client);
+    // Parity with `runMutation`: a pristine wallet captures its consent baseline
+    // here too, so a removal can never compose from a missing baseline.
+    await this.captureConsentBaselineOnce(userId, walletId, client);
+
+    // L1: one advisory lock per affected grant, ascending — the SAME key the
+    // claim path takes, so a claim and this removal serialize on one lock.
+    await this.repository.lockGrantAdvisoryKeys(plan.affectedGrantIds, client);
+    // L2: the affected rows, locked ascending.
+    const locked = await this.repository.lockAffectedGrants(
+      userId,
+      walletId,
+      plan.affectedGrantIds,
+      client,
+    );
+    // L3: the aliases, locked ascending.
+    const aliasesUnderLock = await this.repository.lockActiveAliases(
+      userId,
+      plan.address,
+      client,
+    );
+
+    // Re-derive under lock and abort if the plan moved. Widening is the dangerous
+    // direction: a grant that Phase A never named would be revoked without ever
+    // being disclosed. (Grant creation must hold `W1`, which this transaction
+    // holds, so in practice this is a cheap invariant assertion.)
+    const affectedUnderLock = await this.repository.listAffectedActiveGrants(
+      userId,
+      walletId,
+      plan.address,
+      client,
+    );
+    const lockedIds = new Set(locked.map((grant) => grant.id));
+    if (
+      !sameIdSet(aliasesUnderLock.map((alias) => alias.id), plan.aliasIds) ||
+      affectedUnderLock.some((grant) => !lockedIds.has(grant.id))
+    ) {
+      throw new RemovalRetrySignal();
+    }
+
+    // The version-CAS archive. Zero rows means the contact moved or disappeared
+    // since the caller read it, and the port raises the seam's version conflict —
+    // which rolls back the revocations below with everything else.
+    const archived = await this.contacts.archive(
+      userId,
+      contactId,
+      expectedVersion,
+      client,
+    );
+
+    // Whole-grant revocation, only when the alias set under lock is this one
+    // fresh alias. Each revocation appends its immutable `revoked` audit row in
+    // THIS transaction (design §1.6 step 7, spec "Whole-grant revocation with
+    // audit in one transaction").
+    const revokedGrantIds: string[] = [];
+    if (aliasesUnderLock.length === 1) {
+      for (const grant of affectedUnderLock) {
+        const revoked = await this.repository.revokeGrantWhole(
+          userId,
+          grant.id,
+          client,
+        );
+        // Already revoked by a concurrent revoke/claim: the scope is gone, but
+        // this call did not revoke it, so it is not audited as its own.
+        if (!revoked) continue;
+        await appendGrantAudit(
+          this.database,
+          {
+            grantId: grant.id,
+            userId,
+            event: "revoked",
+            reason: "last_active_alias_removed",
+            detail: {
+              contactId,
+              contactVersion: archived.version,
+              address: plan.address,
+              grantRecipients: grant.recipients,
+            },
+          },
+          client,
+        );
+        revokedGrantIds.push(grant.id);
+      }
+    }
+
+    // The composition reads the POST-mutation projection on THIS client: the
+    // grants just revoked are no longer active, so the recorded revision cannot
+    // re-compose a rule for a scope that was revoked.
+    let composed: ComposedPolicy;
+    try {
+      const grants = await this.repository.listActiveLedgerGrants(
+        userId,
+        walletId,
+        SOLANA_LEDGER_CHAIN,
+        client,
+      );
+      composed = await this.composeRevision(userId, walletId, { client, grants });
+    } catch (error) {
+      if (!(error instanceof PolicyCompositionRefusalError)) throw error;
+      await this.recordStop(
+        userId,
+        walletId,
+        {
+          failureClass: error.failureClass,
+          reason: error.reason,
+          detail: { code: error.reason },
+        },
+        client,
+      );
+      return { kind: "blocked", contact: archived, revokedGrantIds, error };
+    }
+
+    const revision = await this.repository.bumpDesiredRevision(
+      userId,
+      { walletId, desiredRulesHash: composed.hash },
+      client,
+    );
+    // One intent in flight per wallet: the previous revision is superseded in the
+    // same transaction, so the wallet is never left with two, or with none.
+    await this.supersedeInFlightIntent(userId, walletId, client);
+    await this.repository.insertIntent(
+      userId,
+      {
+        walletId,
+        desiredRevision: revision,
+        origin: options.origin ?? "screen",
+        action: "remove",
+        contactId,
+        contactVersion: archived.version,
+        composedRules: composed.rules,
+        composedHash: composed.hash,
+        idempotencyKey,
+      },
+      client,
+    );
+    await this.repository.appendPolicyAudit(
+      userId,
+      {
+        walletId,
+        event: "intent_recorded",
+        desiredRevision: revision,
+        detail: {
+          origin: options.origin ?? "screen",
+          action: "remove",
+          revokedGrantIds,
+        },
+      },
+      client,
+    );
+    // The immutable Phase A payload plus the grants this transaction actually
+    // revoked: the disclosure is durable evidence, not just a response body.
+    await this.repository.appendPolicyAudit(
+      userId,
+      {
+        walletId,
+        event: "revocation_disclosed",
+        desiredRevision: revision,
+        detail: { ...plan.payload, revokedGrantIds },
+      },
+      client,
+    );
+
+    return { kind: "recorded", contact: archived, revision, revokedGrantIds };
+  }
+
+  // -------------------------------------------------------------------------
   // The composition seam (design §3.1, §3.5 step 2/step 7)
   // -------------------------------------------------------------------------
 
@@ -597,13 +1084,11 @@ export class RecipientPolicyService {
   public async composeRevision(
     userId: string,
     walletId: string,
-    options: { client?: Queryable } = {},
+    options: { client?: Queryable; grants?: GrantPolicyInput[] } = {},
   ): Promise<ComposedPolicy> {
-    const grants = await this.listActiveGrants(
-      walletId,
-      userId,
-      SOLANA_LEDGER_CHAIN,
-    );
+    const grants =
+      options.grants ??
+      (await this.listActiveGrants(walletId, userId, SOLANA_LEDGER_CHAIN));
 
     const read = async (client: Queryable) => {
       const contacts = await this.repository.listComposerContacts(userId, client);
@@ -938,6 +1423,46 @@ type MutationOutcome =
       contact: RecipientContactRecord;
       error: PolicyCompositionRefusalError;
     };
+
+/**
+ * The removal transaction's outcome. `revokedGrantIds` is carried on BOTH arms:
+ * a composition refusal still commits the revocations, so the caller can still
+ * disclose what was actually revoked.
+ */
+type RemovalOutcome =
+  | {
+      kind: "recorded";
+      contact: RecipientContactRecord;
+      revision: number;
+      revokedGrantIds: string[];
+    }
+  | {
+      kind: "blocked";
+      contact: RecipientContactRecord;
+      revokedGrantIds: string[];
+      error: PolicyCompositionRefusalError;
+    };
+
+/**
+ * The abort half of design §1.6 step 6: thrown from inside the transaction so the
+ * rollback is the database's, never a compensating write.
+ */
+class RemovalRetrySignal extends Error {}
+
+/**
+ * Design §1.6 step 6's bounded budget: three attempts, then `blocked_conflict`.
+ * Each attempt re-reads Phase A and re-locks, so the budget bounds LIVENESS under
+ * a pathological writer, not correctness.
+ */
+const RECIPIENT_REMOVAL_MAX_ATTEMPTS = 3;
+
+/** Order-independent id-set equality: the alias/affected comparisons are about
+ * membership, and both sides are already read in a deterministic order. */
+function sameIdSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const seen = new Set(left);
+  return right.every((id) => seen.has(id));
+}
 
 /**
  * Whether the enrollment row still needs to be READ to capture the baseline.

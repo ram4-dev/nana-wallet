@@ -40,7 +40,10 @@
  * it is omitted the repository opens its own `withUserTransaction`.
  */
 import type { DatabaseClient, Queryable } from "../../db/client.js";
-import type { GrantPolicyRule } from "../grants/solana-policy-provisioner.js";
+import type {
+  GrantPolicyInput,
+  GrantPolicyRule,
+} from "../grants/solana-policy-provisioner.js";
 
 export type PolicyStateStatus =
   | "saved_not_configured"
@@ -311,6 +314,48 @@ export interface EnrollmentConsent {
  * instead of returning a fabricated default, so a caller can never serialize or
  * bump a wallet the transaction cannot see.
  */
+/** One active alias of the address being removed (design §1.6 step 2). */
+export interface RemovalAliasRow {
+  id: string;
+  version: number;
+}
+
+/**
+ * One grant row read for the removal (design §1.6 steps 3/4/6). `state` is
+ * carried so the caller can distinguish a grant it revoked from one a concurrent
+ * revoke already moved.
+ */
+export interface RemovalAffectedGrantRow {
+  id: string;
+  state: string;
+  recipients: string[];
+}
+
+/**
+ * Map a raw `delegated_grants` row read for the removal. An unreadable
+ * `recipients` projection is refused instead of coerced: a grant whose allowlist
+ * cannot be enumerated must never be treated as "does not contain the address".
+ */
+function mapAffectedGrant(row: {
+  id: string;
+  state: string;
+  recipients: unknown;
+}): RemovalAffectedGrantRow {
+  if (
+    !Array.isArray(row.recipients) ||
+    !row.recipients.every((recipient) => typeof recipient === "string")
+  ) {
+    throw new Error(
+      `Delegated grant ${row.id} has an unreadable recipients projection; refusing to decide its revocation scope from it.`,
+    );
+  }
+  return {
+    id: row.id,
+    state: row.state,
+    recipients: row.recipients as string[],
+  };
+}
+
 export class PolicyStateMissingError extends Error {}
 
 /**
@@ -1286,6 +1331,225 @@ export class RecipientPolicyRepository {
    * This is the narrow place where the repository enforces something row
    * isolation cannot express. See {@link PolicyWalletNotOwnedError}.
    */
+  // -------------------------------------------------------------------------
+  // Removal transaction — design §1.6 (task 1.7)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Phase A step 2 / step 6 (`L3`): the active aliases an address is reachable
+   * through, ascending by id.
+   *
+   * The alias set IS the last-alias decision, and the decision is what authorizes
+   * a whole-grant revocation, so this read is taken twice on purpose: unlocked in
+   * Phase A to build the immutable proposal payload, and again under `FOR UPDATE`
+   * inside the transaction, where it is authoritative. A set that changed between
+   * the two is detected by the caller and aborts the transaction rather than
+   * revoking a scope that a second alias still covers.
+   */
+  public async listActiveAliases(
+    userId: string,
+    address: string,
+    client?: Queryable,
+  ): Promise<RemovalAliasRow[]> {
+    return this.listAliases(userId, address, false, client);
+  }
+
+  /** The `L3` slot: the same alias read, taken `FOR UPDATE` in ascending id order. */
+  public async lockActiveAliases(
+    userId: string,
+    address: string,
+    client: Queryable,
+  ): Promise<RemovalAliasRow[]> {
+    return this.listAliases(userId, address, true, client);
+  }
+
+  private async listAliases(
+    userId: string,
+    address: string,
+    lock: boolean,
+    client?: Queryable,
+  ): Promise<RemovalAliasRow[]> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<{ id: string; version: string | number }>(
+        `SELECT id, version
+           FROM recipients
+          WHERE user_id = $1 AND status = 'active' AND address = $2
+          ORDER BY id ASC${lock ? " FOR UPDATE" : ""}`,
+        [userId, address],
+      );
+      return result.rows.map((row) => ({
+        id: row.id,
+        version: Number(row.version),
+      }));
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * Phase A step 3 / step 6: the ACTIVE grants whose allowlist contains the
+   * address, ascending by id — the affected set whose revocation the removal may
+   * disclose.
+   *
+   * `recipients @> to_jsonb(ARRAY[$3]::text[])` is containment, not equality: a
+   * grant listing several addresses is affected by any one of them, which is why
+   * the revocation that follows is whole-grant instead of a narrowing rewrite
+   * (spec "Multi-address grant is revoked whole, not narrowed").
+   */
+  public async listAffectedActiveGrants(
+    userId: string,
+    walletId: string,
+    address: string,
+    client?: Queryable,
+  ): Promise<RemovalAffectedGrantRow[]> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<{
+        id: string;
+        state: string;
+        recipients: unknown;
+      }>(
+        `SELECT id, state, recipients
+           FROM delegated_grants
+          WHERE user_id = $1 AND wallet_id = $2 AND state = 'active'
+            AND recipients @> to_jsonb(ARRAY[$3]::text[])
+          ORDER BY id ASC`,
+        [userId, walletId, address],
+      );
+      return result.rows.map(mapAffectedGrant);
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * The `L1` slot (design §1.2/§1.6 step 3): one `pg_advisory_xact_lock` per
+   * affected grant, in ascending id order.
+   *
+   * The key is byte-identical to the one the existing claim path takes
+   * (`consumption.ts` uses `hashtext('dgc-grant-' || id)`), so a removal and a
+   * concurrent claim on the same grant serialize on the SAME lock. Taking them in
+   * ascending id order is what makes the chain monotone and therefore
+   * deadlock-free.
+   */
+  public async lockGrantAdvisoryKeys(
+    grantIds: readonly string[],
+    client: Queryable,
+  ): Promise<void> {
+    for (const grantId of [...grantIds].sort()) {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `dgc-grant-${grantId}`,
+      ]);
+    }
+  }
+
+  /**
+   * The `L2` slot: the affected rows locked `FOR UPDATE` in ascending id order.
+   *
+   * Deliberately NOT filtered by `state`: a grant revoked by a concurrent claim
+   * or revoke must still be returned (and locked) so the caller can tell "already
+   * revoked" from "never locked", instead of treating a missing row as success.
+   */
+  public async lockAffectedGrants(
+    userId: string,
+    walletId: string,
+    grantIds: readonly string[],
+    client: Queryable,
+  ): Promise<RemovalAffectedGrantRow[]> {
+    if (grantIds.length === 0) return [];
+    const result = await client.query<{
+      id: string;
+      state: string;
+      recipients: unknown;
+    }>(
+      `SELECT id, state, recipients
+         FROM delegated_grants
+        WHERE user_id = $1 AND wallet_id = $2 AND id = ANY($3::uuid[])
+        ORDER BY id ASC
+        FOR UPDATE`,
+      [userId, walletId, [...grantIds]],
+    );
+    return result.rows.map(mapAffectedGrant);
+  }
+
+  /**
+   * Design §1.6 step 7: revoke ONE grant whole. Returns `false` when the row was
+   * no longer active (a concurrent claim/revoke won the `L1` race), which is not
+   * an error but must not be audited as a revocation this call performed.
+   *
+   * The statement is the existing revoke statement verbatim
+   * (`consumption.ts:367-374`); nothing is rewritten, narrowed, or migrated to a
+   * replacement address.
+   */
+  public async revokeGrantWhole(
+    userId: string,
+    grantId: string,
+    client: Queryable,
+  ): Promise<boolean> {
+    const result = await client.query(
+      `UPDATE delegated_grants
+          SET state = 'revoked', revoked_at = now(), updated_at = now()
+        WHERE id = $1 AND user_id = $2 AND state = 'active'`,
+      [grantId, userId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /**
+   * The composition read the removal transaction needs: the ledger-shaped ACTIVE
+   * grants for one wallet, read on the CALLER's client.
+   *
+   * `listActiveGrants` (the runtime's implementation) opens its own transaction,
+   * so the grants it returns are outside an enclosing mutation's snapshot. The
+   * removal must compose from the POST-mutation projection — the grants it just
+   * revoked are no longer active — so it owns moving that read onto the client it
+   * already holds (carried from task 1.6). The chain guard mirrors the runtime's,
+   * so an unexpected chain family fails closed instead of composing another
+   * family's scopes.
+   */
+  public async listActiveLedgerGrants(
+    userId: string,
+    walletId: string,
+    chain: string,
+    client: Queryable,
+  ): Promise<GrantPolicyInput[]> {
+    if (chain !== "solana") {
+      throw new Error(
+        `Solana grant policy recompute only supports the ledger chain family solana; received "${chain}".`,
+      );
+    }
+    const result = await client.query<{
+      id: string;
+      recipients: unknown;
+      max_per_transfer: string;
+      expires_at: Date;
+    }>(
+      `SELECT id, recipients, max_per_transfer::text, expires_at
+         FROM delegated_grants
+        WHERE wallet_id = $1 AND user_id = $2
+          AND chain = $3 AND state = 'active'
+        ORDER BY created_at, id`,
+      [walletId, userId, chain],
+    );
+    return result.rows.map((row) => {
+      if (
+        !Array.isArray(row.recipients) ||
+        !row.recipients.every((recipient) => typeof recipient === "string") ||
+        !(row.expires_at instanceof Date) ||
+        !Number.isFinite(row.expires_at.getTime())
+      ) {
+        throw new Error(
+          `Delegated grant ${row.id} has an unreadable recipients/expires_at projection; refusing to compose from it.`,
+        );
+      }
+      return {
+        grantId: row.id,
+        walletId,
+        recipients: row.recipients as string[],
+        maxPerTransfer: row.max_per_transfer,
+        // Epoch SECONDS, exactly as the runtime's `listActiveGrants` maps it.
+        expiresAt: Math.floor(row.expires_at.getTime() / 1000),
+      };
+    });
+  }
+
   private async assertWalletOwned(
     client: Queryable,
     userId: string,

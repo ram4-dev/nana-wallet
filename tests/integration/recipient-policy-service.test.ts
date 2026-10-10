@@ -249,6 +249,18 @@ suite("recipient policy service (task 1.6)", () => {
       return mapContact(result.rows[0]!);
     },
 
+    async archive(userId, contactId, expectedVersion, client): Promise<RecipientContactRecord> {
+      const result = await client.query<ContactRow>(
+        `UPDATE recipients
+            SET status = 'inactive', updated_at = now()
+          WHERE user_id = $1 AND id = $2 AND version = $3 AND status = 'active'
+          RETURNING ${RECIPIENT_COLUMNS}`,
+        [userId, contactId, expectedVersion],
+      );
+      if (result.rowCount === 0) throw new RecipientContactVersionConflictError();
+      return mapContact(result.rows[0]!);
+    },
+
     async readActive(userId, contactId, client) {
       const run = async (query: Queryable) => {
         const result = await query.query<ContactRow>(
@@ -290,6 +302,7 @@ suite("recipient policy service (task 1.6)", () => {
         return contacts.update(userId, contactId, input, client);
       },
       readActive: contacts.readActive,
+      archive: contacts.archive,
     };
     const service = new RecipientPolicyService({
       database,

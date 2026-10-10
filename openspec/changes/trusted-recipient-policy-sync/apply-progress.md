@@ -1062,3 +1062,235 @@ untracked `compose.privy-local.ports.yaml` were not touched.
 
 `feat(policy): add the recipient policy service with server-owned identity and a strict seam` — see
 the report envelope for the SHA.
+
+### Task 1.7 — implement the atomic removal transaction with whole-grant revocation
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/service.ts` | Modified (additive, `+537/-7`). `remove(...)`, the `W1 → tx{ W0(U) → L1(asc) → L2 → L3 → L5 }` chain, the abort-and-restart guard, the whole-grant revoke loop, `projectRevocationDisclosure`, the `RecipientRemovalResult` / `RecipientRevocationDisclosure` types, the removal schema, and ONE line in `composeRevision` (`options.grants ?? this.listActiveGrants(...)`). |
+| `src/wallet/policy/repository.ts` | Modified (additive, `+266`). Six new removal reads/statements under a `Removal transaction — task 1.7` marker: `listActiveAliases`, `lockActiveAliases` (L3), `listAffectedActiveGrants`, `lockAffectedGrants` (L2), `lockGrantAdvisoryKeys` (L1), `revokeGrantWhole`, `listActiveLedgerGrants` (the client-scoped composition read), plus the two row types and their mapper. No existing statement, predicate or column list was touched. |
+| `src/wallet/policy/errors.ts` | Modified (additive, `+48`). `RecipientPolicyRemovalConflictError` (`blocked_conflict` / `revocation_set_widened`) and `RecipientPolicyNotSerializedError` (`blocked_conflict` / `policy_lease_busy` \| `policy_lease_unavailable`). |
+| `tests/integration/recipient-policy-removal.test.ts` | New (17 cases). The removal semantics against real tables, real RLS, real transactions and a real second lease holder, plus the disclosure projection's decision table. |
+| `tests/integration/recipient-policy-service.test.ts` | Modified (additive, `+13`): the injected contact port gains the `archive` member this unit's seam requires, so task 1.6's suite keeps compiling and its 22 cases keep their proof. |
+
+#### What the unit delivers
+
+- **The chain, exactly as §1.3 specifies for removal.** `W1` is acquired OUTSIDE the
+  transaction (bounded wait, released in `finally`); Phase B is one `withUserTransaction`
+  taking `W0(U)` (`lockPolicyState`), then `L1` (one `pg_advisory_xact_lock(hashtext('dgc-grant-<id>'))`
+  per affected grant, ascending — the SAME key the claim path takes, so claim and removal
+  serialize on one lock), then `L2` (`FOR UPDATE`, ascending, deliberately NOT filtered by
+  `state`), then `L3` (the aliases `FOR UPDATE`, ascending), then `L5` (appends). Provider I/O
+  never runs inside the transaction: the port's capability is `unavailable` and the apply step
+  is a separate, post-commit status write.
+- **Phase A / Phase B split with the abort-and-restart guard.** Phase A reads the target
+  contact, the alias set, the affected active grants and freezes the immutable proposal payload
+  (`action: 'remove'`, contact id + version, address, `affected_grant_ids` only when last
+  alias). Phase B re-derives the alias set under `L3` and the affected set under the locks, and
+  aborts (rollback → re-plan) when either the alias set differs from Phase A's or an affected
+  grant was not locked. Three attempts, then `blocked_conflict` with
+  `revocation_set_widened`. Widening is the direction that matters: a grant Phase A never named
+  would otherwise be revoked without ever being disclosed.
+- **Whole-grant revocation, or none.** Only when the alias set under lock is exactly one
+  alias: each affected grant is revoked whole by the existing revoke statement
+  (`state='revoked', revoked_at=now()`) and gets its `revoked` `grant_audit_log` row through
+  `appendGrantAudit(..., client)` IN THE SAME transaction. The statement has no `recipients`
+  write at all, so a multi-address grant cannot be narrowed, rewritten or migrated to a
+  replacement address — proven by comparing the raw rows byte-for-byte.
+- **Everything else in the same transaction.** The version-CAS contact archive
+  (`WHERE user_id=$1 AND id=$2 AND version=$3 AND status='active'`; the port raises the seam's
+  `409 VERSION_OBSOLETA` on zero rows), `desired_revision + 1`, the intent row for that revision
+  carrying the composed rules/hash and the `idempotency_key`, and the `intent_recorded` +
+  `revocation_disclosed` audits.
+- **The recorded revision composes the POST-mutation projection.** The grants are read on the
+  caller's client (`listActiveLedgerGrants`) and handed to `composeRevision` through a new
+  optional `grants` field, so the recorded rules cannot contain a rule for a scope this
+  transaction just revoked (proven directly: the intent's `composed_rules` does not contain
+  `solana-grant-<revoked id>`).
+- **No premature success.** `revocation.state` is produced by one exported projection that
+  defers entirely to the already-fail-closed `projectContactPermission`, so a state row claiming
+  `applied` without `verified_at` (or with an applied revision behind the desired one) yields
+  `pending`, never `applied`.
+- **A composition refusal is a STOP, not a rollback.** If the post-mutation composition refuses
+  (`blocked_configuration`), the removal and its revocations COMMIT with the stop recorded and
+  no new revision or intent — revoking authority is the safe direction, and retaining it because
+  a composition could not be proven would be the unsafe one. Proven by a case where one grant is
+  revoked while a second stays active and U1 is unproven.
+
+#### TDD Cycle Evidence
+
+Honest disclosure first: the RED I can attest is **module-level**, not behavioural. The suite was
+written and run against the pre-unit tree (`service.ts`/`repository.ts`/`errors.ts` reverted to
+`HEAD`, restored by `cp` from a backup, no stash involved): **16 failed / 16**, every case failing
+`TypeError: … remove is not a function` / `projectRevocationDisclosure is not a function`. That
+proves the suite cannot pass without the unit, but it does not prove any individual guard. Every
+guard is therefore proven separately, by mutation, and each was restored from a pristine copy
+with the suite re-run green afterwards (`17/17`).
+
+| # | Mutation applied | Observed RED (exact failing tests) | Verdict |
+|---|---|---|---|
+| A | `if (aliasesUnderLock.length === 1)` → `if (true)` | `does not revoke the grant and appends no revoke audit while a second alias is active` | the last-alias authority is load-bearing |
+| B | revocation `reason: "last_active_alias_removed"` → `"neutralised"` | `revokes the affected whole grant with its audit in the same transaction as the contact` | the `revoked` audit append and its evidence are load-bearing |
+| C | `projectRevocationDisclosure`: `if (permission.state === "applied")` → `if (true)` | 5 cases — the removal's `state !== "applied"`, plus 4 decision-table rows | "never reports the revocation as applied before a readback" is genuinely asserted |
+| D | the `W1` gate (`if (lease.status !== "acquired")` → `if (false)`) | `mutates nothing while another writer holds the wallet lease, then succeeds once it is released` | the lease is the writer gate, not a retry hint |
+| E | `composeRevision(userId, walletId, { client, grants })` → `{ client }` (the runtime's own-transaction read) | `revokes the affected whole grant …` **and** `mutates nothing while another writer holds the wallet lease …` | the post-mutation composition read is load-bearing |
+| F | the abort guard's alias clause (`!sameIdSet(...) \|\|` → `false \|\|`) | `restarts on a stale plan instead of disclosing a revocation it did not perform` | the restart guard is load-bearing |
+
+Mutation F is why the suite has a 17th case: the first mutation run produced **16 passed / 16**
+under F — not falsified — which is exactly unit 1.5's lesson. The guard was unreachable because
+grant creation must hold `W1` (which the removal holds), so nothing in the suite could move the
+plan. The honest fix was a test, not a comment: a repository proxy whose Phase A alias read is
+followed by an injected second alias (the alias half needs no new grant), which now fails by name
+under F and passes otherwise.
+
+Every negative assertion is preceded by a positive control on the same fixture: the affected grant
+is asserted `active` before it is asserted `revoked`; `recordRuleUnion` asserts `rowCount === 1`
+so a composition case cannot silently measure the fail-closed default; the rollback case asserts the
+injected failure really ran AFTER the contact write; the version-CAS case asserts the SAME call
+succeeds with the version the caller read; the lease case releases the lease and re-runs the very
+same removal to success; the unrelated-grant case asserts the affected grant's audit IS visible
+through the same helper that reports the unrelated grant's absence.
+
+#### Commands run and results
+
+```text
+# pre-change control (BEFORE any edit), 6 grant suites
+npx vitest run tests/unit/grants-policy-provisioner.test.ts tests/unit/grants-policy-runtime.test.ts \
+  tests/unit/privy-policy-sync.test.ts tests/integration/grant-claim-release.test.ts \
+  tests/integration/delegated-grants-consumption.test.ts tests/integration/delegated-grant-execution.test.ts
+  → Test Files 6 passed (6) | Tests 62 passed (62)
+
+# honest module-level RED (implementation reverted to HEAD, then restored)
+npx vitest run tests/integration/recipient-policy-removal.test.ts
+  → Tests 16 failed (16) — every case `remove is not a function` / `projectRevocationDisclosure is not a function`
+
+# mutations A-F, each restored and re-run green
+  → 1 / 1 / 5 / 1 / 2 / 1 failures respectively, each by name (table above)
+
+npx vitest run tests/integration/recipient-policy-removal.test.ts
+  → Test Files 1 passed (1) | Tests 17 passed (17)   (stable across 3 runs)
+
+npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts
+  → Test Files 10 passed (10) | Tests 189 passed (189)      ← units 1.1-1.6 stayed green (172 → 189)
+
+# post-change grant regression set, SAME six suites, compared by test name
+  → Test Files 6 passed (6) | Tests 62 passed (62)          ← identical to the pre-change control; no new failure
+
+npm run lint        → eslint src tests --max-warnings=0 : clean, exit 0
+npm run typecheck   → tsc -p tsconfig.test.json --noEmit : clean, exit 0
+```
+
+Grant regression comparison **by test name**: pre-change control 62 passed / 0 failed; post-change
+62 passed / 0 failed, the same names, so this unit introduces no regression in the grant
+claim/consumption/revocation area. The six known backend failures named in
+`.agent-workflow/tasks/trusted-recipient-policy-sync/91-test-baseline.md` are outside this set and
+were not touched by this unit's diff.
+
+#### Deviations from the design
+
+Five, all deliberate and additive:
+
+1. **`Remove`'s contact archive goes through the injected port, not `ContactsRepository`.** The port
+   gains an `archive(userId, contactId, expectedVersion, client)` member carrying the design's exact
+   version predicate (`WHERE user_id=$1 AND id=$2 AND version=$3 AND status='active'`). The existing
+   `ContactsRepository.archive` (`src/memory/contacts-repository.ts:226-240`) is an UNVERSIONED soft
+   delete, so it cannot be the seam's CAS and must not be imported here (design §3.3 keeps
+   `src/wallet/policy/**` free of that module). The zero-row case is reported as
+   `RecipientContactVersionConflictError` — the seam's `409 VERSION_OBSOLETA`, exactly what
+   `update` already reports — rather than by importing the concrete `ContactsConflictError`; the
+   translation belongs to the HTTP vertical's adapter.
+2. **Two new seam errors.** `revocation_set_widened` (the exhausted restart budget) and
+   `policy_lease_busy` / `policy_lease_unavailable` (`W1` could not be acquired) have no member in
+   the design's vocabulary, and neither may be reported as a generic failure: the first is a
+   `blocked_conflict` that must be recorded, and the second is the reason a removal mutated
+   NOTHING. Both carry `failureClass` + `reason` so `recordStop` cannot pattern-match message text.
+3. **`composeRevision` gained an optional `grants` input.** §1.6 step 7 requires the composition to
+   read the post-mutation projection; `listActiveGrants` opens its own transaction and would
+   therefore compose from a snapshot that still contains the just-revoked grant. The carried note
+   from task 1.6 named removal as the owner of moving that read onto the caller's client; the new
+   `listActiveLedgerGrants` does exactly that and `composeRevision` accepts the result. One line
+   changed: `const grants = options.grants ?? (await this.listActiveGrants(...))`.
+4. **The lease's bounded wait is injectable** (`deps.policyLease?: { waitBudgetMs?, ownerId? }`,
+   default 3 000 ms / `"backend"`). §1.6 step 1 bounds the wait; without an injection point the
+   contended-lease case would either sleep the production budget or simulate contention instead of
+   creating it. The case holds the lease from a SECOND connection, so contention is real.
+5. **A composition refusal during a removal commits the removal and its revocations.** The design
+   says a failed mutation persists nothing (spec: the rollback scenario) but does not say what a
+   `blocked_configuration` STOP does on the removal path, and slice 1 ships only fail-closed
+   defaults, so this path is reachable today. Rolling back would RETAIN authority the user
+   explicitly removed; committing keeps the safe direction and still records the stop, with no
+   revision, no intent and no PATCH (§11 U1's saved-not-enabled end state, applied to removal).
+
+One smaller, non-behavioural choice: the removal's `revocation_disclosed` audit detail is the frozen
+Phase A payload plus the `revokedGrantIds` the transaction actually performed, so the two are
+comparable in one row; the test that proves the abort guard reads exactly that pair.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **`setPolicyStatus` REPLACES `status_detail`.** `recordApplyPending` writes
+  `{ code: "provider_unavailable" }`, so a U1 probe result recorded as
+  `status_detail.rules_union` is destroyed by the next mutation's post-commit status write. Task 2.1
+  records the probe result and task 2.9 owns the status transitions, so one of them must merge
+  rather than replace (or record the probe outcome where it survives). Found while building this
+  unit's fixture, which has to record the union LAST for that reason; not this unit's to fix.
+- **`grant_audit_log`'s append-only trigger plus its FK to `delegated_grants` makes a revoked grant
+  undeletable.** Any test teardown that revokes a grant must leave the grant row behind (this
+  suite's `afterAll` does, and says why). A future suite that tries to clean up its grants after
+  exercising revocation will fail on the FK, not on its assertions.
+- **`ContactsRepository.archive` is unversioned today.** The HTTP vertical's adapter must add the
+  `version = $3` predicate the design's §1.6 step 7 statement carries; the port's contract already
+  requires it, so the adapter cannot satisfy the seam without it.
+- **The remote rules for a removal are not withdrawn until the reconciler applies them.** When the
+  composition refuses, the previously attached policy keeps the revoked grant's rule; the ledger
+  revocation plus the slice-2 claim gate are what stop execution. This is the design's architecture
+  (`Ledger state, whole-grant revocation, and revoke audits are authoritative`), recorded here so
+  slice 2's apply path is not read as optional for safety.
+- **`L1`/`L2` are locked but not yet contended by this suite.** `claim ‖ removal` under two real
+  connections with `statement_timeout` is design §12.2's concurrency case and task 1.9's explicit
+  deliverable (it also prepends `W0` to the claim path); this unit proves the locks are taken in the
+  documented order, not that the order prevents `40P01`.
+
+#### Remaining tasks in slice 1
+
+```text
+- [ ] **1.8 Delete the legacy full-rule writer entry points and route their callers through the composer.**
+- [ ] **1.9 Document and install the single lock order, prepending `W0` to the claim path.**
+- [ ] **1.10 Extend the structural guard suite to make a second full-rule writer unreachable by construction.**
+- [ ] **1.11 Run the slice-1 gate and record the slice-1 work-unit commits.**
+```
+
+Parent-owned lifecycle rows in `tasks.md` (lines 172-173: the bounded native review and the
+post-apply verify/archive) were left byte-for-byte untouched — both still carry
+`<!-- sdd-owner: parent -->` and remain unchecked — and no review, receipt or delivery gate was
+started by this phase.
+
+#### Workload / PR boundary
+
+One commit, one work unit: `service.ts` (`+537/-7`), `repository.ts` (`+266`), `errors.ts` (`+48`),
+the new 17-case suite and the 13-line additive `archive` member in task 1.6's suite —
+**~1 750 changed lines**, above the 400-line review budget and reported, not hidden. It cannot be
+split without breaking the unit: the chain, the abort guard, the revocation and the disclosure are
+one transaction whose guarantees are only provable together, and `gentle-ai-work-unit-commits`
+forbids shrinking a diff by dropping tests, comments or documentation. It sits at the head of the
+parent-assigned `PR 3` slice (tasks 1.7–1.11, rollback boundary
+`embedded.ts`, grants provisioner/runtime, `consumption.ts`, docs), needs no migration change, and
+no `size:exception` is requested. No push, no PR, and no work started on tasks 1.8-1.11.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit,
+the authoritative artifact paths and the delivery path directly (slice-1 chained PR, this work unit
+alone). Readiness was resolved against the artifacts before any edit — `tasks.md` (task 1.7,
+terminal `<!-- sdd-owner: implementation -->`), `design.md` §1.2/§1.3/§1.6/§1.7, §2.1-§2.5, §9.2,
+§11 U1, §12.2, `spec.md` ("Atomic recipient mutation with desired revision and granted-scope
+revocation", "Atomic revocation of affected grants on last-alias removal", "Effective status
+vocabulary and no premature success") and the 1.1-1.6 apply-progress. `actionContext`: all writes
+stayed inside the assigned worktree root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout and the
+untracked `compose.privy-local.ports.yaml` were not touched. The database was left on the Supabase
+chain this worktree provisions from, and `npm run db:migrate` was not used.
