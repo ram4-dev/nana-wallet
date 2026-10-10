@@ -5043,3 +5043,105 @@ The 20-minute cap was reached after 4.8 was green and committed. Task 4.9 (the `
 for both contexts per design §12.2 and `AGENTS.md` rule 2) remains **unimplemented**: no file
 was created under `evals/` and `npm run eval` was not run for it. It is not partially done and
 nothing about it is claimed as passing. Its checkbox stays `- [ ]`.
+
+---
+
+### Task 4.9 — add the agent evals for both text and voice contexts
+
+Status: **completed and executed**. The earlier 4.9 entry above ("NOT STARTED (budget cap
+reached)", from the 4.8 run) is left byte-for-byte as history; this entry supersedes it. The
+persisted checkbox in `openspec/changes/trusted-recipient-policy-sync/tasks.md` is now `- [x]`,
+and the two parent-owned lifecycle rows are untouched.
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `evals/agent/recipient-lifecycle.eval.ts` | New. One evalite suite, two cases that declare their context (`text`, `voice`), seven scorers. Deterministic and offline. |
+| `docs/evals.md` | New file-tree line plus the section documenting the eval and every scorer. |
+| `openspec/changes/trusted-recipient-policy-sync/tasks.md` | 4.9 → `- [x]`. |
+| `openspec/changes/trusted-recipient-policy-sync/apply-progress.md` | This entry. |
+
+#### What the unit delivers
+
+Each case declares its context and is observed through the adapter that context actually uses:
+`toAiSdkTools` for text, `toLivekitRealtimeTools` for voice. Assertions, one scorer each:
+
+- **`lifecycle_tools_exposed`** — the four lifecycle tools are present in the surface of that
+  context, resolved from the adapter output, not from the shared definition.
+- **`argument_discipline`** — per context and per tool: the documented payload parses, and
+  `address`, `network`, `policyId`, `signerId`, `cap`, `confirmationId`, `timestamp` and
+  `turnCount` are each rejected with `unrecognized_keys` (never ignored).
+- **`no_address_from_name`** — no lifecycle schema exposes an authority field; the payload the
+  server receives for a name-only create carries no authority key; the tool result contains no
+  base58-shaped value; and for voice the **published card bytes** of a name-only create carry
+  `address: null` and no base58 address anywhere.
+- **`ambiguous_name_asks_first`** — a name where an identifier is required is rejected with the
+  missing `contactId` (the model must ask), a name alongside a valid id is
+  `unrecognized_keys`, a name in place of `confirm_*` evidence is `unrecognized_keys`, and the
+  observed server calls for the ambiguous payload are **0**.
+- **`refusal_wording_honest`** — every refusal the production surfaces produce in that context
+  is checked against an affirmative-success detector: text fail-closed
+  `address_review_required` (all four tools, no port wired); voice
+  `address_review_required` (no bound visual client → the review-channel request),
+  `proposal_not_published` (publish rejected), `confirmation_required` (no open window). The
+  `staged` card-publication message is checked too, because a published card is not a verified
+  readback.
+- **`no_unverified_success_wording`** — the above plus a positive control proving the detector
+  is not vacuous: `"El destinatario quedó habilitado."` → detected, `"Todavía no está
+  habilitado."` → not detected (an honest denial passes).
+- **`status_vocabulary_exact`** — `policyReadinessSchema.options` equals the spec vocabulary
+  (`saved_not_configured`, `pending`, `syncing`, `applied`, `retryable_failure`,
+  `blocked_conflict`, `blocked_configuration`) exactly, every observed status is in the
+  declared port-status set, and no refusal reports `applied`.
+
+The voice refusal wording and the card bytes come from the production port
+(`createVoiceContactActions`); the text wording comes from the production fail-closed path of
+the shared definition. The persistence adapter behind the voice port is stubbed, because what
+is measured is the model/agent boundary, not the database — this keeps the offline suite
+provider-free, as `docs/evals.md` requires.
+
+#### Verification evidence (executed, not simulated)
+
+| Command | Result |
+|---|---|
+| `npm run eval` | `evals/agent/recipient-lifecycle.eval.ts (2 evals)` → **100 %**. Suite score 98 % (the pre-existing `evals/agent/wallet-agent.eval.ts` 98 %, untouched by this unit). `Eval Files 9`, `Evals 27`. |
+| `npx evalite run evals/agent/recipient-lifecycle.eval.ts --noHideTable` | Table shows both cases `text` and `voice` at **100 %** under `Agent: recipient lifecycle (text and voice)`; exported JSON confirms `status: success`, `averageScore: 1`, all seven scorers `1` on both cases. |
+| `npm run lint` | clean |
+| `npm run typecheck` | clean |
+| `npx vitest run tests/unit/recipient-lifecycle-tools.test.ts tests/unit/confirmation-arbiter.test.ts` | both files passed |
+| `npm run db:migrate` | not invoked: no schema change in this unit (and it fails locally on the pre-existing `relation "conversations" already exists`). |
+
+Observed scorer values from the exported JSON (`--outputPath`): both cases
+`[lifecycle_tools_exposed, argument_discipline, no_address_from_name,
+ambiguous_name_asks_first, refusal_wording_honest, no_unverified_success_wording,
+status_vocabulary_exact]` = `[1,1,1,1,1,1,1]`; `serverCallsOnAmbiguousName: 0`;
+`publishedCardAddressIsNull: true` (voice); `detectorControl: { affirmative: true, denial: false }`.
+
+**No provider was needed and none was faked.** `npm run eval` is the offline evalite suite
+(`docs/evals.md`: "Suite offline completa (sin red, sin claves)") and the new eval adds no
+model, network or database call, so the `EVAL_REAL=1`-gated suites skipped exactly as before
+(`realtime`, `stt`, `tts round-trip`, `tools-matrix` each printed their documented SKIP line).
+This unit is therefore **executed**, not merely implemented.
+
+#### Deviations from the design
+
+1. **Refusal wording for text comes from the fail-closed definition path, not from a text card
+   port.** The backend/text persistence port is not wired into any eval-visible context, so
+   the text assertions use the production fail-closed behaviour (`address_review_required`,
+   no success wording) plus the structural no-address checks. The voice side does exercise the
+   real port. The asymmetry is deliberate and recorded rather than papered over with a stub
+   port that would have made the wording assertion tautological.
+2. **The AI SDK surface wraps the zod schema**, so the eval resolves text schemas through
+   `inputSchema`/`parameters` and falls back to the shared definition's schema — the same
+   object the parity unit test proves the adapters pass through unchanged. Documented in the
+   file.
+3. The first run of the eval failed with `Cannot read properties of undefined (reading
+   'abortSignal')`: the AI SDK execute signature needs its options object. Fixed by passing
+   `{}` before any commit; the fix is in the shipped bytes.
+
+#### Workload / PR boundary
+
+One commit, one work unit: the new eval file, its `docs/evals.md` documentation, the `tasks.md`
+checkbox and this progress entry. It sits inside the parent-assigned slice-4 boundary
+(tasks 4.1–4.9, PR 6). No push, no PR, no `size:exception`.

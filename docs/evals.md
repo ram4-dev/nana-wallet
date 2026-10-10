@@ -20,6 +20,7 @@ evals/
     scenarios/                   # dataset de escenarios (expected estructurado)
     wallet-agent.eval.ts         # evals offline: tools, guardas, preview→confirm, destinatarios
     tools-parity.eval.ts         # paridad estructural texto/voz (mismo set de tools)
+    recipient-lifecycle.eval.ts  # ciclo de vida de destinatarios: texto (AI SDK) y voz (LiveKit realtime), offline
     scenarios/unified-coverage.ts # cobertura unified: get_networks/list_tokens/get_address/get_history/memory tools + multi-red (Arc/Solana)
     judge.ts                     # LLM-judge con rúbrica fija (1-5 por criterio)
     conversational-quality.eval.ts # offline (judge mock) + real (agente + juez reales)
@@ -38,6 +39,27 @@ evals/
           tools-matrix.eval.ts       # eval real (gated EVAL_REAL=1) de transferencias
           baseline.json              # baseline de la matriz (se escribe tras un run real)
 ```
+
+## Eval del ciclo de vida de destinatarios (`evals/agent/recipient-lifecycle.eval.ts`)
+
+Offline y determinista (sin modelo, sin red, sin base): cada caso declara su contexto y se
+observa a través del adaptador que ese contexto usa de verdad — `toAiSdkTools` para texto,
+`toLivekitRealtimeTools` para voz. Dos casos (`text`, `voice`) × siete scorers:
+
+| Scorer | Qué exige |
+|---|---|
+| `lifecycle_tools_exposed` | Los cuatro tools del ciclo de vida (`stage_trusted_recipient`, `stage_trusted_recipient_edit`, `stage_trusted_recipient_removal`, `confirm_trusted_recipient_action`) existen en el adaptador de ese contexto |
+| `argument_discipline` | Solo `name`/`description`/`contactId`/`expectedVersion`/`proposalId`/`proposalVersion`; `address`, `network`, `policyId`, `signerId`, `cap`, `confirmationId`, `timestamp`, `turnCount` son rechazados con `unrecognized_keys` |
+| `no_address_from_name` | Ningún schema del ciclo de vida expone un campo de autoridad, el payload que recibe el servidor no lo lleva, y la tarjeta publicada de un alta por nombre viaja con `address: null` y sin ningún valor con forma base58 |
+| `ambiguous_name_asks_first` | Un nombre donde se requiere identificador es un rechazo por `contactId` faltante; un nombre junto al id es `unrecognized_keys`; cero llamadas al servidor con un nombre ambiguo |
+| `refusal_wording_honest` | Ninguna negativa (texto fail-closed; voz sin cliente visual, sin publicación, sin ventana) afirma que el destinatario quedó habilitado/aplicado/activado/revocado |
+| `no_unverified_success_wording` | Lo anterior, más el control positivo del detector (`quedó habilitado` → detecta; `no está habilitado` → no detecta) para que el scorer no pueda pasar por vacío |
+| `status_vocabulary_exact` | `policyReadinessSchema` es exactamente el vocabulario de la spec (`saved_not_configured`, `pending`, `syncing`, `applied`, `retryable_failure`, `blocked_conflict`, `blocked_configuration`), todo estado observado está declarado y una negativa nunca reporta `applied` |
+
+El wording de las negativas de voz y los bytes de la tarjeta salen del puerto de producción
+(`createVoiceContactActions`); el de texto, del camino fail-closed de la definición compartida
+cuando no hay puerto cableado. El adaptador de persistencia detrás del puerto de voz está
+stubbeado: lo que se mide es el límite modelo/agente, no la base.
 
 ## Variables de entorno
 
