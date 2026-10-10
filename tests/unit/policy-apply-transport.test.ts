@@ -15,7 +15,10 @@
  * `unavailable`/`unproven` and its verification is recorded as pending.
  */
 import { describe, expect, it } from "vitest";
-import { createSignedPolicyApplyPort } from "../../src/wallet/policy/apply.js";
+import {
+  createSignedPolicyApplyPort,
+  normalizeProviderReadbackRules,
+} from "../../src/wallet/policy/apply.js";
 import type { PolicyApplyRequest, PolicyApplyOutcome } from "../../src/wallet/policy/service.js";
 import {
   allowRule,
@@ -94,6 +97,14 @@ function attachedWallet(policyIds: readonly string[] = [POLICY_ID]) {
 }
 
 describe("the signed apply adapter (design §3.5 steps 4-9)", () => {
+  it("removes only Privy's response-only rule id before exact readback comparison", () => {
+    const [rule] = normalizeProviderReadbackRules([
+      { ...COMPOSED[0]!, id: "ifx_provider_generated" },
+    ]);
+
+    expect(rule).toEqual(COMPOSED[0]);
+  });
+
   it("converges a drifted rule set and reports the verified readback", async () => {
     const { port, calls, signer } = adapter({
       ownerWallets: attachedWallet(),

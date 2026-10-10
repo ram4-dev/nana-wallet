@@ -72,6 +72,7 @@ export type PolicyReadbackConflictReason =
   | "unrecognized_rule"
   | "recipient_address_without_provenance"
   | "rule_conditions_unreadable"
+  | "rule_shape_unrecognized"
   | "rules_mismatch";
 
 /** Failure class `blocked_configuration`: checks (e)-(g) (design §5.1). */
@@ -215,6 +216,37 @@ function scanTransferTo(rule: Record<string, unknown>): TransferToScan {
 }
 
 /**
+ * A known rule name alone is not authority to erase arbitrary remote fields.
+ * Values may differ before a legitimate convergence (recipient/cap/expiry), but
+ * the shape and the non-value condition identity must be exactly the rule shape
+ * this composer owns. Otherwise a PATCH could remove a remote restriction.
+ */
+function hasExpectedRuleShape(
+  observed: Record<string, unknown>,
+  expected: GrantPolicyRule,
+): boolean {
+  const observedKeys = Object.keys(observed).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  if (!isDeepStrictEqual(observedKeys, expectedKeys)) return false;
+  if (observed.method !== expected.method || observed.action !== expected.action) return false;
+  if (!Array.isArray(observed.conditions) || observed.conditions.length !== expected.conditions.length) {
+    return false;
+  }
+  return observed.conditions.every((condition, index) => {
+    const expectedCondition = expected.conditions[index];
+    if (!isRecord(condition) || !expectedCondition) return false;
+    const observedConditionKeys = Object.keys(condition).sort();
+    const expectedConditionKeys = Object.keys(expectedCondition).sort();
+    return (
+      isDeepStrictEqual(observedConditionKeys, expectedConditionKeys) &&
+      condition.field_source === expectedCondition.field_source &&
+      condition.field === expectedCondition.field &&
+      condition.operator === expectedCondition.operator
+    );
+  });
+}
+
+/**
  * Design §5.1 checks (a)-(d), in the design's order with one documented hoist:
  * (c) and (d) run before (b) so a pristine drift with an unexplained rule or an
  * unconsumed address is refused instead of being "repaired" by overwriting it.
@@ -241,6 +273,7 @@ export function compareComposedRules(
   }
 
   const composedNames = new Set(input.composedRules.map((rule) => rule.name));
+  const expectedByName = new Map(input.composedRules.map((rule) => [rule.name, rule]));
   for (const [index, rule] of input.readback.rules.entries()) {
     // (c) no unknown rule name: a rule we cannot explain is never deleted to
     // force convergence, and never adopted into desired state. The early return
@@ -254,7 +287,6 @@ export function compareComposedRules(
         detail: { ruleIndex: index, ruleName: name ?? bounded(rule) },
       };
     }
-
     // (d) every `Transfer.to` entry has a consent provenance entry (baseline,
     // active confirmed contact, or active grant recipient).
     const scan = scanTransferTo(rule);
@@ -277,6 +309,13 @@ export function compareComposedRules(
         outcome: "blocked_conflict",
         reason: "recipient_address_without_provenance",
         detail: { ruleName: rule.name, observedAddress: bounded(unexplained) },
+      };
+    }
+    if (!hasExpectedRuleShape(rule, expectedByName.get(rule.name)!)) {
+      return {
+        outcome: "blocked_conflict",
+        reason: "rule_shape_unrecognized",
+        detail: { ruleName: rule.name },
       };
     }
   }

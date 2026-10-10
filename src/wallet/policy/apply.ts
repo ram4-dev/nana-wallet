@@ -713,7 +713,7 @@ export type PrivyPolicyApplyTransportDependencies = {
         }[];
       }[]
     >;
-    getPolicy(policyId: string): Promise<{ id: string; rules: readonly GrantPolicyRule[] }>;
+    getPolicy(policyId: string): Promise<{ id: string; rules: readonly unknown[] }>;
     createPolicy(
       name: string,
       rules: readonly GrantPolicyRule[],
@@ -722,7 +722,7 @@ export type PrivyPolicyApplyTransportDependencies = {
     patchPolicy(
       policyId: string,
       rules: readonly GrantPolicyRule[],
-    ): Promise<{ id: string; rules: readonly GrantPolicyRule[] }>;
+    ): Promise<{ id: string; rules: readonly unknown[] }>;
     addPolicyToSigner(
       walletId: string,
       signerId: string,
@@ -730,6 +730,24 @@ export type PrivyPolicyApplyTransportDependencies = {
     ): Promise<void>;
   };
 };
+
+/**
+ * Privy adds an opaque `id` to each rule returned by GET/PATCH. It identifies
+ * the provider's stored rule, not an authorization constraint, so it cannot be
+ * part of the composer hash or the exact-shape guard. Every other key remains
+ * intact for the comparator to validate fail-closed.
+ */
+export function normalizeProviderReadbackRules(
+  rules: readonly unknown[],
+): readonly GrantPolicyRule[] {
+  return rules.map((rule) => {
+    if (typeof rule !== "object" || rule === null || Array.isArray(rule)) {
+      return rule as GrantPolicyRule;
+    }
+    const { id: _providerRuleId, ...withoutProviderId } = rule as Record<string, unknown>;
+    return withoutProviderId as GrantPolicyRule;
+  });
+}
 
 /**
  * The real provider implementation of the injected port. The owner-verified read
@@ -779,12 +797,18 @@ export function createPrivyPolicyApplyTransport(
     },
     async getPolicy(policyId) {
       const policy = await deps.server.getPolicy(policyId);
-      return { id: policy.id, rules: policy.rules };
+      return { id: policy.id, rules: normalizeProviderReadbackRules(policy.rules) };
     },
     async createPolicy(input) {
-      return deps.server.createPolicy(input.name, input.rules, {
-        chainType: input.chainType === "solana" ? "solana" : "ethereum",
-      });
+      if (input.chainType !== POLICY_APPLY_CHAIN) {
+        throw new PolicyApplyTransportError(
+          "rejected",
+          "createPolicy",
+          400,
+          "Recipient policy apply only supports the Solana chain.",
+        );
+      }
+      return deps.server.createPolicy(input.name, input.rules, { chainType: "solana" });
     },
     async attachPolicyToSigner(input) {
       await deps.server.addPolicyToSigner(
@@ -795,7 +819,7 @@ export function createPrivyPolicyApplyTransport(
     },
     async patchPolicy(input) {
       const policy = await deps.server.patchPolicy(input.policyId, input.rules);
-      return { id: policy.id, rules: policy.rules };
+      return { id: policy.id, rules: normalizeProviderReadbackRules(policy.rules) };
     },
   };
 }

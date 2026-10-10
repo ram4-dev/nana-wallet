@@ -188,4 +188,12 @@ describe("compose files declare the signed-authorization capability", () => {
     // Names and placeholders only: the template must never carry a key.
     expect(template).not.toContain(KEY_MOUNT);
   });
+  it("gives both consumers the quorum and public key required to verify their signing authority", () => {
+    for (const consumer of ["backend", "voice-worker"]) {
+      const lines = blockOf(repoFile("compose.privy-local.yaml"), consumer).join("\n");
+      expect(lines).toContain("PRIVY_AUTHORIZATION_KEY_QUORUM_ID:");
+      expect(lines).toContain("PRIVY_AUTHORIZATION_PUBLIC_KEY:");
+    }
+  });
+
 });
