@@ -74,6 +74,13 @@ export function createVoiceDecisionGate(classifiers: {
         wakeWaiters();
         return true;
       }
+      // Replacing a transfer preview must release the arbiter window it opened
+      // (design §7.4: replacement invalidates the previous window). A window of
+      // ANOTHER kind is never preempted: it stays open and this open fails closed.
+      const current = classifiers.arbiter?.current();
+      if (current?.kind === "transfer" && current.actionId !== previewId) {
+        classifiers.arbiter?.clear(current.actionId);
+      }
       const opened = classifiers.arbiter?.open({
         kind: "transfer", actionId: previewId,
         userId: classifiers.userId ?? "voice-unbound",
@@ -192,6 +199,9 @@ export function createVoiceDecisionGate(classifiers: {
     },
 
     clear(previewId: string): void {
+      // The arbiter window is closed with the preview, so no later affirmative
+      // can find an armed window for an action the caller just discarded.
+      if (classifiers.arbiter?.current()?.actionId === previewId) classifiers.arbiter.clear(previewId);
       if (previewId !== activePreviewId) return;
       activePreviewId = undefined;
       previewCreatedAt = undefined;

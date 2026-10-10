@@ -4398,3 +4398,59 @@ refusal, and `evidence_expired` replaces a generic `no_evidence` for a case that
 
 One commit: `src/conversations/confirmation-arbiter.ts` (guard additions) + the expanded suite. Inside
 the parent-assigned `PR 6` slice (tasks 4.1–4.9). No push beyond the assigned branch, no PR.
+
+### Task 4.4 — delegate the transfer gate to the arbiter without regressing it
+
+Status: **completed — two real defects found and fixed**. Persisted checkbox updated (`[x]`).
+
+#### The gap actually found
+
+`src/livekit/voice-decision-gate.ts` already opened/recorded/consumed/cleared through the optional
+arbiter and the 20-case `voice-decision-gate` suites passed. The missing proof
+(`tests/unit/livekit/voice-decision-gate-arbiter-adapter.test.ts`, 11 cases) found **two defects**, both
+of them the "invalidation on replacement/clear" clause of the task text:
+
+1. **Replacing a preview left the arbiter window armed and the new preview could never open.**
+   `prepare(preview-2)` called `arbiter.open({actionId: 'preview-2'})` while the v1 `transfer` window was
+   still open, so `open` returned `conflict`, `prepare` returned `false`, and the gate kept v1 as its
+   active preview. The observable effect: after any preview replacement, v1's already-recorded
+   affirmative still consumed (`'confirmed'` where the legacy gate returns `undefined`) and the new
+   preview was permanently unauthorized. Fixed by releasing a *same-kind* transfer window before
+   opening the replacement (design §7.4 "replacing a transfer preview already clears it") while a window
+   of another kind is still never preempted — that collision stays fail-closed.
+2. **`clear(previewId)` never closed the arbiter window.** The gate dropped its own state but left the
+   `transfer` window open, so a cleared preview left an armed window behind. Fixed by clearing the
+   arbiter window for that action id at the top of `clear`, before the early return.
+
+Both fixes are the invalidation the design already requires; no eligibility rule, bound, or refusal
+shape was widened.
+
+#### RED → GREEN
+
+| Phase | Evidence |
+|---|---|
+| RED (honest, pre-fix) | The new suite was written and run against the unmodified gate: **3 failed / 8 passed** — `drops evidence on a replaced preview in both implementations` (`expected [ 'confirmed', undefined ] to deeply equal [ undefined, undefined ]`), `clears a preview identically and leaves a later decision unauthorized` (`expected { kind: 'transfer', …(5) } to be undefined`), and the §7.4 collision case (transposed expectation). Each maps to one defect. |
+| GREEN | After the two fixes (and correcting the transposed §7.4 expectation, which is honest: an open `contact` window makes a `transfer` consume a `kind_mismatch`, not a `no_window`): **11 passed / 11**; with the three pre-existing `voice-decision-gate`/`voice-decision-transcripts` suites: **4 files passed, 41 tests passed**. |
+| TRIANGULATE | Every scenario is asserted as behavioural EQUIVALENCE against a legacy gate with no arbiter wired, step by step, including the expiry branch (2 000 ms) and the 1 999 ms accept/2 001 ms reject boundary — so the adapter cannot pass by behaving “differently but plausibly”. |
+| Regression (the task's hard precondition) | The existing `tests/unit/livekit/voice-decision-gate.test.ts`, `-wait.test.ts` and `voice-decision-transcripts.test.ts` pass **unchanged** (no case was edited, no expectation widened). |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/livekit/voice-decision-gate-arbiter-adapter.test.ts` (RED) | **3 failed / 8 passed** — the two defects plus one transposed expectation |
+| same after the two fixes | **11 passed / 11** |
+| `npx vitest run tests/unit/livekit/voice-decision-gate-arbiter-adapter.test.ts tests/unit/livekit/voice-decision-gate.test.ts tests/unit/livekit/voice-decision-gate-wait.test.ts tests/unit/livekit/voice-decision-transcripts.test.ts` | **4 files passed, 41 tests passed** |
+| `npx vitest run tests/unit/confirmation-arbiter.test.ts tests/unit/livekit/voice-decision-gate*.test.ts tests/unit/livekit/voice-decision-transcripts.test.ts tests/unit/agent-tools-parity.test.ts tests/unit/recipient-lifecycle-tools.test.ts` | **6 files passed, 56 tests passed** (recorded with 4.3) |
+
+#### Deviations
+
+One: the "replacement" fix deliberately preempts only a same-kind `transfer` window. Preempting a
+`contact` window from the transfer path would break §7.4's fail-closed collision handling in Order B, so
+the transfer open still returns `conflict` → `prepare` `false` there, which the adapter test asserts
+explicitly as the intended divergence from legacy behaviour.
+
+#### Workload / PR boundary
+
+One commit: the two invalidation fixes in `src/livekit/voice-decision-gate.ts` plus the adapter suite.
+Inside the parent-assigned `PR 6` slice (tasks 4.1–4.9). No push beyond the assigned branch, no PR.
