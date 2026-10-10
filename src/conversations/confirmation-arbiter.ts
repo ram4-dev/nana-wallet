@@ -20,7 +20,16 @@ export type ArbiterResult = { status: "consumed" } | { status: "refused"; code: 
 
 type Classifiers = { isConfirmation(text: string): boolean; isCancellation(text: string): boolean };
 type Evidence = "confirmed" | "cancelled";
+type ConsumeInput = { kind: ActionKind; actionId: string; userId: string; version: number; tool: string; decision?: "confirm" | "cancel" };
 const DEFAULT_WAIT_MS = 2_000;
+/**
+ * The ONLY keys a confirmation call may carry. Every value here is server-owned
+ * state (the window it names, the identity it binds, the tool asking); design
+ * §7.5 forbids the arbiter from accepting any identifier, phrase, timestamp or
+ * turn ordinal a model supplied, so an unexpected key is refused by name rather
+ * than silently ignored.
+ */
+const CONSUME_KEYS = new Set(["kind", "actionId", "userId", "version", "tool", "decision"]);
 
 export function createConfirmationArbiter(
   classifiers: Classifiers & { onObservation?: (event: Record<string, string | number | boolean | null>) => void; boundedWaitMs?: number },
@@ -28,6 +37,8 @@ export function createConfirmationArbiter(
   let active: ActionWindow | undefined;
   let evidence: Evidence | undefined;
   let consumed: string | undefined;
+  /** Evidence was spoken, but not after the window existed: it never authorizes. */
+  let staleEvidence = false;
   const waiters = new Set<() => void>();
   const wake = () => { for (const waiter of waiters) waiter(); };
   const refuse = (code: ArbiterRefusalCode): ArbiterResult => ({ status: "refused", code });
@@ -48,28 +59,35 @@ export function createConfirmationArbiter(
       active = window;
       evidence = undefined;
       consumed = undefined;
+      staleEvidence = false;
       wake();
       return { status: "opened" };
     },
     current(): ActionWindow | undefined { return active; },
     recordEvidence(input: { text: string; isFinal: boolean; authenticatedSpeaker: boolean; createdAt: number; userId: string; conversationId: string }): void {
       const window = active;
-      const eligible = Boolean(window && input.isFinal && input.authenticatedSpeaker && Number.isFinite(input.createdAt) && input.createdAt > window.createdAt && input.userId === window.userId && input.conversationId === window.conversationId && !consumed);
+      const afterWindow = Boolean(window && Number.isFinite(input.createdAt) && input.createdAt > window.createdAt);
+      const eligible = Boolean(window && input.isFinal && input.authenticatedSpeaker && Number.isFinite(input.createdAt) && afterWindow && input.userId === window.userId && input.conversationId === window.conversationId && !consumed);
       const decision = eligible ? classifiers.isConfirmation(input.text) ? "confirmed" : classifiers.isCancellation(input.text) ? "cancelled" : undefined : undefined;
-      classifiers.onObservation?.({ event: "transcript", isFinal: input.isFinal, authenticatedSpeaker: input.authenticatedSpeaker, afterWindow: window ? input.createdAt > window.createdAt : false, decision: decision ?? null });
+      // Spoken before the window existed (or with an unorderable timestamp): it
+      // answered an earlier question, so it is recorded as expired, never armed.
+      if (window && input.isFinal && input.authenticatedSpeaker && !afterWindow) staleEvidence = true;
+      classifiers.onObservation?.({ event: "transcript", isFinal: input.isFinal, authenticatedSpeaker: input.authenticatedSpeaker, afterWindow, decision: decision ?? null });
       if (decision) { evidence = decision; wake(); }
     },
-    consume(input: { kind: ActionKind; actionId: string; userId: string; version: number; tool: string; decision?: "confirm" | "cancel" }): ArbiterResult {
+    consume(input: ConsumeInput): ArbiterResult {
+      if (Object.keys(input).some((key) => !CONSUME_KEYS.has(key))) return refuse("model_supplied");
       const mismatch = same(input);
       if (mismatch) return refuse(mismatch);
       const expected = input.decision === "cancel" ? "cancelled" : "confirmed";
-      if (evidence !== expected) return refuse("no_evidence");
+      if (evidence !== expected) return refuse(evidence === undefined && staleEvidence ? "evidence_expired" : "no_evidence");
       consumed = input.actionId;
       evidence = undefined;
+      staleEvidence = false;
       wake();
       return { status: "consumed" };
     },
-    async waitAndConsume(input: { kind: ActionKind; actionId: string; userId: string; version: number; tool: string; decision?: "confirm" | "cancel" }, timeoutMs = classifiers.boundedWaitMs ?? DEFAULT_WAIT_MS): Promise<ArbiterResult> {
+    async waitAndConsume(input: ConsumeInput, timeoutMs = classifiers.boundedWaitMs ?? DEFAULT_WAIT_MS): Promise<ArbiterResult> {
       const now = this.consume(input);
       if (now.status === "consumed" || now.code !== "no_evidence") return now;
       const changed = await new Promise<boolean>((resolve) => {
@@ -82,8 +100,8 @@ export function createConfirmationArbiter(
       if (!changed) return refuse("no_evidence");
       return this.consume(input);
     },
-    cancel(kind: ActionKind, actionId: string): void { if (active?.kind === kind && active.actionId === actionId) { active = undefined; evidence = undefined; wake(); } },
-    clear(actionId: string): void { if (active?.actionId === actionId) { active = undefined; evidence = undefined; wake(); } },
+    cancel(kind: ActionKind, actionId: string): void { if (active?.kind === kind && active.actionId === actionId) { active = undefined; evidence = undefined; staleEvidence = false; wake(); } },
+    clear(actionId: string): void { if (active?.actionId === actionId) { active = undefined; evidence = undefined; staleEvidence = false; wake(); } },
   };
 }
 

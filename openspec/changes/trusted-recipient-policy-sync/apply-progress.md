@@ -4316,3 +4316,85 @@ tools fail closed to `address_review_required` until task 4.6 wires publication.
 #### Workload / PR boundary
 
 One commit: the missing suite (10 cases). Inside the parent-assigned `PR 6` slice (tasks 4.1–4.9).
+
+### Task 4.3 — implement the typed per-session confirmation arbiter
+
+Status: **completed**. Persisted checkbox updated (`- [x]`).
+
+#### The gap actually found
+
+The module existed and was thin in TWO senses, not one:
+
+1. **Tests:** `tests/unit/confirmation-arbiter.test.ts` had 4 cases against the enumerated matrix. It now
+   has 11.
+2. **Two declared refusal codes were unreachable** (`ArbiterRefusalCode` declares ten, the module could
+   emit eight). A test that asserts an unreachable guard is a false green, so the missing triggers were
+   implemented rather than asserted into thin air:
+   - `model_supplied` — design §7.5 ("the arbiter's API takes no identifier from a tool call"): a
+     `consume`/`waitAndConsume` call carrying ANY key outside
+     `{kind, actionId, userId, version, tool, decision}` is refused with `model_supplied` instead of
+     having the extra key silently ignored.
+   - `evidence_expired` — design §7.3 ("an affirmative the user spoke AFTER the preview existed, and
+     only that"): evidence that was spoken but not after the window existed is now remembered as stale,
+     so `consume` reports `evidence_expired` instead of the generic `no_evidence`, and it is cleared on
+     open/consume/cancel/clear so it can never leak into a later window.
+   The one remaining declared code with no trigger at this layer is `expired` — its authority is the
+   persisted proposal's `expires_at`, enforced by the conditional consume of task 4.5, not by an
+   in-process window (see the finding below).
+
+#### The suite (11 cases)
+
+One window at a time with a typed conflict in **both** opening orders and the refused window not
+installed (plus idempotent re-open); `{kind, actionId, userId, version}` matched exactly (each mismatch
+reported with its own code) and exactly once, with consumed evidence never re-armed by a later
+affirmative or cancel; interim, unauthenticated, foreign-conversation and foreign-user evidence all
+refused; pre-window evidence refused as `evidence_expired` with a valid later affirmative still
+authorizing the same window; every injected tool-call field (`text`, `confirmationId`, `timestamp`,
+`turnCount`, an address, `evidence`) refused as `model_supplied` with the window left untouched;
+contact and transfer affirmatives never cross-authorizing in **either** direction, and `cancel`/`clear`
+of one kind never clearing another kind's window; the delayed-affirmative path completing the same call
+at 48 ms and at 1 999 ms while 2 001 ms expires without authorizing; cleared/replaced evidence never
+authorizing a re-opened window or a newer version; an explicit `boundedWaitMs` honoured for both
+`confirm` and `cancel`; and `no_window` for a window that was never opened or was cleared.
+
+#### RED → GREEN and the mutation record
+
+| Phase | Evidence |
+|---|---|
+| RED (honest) | The expanded suite was written and run BEFORE the two guards existed: **2 failed / 9 passed** — `refuses out-of-window evidence as expired instead of authorizing` and `takes no identifier from a tool call` (`{"text":"sí"}` was **consumed**). The second failure is the security-relevant one: a call carrying a model-supplied phrase was accepted as an extra key. |
+| GREEN | **11 passed / 11** after implementing both guards. |
+| Mutation (attribution) | Removing the key allowlist check **and** the stale-evidence branch produced **exactly the same two failures**, then restore → **11 passed / 11**. |
+| Regression (the 4.4 precondition) | `npx vitest run tests/unit/confirmation-arbiter.test.ts tests/unit/livekit/voice-decision-gate.test.ts tests/unit/livekit/voice-decision-gate-wait.test.ts tests/unit/livekit/voice-decision-transcripts.test.ts tests/unit/agent-tools-parity.test.ts tests/unit/recipient-lifecycle-tools.test.ts` → **6 files passed, 56 tests passed** — the existing `voice-decision-gate` suites pass **unchanged** across this arbiter change. |
+| False-green guard | Each negative assertion has a positive control in the same case: the valid payload/quad consumes; the pre-window case re-arms with a valid affirmative and then consumes; the injected-field case consumes after the refusals, proving the window was not damaged; the interim/unauthenticated case asserts `current()` is still the window. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/confirmation-arbiter.test.ts` (RED) | **2 failed / 9 passed** — the two unsupported guards |
+| `npx vitest run tests/unit/confirmation-arbiter.test.ts` | **11 passed / 11** |
+| same, with both guards mutated away | **2 failed / 9 passed**, same two cases, then restored |
+| the 6-suite regression set above | **56 passed / 56** |
+
+#### Deviations from the design
+
+Two, both additive and each closing a declared-but-unreachable refusal code (§7.1 declares the ten-code
+set; §7.5 and §7.3 supply the semantics). No window semantic was weakened: `model_supplied` only adds a
+refusal, and `evidence_expired` replaces a generic `no_evidence` for a case that was already refused.
+
+#### Findings handed forward (not defects in this unit)
+
+- **`ArbiterRefusalCode['expired']` has no trigger in the arbiter.** The arbiter is an in-process
+  window; the only expiry authority in this design is the persisted `contact_action_proposals.expires_at`
+  enforced by task 4.5's conditional consume and the 2 000 ms `waitAndConsume` bound. Recorded rather
+  than invented; a reviewer reading the union should not assume an in-process TTL exists.
+- **`recordEvidence` stamps evidence to the *active* window and does not take `kind`/`actionId`** as
+  design §7.1 sketches. Behaviourally equivalent for a single-window contract (only the visible window
+  can be authorized) and it removes an identifier from the evidence path — but the design's shape and
+  the implementation differ, so it is recorded as a deviation for verify rather than smoothed over.
+  `sessionId` is named `conversationId` at this seam (matching the rest of the codebase).
+
+#### Workload / PR boundary
+
+One commit: `src/conversations/confirmation-arbiter.ts` (guard additions) + the expanded suite. Inside
+the parent-assigned `PR 6` slice (tasks 4.1–4.9). No push beyond the assigned branch, no PR.
