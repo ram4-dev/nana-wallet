@@ -109,15 +109,24 @@ suite("contacts cross-user isolation (PMU-013/019)", () => {
         bStill.json().data.find((c: { id: string }) => c.id === idB)?.name,
       ).toBe("Contacto de B");
 
-      // DELETE B's id as A: not-found, row untouched (relative count check so
-      // the test tolerates prior runs of the same suite against one DB).
+      // DELETE B's id as A: the removal is preview-first, and BOTH steps are
+      // not-found — the disclosure preview must not reveal that B's contact
+      // exists either. Row untouched (relative count check so the test tolerates
+      // prior runs of the same suite against one DB).
       const countBefore = (
         await app.inject({ method: "GET", url: "/v1/contacts", headers: authB })
       ).json().data.length as number;
+      const previewB = await app.inject({
+        method: "GET",
+        url: `/v1/contacts/${idB}/removal-preview?expectedVersion=1`,
+        headers: authA,
+      });
+      expect(previewB.statusCode).toBe(404);
       const deleteB = await app.inject({
         method: "DELETE",
-        url: `/v1/contacts/${idB}`,
+        url: `/v1/contacts/${idB}?expectedVersion=1`,
         headers: authA,
+        payload: { expectedRevokedGrantIds: [] },
       });
       expect(deleteB.statusCode).toBe(404);
       expect(

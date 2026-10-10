@@ -95,13 +95,43 @@ suite("/v1/contacts CRUD (fixture identity, PMU-008..012)", () => {
         "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq",
       );
 
-      // DELETE soft-deletes (excluded from list, row remains).
+      // DELETE soft-deletes (excluded from list, row remains). The removal is
+      // preview-first: the client reads GET /v1/contacts/:id/removal-preview,
+      // shows the automatic-payment revocation disclosure, and echoes the
+      // disclosed grant ids back on the DELETE (spec "Revocation is disclosed
+      // before mutation": "no mutation is executed before that disclosure is
+      // confirmed").
+      const preview = await app.inject({
+        method: "GET",
+        url: `/v1/contacts/${contact.id}/removal-preview?expectedVersion=2`,
+      });
+      expect(preview.statusCode).toBe(200);
+      expect(preview.json().data).toMatchObject({
+        contactId: contact.id,
+        contactVersion: 2,
+      });
+      expect(Array.isArray(preview.json().data.revokedGrantIds)).toBe(true);
+
+      // A DELETE that does not carry the disclosed scope is refused: that is the
+      // disclosure gate, not a formatting error.
+      const undisclosed = await app.inject({
+        method: "DELETE",
+        url: `/v1/contacts/${contact.id}?expectedVersion=2`,
+      });
+      expect(undisclosed.statusCode).toBe(422);
+
       const deleted = await app.inject({
         method: "DELETE",
-        url: `/v1/contacts/${contact.id}`,
+        url: `/v1/contacts/${contact.id}?expectedVersion=2`,
+        payload: {
+          expectedRevokedGrantIds: preview.json().data.revokedGrantIds,
+        },
       });
       expect(deleted.statusCode).toBe(200);
-      expect(deleted.json().data.status).toBe("inactive");
+      expect(deleted.json().data.contact.status).toBe("inactive");
+      expect(deleted.json().data.revocation.grantIds).toEqual(
+        preview.json().data.revokedGrantIds,
+      );
       const afterList = await app.inject({
         method: "GET",
         url: "/v1/contacts",
