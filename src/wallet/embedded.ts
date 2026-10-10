@@ -2,8 +2,6 @@ import type { DatabaseClient, Queryable } from "../db/client.js";
 import { isValidEvmAddress } from "../memory/address.js";
 import { PublicKey } from "@solana/web3.js";
 import {
-  ARC_TESTNET_CHAIN_ID,
-  ARC_USDC_ERC20,
   DEFAULT_GAS_CEILING,
   DEFAULT_ROLLING_WINDOW_SECONDS,
   PER_TRANSFER_USDC,
@@ -14,10 +12,7 @@ import {
 } from "./privy-client.js";
 import {
   AGGREGATION_BLOCK_REASON,
-  ENROLLMENT_PER_TRANSFER_USDC,
-  ENROLLMENT_ROLLING_TOTAL_USDC,
   ENROLLMENT_WINDOW_SECONDS,
-  buildEnrollmentPolicyRules,
 } from "./enrollment-policy.js";
 import { buildSolanaEnrollmentRules } from "./grants/solana-enrollment-rules.js";
 
@@ -216,7 +211,7 @@ export type PermissionSummary = {
 export type EnrollmentPreparation = {
   walletId: string;
   walletAddress: string;
-  walletChainFamily: "arc" | "solana";
+  walletChainFamily: "solana";
   policyId: string;
   quorumId: string;
   perTransferUsdc: string;
@@ -305,7 +300,7 @@ function mapWallet(row: WalletRow): CurrentWallet {
 /** Adapts a trusted server wallet record to the internal ProviderWallet shape. */
 function liveRecordToProviderWallet(
   record: PrivyWalletRecord,
-  chainFamily: string = "arc",
+  chainFamily: string = "solana",
 ): ProviderWallet {
   return {
     providerWalletId: record.id,
@@ -343,7 +338,7 @@ export class EmbeddedWalletService {
       private async currentWalletRow(
         userId: string,
         client: Queryable,
-        chainFamily: WalletChainFamily = "arc",
+        chainFamily: WalletChainFamily = "solana",
       ): Promise<WalletRow | undefined> {
         const result = await client.query<WalletRow>(
           `SELECT ${WALLET_COLUMNS} FROM user_wallets
@@ -411,7 +406,7 @@ export class EmbeddedWalletService {
   /** PEW-005: identity is separate from wallet readiness. */
   public async getCurrentWallet(
     userId: string,
-    chainFamily: WalletChainFamily = "arc",
+    chainFamily: WalletChainFamily = "solana",
   ): Promise<CurrentWallet> {
     const row = await this.database.withUserTransaction(userId, (client) =>
       this.currentWalletRow(userId, client, chainFamily),
@@ -463,18 +458,39 @@ export class EmbeddedWalletService {
           );
       }
 
-      const eligible = owned.filter(
-        (wallet) => wallet.chainFamily === "arc" && wallet.state === "ready",
+      // Solana is the only chain this build serves, so the fixture path
+      // reconciles the Solana subset of the verified wallets through the same
+      // chain-scoped row helpers as the live path: no other chain family can
+      // be written by a local sync.
+      const solanaOwned = owned.filter(
+        (wallet) => wallet.chainFamily === "solana",
+      );
+      const eligible = solanaOwned.filter(
+        (wallet) => wallet.state === "ready",
       );
       let created: { created: boolean; address: string };
       if (eligible.length > 1) {
-        await this.reconcileWalletRows(client, userId, owned, "conflict");
+        await this.reconcileWalletRowsForChain(
+          client,
+          userId,
+          solanaOwned,
+          "conflict",
+        );
         created = { created: false, address: eligible[0].address };
       } else if (eligible.length === 1) {
-        created = await this.upsertReadyWallet(client, userId, eligible[0]);
-      } else if (owned.length > 0) {
-        await this.reconcileWalletRows(client, userId, owned, "unavailable");
-        created = { created: false, address: owned[0].address };
+        created = await this.upsertReadyWalletForChain(
+          client,
+          userId,
+          eligible[0],
+        );
+      } else if (solanaOwned.length > 0) {
+        await this.reconcileWalletRowsForChain(
+          client,
+          userId,
+          solanaOwned,
+          "unavailable",
+        );
+        created = { created: false, address: solanaOwned[0].address };
       } else {
         created = { created: false, address: "" };
       }
@@ -519,15 +535,8 @@ export class EmbeddedWalletService {
             "User identity is not provisioned; cannot verify wallet ownership.",
           );
 
-        let records: PrivyWalletRecord[] = [];
         let solanaRecords: PrivyWalletRecord[] = [];
-        let ethereumUnavailable = false;
         let solanaUnavailable = false;
-        try {
-          records = await this.privyServer!.listWalletsForUser(privyDid);
-        } catch {
-          ethereumUnavailable = true;
-        }
         try {
           solanaRecords = await this.privyServer!.listWalletsForChain(
             privyDid,
@@ -537,19 +546,11 @@ export class EmbeddedWalletService {
           solanaUnavailable = true;
         }
 
-        // Ethereum retains its historical outage demotion behavior.
-        if (ethereumUnavailable) {
-          await this.demoteCurrentWallets(client, userId, "unavailable");
-          return { kind: "unavailable" as const };
-        }
-        const owned = records
-          .filter(
-            (record) =>
-              record.chain_type === "ethereum" &&
-              isValidEvmAddress(record.address),
-          )
-          .map((record) => liveRecordToProviderWallet(record))
-          .filter((wallet) => wallet.address.length > 0);
+        // Solana is the only chain, so a discovery outage IS the sync failing
+        // closed: no binding change is attempted and no ownership proof is
+        // evaluated against a set we already know is incomplete.
+        if (solanaUnavailable) return { kind: "unavailable" as const };
+
         const solanaOwned = solanaRecords
           .filter(
             (record) =>
@@ -560,7 +561,7 @@ export class EmbeddedWalletService {
           .map((record) => liveRecordToProviderWallet(record, "solana"));
 
         if (opts.claimedAddress) {
-          const matchesOwned = owned.some(
+          const matchesOwned = solanaOwned.some(
             (wallet) =>
               wallet.address.toLowerCase() ===
               opts.claimedAddress?.toLowerCase(),
@@ -571,30 +572,10 @@ export class EmbeddedWalletService {
             );
         }
 
-        let created: { created: boolean; address: string };
-        if (owned.length > 1) {
-          await this.demoteCurrentWallets(client, userId, "conflict");
-          await this.reconcileWalletRows(client, userId, owned, "conflict");
-          created = { created: false, address: owned[0].address };
-        } else if (owned.length === 1) {
-          // Release the one-ready-per-user/chain slot before a newly discovered
-          // wallet is inserted. This also prevents a stale local selection from
-          // surviving when Privy changes the wallet attributed to the user.
-          await this.demoteCurrentWallets(client, userId, "unavailable");
-          created = await this.upsertReadyWallet(client, userId, owned[0]);
-        } else {
-          // An empty trusted result revokes the evidence behind any cached ready
-          // binding. Keep the row for auditability while failing readiness closed.
-          await this.demoteCurrentWallets(client, userId, "unavailable");
-          created = { created: false, address: "" };
-        }
-
-        // A Solana discovery outage blocks its binding changes but does not
-        // alter the already successful Ethereum reconciliation above.
-        if (solanaUnavailable) return { kind: "unavailable" as const };
-
-        let solanaCreated = { created: false, address: "" };
+        let created = { created: false, address: "" };
         if (solanaOwned.length > 1) {
+          // Two or more Solana wallets cannot be selected between: keep every
+          // row for auditability and fail readiness closed.
           await this.demoteWalletsForChain(
             client,
             userId,
@@ -608,17 +589,29 @@ export class EmbeddedWalletService {
             "conflict",
           );
         } else if (solanaOwned.length === 1) {
-          // Keep the one-ready-per-user-per-chain slot independent from Arc.
+          // Release the one-ready-per-user-per-chain slot before a newly
+          // discovered wallet is inserted. This also prevents a stale local
+          // selection from surviving when Privy changes the wallet attributed
+          // to the user.
           await this.demoteWalletsForChain(
             client,
             userId,
             "solana",
             "unavailable",
           );
-          solanaCreated = await this.upsertReadyWalletForChain(
+          created = await this.upsertReadyWalletForChain(
             client,
             userId,
             solanaOwned[0],
+          );
+        } else {
+          // An empty trusted result revokes the evidence behind any cached ready
+          // binding. Keep the row for auditability while failing readiness closed.
+          await this.demoteWalletsForChain(
+            client,
+            userId,
+            "solana",
+            "unavailable",
           );
         }
 
@@ -627,23 +620,22 @@ export class EmbeddedWalletService {
           kind: "success" as const,
           result: {
             userId,
-            state: (solanaOwned.length > 1 || owned.length > 1
+            state: (solanaOwned.length > 1
               ? "conflict"
               : row?.state === "ready"
                 ? "ready"
                 : solanaOwned.length === 1
                   ? "ready"
                   : row?.state ?? "unprovisioned") as WalletReadinessState,
-            // Preserve the legacy Arc-first response until task 2.8 callers
-            // carry explicit chain intent; otherwise expose the sole Solana
-            // address when no ready Arc row exists.
+            // Solana-only response: a ready Solana row wins, otherwise the
+            // single discovered Solana address, otherwise empty.
             address:
               row?.state === "ready"
                 ? row.address
                 : solanaOwned.length === 1
                   ? solanaOwned[0].address
                   : "",
-            created: created.created || solanaCreated.created,
+            created: created.created,
           },
         };
       },
@@ -663,19 +655,6 @@ export class EmbeddedWalletService {
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`nana-wallet-sync:${userId}`],
-    );
-  }
-
-  private async demoteCurrentWallets(
-    client: Queryable,
-    userId: string,
-    state: "conflict" | "unavailable",
-  ): Promise<void> {
-    await client.query(
-      `UPDATE user_wallets
-       SET state = $2, verified_at = now(), updated_at = now()
-       WHERE user_id = $1 AND chain_family = 'arc'`,
-      [userId, state],
     );
   }
 
@@ -725,59 +704,6 @@ export class EmbeddedWalletService {
     }
   }
 
-  private async reconcileWalletRows(
-    client: Queryable,
-    userId: string,
-    wallets: ProviderWallet[],
-    state: "conflict" | "unavailable",
-  ): Promise<void> {
-    for (const wallet of wallets) {
-      await client.query(
-        `INSERT INTO user_wallets (user_id, provider, provider_wallet_id, chain_family, address, state, verified_at)
-         VALUES ($1, $2, $3, $4, $5, $6, now())
-         ON CONFLICT (provider_wallet_id) DO UPDATE SET
-           address = EXCLUDED.address, state = EXCLUDED.state, verified_at = EXCLUDED.verified_at, updated_at = now()`,
-        [
-          userId,
-          "privy",
-          wallet.providerWalletId,
-          wallet.chainFamily,
-          wallet.address,
-          state,
-        ],
-      );
-    }
-  }
-
-  private async upsertReadyWallet(
-    client: Queryable,
-    userId: string,
-    wallet: ProviderWallet,
-  ): Promise<{ created: boolean; address: string }> {
-    const result = await client.query<{ id: string; inserted: boolean }>(
-      `INSERT INTO user_wallets (user_id, provider, provider_wallet_id, chain_family, address, state, verified_at)
-       VALUES ($1, $2, $3, $4, $5, 'ready', now())
-       ON CONFLICT (provider_wallet_id) DO UPDATE SET
-         chain_family = EXCLUDED.chain_family,
-         address = EXCLUDED.address,
-         state = 'ready',
-         verified_at = EXCLUDED.verified_at,
-         updated_at = now()
-       RETURNING id, (xmax = 0) AS inserted`,
-      [
-        userId,
-        "privy",
-        wallet.providerWalletId,
-        wallet.chainFamily,
-        wallet.address,
-      ],
-    );
-    return {
-      created: Boolean(result.rows[0]?.inserted),
-      address: wallet.address,
-    };
-  }
-
   private async upsertReadyWalletForChain(
     client: Queryable,
     userId: string,
@@ -818,7 +744,7 @@ export class EmbeddedWalletService {
     userId: string,
     walletId: string,
     input: GrantInput,
-    chainFamily: WalletChainFamily = "arc",
+    chainFamily: WalletChainFamily = "solana",
   ): Promise<PermissionSummary> {
     if (this.usesUnverifiedLivePolicy()) {
       throw new WalletUnavailableError(
@@ -895,7 +821,7 @@ export class EmbeddedWalletService {
   public async activatePermission(
     userId: string,
     recipients: string[],
-    chainFamily: WalletChainFamily = "arc",
+    chainFamily: WalletChainFamily = "solana",
   ): Promise<PermissionSummary> {
     const wallet = await this.getCurrentWallet(userId, chainFamily);
     if (wallet.state !== "ready") {
@@ -927,22 +853,24 @@ export class EmbeddedWalletService {
     userId: string,
     recipients: string[],
   ): Promise<EnrollmentPreparation> {
-    // Chain selection by RECIPIENT type, not by which wallet row happens to
-    // be preferred (multi-wallet users hold both arc and solana rows). Mixed
-    // recipients are rejected: one permission binds one wallet + one policy.
-    const wantsSolana = recipients.every((r) => isValidSolanaAddress(r));
-    const wantsEvm = recipients.every((r) => isValidEvmAddress(r));
-    if (!wantsSolana && !wantsEvm) {
-      throw new GrantValidationError(
-        "All recipients must share one chain (EVM addresses or Solana addresses).",
-      );
+    // Solana is the only chain this build serves, so recipients are validated
+    // against the Solana address space BEFORE any wallet or provider gate: an
+    // unusable recipient set must be a 422, never a misleading 404/503. The
+    // numeric envelope is validated again below (validateSolanaGrantInput).
+    if (recipients.length === 0) {
+      throw new GrantValidationError("At least one recipient is required.");
     }
-    const wallet = wantsSolana
-      ? await this.solanaEnrollmentWalletRow(userId)
-      : await this.getCurrentWallet(userId);
+    for (const recipient of recipients) {
+      if (!isValidSolanaAddress(recipient)) {
+        throw new GrantValidationError(
+          `Invalid recipient address: ${recipient}`,
+        );
+      }
+    }
+    const wallet = await this.solanaEnrollmentWalletRow(userId);
     if (wallet.state !== "ready") {
       throw new WalletNotFoundError(
-        `Wallet is not ready (state: ${wallet.state}, chain: ${wantsSolana ? "solana" : "arc"}).`,
+        `Wallet is not ready (state: ${wallet.state}, chain: solana).`,
       );
     }
     if (!this.enrollment?.keyQuorumId) {
@@ -958,34 +886,21 @@ export class EmbeddedWalletService {
     }
 
     // USER DECISION (2026-09-09): enrollment is enabled with the provable
-    // per-transfer policy (chain 5042002 + USDC contract + transfer <= 10 USDC
-    // + recipient allowlist + gas ceiling). The rolling 50 USDC/3600 s
-    // aggregate is NOT in the policy and stays a visible pending feature
-    // (aggregationReady:false) until the provider proves wallet-identity
-    // grouping. The complete-readback still proves ownership + exact policy.
-    const isSolanaWallet = wallet.chainFamily === "solana";
+    // Solana per-transfer policy (recipient allowlist + <= 0.01 SOL per
+    // transfer). The rolling aggregate is NOT in the policy and stays a visible
+    // pending feature (aggregationReady:false) until the provider proves
+    // wallet-identity grouping. The complete-readback still proves ownership +
+    // exact policy.
 
     // Solana consent enrollment (task 2.7): the policy is Solana-shaped and
     // the pending grant must carry a DURABLE snapshot of the CURRENT remote
     // signer ids (pre-consent) so complete can resolve exactly-one new id.
     // Prepare retries preserve the original snapshot (restart-safe).
-    let snapshotJson: string | null = null;
-    if (isSolanaWallet) {
-      if (!this.privyServer) {
-        throw new WalletUnavailableError(
-          "Signer enrollment requires a configured Privy server client.",
-        );
-      }
-      const existingSignerIds = await this.remoteSignerIdsOf(
-        userId,
-        wallet,
-      );
-      snapshotJson = JSON.stringify({ signerIds: existingSignerIds });
-    }
+    const existingSignerIds = await this.remoteSignerIdsOf(userId, wallet);
+    const snapshotJson = JSON.stringify({ signerIds: existingSignerIds });
 
     const input = defaultGrantInput(recipients);
-    if (isSolanaWallet) validateSolanaGrantInput(input);
-    else validateGrantInput(input);
+    validateSolanaGrantInput(input);
 
     // Reuse an existing pending grant's immutable policy id instead of
     // recreating a policy on every retry (idempotent prepare).
@@ -1006,19 +921,14 @@ export class EmbeddedWalletService {
     if (existing?.provider_policy_id) {
       policyId = existing.provider_policy_id;
     } else {
-          const created = isSolanaWallet
-            ? await this.privyServer!.createPolicy(
-                `nana-${wallet.address.slice(-10)}`,
-                buildSolanaEnrollmentRules({
-                  recipients,
-                  maxLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
-                }),
-                { chainType: "solana" },
-              )
-            : await this.privyServer.createPolicy(
-                `nana-${wallet.address.slice(-10)}`,
-                buildEnrollmentPolicyRules({ recipients }),
-              );
+          const created = await this.privyServer!.createPolicy(
+            `nana-${wallet.address.slice(-10)}`,
+            buildSolanaEnrollmentRules({
+              recipients,
+              maxLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
+            }),
+            { chainType: "solana" },
+          );
       policyId = created.id;
       await this.database.withUserTransaction(userId, async (client) => {
         await client.query(
@@ -1029,15 +939,13 @@ export class EmbeddedWalletService {
             userId,
             wallet.id,
             policyId,
-            deterministicPolicyHash(
-              input,
-              isSolanaWallet
-                ? { unit: "solana-lamports", amount: SOLANA_MAX_PER_TRANSFER_LAMPORTS }
-                : undefined,
-            ),
+            deterministicPolicyHash(input, {
+              unit: "solana-lamports",
+              amount: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
+            }),
             JSON.stringify(input.recipients),
             input.perTransferAtomic6,
-            isSolanaWallet ? SOLANA_MAX_PER_TRANSFER_LAMPORTS : null,
+            SOLANA_MAX_PER_TRANSFER_LAMPORTS,
             input.rollingTotalAtomic6,
             input.rollingWindowSeconds,
             input.gasCeiling,
@@ -1050,17 +958,17 @@ export class EmbeddedWalletService {
     return {
       walletId: wallet.id,
       walletAddress: wallet.address,
-      walletChainFamily: isSolanaWallet ? "solana" : "arc",
+      walletChainFamily: "solana",
       policyId,
       quorumId: this.enrollment.keyQuorumId,
-      perTransferUsdc: isSolanaWallet ? "" : ENROLLMENT_PER_TRANSFER_USDC,
-      perTransferSol: isSolanaWallet ? "0.01" : "",
-      rollingTotalUsdc: isSolanaWallet ? "" : ENROLLMENT_ROLLING_TOTAL_USDC,
+      // Solana grant surface: the USDC columns carry no meaning on this chain.
+      perTransferUsdc: "",
+      perTransferSol: "0.01",
+      rollingTotalUsdc: "",
       windowSeconds: ENROLLMENT_WINDOW_SECONDS,
       aggregationReady: false,
-      aggregateBlockReason: isSolanaWallet
-        ? "El límite acumulado en SOL todavía no está activo. El máximo por transferencia es 0.01 SOL."
-        : AGGREGATION_BLOCK_REASON,
+      aggregateBlockReason:
+        "El límite acumulado en SOL todavía no está activo. El máximo por transferencia es 0.01 SOL.",
     };
   }
 
@@ -1577,7 +1485,7 @@ export class EmbeddedWalletService {
    */
   public async getPermission(
     userId: string,
-    chainFamily: WalletChainFamily = "arc",
+    chainFamily: WalletChainFamily = "solana",
   ): Promise<PermissionSummary> {
     const row = await this.database.withUserTransaction(
       userId,
@@ -1608,7 +1516,7 @@ export class EmbeddedWalletService {
    */
   public async revokePermission(
     userId: string,
-    chainFamily: WalletChainFamily = "arc",
+    chainFamily: WalletChainFamily = "solana",
   ): Promise<RevokeResult> {
     const grant = await this.database.withUserTransaction(
       userId,
@@ -1737,8 +1645,3 @@ function lamportsToSol(lamports: string): string {
     .replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
-
-export const PINNED = {
-  chainId: ARC_TESTNET_CHAIN_ID,
-  usdcContract: ARC_USDC_ERC20,
-};

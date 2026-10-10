@@ -188,7 +188,14 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     if (result.status !== 'sent') return;
     expect(result.transaction.network).toBe('sepolia');
     expect(result.transaction.transactionHash).toMatch(/^0x[0-9a-f]{64}$/u);
-    expect(result.transaction.explorerUrl).toContain('sepolia.etherscan.io');
+    // The chain fixture is the WDK fixture runtime's own synthetic network
+    // (see createWdkToolsFixture), not a wallet-service selector, so only the
+    // explorer base moved: Solana devnet is the only chain this deployment
+    // serves, and an unrecognised network now resolves to the Solana explorer
+    // instead of Sepolia's Etherscan.
+    expect(result.transaction.explorerUrl).toBe(
+      `https://explorer.solana.com/tx/${result.transaction.transactionHash}`,
+    );
   });
 
   it('returns recipient revalidation failure without leaving the session uncertain', async () => {

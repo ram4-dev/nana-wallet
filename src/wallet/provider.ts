@@ -58,10 +58,10 @@ export type FinalityRequest =
   | { transaction: TransactionResult; signal?: AbortSignal };
 export type TransferRequest = Omit<PendingTransfer, "preview">;
 
+const SOLANA_EXPLORER_BASE = "https://explorer.solana.com/tx/";
+
 const EXPLORER_URLS: Record<string, string> = {
-  sepolia: "https://sepolia.etherscan.io/tx/",
-  "arc-testnet": "https://testnet.arcscan.app/tx/",
-  "solana-devnet": "https://explorer.solana.com/tx/",
+  "solana-devnet": SOLANA_EXPLORER_BASE,
 };
 
 /** Devnet explorer links carry the cluster query param AFTER the hash. */
@@ -73,7 +73,11 @@ export function explorerUrlFor(
   network: string,
   transactionHash: string,
 ): string {
-  const base = EXPLORER_URLS[network] ?? "https://sepolia.etherscan.io/tx/";
+  // Solana devnet is the only chain this deployment serves, so an unrecognised
+  // network still resolves to the Solana explorer. It used to fall back to
+  // Sepolia's Etherscan, which pointed a Solana transaction at another chain's
+  // explorer.
+  const base = EXPLORER_URLS[network] ?? SOLANA_EXPLORER_BASE;
   const suffix = EXPLORER_URL_SUFFIXES[network] ?? "";
   return `${base}${transactionHash}${suffix}`;
 }

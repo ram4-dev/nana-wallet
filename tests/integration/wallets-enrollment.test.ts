@@ -1,11 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { randomUUID, generateKeyPairSync } from "node:crypto";
+import { randomUUID, generateKeyPairSync, createHash } from "node:crypto";
+import { PublicKey } from "@solana/web3.js";
 import { InternalServerError } from "@privy-io/node";
 import { buildServer } from "../../src/server.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
 } from "../../src/db/client.js";
+import { isValidSolanaAddress } from "../../src/memory/address.js";
 import {
   EmbeddedWalletService,
   WalletConflictError,
@@ -28,6 +30,18 @@ const APP_ID = "test-enroll-app";
 const APP_SECRET = "test-enroll-secret";
 const BASE = "https://mock.privy.test/v1";
 const DID = "did:privy:enroll-user";
+/** A real Solana recipient: enrollment now validates base58, never 0x. */
+const SOL_RECIPIENT = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+
+/**
+ * A valid base58 Solana address derived from a seed. The embedded-wallet
+ * service is Solana-only, so every wallet record handed to the Privy boundary
+ * must be Solana-shaped (`chain_type: 'solana'` + base58 address) or the chain
+ * filter drops it before any ownership proof is evaluated.
+ */
+function solanaAddress(seed: string): string {
+  return new PublicKey(createHash("sha256").update(seed).digest()).toBase58();
+}
 
 async function provisionUser(
   database: DatabaseClient,
@@ -42,6 +56,8 @@ async function provisionUser(
 
 /**
  * Standard wallet read-back for the enroll user (owner + signer with policy).
+ * Every wallet is chain_type 'solana' with a valid base58 address (a unique one
+ * per provider id) because the service binds and lists the Solana family only.
  * Every wallet gets a UNIQUE provider id so test runs never collide on the
  * `provider_wallet_id` unique constraint across different users (which would trip
  * the user_wallets RLS USING check on an ON CONFLICT update).
@@ -50,11 +66,12 @@ function enrollWallet(
   policyId: string,
   ownerId = "owner-key-quorum",
   id = `provider-wallet-${randomUUID()}`,
+  address = solanaAddress(id),
 ): PrivyWalletRecord {
   return {
     id,
-    address: "0x0000000000000000000000000000000000000001",
-    chain_type: "ethereum",
+    address,
+    chain_type: "solana",
     policy_ids: [],
     owner_id: ownerId,
     additional_signers: [
@@ -201,9 +218,8 @@ suite(
         database,
         `did:privy:one-${randomUUID()}`,
       );
-      const { client } = mockServerClient({
-        list: [enrollWallet("pol_ignored", `did:privy:one-${randomUUID()}`)],
-      });
+      const wallet = enrollWallet("pol_ignored", `did:privy:one-${randomUUID()}`);
+      const { client } = mockServerClient({ list: [wallet] });
       const service = new EmbeddedWalletService(
         database,
         createPrivyWalletApiClient(process.env, {}),
@@ -213,7 +229,10 @@ suite(
       const first = await service.syncWallet(userId);
       expect(first.state).toBe("ready");
       expect(first.created).toBe(true);
-      expect(first.address).toMatch(/^0x[0-9a-f]{40}$/u);
+      // The bound address is the discovered Solana one, proven through the
+      // repo's Solana validator instead of a retired EVM shape.
+      expect(first.address).toBe(wallet.address);
+      expect(isValidSolanaAddress(first.address)).toBe(true);
       const second = await service.syncWallet(userId);
       expect(second.created).toBe(false);
       expect(second.address).toBe(first.address);
@@ -225,7 +244,7 @@ suite(
       const did = `did:privy:removed-${randomUUID()}`;
       const userId = await provisionUser(database, did);
       const wallet = enrollWallet("pol_ignored");
-      const { client } = mockServerClient({ lists: [[wallet], []] });
+      const { client } = mockServerClient({ solanaLists: [[wallet], []] });
       const service = new EmbeddedWalletService(
         database,
         createPrivyWalletApiClient(process.env, {}),
@@ -242,15 +261,15 @@ suite(
       });
     });
 
-    it("demotes cached readiness when Privy cannot verify ownership", {
+    it("fails the sync closed on a Privy outage and leaves the cached binding untouched", {
       timeout: 60_000,
     }, async () => {
       const did = `did:privy:sync-outage-${randomUUID()}`;
       const userId = await provisionUser(database, did);
       const wallet = enrollWallet("pol_ignored");
       const { client } = mockServerClient({
-        lists: [[wallet], [wallet]],
-        listStatuses: [200, 503],
+        solanaLists: [[wallet], [wallet]],
+        solanaListStatuses: [200, 503],
       });
       const service = new EmbeddedWalletService(
         database,
@@ -260,12 +279,15 @@ suite(
       );
 
       expect((await service.syncWallet(userId)).state).toBe("ready");
+      // Solana is the only chain, so a discovery outage IS the sync failing
+      // closed: no binding change is attempted and the cached row keeps the
+      // evidence it already had instead of being demoted on an unverified read.
       await expect(service.syncWallet(userId)).rejects.toBeInstanceOf(
         WalletUnavailableError,
       );
       await expect(service.getCurrentWallet(userId)).resolves.toMatchObject({
-        state: "unavailable",
-        address: "",
+        state: "ready",
+        address: wallet.address,
       });
     });
 
@@ -360,16 +382,14 @@ suite(
         "owner-key-quorum",
         `provider-wallet-${randomUUID()}`,
       );
-      const secondWallet = {
-        ...enrollWallet(
-          "pol_ignored",
-          "owner-key-quorum",
-          `provider-wallet-${randomUUID()}`,
-        ),
-        address: "0x2222222222222222222222222222222222222222",
-      };
+      const secondWallet = enrollWallet(
+        "pol_ignored",
+        "owner-key-quorum",
+        `provider-wallet-${randomUUID()}`,
+        solanaAddress(`replacement-${randomUUID()}`),
+      );
       const { client } = mockServerClient({
-        lists: [[firstWallet], [secondWallet]],
+        solanaLists: [[firstWallet], [secondWallet]],
       });
       const service = new EmbeddedWalletService(
         database,
@@ -410,6 +430,7 @@ suite(
       const { client } = mockServerClient({
         list: [enrollWallet("pol_a", did), enrollWallet("pol_b", did)],
       });
+
       const service = new EmbeddedWalletService(
         database,
         createPrivyWalletApiClient(process.env, {}),
@@ -436,14 +457,12 @@ suite(
       );
       await service.syncWallet(userId);
 
-      const prep = await service.preparePermission(userId, [
-        "0x1111111111111111111111111111111111111111",
-      ]);
+      const prep = await service.preparePermission(userId, [SOL_RECIPIENT]);
       // Per-transfer policy created server-side; the rolling-hour aggregate
       // stays a pending feature (never enforced, never hidden).
       expect(prep.policyId).toBe("pol_1");
       expect(prep.aggregationReady).toBe(false);
-      expect(prep.aggregateBlockReason).toMatch(/group_by/u);
+      expect(prep.aggregateBlockReason).toMatch(/0\.01 SOL/u);
       expect(createPolicy).toHaveBeenCalledTimes(1);
       const rows = await database.query<{ state: string }>(
         "SELECT state FROM signer_grants WHERE user_id = $1 LIMIT 1",
@@ -494,7 +513,7 @@ suite(
       const did = `did:privy:ownership-loss-${randomUUID()}`;
       const userId = await provisionUser(database, did);
       const wallet = enrollWallet("pol_enroll_1");
-      const { client } = mockServerClient({ lists: [[wallet], []] });
+      const { client } = mockServerClient({ solanaLists: [[wallet], []] });
       const service = new EmbeddedWalletService(
         database,
         createPrivyWalletApiClient(process.env, {}),
@@ -564,8 +583,8 @@ suite(
       const userId = await provisionUser(database, did);
       const wallet = enrollWallet("pol_enroll_1");
       const { client } = mockServerClient({
-        lists: [[wallet], [wallet]],
-        listStatuses: [200, 503],
+        solanaLists: [[wallet], [wallet]],
+        solanaListStatuses: [200, 503],
       });
       const service = new EmbeddedWalletService(
         database,
@@ -613,9 +632,7 @@ suite(
       );
       await service.syncWallet(userId);
       await expect(
-        service.preparePermission(userId, [
-          "0x1111111111111111111111111111111111111111",
-        ]),
+        service.preparePermission(userId, [SOL_RECIPIENT]),
       ).rejects.toBeInstanceOf(WalletUnavailableError);
     });
 
@@ -645,7 +662,7 @@ suite(
           url: "/v1/wallets/current/permission/prepare",
           headers: { authorization: `Bearer ${token}` },
           payload: {
-            recipients: ["0x1111111111111111111111111111111111111111"],
+            recipients: [SOL_RECIPIENT],
           },
         });
         expect(prepare.statusCode).toBe(200);
@@ -735,7 +752,7 @@ suite(
       timeout: 60_000,
     }, async () => {
       const did = `did:privy:sync-unavailable-${randomUUID()}`;
-      const { client } = mockServerClient({ listStatuses: [503] });
+      const { client } = mockServerClient({ solanaListStatuses: [503] });
       const app = buildServer({ privyServer: client });
       try {
         const response = await app.inject({
@@ -1491,23 +1508,24 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     );
 
     // Zero Solana wallets is an exercised sync path, not an inert one: the
-    // Ethereum arm keeps its unchanged behavior (an arc row is provisioned
-    // as before) while NO Solana binding is fabricated.
+    // non-Solana record is dropped by the chain filter, so NO binding of any
+    // chain family may be fabricated from it.
     const result = await service.syncWallet(userId);
-    expect(result.state).toBe("ready");
+    expect(result.state).toBe("unprovisioned");
+    expect(result.address).toBe("");
     // The authenticated listing must still target the solana chain so the
     // empty result is authoritative, not an accidental ethereum-only read.
     expectSolanaListingCall(listCalls, did);
-    expect(result.created).toBe(true);
-    const arcRows = await database.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM user_wallets WHERE user_id = $1 AND chain_family = 'arc' AND state = 'ready'",
+    expect(result.created).toBe(false);
+    const rows = await database.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM user_wallets WHERE user_id = $1",
       [userId],
     );
-    expect(arcRows.rows[0]?.count).toBe("1");
+    expect(rows.rows[0]?.count).toBe("0");
     expect(await solanaReadyRowCount(userId)).toBe("0");
   });
 
-  it("leaves an existing Solana binding unchanged when the authenticated list is empty", {
+  it("demotes a cached Solana binding to unavailable, but never deletes the row, when the authenticated list has no Solana wallet", {
     timeout: 60_000,
   }, async () => {
     const did = `did:privy:sol-sync-empty-existing-${randomUUID()}`;
@@ -1535,8 +1553,12 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
       { keyQuorumId: "key-quorum-1" },
     );
 
-    await service.syncWallet(userId);
+    const result = await service.syncWallet(userId);
     expectSolanaListingCall(listCalls, did);
+    // An empty trusted Solana result revokes the evidence behind the cached
+    // ready binding: readiness fails closed while the row stays for audit.
+    expect(result.state).toBe("unavailable");
+    expect(result.address).toBe("");
     const rows = await database.query<{
       provider_wallet_id: string;
       address: string;
@@ -1546,7 +1568,7 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
       [userId],
     );
     expect(rows.rows).toEqual([
-      { provider_wallet_id: providerWalletId, address, state: "ready" },
+      { provider_wallet_id: providerWalletId, address, state: "unavailable" },
     ]);
   });
 
@@ -1594,55 +1616,5 @@ suite("chain-aware authenticated Solana wallet sync (task 2.6)", () => {
     // authenticated solana listing before being rejected.
     expectSolanaListingCall(listCalls, did);
     expect(await solanaReadyRowCount(userId)).toBe("0");
-  });
-});
-
-describe("prepare with multiple chain wallets (multi-wallet users)", () => {
-  let database: DatabaseClient;
-
-  beforeAll(async () => {
-    if (!databaseUrl) return;
-    database = createDatabaseClient(databaseUrl);
-  });
-
-  afterAll(async () => {
-    if (database) await database.close();
-  });
-
-  it("prepares an EVM recipient permission on the Arc wallet even when a ready Solana wallet exists", {
-    timeout: 60_000,
-  }, async () => {
-    const did = `did:privy:multi-${randomUUID()}`;
-    const userId = await provisionUser(database, did);
-    // Both chains synced: one EVM wallet + one Solana wallet, both ready.
-    const solWallet = {
-      id: `sol-provider-${randomUUID()}`,
-      address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
-      chain_type: "solana",
-      policy_ids: [],
-      owner_id: "owner-key-quorum",
-      additional_signers: [],
-      archived_at: null,
-    };
-    const { client } = mockServerClient({
-      list: [enrollWallet("pol_multi_1")],
-      solanaList: [solWallet],
-    });
-    const service = new EmbeddedWalletService(
-      database,
-      createPrivyWalletApiClient(process.env, {}),
-      client,
-      { keyQuorumId: "key-quorum-1" },
-    );
-    await service.syncWallet(userId);
-
-    // An EVM recipient must validate on the EVM path — the presence of a
-    // Solana wallet must not flip validation to base58 (regression: the
-    // enrollment resolver preferred the Solana row and rejected the address).
-    const prep = await service.preparePermission(userId, [
-      "0x1531F7AA08D5dF6E9e7d1e0dF8C88656BF9EBd5C",
-    ]);
-    expect(prep.walletChainFamily).toBe("arc");
-    expect(prep.policyId).toBe("pol_1");
   });
 });

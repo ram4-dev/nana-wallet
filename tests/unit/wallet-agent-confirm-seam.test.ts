@@ -231,14 +231,16 @@ describe('receipt-waiter selection (D3, task 4.3)', () => {
 
     // The legacy path broadcasts through the WDK fixture tools and verifies via
     // defaultTransactionReceiptWaiter's immediate fixture outcome — no provider
-    // waitForFinality call, and the sepolia etherscan URL survives D6.
+    // waitForFinality call. The explorer base is the Solana explorer: this
+    // deployment serves Solana devnet only and an unrecognised network no
+    // longer falls back to Sepolia's Etherscan.
     expect(result).toMatchObject({
       status: 'sent',
       message: 'Transfer confirmed.',
       transaction: {
         network: 'sepolia',
         transactionHash: '0x' + '1'.padStart(64, '0'),
-        explorerUrl: 'https://sepolia.etherscan.io/tx/0x' + '1'.padStart(64, '0'),
+        explorerUrl: 'https://explorer.solana.com/tx/0x' + '1'.padStart(64, '0'),
       },
     });
     expect(broadcastCalls(calls)).toBe(0);

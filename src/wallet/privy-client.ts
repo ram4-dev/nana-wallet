@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { PublicKey } from "@solana/web3.js";
 
 /**
  * PEW-002/003/007/011: Privy server-API boundary for embedded wallets.
@@ -13,9 +14,6 @@ import { createHash } from "node:crypto";
  * It is visibly synthetic and MUST never be copied into a live grant.
  */
 
-export const ARC_TESTNET_CHAIN_ID = 5042002;
-export const ARC_USDC_ERC20 = "0x3600000000000000000000000000000000000000";
-export const ERC20_TRANSFER_SELECTOR = "0xa9059cbb";
 export const DEFAULT_GAS_CEILING = "0.001";
 export const DEFAULT_ROLLING_WINDOW_SECONDS = 3600;
 export const PER_TRANSFER_USDC = "10";
@@ -102,7 +100,11 @@ function deterministicHex(userId: string, length: number): string {
 }
 
 function deterministicAddress(userId: string): string {
-  return `0x${deterministicHex(userId, 40)}`;
+  // A valid Solana address for every fixture user: 32 deterministic bytes
+  // encoded through the same codec the real provider uses. The fixture used to
+  // mint an EVM `0x…` address, which a Solana-only build can never bind.
+  const bytes = Buffer.from(deterministicHex(userId, 64), "hex");
+  return new PublicKey(bytes).toBase58();
 }
 
 function deterministicProviderWalletId(userId: string): string {
@@ -127,7 +129,7 @@ export class FixturePrivyWalletApiClient implements PrivyWalletApiClient {
     const native: ProviderWallet = {
       providerWalletId: deterministicProviderWalletId(userId),
       address: deterministicAddress(userId),
-      chainFamily: "arc",
+      chainFamily: "solana",
       state: "ready",
     };
     return [...(this.options.extraWallets?.[userId] ?? []), native];

@@ -238,12 +238,12 @@ function bothChainsFixture() {
   };
 }
 
-describe("chain-scoped wallet reads default to arc (compatibility)", () => {
-  it("getCurrentWallet with no chain returns the arc wallet", async () => {
+describe("chain-scoped wallet reads default to solana (compatibility)", () => {
+  it("getCurrentWallet with no chain returns the solana wallet", async () => {
     const { service: svc } = service(bothChainsFixture());
     const wallet = await svc.getCurrentWallet(USER);
-    expect(wallet.chainFamily).toBe("arc");
-    expect(wallet.id).toBe(ARC_WALLET_ID);
+    expect(wallet.chainFamily).toBe("solana");
+    expect(wallet.id).toBe(SOL_WALLET_ID);
   });
 
   it("getCurrentWallet for solana returns the solana wallet", async () => {
@@ -253,12 +253,13 @@ describe("chain-scoped wallet reads default to arc (compatibility)", () => {
     expect(wallet.id).toBe(SOL_WALLET_ID);
   });
 
-  it("getPermission with no chain returns the arc grant", async () => {
+  it("getPermission with no chain returns the solana grant", async () => {
     const { service: svc } = service(bothChainsFixture());
     const permission = await svc.getPermission(USER);
-    expect(permission.grantId).toBe(ARC_GRANT_ID);
-    expect(permission.perTransferUsdc).toBe("10");
-    expect(permission.recipients).toContain(ARC_RECIPIENT);
+    expect(permission.grantId).toBe(SOL_GRANT_ID);
+    expect(permission.perTransferSol).toBe("0.01");
+    expect(permission.recipients).toContain(SOL_RECIPIENT);
+    expect(permission.recipients).not.toContain(ARC_RECIPIENT);
   });
 });
 

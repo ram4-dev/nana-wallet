@@ -13,11 +13,15 @@ import {
   createPrivyWalletApiClient,
   type FixturePrivyClientOptions,
 } from "../../src/wallet/privy-client.js";
+import { isValidSolanaAddress } from "../../src/memory/address.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 // Fixture identity: the identity provider resolves every request to this user.
 const USER_A = TEST_USER_ID;
+/** A second owned Solana wallet, distinct from the fixture's per-user wallet. */
+const SECOND_SOLANA_ADDRESS =
+  "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq";
 
 async function provisionUser(
   database: DatabaseClient,
@@ -48,15 +52,18 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
       database,
       `did:privy:sync-${randomUUID()}`,
     );
-    const service = new EmbeddedWalletService(
-      database,
-      createPrivyWalletApiClient(process.env, {}),
-    );
+    const privy = createPrivyWalletApiClient(process.env, {});
+    const service = new EmbeddedWalletService(database, privy);
     const first = await service.syncWallet(userId);
     const second = await service.syncWallet(userId);
     expect(first.state).toBe("ready");
     expect(first.created).toBe(true);
-    expect(first.address).toMatch(/^0x[0-9a-f]{40}$/u);
+    // The fixture now mints a real base58 Solana address and the build binds
+    // Solana only, so the expectation is DERIVED from the same client instead
+    // of a hand-written EVM regex that could never match again.
+    const [discovered] = await privy.listWallets(userId);
+    expect(first.address).toBe(discovered?.address);
+    expect(isValidSolanaAddress(first.address)).toBe(true);
     expect(second.created).toBe(false);
     expect(second.address).toBe(first.address);
     const rows = await database.query<{ count: string }>(
@@ -103,8 +110,11 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
         [userId]: [
           {
             providerWalletId: `privy_extra_${randomUUID()}`,
-            address: "0x1111111111111111111111111111111111111111",
-            chainFamily: "arc",
+            // The extra wallet must be Solana-shaped (valid base58 address),
+            // because the sync reconciles the solana family only: an EVM-shaped
+            // extra wallet would be filtered out and never conflict.
+            address: SECOND_SOLANA_ADDRESS,
+            chainFamily: "solana",
             state: "ready",
           },
         ],

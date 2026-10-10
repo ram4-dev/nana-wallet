@@ -428,6 +428,22 @@ export function canonicalizeTransferPreview(
   return canonical.success ? canonical.data : null;
 }
 
+/**
+ * A transaction hash as the provider reports it: an EVM `0x` hash, or a Solana
+ * base58 signature (64 bytes, so 87-88 base58 characters). Solana signature is
+ * what this deployment produces; EVM hashes are still accepted because the
+ * fixture and the legacy paths mint one.
+ */
+const EVM_TRANSACTION_HASH = /^0x[0-9a-fA-F]{64}$/u;
+const SOLANA_SIGNATURE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/u;
+
+function isTransactionHash(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    (EVM_TRANSACTION_HASH.test(value) || SOLANA_SIGNATURE.test(value))
+  );
+}
+
 export function normalizeBroadcastResult(output: unknown, network: string) {
   const candidate = decodeBroadcastCandidate(output);
   const status = typeof candidate?.status === 'string' ? candidate.status.toLocaleLowerCase('en-US') : '';
@@ -441,7 +457,7 @@ export function normalizeBroadcastResult(output: unknown, network: string) {
   ) return null;
   const hashEntry = ['transactionHash', 'txHash', 'hash']
     .map((key) => ({ key, value: candidate[key] }))
-    .find(({ value }) => typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/u.test(value));
+    .find(({ value }) => isTransactionHash(value));
   if (!hashEntry || (hashEntry.key !== 'transactionHash' && candidate.success !== true)) return null;
   const hash = hashEntry.value as string;
   const result = transactionResultSchema.safeParse({

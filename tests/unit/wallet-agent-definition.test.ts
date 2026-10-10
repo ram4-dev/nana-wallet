@@ -283,31 +283,40 @@ describe("send_token broadcast failures are narrated in the session language", (
 });
 
 describe("normalizeBroadcastResult explorer URL (D6, CAR-010)", () => {
-  const HASH = `0x${"ab".repeat(32)}`;
+  const SIGNATURE =
+      "99eUso3aSbE9tqGSTXzo3TLfKb9RkMTURrHKQ1K7Zh3BbeqPevr5E1iCbpTjqHuTFLtfxTTD5ekfVuZFzQyEQf8";
 
-  it("links arc-testnet broadcasts to the Arcscan explorer", () => {
+  it("links a solana-devnet broadcast to the Solana explorer", () => {
     const result = normalizeBroadcastResult(
-      { network: "arc-testnet", transactionHash: HASH, explorerUrl: "ignored" },
-      "arc-testnet",
+      {
+network: "solana-devnet",
+transactionHash: SIGNATURE,
+explorerUrl: "ignored",
+      },
+      "solana-devnet",
     );
 
     expect(result).toEqual({
-      network: "arc-testnet",
-      transactionHash: HASH,
-      explorerUrl: `https://testnet.arcscan.app/tx/${HASH}`,
+      network: "solana-devnet",
+      transactionHash: SIGNATURE,
+      explorerUrl: `https://explorer.solana.com/tx/${SIGNATURE}?cluster=devnet`,
     });
   });
 
-  it("keeps the sepolia etherscan URL unchanged", () => {
+  it("falls back to the Solana explorer for an unrecognised network", () => {
+    // Solana devnet is the only chain this deployment serves, so an unknown
+    // network must not resolve to a retired chain's explorer.
     const result = normalizeBroadcastResult(
-      { network: "sepolia", transactionHash: HASH, explorerUrl: "ignored" },
-      "sepolia",
+      {
+network: "unknown-net",
+transactionHash: SIGNATURE,
+explorerUrl: "ignored",
+      },
+      "unknown-net",
     );
 
-    expect(result).toEqual({
-      network: "sepolia",
-      transactionHash: HASH,
-      explorerUrl: `https://sepolia.etherscan.io/tx/${HASH}`,
-    });
+    expect(result?.explorerUrl).toBe(
+      `https://explorer.solana.com/tx/${SIGNATURE}`,
+    );
   });
 });
