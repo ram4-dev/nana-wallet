@@ -2260,14 +2260,33 @@ npm run typecheck → tsc -p tsconfig.test.json --noEmit : clean, exit 0
 > unchanged and still `unproven`** — `capable:true` is their precondition, not their evidence; each still
 > needs a live devnet policy write. Only the capability statement on this heading moved.
 
+> **UPDATE (2026-10-10, live U2/U3 collection) — U2 and U3 are COLLECTED; U1 and U4 are unchanged.** Both
+> were executed against the live deployment — the `backend` container, real `https://api.privy.io/v1`, no
+> `PRIVY_API_BASE_URL` override, `canSignAuthorizations()` `true` — through the live wiring added in
+> `scripts/privy-policy-probe-collect.mjs`. **U2 `proven: true`**: `readPath: "owner_verified_listing"`,
+> `occurrences: 1`, canonical signer `np33q4k0i44p3g4kr2na0u9y` carrying policy
+> `jb227q0o7d3hmf0ksbi3hj6e`, `patchIssued: false`. **U3 `proven: true`**: `signature:
+> "owner_listing_present"`, `bindingRewritten: false`. Both were recorded in the **stack** database at
+> `recipient_policy_state.status_detail.attachment_evidence` / `.ownership_evidence` for wallet
+> `d8dd0511-6bfc-479a-8f8f-58385ebb2c14` (user `08c462d6-44e4-4368-be4e-5de2a7e39179`) and read back from
+> there, not reported from memory. The U2 and U3 rows below are SUPERSEDED IN PLACE: their "what is
+> genuinely missing" text describes the state BEFORE this run, and the collection step they name is the
+> step that was executed. **The U1 and U4 rows are untouched, still `unproven`, and still need a live
+> devnet policy write** (U1 and U4 step (iii) additionally need a separately authorized signed transfer
+> ≤ 0.01 SOL). Nothing about U1/U4 moved, and no fake-transport output is presented as live provider
+> evidence: the transport in this run delegates every provider call to the production `PrivyServerClient`.
+> The exact command, its output, and the honesty caveats (what U2's `policyId` source is; why U3's
+> mismatch branch was NOT observed) are in the "Continuation run (2026-10-10) — Unit 2" section at the end
+> of this file.
+
 Every probe below is implemented and unit-proven over a fake transport, and every one of them
-currently records `unproven` on this deployment. Nothing here is resolved.
+currently records `unproven` on this deployment. Nothing here is resolved. *(UPDATED IN PLACE, 2026-10-10, U2/U3 collection: the U2 and U3 rows are now collected — see the update above. This sentence remains literally true for U1 and U4, which are still `unproven`.)*
 
 | # | What is genuinely missing | Exact step that collects it | Exact evidence shape to record | Exact place it must be recorded |
 |---|---|---|---|---|
 | U1 | A live devnet policy with two ALLOW rules over disjoint `Transfer.to` allowlists, and one SIGNED `signAndSendTransaction` covered by only one rule, observed permitted. Requires `PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` (so `canSignAuthorizations()` is `true`) and a signed-send capability bound to the probe policy. | With a configured sidecar and a devnet wallet: `probeRuleComposition({ transport, evidence, walletId, ordinaryAddress, grantAddress })` from the capability probe run (2.7). No manual step is needed beyond the sidecar being reachable; the probe writes its own policy and never touches the wallet's policy. | `{ rules_union: "union", rules_union_evidence: { before: [...2 ALLOW rules...], after: [...getPolicy readback...], permitted: true, probePolicyId: "pol_…", at: "<ISO>" } }` — and `{ rules_union: "unproven", rules_union_evidence: { …, reason: "signer_unavailable" \| "signed_transfer_unavailable" \| "transfer_not_permitted" \| "provider_unreachable" } }` when it cannot resolve. | `recipient_policy_state.status_detail.rules_union` (+ `.rules_union_evidence`) via `mergePolicyStatusDetail`; the composer reads `status_detail.rules_union` as its `ruleComposition` input (design §11 U1). |
-| U2 | One owner-verified readback (`privyDid` + `listWalletsForChain(did,'solana')`) showing the canonical signer present exactly once carrying our policy id. Needs a wallet whose `provider_signer_id` is bound and a policy actually attached to that signer. | `assertPolicyTargetCapability(userId, walletId, policyId)` before any PATCH (wired by 2.7/2.8). | `{ attachment_evidence: { providerWalletId, providerSignerId, policyId, observedOwnerWalletIds, observedSignerIds, observedPolicyIds, readPath: "owner_verified_listing", occurrences: 1, at: "<ISO>", detail: null } }`; on failure `proven: false`, `blocked_configuration`, `signer_attachment_unproven`, `detail ∈ { owner_listing_failed, wallet_absent_from_owner_listing, signer_absent, signer_duplicated, policy_not_attached_to_signer, binding_unresolved }`. | `recipient_policy_state.status_detail.attachment_evidence` via `mergePolicyStatusDetail` (design §11 U2). |
-| U3 | (i) A live observation of the mismatch signature (owner listing empty WHILE the unfiltered read returns the wallet) and (ii) the provider's error code for a signed mutation against such a wallet. Deliberately NOT produced by this unit: manufacturing an ownership conflict against a real account is not something a test run may do. | (i) `assertPolicyOwnership(userId, walletId)` against a deliberately mismatched binding (a wallet row whose `provider_wallet_id` belongs to another identity). (ii) A signed `patchPolicy`/`addPolicyToSigner` attempt against that wallet with the sidecar configured, recording the provider's error code. | `{ ownership_evidence: { providerWalletId, observedOwnerWalletIds, unfilteredObservedId, signature: "owner_listing_empty_unfiltered_present" \| "absent_everywhere" \| "owner_listing_present", at: "<ISO>", detail } }` plus the provider error code for (ii) recorded in `.detail` (code only, never the provider body). | `recipient_policy_state.status_detail.ownership_evidence` via `mergePolicyStatusDetail` (design §11 U3). |
+| U2 | **COLLECTED 2026-10-10 — see the update above; the observed evidence and its caveats are in the Unit 2 section at the end of this file.** One owner-verified readback (`privyDid` + `listWalletsForChain(did,'solana')`) showing the canonical signer present exactly once carrying our policy id. Needs a wallet whose `provider_signer_id` is bound and a policy actually attached to that signer. | `assertPolicyTargetCapability(userId, walletId, policyId)` before any PATCH (wired by 2.7/2.8). | `{ attachment_evidence: { providerWalletId, providerSignerId, policyId, observedOwnerWalletIds, observedSignerIds, observedPolicyIds, readPath: "owner_verified_listing", occurrences: 1, at: "<ISO>", detail: null } }`; on failure `proven: false`, `blocked_configuration`, `signer_attachment_unproven`, `detail ∈ { owner_listing_failed, wallet_absent_from_owner_listing, signer_absent, signer_duplicated, policy_not_attached_to_signer, binding_unresolved }`. | `recipient_policy_state.status_detail.attachment_evidence` via `mergePolicyStatusDetail` (design §11 U2). |
+| U3 | **COLLECTED 2026-10-10 for the positive branch (`owner_listing_present`) — see the update above; the mismatch branch (i)/(ii) was NOT observed and is still pending.** (i) A live observation of the mismatch signature (owner listing empty WHILE the unfiltered read returns the wallet) and (ii) the provider's error code for a signed mutation against such a wallet. Deliberately NOT produced by this unit: manufacturing an ownership conflict against a real account is not something a test run may do. | (i) `assertPolicyOwnership(userId, walletId)` against a deliberately mismatched binding (a wallet row whose `provider_wallet_id` belongs to another identity). (ii) A signed `patchPolicy`/`addPolicyToSigner` attempt against that wallet with the sidecar configured, recording the provider's error code. | `{ ownership_evidence: { providerWalletId, observedOwnerWalletIds, unfilteredObservedId, signature: "owner_listing_empty_unfiltered_present" \| "absent_everywhere" \| "owner_listing_present", at: "<ISO>", detail } }` plus the provider error code for (ii) recorded in `.detail` (code only, never the provider body). | `recipient_policy_state.status_detail.ownership_evidence` via `mergePolicyStatusDetail` (design §11 U3). |
 | U4 | Step (iii): a signed transfer attempt against an empty-rules policy observed as REFUSED, which requires a user-authorized wallet action. Steps (i)/(ii) alone stay `unproven` by construction. | `probeEmptyComposition({ … })` with the sidecar configured and a signed-send port bound; the protocol steps (i)/(ii) run automatically and (iii) is the only omitted step while `uncoveredAddress` cannot be attempted. | `{ empty_composition: "proven_deny" }` + `status_detail.empty_composition_evidence = { createdPolicyId, rulesAfterCreate: 0, rulesAfterPatch: 0, signedDenialObserved: true, at }`; while step (iii) is missing: `empty_composition: "unproven"` with `reason: "signed_denial_unobserved"` (or `signed_transfer_permitted` if an empty policy ALLOWED, which must block, and `provider_unreachable`/`signer_unavailable`). | `recipient_policy_state.empty_composition` (column) via `setEmptyComposition`, plus `status_detail.empty_composition_evidence` (design §11 U4). |
 
 Provider documentation (union of ALLOW rules, DENY precedence, default DENY, a method absent from
@@ -3378,7 +3397,7 @@ this deployment** and nothing above resolves any of them: the absence of `rules_
 everywhere, is the direct confirmation of that. Design §6.4's `{ capable, code }` is likewise
 uncollected. The exact collection step for each is unchanged and remains the one named in that table —
 each needs a configured sidecar (`canSignAuthorizations()` `true`) and a devnet budget, and is carried
-by tasks 5.2/5.7. **No fake-transport output is presented here as live provider evidence.**
+by tasks 5.2/5.7. **No fake-transport output is presented here as live provider evidence.** **UPDATED IN PLACE (2026-10-10, U2/U3 collection): this paragraph's U2 and U3 half is superseded — U2 and U3 were later collected live against the stack database (see the Unit 2 section at the end of this file); U1 and U4 remain pending exactly as written here.** The row counts quoted above describe the worktree database and are unchanged there.
 
 #### Commands run and results (task 2.14)
 
@@ -3589,7 +3608,7 @@ environment (`PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` unset ⇒ `canSignAuthoriza
 step is unchanged: run task 5.2 against a deployment whose `backend-signer`/`voice-worker-signer`
 sidecar is up (`canSignAuthorizations()` `true`) with a devnet budget, and read the `{ capable, code }`
 plus U1–U4 outcomes from `status_detail`. **No fake-transport output is presented here as live provider
-evidence.**
+evidence.** **UPDATED IN PLACE (2026-10-10, U2/U3 collection): U2 and U3 have since been collected live against the stack database (see the Unit 2 section at the end of this file); U1 and U4 remain pending with exactly the collection step named here.**
 
 > **UPDATED IN PLACE (2026-10-10, task 5.2 — the only earlier entry this run rewrote, and only to
 > replace its pending state with a real observed result).** The capability half of this pending note is
@@ -3678,7 +3697,7 @@ run against a deployment whose `backend-signer`/`voice-worker-signer` services a
 `canSignAuthorizations()` is `true`) and with a devnet budget, reading `{ capable, code }` and the
 U1–U4 outcomes back from `recipient_policy_state.status_detail`. Per the change owner's standing
 instruction, a probe that needs credentials or a real deployment is documented as pending and the work
-continues; nothing here refuses to proceed on that account.
+continues; nothing here refuses to proceed on that account. **UPDATED IN PLACE (2026-10-10, U2/U3 collection): the `U1–U4 evidence remains PENDING` clause above is now true only of U1 and U4 — U2 (`attachment_evidence`) and U3 (`ownership_evidence`) were collected live in the stack database for wallet `d8dd0511-6bfc-479a-8f8f-58385ebb2c14` (see the Unit 2 section at the end of this file); the `empty_composition = 'unproven'` clause and every U1/U4 statement stay exactly as written.**
 
 > **UPDATED IN PLACE (2026-10-10, task 5.2).** The §6.4 half of the pending state above is closed with
 > a real observed result: `{"capable":false,"code":"signer_unavailable"}` for the `backend` and for
@@ -5263,7 +5282,7 @@ The two PENDING paragraphs earlier in this file were updated **in place** to say
 here because it is the only earlier content this run touched). `capable: false` is the completed
 outcome the task's own `Verify:` anticipates: it blocks 5.3–5.7 and is reported as the exact blocker
 above. Live U1–U4 evidence and the U1/(U4 step iii) signed-transfer step stay documented as pending,
-untouched, as the brief requires.
+untouched, as the brief requires. **UPDATED IN PLACE (2026-10-10, U2/U3 collection): the U2 and U3 half of that sentence is superseded — both were collected live against the stack database (see the Unit 2 section at the end of this file). U1 and the U4 step (iii) signed-transfer step remain pending and untouched, with their exact collection step and blocking reason recorded.**
 
 ### Secret safety
 
@@ -5944,3 +5963,182 @@ unit is a small frontend work unit inside the existing slice-4/5 boundary and no
 One frontend work unit: 3 new files, 2 edited files, 40 insertions/deletions in the two
 edited files plus the new files (~250 authored lines including tests), well under the
 400-line budget. No push, no PR.
+
+---
+
+## Continuation run (2026-10-10) — Unit 2: live collection of U2 and U3
+
+**Why these two, and only these two.** With the signer sidecars deployed and the live capability
+probe reading `{"capable":true,"code":"verified"}` in both processes, the probes became runnable.
+U2 and U3 are the two that are **pure reads**: `assertPolicyTargetCapability` performs an
+owner-verified listing readback, and `assertPolicyOwnership` resolves the wallet through that same
+owner-verified listing and compares it with the recorded `user_wallets.provider_wallet_id`. Neither
+writes a policy, patches one, detaches anything, rewrites a binding, or moves funds.
+
+**U1 and U4 were NOT run, and could not be run here.** U1 needs a live devnet policy write plus one
+SIGNED `signAndSendTransaction`; U4 steps (i)/(ii) need a policy write; U4 step (iii) needs the
+signed transfer. All of that requires separate explicit user authorization ≤ 0.01 SOL. They remain
+`unproven` with their exact collection step unchanged (design §11 U1/U4) — and the collection
+transport makes that structural, not a promise: `signAndSendTransfer` is **absent**, and the U2/U3
+code path never reaches `createPolicy`/`patchPolicy`.
+
+### The missing wiring, and nothing else
+
+`src/wallet/policy/probe.ts` already shipped both production factories
+(`createPolicyProbeBindingResolver`, `createRepositoryProbeEvidenceWriter`) and the probe logic was
+unit-proven over a fake transport — but no `PolicyProbeTransport` implementation was ever supplied
+to a live deployment, so the probes had no way to run. This run adds exactly that wiring:
+
+| File | Role |
+|---|---|
+| `scripts/privy-policy-probe-collect.mjs` | **New.** The live transport adapter plus the U2/U3 run: it delegates every provider call to the production `PrivyServerClient` (`listWalletsForChain`, `getWallet`; `createPolicy`/`patchPolicy`/`getPolicy` present only to satisfy the declared port and never called here), resolves the binding through `createPolicyProbeBindingResolver`, records through `createRepositoryProbeEvidenceWriter`, and prints bounded ids/booleans/codes only. No fake transport exists in the path: there is no in-memory or stubbed provider client in this script. |
+
+No source, test, migration, contract or compose byte changed in this unit — the probe module, the
+repository, the client and the config reader are all used exactly as they ship.
+
+### Exact command and observed result
+
+```bash
+docker exec -i -e PROBE_USER_ID=08c462d6-44e4-4368-be4e-5de2a7e39179 \
+  -e PROBE_WALLET_ID=d8dd0511-6bfc-479a-8f8f-58385ebb2c14 \
+  nana-privy-impl-backend-1 node --input-type=module - < scripts/privy-policy-probe-collect.mjs
+```
+
+The script is delivered over stdin because the `backend` service mounts only `src`, `tsconfig.json`
+and `examples` — no `scripts/` volume — and the probes are already compiled at
+`/app/dist/wallet/policy/probe.js` in the running image.
+
+Run 1 (first execution, which also created the missing state row):
+
+```text
+privyApiBaseUrlConfigured   false            resolvedProviderBaseUrl "https://api.privy.io/v1"
+signerConfigured            true             stateRowExisted false  stateRowCreatedByThisRun true
+policyIdSource              "signer_grants.provider_policy_id (newest active)"
+U2  proven true  reason null  patchIssued false
+    evidence { providerWalletId: "mb8lz733x37gldmywtejfg14",
+               providerSignerId: "np33q4k0i44p3g4kr2na0u9y",
+               policyId:         "jb227q0o7d3hmf0ksbi3hj6e",
+               observedOwnerWalletIds: ["mb8lz733x37gldmywtejfg14"],
+               observedSignerIds:      ["np33q4k0i44p3g4kr2na0u9y"],
+               observedPolicyIds:      ["jb227q0o7d3hmf0ksbi3hj6e"],
+               readPath: "owner_verified_listing", occurrences: 1, at: "2026-10-10T19:02:15.362Z",
+               detail: null }
+U3  proven true  reason null  bindingRewritten false
+    evidence { providerWalletId: "mb8lz733x37gldmywtejfg14",
+               observedOwnerWalletIds: ["mb8lz733x37gldmywtejfg14"],
+               unfilteredObservedId: null, signature: "owner_listing_present",
+               at: "2026-10-10T19:02:15.971Z", detail: null }
+recordedStatusDetail { attachment_evidence: {...}, ownership_evidence: {...}, status: "saved_not_configured" }
+```
+
+Run 2 (re-executed after adding the resolved-endpoint field): **identical results, idempotent** —
+`stateRowExisted: true`, `stateRowCreatedByThisRun: false`, U2 `proven: true`, U3 `proven: true`.
+The evidence merge is in place, so nothing is duplicated and nothing else in `status_detail` is
+erased.
+
+Read back from the stack database, so the record is the database's and not the script's:
+
+```sql
+SELECT wallet_id, desired_revision, applied_revision, applied_policy_id, applied_signer_id,
+       status, empty_composition,
+       (status_detail ? 'attachment_evidence') AS has_u2,
+       (status_detail ? 'ownership_evidence')  AS has_u3
+  FROM recipient_policy_state;
+-- d8dd0511-6bfc-479a-8f8f-58385ebb2c14 | 0 | 0 | (null) | (null) | saved_not_configured | unproven | t | t
+```
+
+Cross-check against our own records (`user_wallets` / `signer_grants`), which is what makes the
+readback meaningful rather than circular:
+
+| Our record | Value | What the live provider readback said |
+|---|---|---|
+| `user_wallets.provider_wallet_id` | `mb8lz733x37gldmywtejfg14` | present in the owner-verified listing → U3 `owner_listing_present` |
+| `user_wallets.provider_signer_id` | `np33q4k0i44p3g4kr2na0u9y` | the canonical signer, present **exactly once** → U2 `occurrences: 1` |
+| `signer_grants.provider_policy_id` (active) | `jb227q0o7d3hmf0ksbi3hj6e` | carried by that signer's `override_policy_ids` → U2 `observedPolicyIds` |
+
+### Per-probe outcome
+
+| Probe | Outcome | Read path | Wrote a policy? | Moved funds? |
+|---|---|---|---|---|
+| **U2** `assertPolicyTargetCapability` | **`proven: true`** — owner-verified readback, canonical signer exactly once carrying our policy id; `patchIssued: false` | `privyDid(userId)` + `listWalletsForChain(did,'solana')` (`readPath: "owner_verified_listing"`), **not** the unfiltered `server.getWallet` | No | No |
+| **U3** `assertPolicyOwnership` | **`proven: true`** — signature `owner_listing_present`; `bindingRewritten: false` | owner-verified listing; the unfiltered read was never even called (`unfilteredObservedId: null`) | No | No |
+| **U1** `probeRuleComposition` | **unproven, not run** — needs a policy write plus a signed transfer | — | n/a | n/a |
+| **U4** `probeEmptyComposition` | **unproven, not run** — steps (i)/(ii) need a policy write; step (iii) needs a signed transfer | — | n/a | n/a |
+
+### Honesty caveats, stated rather than buried
+
+1. **U2's `policyId` source is our own record, not a composer-applied revision.**
+   `recipient_policy_state` had no row for this wallet before this run (the composer has never
+   applied on this deployment, which is the correct fail-closed state while U1 is unproven), so
+   `applied_policy_id` is `null`. The policy id asserted is
+   `signer_grants.provider_policy_id` — the policy our own ledger records as attached to this
+   wallet's canonical signer during enrollment — reported in the output as `policyIdSource`. U2
+   therefore proves the **owner-verified readback path and a real attachment of a policy this system
+   created**, exactly as design §11 U2 defines the evidence ("the canonical signer present exactly
+   once with `override_policy_ids` containing our policy id, obtained through `privyDid(userId)` +
+   `listWalletsForChain(privyDid,'solana')`"). It does **not** prove anything about a
+   composer-created policy, because none exists on this deployment yet.
+2. **U3's positive branch was observed; its mismatch branch was NOT.** The design names two pieces of
+   evidence for U3: (i) the drift signature (owner listing empty while the unfiltered read returns
+   the wallet) and (ii) the provider's error code for a signed mutation against such a wallet.
+   Neither was observed, because this wallet has no ownership drift and manufacturing one against a
+   real account is not something this run may do — and (ii) needs a signed policy write anyway. What
+   **is** observed is the normal case: the owner-verified listing agrees with the recorded binding,
+   so the composer's cheap early check resolves positively for a real wallet. The probe's own
+   `proven: true` semantics (`owner_listing_present`) is what makes that a recorded outcome; the
+   drift branch stays unobserved and is reported as such, not inferred.
+3. **The state row for this wallet was created by this run.** `RecipientPolicyRepository.mergePolicyStatusDetail`
+   merges into an existing row (design §2.1), and this wallet had none, so the script created it the
+   way the first real mutation would — `lockPolicyState` inside `withUserTransaction` — and reports
+   `stateRowCreatedByThisRun: true` on run 1 and `false` on run 2. The row carries fail-closed
+   defaults: `desired_revision 0`, `applied_revision 0`, no `applied_*`, `status
+   'saved_not_configured'`, `empty_composition 'unproven'`. **Capability is unchanged by it:**
+   `isWalletPolicyVerified(null)` is `false` for a missing row and `false` for this one, so the
+   coverage gate refuses a grant in exactly the same way with or without the row. No policy was
+   written, no binding was rewritten, no funds moved.
+4. **This is live provider proof, and here is the check:** `resolvedProviderBaseUrl` is
+   `https://api.privy.io/v1` with no `PRIVY_API_BASE_URL` override present, and the observed ids are
+   provider ids returned over the network by the SDK's user-filtered listing. Nothing in the path is
+   a fake transport, a fixture, or an in-process stub. The distinction the brief draws is respected:
+   an in-process *script* is fine; an in-process *fake provider* would not be proof, and there is
+   none.
+5. **Nothing secret was printed.** The script prints bounded ids, booleans and codes; no environment
+   value, token, key, payload or signature appears in any output or in this file.
+
+### In-place updates for U2/U3, and what was deliberately left alone
+
+Earlier entries were **not** rewritten. The only earlier content touched is the U2/U3 half of the
+pending-probe notes, each marked `UPDATED IN PLACE (2026-10-10, U2/U3 collection)`:
+
+- `apply-progress.md`: the `#### PENDING LIVE EVIDENCE` banner (a new update blockquote; the U2/U3
+  table rows marked SUPERSEDED IN PLACE; the "Nothing here is resolved" sentence annotated), plus the
+  three later "live probe evidence remains PENDING" statements and the slice-5 closing paragraph.
+- `tasks.md`: the closure notes of 2.14 and 5.2, both surgically split into "U2/U3 collected" vs
+  "U1/U4 unchanged".
+
+**Left untouched, byte-for-byte:** every U1 and U4 statement (still pending, with their exact
+collection step and their ≤ 0.01 SOL authorization requirement), task 5.2's checkbox (`[ ]` — the
+task requires the U1–U4 outcomes and two of them are still uncollected), task 5.7's text, and **both
+`<!-- sdd-owner: parent -->` rows** (`git diff | grep 'sdd-owner: parent'` → 0 matches).
+
+### Structured status consumed
+
+Artifact store `openspec`; readiness resolved directly against the artifacts before any edit
+(`tasks.md` owner markers; `design.md` §11 U2/U3; `spec.md`; `openspec/config.yaml`). `actionContext`:
+one allowed root (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write
+stayed inside it, and the stack database was read/written only through the production repository path
+described above. The Review Workload Forecast guard is already resolved for this change; this unit is
+a script plus evidence inside the existing slice-2/5 boundary, and no `size:exception` is requested or
+applied.
+
+### Deviations
+
+1. **One state row was created in the stack database** (caveat 3 above), because the design's own
+   recorded-evidence site requires the row to exist. Reported, not hidden.
+2. **The resolved provider endpoint is recorded in the output** (`resolvedProviderBaseUrl`). It is a
+   URL, not a secret, and it is what makes "live provider" checkable instead of asserted; the repo's
+   existing `scripts/privy-live-smoke.mjs` already prints its base URL in the same spirit.
+3. **U2's `policyId` came from `signer_grants.provider_policy_id`** rather than
+   `recipient_policy_state.applied_policy_id`, for the reason in caveat 1. Both sources are named in
+   the script output (`policyIdSource`), so the choice is visible in the evidence rather than
+   implicit.
