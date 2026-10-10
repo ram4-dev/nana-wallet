@@ -261,6 +261,23 @@ export const meResponseSchema = z.object({
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
+export const contactPermissionSchema = z.object({
+  state: z.enum([
+    "saved_not_configured",
+    "pending",
+    "syncing",
+    "applied",
+    "retryable_failure",
+    "blocked_conflict",
+    "blocked_configuration",
+  ]),
+  desiredRevision: z.number().int().nonnegative(),
+  appliedRevision: z.number().int().nonnegative(),
+  retryable: z.boolean(),
+  reason: z.string().optional(),
+});
+export type ContactPermission = z.infer<typeof contactPermissionSchema>;
+
 export const contactSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -271,6 +288,7 @@ export const contactSchema = z.object({
   status: z.enum(["active", "inactive"]),
   createdAt: z.string(),
   updatedAt: z.string(),
+  permission: contactPermissionSchema,
 });
 export type Contact = z.infer<typeof contactSchema>;
 
@@ -288,8 +306,43 @@ export const updateContactInputSchema = z.object({
   address: z.string().trim().min(1).optional(),
   network: z.literal("solana-devnet").nullable().optional(),
   expectedVersion: z.number().int().positive(),
+  expectedPolicyRevision: z.number().int().nonnegative().optional(),
 });
 export type UpdateContactInput = z.infer<typeof updateContactInputSchema>;
+
+export const contactRemovalPreviewQuerySchema = z.object({
+  expectedVersion: z.coerce.number().int().positive(),
+});
+export type ContactRemovalPreviewQuery = z.infer<
+  typeof contactRemovalPreviewQuerySchema
+>;
+
+export const contactRemovalPreviewSchema = z.object({
+  contactId: z.string().uuid(),
+  contactVersion: z.number().int().positive(),
+  revokedGrantIds: z.array(z.string().uuid()),
+  lastAlias: z.boolean(),
+});
+export type ContactRemovalPreview = z.infer<typeof contactRemovalPreviewSchema>;
+
+export const deleteContactBodySchema = z
+  .object({
+    expectedRevokedGrantIds: z.array(z.string().uuid()),
+  })
+  .strict();
+export type DeleteContactBody = z.infer<typeof deleteContactBodySchema>;
+
+export const contactRevocationSchema = z.object({
+  grantIds: z.array(z.string().uuid()),
+  state: z.enum(["pending", "applied", "retryable_failure"]),
+});
+export type ContactRevocation = z.infer<typeof contactRevocationSchema>;
+
+export const deleteContactResponseSchema = z.object({
+  contact: contactSchema,
+  revocation: contactRevocationSchema,
+});
+export type DeleteContactResponse = z.infer<typeof deleteContactResponseSchema>;
 
 export const revealedCbuSchema = z.object({
   id: z.string().uuid(),

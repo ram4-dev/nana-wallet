@@ -1,18 +1,21 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
   contactSchema,
+  contactPermissionSchema,
+  contactRemovalPreviewQuerySchema,
+  contactRemovalPreviewSchema,
   createContactInputSchema,
+  deleteContactBodySchema,
+  deleteContactResponseSchema,
   revealedCbuSchema,
   updateContactInputSchema,
   type Contact,
+  type DeleteContactResponse,
   type MeResponse,
   type RevealedCbu,
 } from "../contracts/http.js";
 import {
-  ContactsConflictError,
-  ContactsNotFoundError,
   ContactsRepository,
-  ContactsValidationError,
 } from "../memory/contacts-repository.js";
 import { PrivyIdentityError } from "../auth/privy-identity.js";
 import {
@@ -21,6 +24,10 @@ import {
 } from "../memory/embedding.js";
 import { EMBEDDING_MODEL_ID } from "../memory/types.js";
 import { readRecipientMemoryConfig } from "../config/env.js";
+import {
+  RecipientPolicySeamError,
+  type RecipientPolicyService,
+} from "../wallet/policy/service.js";
 
 export type ContactEmbedder = {
   embed(text: string): Promise<number[]>;
@@ -30,6 +37,7 @@ export type ContactsRouteDependencies = {
   resolveUserId(request: FastifyRequest): Promise<string>;
   contacts: ContactsRepository;
   embedder: ContactEmbedder;
+  recipientPolicy: RecipientPolicyService;
 };
 
 export type ContactApiError = {
@@ -44,29 +52,17 @@ export type ContactReply = {
 function errorReply(reply: ContactReply, error: unknown): ContactApiError {
   // Identity failures map to 401 via the server-wide handler, never 500.
   if (error instanceof PrivyIdentityError) throw error;
-  if (error instanceof ContactsValidationError) {
+  if (error instanceof RecipientPolicySeamError) {
+    const status =
+      error.code === "DATOS_INVALIDOS"
+        ? 422
+        : error.code === "CONTACTO_NO_ENCONTRADO"
+          ? 404
+          : 409;
     reply.code(422);
     return {
       ok: false,
-      error: { code: "DATOS_INVALIDOS", message: error.message },
-    };
-  }
-  if (error instanceof ContactsConflictError) {
-    reply.code(409);
-    return {
-      ok: false,
-      error: {
-        code: "VERSION_OBSOLETA",
-        message:
-          "The contact changed. Refresh and retry with the current version.",
-      },
-    };
-  }
-  if (error instanceof ContactsNotFoundError) {
-    reply.code(404);
-    return {
-      ok: false,
-      error: { code: "CONTACTO_NO_ENCONTRADO", message: "Contact not found." },
+      error: { code: error.code, message: error.message },
     };
   }
   reply.code(500);
@@ -74,6 +70,25 @@ function errorReply(reply: ContactReply, error: unknown): ContactApiError {
     ok: false,
     error: { code: "ERROR_INTERNO", message: "Unexpected contacts error." },
   };
+}
+
+function idempotencyKey(request: FastifyRequest): string | null {
+  const value = request.headers["idempotency-key"];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+async function projectContact(
+  dependencies: ContactsRouteDependencies,
+  userId: string,
+  contactId: string,
+  permission: unknown,
+) {
+  const contact = await dependencies.contacts.read(userId, contactId);
+  if (!contact) throw new Error("policy mutation did not leave a contact projection");
+  return contactSchema.parse({
+    ...contact,
+    permission: contactPermissionSchema.parse(permission),
+  });
 }
 
 /**
@@ -96,10 +111,15 @@ export async function registerContactsRoutes(
     > => {
       try {
         const userId = await dependencies.resolveUserId(request);
-        const contacts = await dependencies.contacts.listActive(userId);
+        const [contacts, permission] = await Promise.all([
+          dependencies.contacts.listActive(userId),
+          dependencies.recipientPolicy.readPermissionForUser(userId),
+        ]);
         return {
           ok: true,
-          data: contacts.map((contact) => contactSchema.parse(contact)),
+          data: contacts.map((contact) =>
+            contactSchema.parse({ contact, permission }),
+          ),
         };
       } catch (error) {
         return errorReply(reply, error);
@@ -126,17 +146,21 @@ export async function registerContactsRoutes(
       }
       try {
         const userId = await dependencies.resolveUserId(request);
-        const embedding = await dependencies.embedder.embed(
-          recipientEmbeddingText(parsed.data.name, parsed.data.description),
-        );
-        const contact = await dependencies.contacts.create(
+        const result = await dependencies.recipientPolicy.create(
           userId,
           parsed.data,
-          embedding,
-          EMBEDDING_MODEL_ID,
+          { origin: "screen", idempotencyKey: idempotencyKey(request) },
         );
         reply.code(201);
-        return { ok: true, data: contactSchema.parse(contact) };
+        return {
+          ok: true,
+          data: await projectContact(
+            dependencies,
+            userId,
+            result.contact.id,
+            result.permission,
+          ),
+        };
       } catch (error) {
         return errorReply(reply, error);
       }
@@ -176,26 +200,21 @@ export async function registerContactsRoutes(
       }
       try {
         const userId = await dependencies.resolveUserId(request);
-        // Embed the merged next projection (any embedded field may have changed).
-        const current = await dependencies.contacts
-          .listActive(userId)
-          .then((list) =>
-            list.find((contact) => contact.id === request.params.id),
-          );
-        const name = parsed.data.name ?? current?.name ?? "";
-        const description =
-          parsed.data.description ?? current?.description ?? "";
-        const embedding = await dependencies.embedder.embed(
-          recipientEmbeddingText(name, description),
-        );
-        const contact = await dependencies.contacts.update(
+        const result = await dependencies.recipientPolicy.edit(
           userId,
           request.params.id,
           parsed.data,
-          embedding,
-          EMBEDDING_MODEL_ID,
+          { origin: "screen", idempotencyKey: idempotencyKey(request) },
         );
-        return { ok: true, data: contactSchema.parse(contact) };
+        return {
+          ok: true,
+          data: await projectContact(
+            dependencies,
+            userId,
+            result.contact.id,
+            result.permission,
+          ),
+        };
       } catch (error) {
         return errorReply(reply, error);
       }
@@ -205,34 +224,116 @@ export async function registerContactsRoutes(
   app.delete(
     "/v1/contacts/:id",
     async (
-      request: FastifyRequest<{ Params: { id: string } }>,
+      request: FastifyRequest<{
+        Params: { id: string };
+        Querystring: unknown;
+        Body: unknown;
+      }>,
       reply,
     ): Promise<
-      | { ok: true; data: Contact }
+      | { ok: true; data: DeleteContactResponse }
       | { ok: false; error: { code: string; message: string } }
     > => {
+      const query = contactRemovalPreviewQuerySchema.safeParse(request.query);
+      const body = deleteContactBodySchema.safeParse(request.body);
+      if (!query.success || !body.success) {
+        reply.code(422);
+        return {
+          ok: false,
+          error: { code: "DATOS_INVALIDOS", message: "Invalid removal request." },
+        };
+      }
       try {
         const userId = await dependencies.resolveUserId(request);
-        const contact = await dependencies.contacts.archive(
+        const result = await dependencies.recipientPolicy.remove(
           userId,
           request.params.id,
+          query.data.expectedVersion,
+          idempotencyKey(request),
+          {
+            origin: "screen",
+            idempotencyKey: idempotencyKey(request),
+            expectedRevokedGrantIds: body.data.expectedRevokedGrantIds,
+          },
         );
-        if (!contact) {
-          reply.code(404);
-          return {
-            ok: false,
-            error: {
-              code: "CONTACTO_NO_ENCONTRADO",
-              message: "Contact not found.",
-            },
-          };
-        }
-        return { ok: true, data: contactSchema.parse(contact) };
+        return {
+          ok: true,
+          data: deleteContactResponseSchema.parse({
+            contact: await projectContact(
+              dependencies,
+              userId,
+              result.contact.id,
+              result.permission,
+            ),
+            revocation: result.revocation,
+          }),
+        };
       } catch (error) {
         return errorReply(reply, error);
       }
     },
   );
+
+  app.get(
+    "/v1/contacts/:id/removal-preview",
+    async (
+      request: FastifyRequest<{ Params: { id: string }; Querystring: unknown }>,
+      reply,
+    ) => {
+      const query = contactRemovalPreviewQuerySchema.safeParse(request.query);
+      if (!query.success) {
+        reply.code(422);
+        return {
+          ok: false,
+          error: { code: "DATOS_INVALIDOS", message: "Invalid removal preview." },
+        };
+      }
+      try {
+        const userId = await dependencies.resolveUserId(request);
+        const preview = await dependencies.recipientPolicy.previewRemoval(
+          userId,
+          request.params.id,
+          query.data.expectedVersion,
+        );
+        return {
+          ok: true,
+          data: contactRemovalPreviewSchema.parse({
+            contactId: preview.contact.id,
+            contactVersion: preview.contact.version,
+            revokedGrantIds: preview.revokedGrantIds,
+            lastAlias: preview.lastAlias,
+          }),
+        };
+      } catch (error) {
+        return errorReply(reply, error);
+      }
+    },
+  );
+
+  app.get("/v1/recipient-policy", async (request, reply) => {
+    try {
+      const userId = await dependencies.resolveUserId(request);
+      return {
+        ok: true,
+        data: contactPermissionSchema.parse(
+          await dependencies.recipientPolicy.readPermissionForUser(userId),
+        ),
+      };
+    } catch (error) {
+      return errorReply(reply, error);
+    }
+  });
+
+  app.post("/v1/recipient-policy/retry", async (request, reply) => {
+    try {
+      const userId = await dependencies.resolveUserId(request);
+      const permission = await dependencies.recipientPolicy.retryForUser(userId);
+      reply.code(202);
+      return { ok: true, data: contactPermissionSchema.parse(permission) };
+    } catch (error) {
+      return errorReply(reply, error);
+    }
+  });
 
   app.post(
     "/v1/contacts/:id/reveal-cbu",

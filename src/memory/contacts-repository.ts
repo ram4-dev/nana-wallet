@@ -1,4 +1,4 @@
-import type { DatabaseClient } from "../db/client.js";
+import type { DatabaseClient, Queryable } from "../db/client.js";
 import { isValidRecipientAddress } from "../memory/address.js";
 import { redactAddressLikeText, vectorLiteral } from "../memory/embedding.js";
 import type { Embedding } from "../memory/types.js";
@@ -104,13 +104,14 @@ export class ContactsRepository {
     input: ContactWriteInput,
     embedding: Embedding,
     embeddingModelRevision: string,
+    client?: Queryable,
   ): Promise<ContactRecord> {
     const name = this.validatedName(input.name);
     if (!isValidRecipientAddress(input.address, input.network)) {
       throw new ContactsValidationError("address must match the selected network");
     }
-    return this.database.withUserTransaction(userId, async (client) => {
-      const result = await client.query<RecipientRow>(
+    const run = async (executor: Queryable): Promise<ContactRecord> => {
+      const result = await executor.query<RecipientRow>(
         `INSERT INTO recipients (user_id, name, normalized_name, description, address, network, embedding, embedding_model_revision, provenance, address_confirmed_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9::jsonb, now())
          RETURNING ${RECIPIENT_COLUMNS}`,
@@ -131,7 +132,10 @@ export class ContactsRepository {
       const row = result.rows[0];
       if (!row) throw new Error("recipient insert returned no row");
       return mapRecipient(row);
-    });
+    };
+    return client
+      ? run(client)
+      : this.database.withUserTransaction(userId, run);
   }
 
   /**
@@ -145,15 +149,16 @@ export class ContactsRepository {
     input: ContactPatchInput,
     embedding: Embedding,
     embeddingModelRevision: string,
+    client?: Queryable,
   ): Promise<ContactRecord> {
     const contentChanged =
       input.name !== undefined ||
       input.description !== undefined ||
       input.address !== undefined ||
       Object.prototype.hasOwnProperty.call(input, 'network');
-    return this.database.withUserTransaction(userId, async (client) => {
+    const run = async (executor: Queryable): Promise<ContactRecord> => {
       // Lock the current projection for the expected-version check.
-      const current = await client.query<RecipientRow>(
+      const current = await executor.query<RecipientRow>(
         `SELECT ${RECIPIENT_COLUMNS}
          FROM recipients
          WHERE user_id = $1 AND id = $2 AND status = 'active'
@@ -165,7 +170,7 @@ export class ContactsRepository {
       if (Number(row.version) !== input.expectedVersion)
         throw new ContactsConflictError();
 
-      await client.query(
+      await executor.query(
         `INSERT INTO recipient_versions (recipient_id, user_id, version, name, description, address, network)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
@@ -192,7 +197,7 @@ export class ContactsRepository {
       if (!isValidRecipientAddress(nextAddress, nextNetwork)) {
         throw new ContactsValidationError("address must match the selected network");
       }
-      const updated = await client.query<RecipientRow>(
+      const updated = await executor.query<RecipientRow>(
         `UPDATE recipients
          SET name = $3, normalized_name = $4, description = $5,
              address = $6, network = $7,
@@ -219,24 +224,76 @@ export class ContactsRepository {
       const updatedRow = updated.rows[0];
       if (!updatedRow) throw new ContactsNotFoundError();
       return mapRecipient(updatedRow);
-    });
+    };
+    return client
+      ? run(client)
+      : this.database.withUserTransaction(userId, run);
   }
 
   /** PMU-011: soft delete — status flips to 'inactive', the row remains. */
   public async archive(
     userId: string,
     recipientId: string,
+    expectedVersion?: number,
+    client?: Queryable,
   ): Promise<ContactRecord | undefined> {
-    return this.database.withUserTransaction(userId, async (client) => {
-      const result = await client.query<RecipientRow>(
+    const run = async (executor: Queryable): Promise<ContactRecord | undefined> => {
+      const expectedPredicate = expectedVersion === undefined ? "" : " AND version = $3";
+      const values = expectedVersion === undefined
+        ? [userId, recipientId]
+        : [userId, recipientId, expectedVersion];
+      const result = await executor.query<RecipientRow>(
         `UPDATE recipients
          SET status = 'inactive', updated_at = now()
-         WHERE user_id = $1 AND id = $2 AND status = 'active'
+         WHERE user_id = $1 AND id = $2 AND status = 'active'${expectedPredicate}
          RETURNING ${RECIPIENT_COLUMNS}`,
+        values,
+      );
+      return result.rows[0] ? mapRecipient(result.rows[0]) : undefined;
+    };
+    return client
+      ? run(client)
+      : this.database.withUserTransaction(userId, run);
+  }
+
+  /** Owner-scoped contact read. An injected executor keeps policy mutations atomic. */
+  public async readActive(
+    userId: string,
+    recipientId: string,
+    client?: Queryable,
+  ): Promise<ContactRecord | undefined> {
+    const run = async (executor: Queryable): Promise<ContactRecord | undefined> => {
+      const result = await executor.query<RecipientRow>(
+        `SELECT ${RECIPIENT_COLUMNS}
+         FROM recipients
+         WHERE user_id = $1 AND id = $2 AND status = 'active'`,
         [userId, recipientId],
       );
       return result.rows[0] ? mapRecipient(result.rows[0]) : undefined;
-    });
+    };
+    return client
+      ? run(client)
+      : this.database.withUserTransaction(userId, run);
+  }
+
+  /** Owner-scoped projection read including archived contacts for mutation replies. */
+  public async read(
+    userId: string,
+    recipientId: string,
+    client?: Queryable,
+  ): Promise<ContactRecord | undefined> {
+    const run = async (executor: Queryable): Promise<ContactRecord | undefined> => {
+      const result = await executor.query<RecipientRow>(
+        `SELECT ${RECIPIENT_COLUMNS}
+         FROM recipients
+         WHERE user_id = $1 AND id = $2`,
+        [userId, recipientId],
+      );
+      return result.rows[0] ? mapRecipient(result.rows[0]) : undefined;
+    };
+    return client
+      ? run(client)
+      : this.database.withUserTransaction(userId, run);
   }
 
   /** PMU-012: reveal the plain address for the owner only; 404-shaped otherwise. */

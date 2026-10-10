@@ -145,13 +145,16 @@ describe("ContactsRepository mutations stay behind the policy path and its HTTP 
   it("is imported by the composition root and the contacts route only", () => {
     // `src/server.ts` constructs the repository for the HTTP wiring (no
     // mutation of its own); `src/api/contacts.ts` is the pre-existing contacts
-    // vertical design §3.3 leaves in place. A third importer — including any
-    // module under `src/wallet/policy/**` — fails this case.
+    // vertical design §3.3 leaves in place; `src/memory/contact-policy-adapter.ts`
+    // is the policy service's injected contact port, kept beside the repository
+    // so the policy package never learns about embeddings. A fourth importer —
+    // including any module under `src/wallet/policy/**` — fails this case.
     expect(
       mentions(importsSymbol("ContactsRepository")),
       "ContactsRepository gained a new importer",
     ).toEqual([
       "src/api/contacts.ts",
+      "src/memory/contact-policy-adapter.ts",
       "src/server.ts",
     ]);
   });
@@ -167,13 +170,15 @@ describe("ContactsRepository mutations stay behind the policy path and its HTTP 
 
   it("mutates contacts only from the policy service and the contacts route", () => {
     // The contact mutation port the service holds is injected; the only
-    // mutation call sites are the service's own write paths and the contacts
-    // HTTP vertical. A mutation call from any other module fails this case.
+    // mutation call sites are the service's own write paths, the injected port
+    // adapter and the contacts HTTP vertical. A mutation call from any other
+    // module fails this case.
     expect(
       mentions(/contacts\.(create|update|archive)\(/).filter(
         (path) =>
           !path.startsWith(POLICY_PATH) &&
-          path !== "src/api/contacts.ts",
+          path !== "src/api/contacts.ts" &&
+          path !== "src/memory/contact-policy-adapter.ts",
       ),
       "a contact mutation call site appeared outside the policy path and the contacts route",
     ).toEqual([]);

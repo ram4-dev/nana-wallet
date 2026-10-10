@@ -38,6 +38,12 @@ import {
   createContactsEmbedder,
 } from "./api/contacts.js";
 import { ContactsRepository } from "./memory/contacts-repository.js";
+import { createRecipientContactMutationPort } from "./memory/contact-policy-adapter.js";
+import {
+  createRecipientPolicyService,
+  createUnavailablePolicyApplyPort,
+} from "./wallet/policy/service.js";
+import { RecipientPolicyRepository } from "./wallet/policy/repository.js";
 import { EmbeddingService } from "./memory/embedding.js";
 import { FinancialTaskRegistry } from "./conversations/financial-task-registry.js";
 import { readApiProcessConfig } from "./config/process.js";
@@ -347,10 +353,43 @@ export function buildServer(options: {
     }
 
     // PMU-008..013: user-scoped contacts CRUD.
+    const contactsRepository = new ContactsRepository(database);
+    const policyRepository = new RecipientPolicyRepository(database);
+    // The contacts surface (`/v1/contacts`, `/v1/recipient-policy`) recomposes
+    // through the same recipient-policy service the grant-sync runtime builds:
+    // the contact projection is written by the only adapter allowed to write it,
+    // and the active grants are read from the ledger exactly as the runtime's
+    // admin client reads them. This deployment still wires no signed
+    // policy-apply capability, so the composer records the desired revision and
+    // the reconciler applies it instead of reporting a policy nobody created.
+    const recipientPolicy = createRecipientPolicyService({
+      database,
+      repository: policyRepository,
+      contacts: createRecipientContactMutationPort({
+        contacts: contactsRepository,
+        embedder: createContactsEmbedder(),
+      }),
+      listActiveGrants: (walletId, userId, chain) => {
+        const client = database;
+        if (!client) throw new Error("Contacts require a database client.");
+        return client.withUserTransaction(userId, (transaction) =>
+          policyRepository.listActiveLedgerGrants(
+            userId,
+            walletId,
+            chain,
+            transaction,
+          ),
+        );
+      },
+      provider: createUnavailablePolicyApplyPort(
+        "provider_unavailable: this deployment has no signed apply capability wired into the HTTP API; the composer records the desired revision and the reconciler applies it.",
+      ),
+    });
     app.register(registerContactsRoutes, {
       resolveUserId,
-      contacts: new ContactsRepository(database),
+      contacts: contactsRepository,
       embedder: createContactsEmbedder(),
+      recipientPolicy,
     });
 
     // Contact creation embeds the name through the transformers.js model;
