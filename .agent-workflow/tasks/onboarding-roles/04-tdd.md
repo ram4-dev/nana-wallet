@@ -1,6 +1,6 @@
 # TDD: onboarding de persona usuaria y responsable
 
-Estado: **diseño de sistema aprobado; diseño de programa revisión 1 propuesto**. PRD rector: `03-prd.md`, revisión 3, aprobado por Ramiro el 2026-10-10 y registrado en `1edc62c`.
+Estado: **diseños de sistema y programa aprobados**. PRD rector: `03-prd.md`, revisión 3, aprobado por Ramiro el 2026-10-10 y registrado en `1edc62c`.
 
 ## Diseño de sistema, revisión 1
 
@@ -170,7 +170,7 @@ Decision / allowed mutation: aprobar interfaces, estado, migración y pruebas co
 Explicit exclusions: código de aplicación, migraciones ejecutadas, políticas remotas y fondos; el outline no autoriza implementación por sí solo.
 Owning artifact / revision or hash: este TDD, diseño de programa revisión 1.
 Decision owner: Ramiro.
-Approved by / trusted identity: —
-Approved at: —
-Status: proposed
+Approved by / trusted identity: Ramiro, respuesta explícita «sí, aprueba» en esta conversación a la solicitud de aprobación de la revisión 1.
+Approved at: 2026-10-10
+Status: approved
 Invalidated by: —
