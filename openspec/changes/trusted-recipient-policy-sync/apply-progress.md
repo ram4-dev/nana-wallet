@@ -643,3 +643,218 @@ root; the main checkout and the untracked `compose.privy-local.ports.yaml` were 
 
 `feat(policy): compose one rule set per wallet from consent and grants` — see the report
 envelope for the SHA.
+
+### Task 1.5 — implement the readback comparator as a pure function with its failure classes
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+This unit was finished from an interrupted run: `src/wallet/policy/readback.ts` and
+`tests/unit/policy-readback.test.ts` already existed as untracked work in progress, and a green
+53-test suite from that run was **not** treated as evidence. Both files were re-judged against
+design §5.1 requirement by requirement first, then repaired under RED → GREEN → mutation, and the
+gaps below are what that review actually found.
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/readback.ts` | New (407 lines). The pure §5.1 comparator: `compareComposedRules` (checks (a)–(d)), `assertOwnerVerifiedBinding` (checks (e)–(g)) and `comparePolicyReadback` (the single decision the reconciler consumes). |
+| `tests/unit/policy-readback.test.ts` | New (774 lines, 33 cases): the policy-id check, the rule-set comparison, the unknown-rule and unenumerable-allowlist checks, the address-provenance A/B for the `Test1` drift, the canonical-signer and sibling-signer checks, the ownership checks, the frozen-input purity check and the failure-class table. |
+
+No other file was touched. `src/wallet/embedded.ts` inside `e9b11d3` was spot-checked, not extended
+(see the spot-check verdict below).
+
+#### What the unit delivers
+
+- **The comparator is pure and I/O-free (design §12.1).** `readback.ts` imports only
+  `node:util`, two `type` imports and the `composedRulesHash`-free composer types: no database, no
+  provider, no clock. Every comparison is unit-provable before any apply code exists, which is why
+  slice 1 can ship the whole §5.1 contract without a live readback.
+- **Checks (a)–(d) classify `blocked_conflict` in the design's order** — policy id, then a
+  documented hoist of (c)/(d) before (b), so a pristine drift carrying an unexplained rule or an
+  unconsumed address is refused instead of being "repaired" by overwriting it; (b) is the
+  `isDeepStrictEqual` comparator `solana-policy-provisioner.ts:97-99` already uses, so it is
+  key-order independent rather than a new deep-equal.
+- **It never returns a rule set derived from the readback.** The comparison result union has no
+  `rules` member at all, and the frozen-input case proves the comparator reads its inputs instead of
+  rewriting them: an implementation that normalised, sorted or repaired `readback.rules` in place
+  throws on the frozen fixtures. This is what makes "unknown remote rules MUST block instead of
+  being deleted or copied into desired state" mechanical rather than aspirational.
+- **Checks (e)–(g) fail closed by default (design §5.1, §11 U2/U3).** The owner-verified signer and
+  wallet listings are explicit inputs with a first-class `not_acquired` variant, so "we did not
+  look" is distinguishable from "we looked and it was fine", and an absent listing is itself the
+  `blocked_configuration`. No caller can reach `proven` by omitting evidence, and the decision
+  function can therefore never return `verified` or `patch_required` in slice 1: the unit suite
+  asserts exactly that (the `rules equal + binding unproven` row returns
+  `signer_attachment_unproven`, never `verified`).
+- **The binding checks are ordered (e) → (f) → (g)** with a distinct reason each
+  (`signer_attachment_unproven`, `sibling_signer_lost`, `ownership_unproven`, `ownership_drift`), so
+  the status reason a later task persists identifies which invariant actually broke instead of a
+  single catch-all.
+
+#### Gaps found in the interrupted work, and how each was repaired
+
+1. **A `Transfer.to` allowlist that cannot be enumerated was silently treated as "no addresses".**
+   `transferToEntries` returned `unreadable: undefined` for a missing `conditions` array *and* for a
+   `Transfer.to` condition with no `value`, and the caller's `unreadable !== undefined` guard
+   therefore never fired. The comparison then fell through to a `converge` in the pristine phase —
+   a PATCH derived from `composed.rules` that would have **deleted** a remote allowlist nobody could
+   enumerate. This is the one failure mode the comparator exists to prevent, so it was repaired with
+   a tagged scan result (`enumerated` | `unreadable`) plus a distinct reason,
+   `rule_conditions_unreadable`, rather than by reusing `recipient_address_without_provenance`: the
+   failure is "this rule's allowlist is unreadable", not "this address lacks provenance", and the two
+   need different evidence in `status_detail`.
+2. **The duplicated-canonical-signer case passed for the wrong reason.** The suite covered only
+   `[canonical(POLICY_ID), canonical(POLICY_ID), sibling]`, which the *policy-id count* clause
+   catches; the "exactly once" clause was never exercised. Mutation confirmed it: relaxing
+   `occurrences.length !== 1` to `< 1` left **32/32 passing**. A second occurrence whose
+   `override_policy_ids` is empty hides the duplicate from the count clause entirely, so that case
+   (units 2.2/2.3 read the listing that way) is now covered directly and through the decision
+   table.
+3. **Two required "no PATCH decision" cases were missing at the decision level.** Owner drift and
+   the duplicated canonical signer were asserted only against `assertOwnerVerifiedBinding`, so the
+   aggregator could have returned `patch_required` for them unnoticed. Both are now rows in the
+   failure-class table, and the table helper *throws* naming the resolved outcome instead of relying
+   on redundant negations.
+4. **A weakened assertion.** The "never returns a rule set" case asserted
+   `Object.keys(comparison)).not.toContain("rules")` on a return type that has no `rules` member —
+   vacuous by construction. It now pins the whole classification (`ruleIndex`, `ruleName`) and is
+   paired with the frozen-input purity case.
+5. **A weakened table.** `Array<[PolicyReadbackDecision, string, string]>` with a cast at the call
+   site meant a typo in an outcome or a reason still compiled. The table is now typed with the real
+   unions and additionally asserts that the eleven rows produce nine distinct reasons, i.e. that no
+   two rows collapse.
+6. **A real `npm run typecheck` failure the interrupted run never reached:** `scanTransferTo(rule)`
+   was called with `rule: unknown`, because the `isRecord` guard was consumed inside the `name`
+   ternary and TypeScript does not narrow from that. Replaced with an explicit early-return guard,
+   which narrows `rule` to `Record<string, unknown>` for check (d) with no cast. (The killed run had
+   therefore never established the slice's typecheck gate; this unit does.)
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED (the repaired guards) | The new cases ran against the *unmodified* interrupted implementation: **6 failed / 26 passed** — exactly the 5 unenumerable-allowlist cases (`expected 'converge' to be 'blocked_conflict'` for the missing-`conditions` and missing-`value` fixtures, `expected 'recipient_address_without_provenance' to be 'rule_conditions_unreadable'` for the three non-enumerable fixtures) and the decision-table row for the unenumerable allowlist (`expected 'blocked_configuration' to be 'blocked_conflict'` — i.e. the flow had resolved to the fail-closed binding instead of the conflict). |
+| REFACTOR (narrowing) | The typecheck failure from gap 6 was fixed by replacing the ternary guard with an early return; lint and typecheck clean, **33/33** unchanged. |
+| GREEN | **33 passed / 33** (`tests/unit/policy-readback.test.ts`), and **64 passed / 64** across the three slice-1 unit suites. `npm run lint` and `npm run typecheck` clean. |
+| MUTATION A (the repaired sentinel) | Reverting `scanTransferTo` to "unreadable looks like no addresses" produced **6 failed / 27 passed**, exactly the 5 unenumerable cases plus the decision-table row — and the same 6 failures again after the narrowing refactor. |
+| MUTATION B ("exactly once") | `occurrences.length !== 1` → `< 1`: **32 passed / 32 with the original suite** — not falsified, which is how gap 2 was found. After adding the empty-`override_policy_ids` duplicate: **3 failed / 30 passed** (`classifies a duplicated with only one entry carrying our policy id …`, `reports the occurrence count so the anomalies are distinguishable`, the decision-table row). Re-confirmed post-refactor. |
+| MUTATION C (lost sibling) | Disabling the `missingSignerIds` branch (`> 0` → `> 100`): **2 failed / 30 passed** (`classifies a lost sibling signer as blocked_configuration`, the decision-table row). |
+| MUTATION C2 (policy-id count clause) | Dropping `observedPolicyIds.length !== 1`: **2 failed / 31 passed** (`classifies a carrying our policy id and another canonical signer …`, the occurrence-count case). |
+| MUTATION D (policy-id value clause) | Neutralising `occurrences[0].overridePolicyIds[0] !== expectedPolicyId`: **2 failed / 31 passed** (`classifies a carrying another policy id canonical signer …`, the occurrence-count case). |
+| MUTATION E (verification phase) | Treating a verification mismatch as repairable (`phase === "verification"` → `false`): **2 failed / 31 passed** (the (b) pristine/verification case and the `rules_mismatch` row). |
+| MUTATION F (ownership fail-closed default) | Returning `proven` when the owner-verified wallet listing was not acquired: **4 failed / 29 passed** — the (f) positive control, both (g) cases and the decision-table row, i.e. removing the fail-closed default turns a `blocked_configuration` into `patch_required`. |
+| False-green guard | Every mutation was applied to one anchor, observed, and reverted (`cp` from a pristine copy); the suite was re-run green after each revert and the unmodified module reproduces **33/33**. The green from the interrupted run was deliberately not adopted as evidence: two of the six gaps above were only reachable by falsifying guards the old suite claimed to cover. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/policy-readback.test.ts` (RED, before the repair) | **6 failed / 26 passed** (the five unenumerable cases + the decision-table row) |
+| … (mutations A / B / C / C2 / D / E / F, each reverted) | **6 / 3 / 2 / 2 / 2 / 2 / 4** failures respectively, each attributed to the named cases above |
+| `npx vitest run tests/unit/policy-composer.test.ts tests/unit/policy-composer-hash.test.ts tests/unit/policy-readback.test.ts` | **3 files passed, 64 tests passed** (0.2 s) |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts` | **4 files passed, 53 tests passed** (units 1.1–1.3 stay green; no residue flakiness this run) |
+| `npm run lint` (twice, convergence check) | clean both runs (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`, exit 0) — this is the first time the slice's typecheck gate actually ran over these two files |
+
+#### Deviations from the design
+
+Three, all fail-closed and all additive:
+
+1. **`converge` in the pristine phase vs. the §5.1 table's flat `blocked_conflict` for (b).** The
+   table lists (b)'s failure class as `blocked_conflict`, but §5.1 also says the pristine readback
+   "decides whether any PATCH is needed at all", so a structural difference with no unexplained rule
+   and no unconsumed address is a repairable drift (`converge` → `patch_required`), not a stop. The
+   verification phase classifies the same difference as `blocked_conflict`/`rules_mismatch`, and the
+   unit suite pins both halves plus the two failure classes side by side.
+2. **A fifth `blocked_conflict` reason, `rule_conditions_unreadable`.** §5.1 names four checks and
+   two classes, not reason codes. Folded into `recipient_address_without_provenance` it would have
+   reported "an address without provenance" for a rule that has no readable addresses at all, which
+   is different evidence for 2.8/2.9 to persist. The reason is what let the repaired guard be
+   mutation-provable.
+3. **A documented hoist: (c)/(d) run before (b).** The design's table order is (a)…(g). Running (b)
+   first would make the pristine phase answer `converge` for a drifted readback that also carries an
+   unexplained rule, and the caller would then PATCH over an unknown remote rule — the exact
+   behaviour the spec forbids. There is a unit case that pins the hoist. In the verification phase
+   the relative order cannot change the outcome (all four are `blocked_conflict`).
+
+One deliberate non-deviation: checks (e)–(g) are implemented and reachable, but no slice-1 case
+asserts a *resolved* signer or ownership semantic (`proven`, `verified`, `patch_required`). That
+proof is the owner-verified read in slice 2 (design §11 U2/U3); slice 1 asserts only that every
+shape reaching the comparator without that evidence stops as `blocked_configuration`.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **Task 1.6 must supply the listings, and the type makes "not looked" explicit.** Both
+  `ownerVerifiedSigners` and `ownerVerifiedWallets` are optional precisely so a caller that has not
+  performed the owner-verified read (design §0 C5, §11 U2/U3) produces the fail-closed stop instead
+  of an accidental `proven`. The service must pass `not_acquired` with a reason while the read does
+  not exist, and must not default to an empty `acquired` listing: `walletIds: []` is
+  `ownership_drift` (a disproved binding), which is a different status from `ownership_unproven`.
+- **Task 2.8/2.9 own the phase mapping.** `compareComposedRules(phase: "pristine")` → `converge`
+  is "PATCH required"; `compareComposedRules(phase: "verification")` → `equal` is
+  "promote to applied". Nothing else in this module decides which phase it is in, so the reconciler
+  and the apply path must each pass their own phase explicitly.
+- **`rule_conditions_unreadable` is a hard stop in both phases, by construction.** A provider that
+  ever returns a `Transfer.to` condition with a non-array `value` (or a rule with no `conditions`)
+  will now block every mutation for that wallet with no PATCH. That is the intended fail-closed
+  direction, but 2.2's owner-verified probe and 2.9's GET-outcome table should record the reason so
+  a malformed remote policy is diagnosable from `status_detail` rather than looking like an outage.
+- **Check (a) is the only id-level check.** A readback whose `id` matches but whose rules belong to
+  another wallet entirely is indistinguishable here; that separation is the wallet-binding step of
+  §3.5, not this comparator.
+
+#### Remaining tasks in slice 1
+
+```text
+- [ ] **1.6 Add `RecipientPolicyService` with server-owned identity, wallet, and network, plus the strict service-seam types.**
+- [ ] **1.7 Implement the atomic removal transaction with whole-grant revocation.**
+- [ ] **1.8 Delete the legacy full-rule writer entry points and route their callers through the composer.**
+- [ ] **1.9 Document and install the single lock order, prepending `W0` to the claim path.**
+- [ ] **1.10 Extend the structural guard suite to make a second full-rule writer unreachable by construction.**
+- [ ] **1.11 Run the slice-1 gate and record the slice-1 work-unit commits.**
+```
+
+Parent-owned lifecycle rows in `tasks.md` (the bounded native review and the post-apply
+verify/archive rows) were left byte-for-byte untouched, and no review, receipt or delivery gate was
+started by this phase.
+
+#### Spot-check: `src/wallet/embedded.ts` inside `e9b11d3` (15 lines)
+
+**Verdict: the benign seam unit 1.4 needed — nothing broader.** The diff is exactly two `export`
+keywords plus the two doc comments that justify them: `SOLANA_MAX_PER_TRANSFER_LAMPORTS` is exported
+so the composer imports the single lamport ceiling instead of restating `"10000000"`, and
+`deterministicPolicyHash` is exported so the composer's unit suite compares `applied_rules_hash`
+against the *real* consent-envelope hash. No statement, expression, value, call site or control flow
+was changed; `-3 / +15` is entirely comments, the `export` keywords, and one line reflowed by the
+added doc block. It is the same seam this unit's apply-progress records for task 1.4, so no stop was
+required. One cosmetic observation for whoever next touches the file: the new `export const` block
+was inserted *between* two import statements (imports keep working because ESM hoists them, and lint
+is clean), but it would read better above the import block.
+
+#### Workload / PR boundary
+
+One commit, one work unit: one new module (407 lines) and its suite (774 lines) — **~1 181 new
+lines**, above the 400-line review budget and reported, not hidden. It cannot be split without
+breaking the unit: the comparator and the seven checks it must satisfy are one artifact, and
+`gentle-ai-work-unit-commits` forbids shrinking a diff by dropping tests, comments or
+documentation. It sits inside the parent-assigned `PR 2` slice (tasks 1.4–1.6, rollback boundary
+`src/wallet/policy/{composer,readback,service,errors}.ts`), needs no migration change, and no
+`size:exception` is requested. No push, no PR, and no slice-2 work started.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit,
+the authoritative artifact paths and the delivery path directly. Readiness was resolved against the
+artifacts before any edit — `tasks.md` (task 1.5, terminal `<!-- sdd-owner: implementation -->`),
+`design.md` §0 C5/C6, §3.2, §5.1, §11 U2/U3, §12.1, `spec.md` ("Unknown remote rule blocks
+mutation", "Owner or attachment drift blocks mutation", "Known drift is repaired by the reconciler")
+and the 1.1–1.4 apply-progress. `actionContext`: all writes stayed inside the assigned worktree root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout and the
+untracked `compose.privy-local.ports.yaml` were not touched.
+
+#### Commit
+
+`feat(policy): compare a policy readback against the composed revision` — see the report envelope
+for the SHA.
