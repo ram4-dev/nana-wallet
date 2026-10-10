@@ -515,3 +515,100 @@ describe("composition refusals carry their status class and reason", () => {
     }
   });
 });
+
+/**
+ * Re-homed from the deleted `tests/unit/grants-policy-provisioner.test.ts`
+ * (task 1.8a deleted the suite with its writer). Task 1.11's deletion audit
+ * found two substantive assertions that had no surviving home, so they live
+ * here, on the composer's own output — the module that now owns every rule set.
+ */
+describe("composePolicy — the provider rule shape survives the writer deletion", () => {
+  const ordinary = () => composePolicy(composeInput());
+  const grantOnly = () =>
+    composePolicy(
+      composeInput({
+        baseline: { addresses: [], provenance: {} },
+        grants: [
+          grant({
+            grantId: "9a".repeat(40),
+            recipients: [GRANT_ADDRESS],
+            maxPerTransfer: "5000000",
+            expiresAt: 1_800_000_000,
+          }),
+        ],
+      }),
+    );
+
+  it("emits the exact flat PROVIDER rule shape: no `resource` wrapper, no extra key", () => {
+    // Privy rejects the former `{ action, resource: { method, chain }, … }`
+    // wrapper and any extra key (e.g. `metadata`) with 400
+    // invalid_policy_format: "Unrecognized key(s) in object".
+    for (const rules of [ordinary().rules, grantOnly().rules]) {
+      expect(rules).toHaveLength(1);
+      const rule = rules[0] as unknown as Record<string, unknown>;
+      expect(Object.keys(rule).sort()).toEqual([
+        "action",
+        "conditions",
+        "method",
+        "name",
+      ]);
+      expect(rule).not.toHaveProperty("resource");
+      expect(rule).not.toHaveProperty("metadata");
+      expect(rule).not.toHaveProperty("chain");
+      expect(rule.method).toBe("signAndSendTransaction");
+      expect(rule.action).toBe("ALLOW");
+    }
+  });
+
+  it("caps every rule name at the provider's 50-character limit", () => {
+    const longGrantRule = grantOnly().rules[0] as unknown as { name: string };
+    // Positive control first: the long grant id really is longer than the cap,
+    // so the assertion below is not passing on a short fixture.
+    expect("solana-grant-".length + "9a".repeat(40).length).toBeGreaterThan(50);
+    expect(longGrantRule.name.length).toBeLessThanOrEqual(50);
+    expect(
+      (ordinary().rules[0] as unknown as { name: string }).name.length,
+    ).toBeLessThanOrEqual(50);
+  });
+
+  it("scopes the allowlist by Transfer.to `in` and the ceiling by Transfer.lamports `lte`", () => {
+    const ordinaryRule = ordinary().rules[0] as unknown as {
+      conditions: Array<Record<string, unknown>>;
+    };
+    expect(ordinaryRule.conditions[0]).toEqual({
+      field_source: "solana_system_program_instruction",
+      field: "Transfer.to",
+      operator: "in",
+      value: [BASELINE_ADDRESS],
+    });
+    expect(ordinaryRule.conditions[1]).toMatchObject({
+      field: "Transfer.lamports",
+      operator: "lte",
+    });
+
+    const grantRule = grantOnly().rules[0] as unknown as {
+      conditions: Array<Record<string, unknown>>;
+    };
+    expect(grantRule.conditions[0]).toMatchObject({
+      field: "Transfer.to",
+      operator: "in",
+    });
+  });
+
+  it("defaults deny: every rule is a conditioned ALLOW and never a catch-all", () => {
+    // An instruction that matches no conditioned ALLOW rule is denied by the
+    // ABSENCE of a matching rule, never by an explicit wildcard ALLOW.
+    for (const rules of [ordinary().rules, grantOnly().rules]) {
+      for (const rule of rules as Array<Record<string, unknown>>) {
+        expect(rule.action).toBe("ALLOW");
+        const conditions = rule.conditions as Array<Record<string, unknown>>;
+        expect(conditions.length).toBeGreaterThan(0);
+        for (const condition of conditions) {
+          expect(condition.field).toBeTypeOf("string");
+          expect(condition.operator).toBeTypeOf("string");
+          expect(condition).toHaveProperty("value");
+        }
+      }
+    }
+  });
+});
