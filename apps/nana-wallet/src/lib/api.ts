@@ -6,8 +6,12 @@ import type {
   BillStatus,
   ConfirmableIntent,
   Contact,
+  ContactPermission,
+  ContactRemovalPreview,
   CreateAgendaEventInput,
   CreateContactInput,
+  DeleteContactInput,
+  DeleteContactResponse,
   CreateConversationResponse,
   CurrentWalletResponse,
   BalancesData,
@@ -468,14 +472,48 @@ export const api = {
 
   getContacts: () => request<Contact[]>("/v1/contacts"),
 
-  createContact: (input: CreateContactInput) =>
-    request<Contact>("/v1/contacts", jsonRequest("POST", input)),
+  createContact: (input: CreateContactInput, idempotencyKey: string = createIdempotencyKey()) =>
+    request<Contact>("/v1/contacts", jsonRequest("POST", input), idempotencyKey),
 
-  updateContact: (contactId: string, input: UpdateContactInput) =>
-    request<Contact>(`/v1/contacts/${contactId}`, jsonRequest("PATCH", input)),
+  updateContact: (
+    contactId: string,
+    input: UpdateContactInput,
+    idempotencyKey: string = createIdempotencyKey(),
+  ) =>
+    request<Contact>(
+      `/v1/contacts/${encodeURIComponent(contactId)}`,
+      jsonRequest("PATCH", input),
+      idempotencyKey,
+    ),
 
-  deleteContact: (contactId: string) =>
-    request<Contact>(`/v1/contacts/${contactId}`, jsonRequest("DELETE")),
+  getContactRemovalPreview: (
+    contactId: string,
+    expectedVersion: number,
+    action: "remove" | "address_change" = "remove",
+  ) =>
+    request<ContactRemovalPreview>(
+      `/v1/contacts/${encodeURIComponent(contactId)}/removal-preview?expectedVersion=${encodeURIComponent(String(expectedVersion))}&action=${encodeURIComponent(action)}`,
+    ),
+
+  deleteContact: (
+    contactId: string,
+    input: DeleteContactInput,
+    idempotencyKey: string = createIdempotencyKey(),
+  ) =>
+    request<DeleteContactResponse>(
+      `/v1/contacts/${encodeURIComponent(contactId)}?expectedVersion=${encodeURIComponent(String(input.expectedVersion))}`,
+      jsonRequest("DELETE", { expectedRevokedGrantIds: input.expectedRevokedGrantIds }),
+      idempotencyKey,
+    ),
+
+  getRecipientPolicy: () => request<ContactPermission>("/v1/recipient-policy"),
+
+  retryRecipientPolicy: (idempotencyKey: string = createIdempotencyKey()) =>
+    request<ContactPermission>(
+      "/v1/recipient-policy/retry",
+      jsonRequest("POST", {}),
+      idempotencyKey,
+    ),
 
   revealContactCbu: (contactId: string) =>
     request<RevealedCbu>(`/v1/contacts/${contactId}/reveal-cbu`, jsonRequest("POST", {})),

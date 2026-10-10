@@ -1,12 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createContact: vi.fn(),
+  updateContact: vi.fn(),
   deleteContact: vi.fn(),
+  getContactRemovalPreview: vi.fn(),
+  retryRecipientPolicy: vi.fn(),
   getContacts: vi.fn(),
   refetch: vi.fn(),
 }));
@@ -14,7 +17,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({
   api: {
     createContact: (...args: unknown[]) => mocks.createContact(...args),
+    updateContact: (...args: unknown[]) => mocks.updateContact(...args),
     deleteContact: (...args: unknown[]) => mocks.deleteContact(...args),
+    getContactRemovalPreview: (...args: unknown[]) => mocks.getContactRemovalPreview(...args),
+    retryRecipientPolicy: (...args: unknown[]) => mocks.retryRecipientPolicy(...args),
     getContacts: () => mocks.getContacts(),
   },
   queryKeys: {
@@ -39,12 +45,21 @@ const CONTACT = {
   status: "active" as const,
   createdAt: "2026-09-10T00:00:00.000Z",
   updatedAt: "2026-09-10T00:00:00.000Z",
+  permission: {
+    state: "pending" as const,
+    desiredRevision: 1,
+    appliedRevision: 0,
+    retryable: true,
+  },
 };
 
 describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
   beforeEach(() => {
     mocks.createContact.mockReset();
+    mocks.updateContact.mockReset();
     mocks.deleteContact.mockReset();
+    mocks.getContactRemovalPreview.mockReset();
+    mocks.retryRecipientPolicy.mockReset();
     mocks.getContacts.mockReset().mockResolvedValue([]);
     mocks.refetch.mockReset().mockResolvedValue(CONTACT);
   });
@@ -61,7 +76,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     await userEvent.type(screen.getByLabelText("Nombre"), "Lucas");
     await userEvent.type(
       screen.getByLabelText("Dirección"),
-      "0x9999999999999999999999999999999999999999",
+      "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
     await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
@@ -69,7 +84,8 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
       expect(mocks.createContact).toHaveBeenCalledWith({
         name: "Lucas",
         description: "",
-        address: "0x9999999999999999999999999999999999999999",
+        address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+        network: "solana-devnet",
       });
     });
     await waitFor(() => {
@@ -81,7 +97,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     });
   });
 
-  it("saves and displays an explicitly selected Solana devnet contact", async () => {
+  it("uses the fixed Solana devnet scope without showing a chain picker", async () => {
     const solanaContact = { ...CONTACT, network: "solana-devnet" as const };
     mocks.createContact.mockResolvedValue(solanaContact);
     mocks.getContacts.mockResolvedValue([solanaContact]);
@@ -97,7 +113,6 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
       screen.getByLabelText("Dirección"),
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
-    await userEvent.selectOptions(screen.getByLabelText("Red de la dirección"), "solana-devnet");
     await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
     await waitFor(() => {
@@ -109,6 +124,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
       });
     });
     expect(await screen.findByText("Solana devnet")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Red de la dirección")).not.toBeInTheDocument();
   });
 
   it("surfaces a recoverable error without losing the form", async () => {
@@ -123,7 +139,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     await userEvent.type(screen.getByLabelText("Nombre"), "Lucas");
     await userEvent.type(
       screen.getByLabelText("Dirección"),
-      "0x9999999999999999999999999999999999999999",
+      "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
     await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
 
@@ -144,5 +160,48 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
     expect(mocks.createContact).not.toHaveBeenCalled();
     expect((await screen.findByRole("alert")).textContent).toContain("nombre");
+  });
+
+  it("shows the automatic-payment revocation disclosure before deleting", async () => {
+    mocks.getContacts.mockResolvedValue([CONTACT]);
+    mocks.getContactRemovalPreview.mockResolvedValue({
+      contactId: "c1",
+      contactVersion: 1,
+      revokedGrantIds: ["grant-1"],
+      lastAlias: true,
+    });
+    mocks.deleteContact.mockResolvedValue({
+      contact: CONTACT,
+      revocation: { grantIds: ["grant-1"], state: "pending" },
+    });
+    render(
+      <Wrapper>
+        <AddTrustedRecipient userId="u1" />
+      </Wrapper>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: "Quitar" }));
+    expect(await screen.findByText(/también se revocarán 1 pago automático/i)).toBeInTheDocument();
+    expect(mocks.deleteContact).not.toHaveBeenCalled();
+    await userEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quitar" }),
+    );
+    await waitFor(() =>
+      expect(mocks.deleteContact).toHaveBeenCalledWith("c1", {
+        expectedVersion: 1,
+        expectedRevokedGrantIds: ["grant-1"],
+      }),
+    );
+  });
+
+  it("retries only a recoverable policy verification", async () => {
+    mocks.getContacts.mockResolvedValue([CONTACT]);
+    mocks.retryRecipientPolicy.mockResolvedValue({ ...CONTACT.permission, state: "syncing" });
+    render(
+      <Wrapper>
+        <AddTrustedRecipient userId="u1" />
+      </Wrapper>,
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /reintentar verificación/i }));
+    await waitFor(() => expect(mocks.retryRecipientPolicy).toHaveBeenCalledTimes(1));
   });
 });

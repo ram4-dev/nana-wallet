@@ -1,77 +1,129 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { UserPlus } from "lucide-react";
+import { Loader2, Pencil, RotateCw, UserPlus } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, getErrorMessage, queryKeys } from "@/lib/api";
-import type { Contact } from "@/lib/api-types";
+import type { Contact, ContactPermission, ContactRemovalPreview } from "@/lib/api-types";
 
-/**
- * Trusted-recipient management for the wallet permission allowlist.
- *
- * Product decision (2026-09-10, wallet-profile scope): the payment-permission
- * allowlist is exactly the user's saved contacts (Q3), so adding a trusted
- * recipient here means creating a contact. The form lives INSIDE
- * /perfil (owner decision 2026-10-07): it never loads just by opening a screen,
- * and the balance section is unaffected by its errors. The activation flow in
- * WalletLifecycle consumes the refreshed contacts automatically.
- */
+type EditorState = { contact?: Contact } | null;
+type PendingRemoval = { contact: Contact; preview: ContactRemovalPreview } | null;
+type PendingAddressChange = {
+  contact: Contact;
+  name: string;
+  address: string;
+  preview: ContactRemovalPreview;
+} | null;
 
+const solanaAddressPattern = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+function isPlausibleSolanaAddress(address: string): boolean {
+  return solanaAddressPattern.test(address);
+}
+
+function permissionLabel(permission: ContactPermission): string {
+  switch (permission.state) {
+    case "saved_not_configured":
+      return "Guardado, sin permiso configurado";
+    case "pending":
+      return "Guardado, esperando verificación";
+    case "syncing":
+      return "Verificando el permiso";
+    case "applied":
+      return "Habilitado tras la verificación";
+    case "retryable_failure":
+      return "No pudimos verificar el permiso todavía";
+    case "blocked_conflict":
+      return "El permiso necesita revisión";
+    case "blocked_configuration":
+      return "El permiso no está configurado";
+  }
+}
+
+/** Solana-only contact management with an honest, readback-backed permission state. */
 export function AddTrustedRecipient({
   userId,
   onContactsChanged,
 }: {
   userId: string | undefined;
-  /** Called after a successful save so the parent can refresh its allowlist query. */
   onContactsChanged?: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editor, setEditor] = useState<EditorState>(null);
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
-  const [network, setNetwork] = useState<"evm" | "solana-devnet">("evm");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval>(null);
+  const [pendingAddressChange, setPendingAddressChange] = useState<PendingAddressChange>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
   const contactsQuery = useQuery({
     queryKey: queryKeys.contacts(userId),
     queryFn: api.getContacts,
     enabled: Boolean(userId),
   });
 
-  function resetForm() {
+  function resetEditor() {
+    setEditor(null);
     setName("");
     setAddress("");
-    setNetwork("evm");
     setError(null);
+  }
+  function openCreate() {
+    setEditor({});
+    setName("");
+    setAddress("");
+    setError(null);
+  }
+  function openEdit(contact: Contact) {
+    setEditor({ contact });
+    setName(contact.name);
+    setAddress(contact.address);
+    setError(null);
+  }
+  async function refreshContacts() {
+    await queryClient.invalidateQueries({ queryKey: queryKeys.contacts(userId) });
+    onContactsChanged?.();
   }
 
   async function saveRecipient(event: FormEvent) {
     event.preventDefault();
     const cleanName = name.trim();
     const cleanAddress = address.trim();
-    if (!cleanName) {
-      setError("Poné el nombre de la persona de confianza.");
-      return;
-    }
-    if (!cleanAddress) {
-      setError("Poné la dirección o el CBU.");
-      return;
-    }
+    if (!cleanName) return setError("Poné el nombre de la persona de confianza.");
+    if (!isPlausibleSolanaAddress(cleanAddress))
+      return setError("Pegá una dirección válida de Solana.");
     setIsSaving(true);
     setError(null);
     try {
-      await api.createContact({
-        name: cleanName,
-        description: "",
-        address: cleanAddress,
-        ...(network === "solana-devnet" ? { network: "solana-devnet" } : {}),
-      });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.contacts(userId) });
-      onContactsChanged?.();
-      resetForm();
-      setIsFormOpen(false);
+      if (editor?.contact) {
+        if (cleanAddress !== editor.contact.address) {
+          const preview = await api.getContactRemovalPreview(
+            editor.contact.id,
+            editor.contact.version,
+            "address_change",
+          );
+          setPendingAddressChange({
+            contact: editor.contact,
+            name: cleanName,
+            address: cleanAddress,
+            preview,
+          });
+          return;
+        }
+        await updateContact(editor.contact, cleanName, cleanAddress, []);
+      } else {
+        await api.createContact({
+          name: cleanName,
+          description: "",
+          address: cleanAddress,
+          network: "solana-devnet",
+        });
+      }
+      await refreshContacts();
+      resetEditor();
     } catch (saveError) {
       setError(getErrorMessage(saveError));
     } finally {
@@ -79,19 +131,86 @@ export function AddTrustedRecipient({
     }
   }
 
-  async function removeRecipient(contact: Contact) {
+  async function updateContact(
+    contact: Contact,
+    nextName: string,
+    nextAddress: string,
+    expectedRevokedGrantIds: string[],
+  ) {
+    await api.updateContact(contact.id, {
+      name: nextName,
+      address: nextAddress,
+      network: "solana-devnet",
+      expectedVersion: contact.version,
+      expectedPolicyRevision: contact.permission.desiredRevision,
+      ...(nextAddress !== contact.address ? { expectedRevokedGrantIds } : {}),
+    });
+  }
+
+  async function confirmAddressChange() {
+    if (!pendingAddressChange) return;
+    setIsSaving(true);
     setError(null);
     try {
-      await api.deleteContact(contact.id);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.contacts(userId) });
-      onContactsChanged?.();
-    } catch (deleteError) {
-      setError(getErrorMessage(deleteError));
+      await updateContact(
+        pendingAddressChange.contact,
+        pendingAddressChange.name,
+        pendingAddressChange.address,
+        pendingAddressChange.preview.revokedGrantIds,
+      );
+      setPendingAddressChange(null);
+      await refreshContacts();
+      resetEditor();
+    } catch (saveError) {
+      setError(getErrorMessage(saveError));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function requestRemoval(contact: Contact) {
+    setError(null);
+    try {
+      setPendingRemoval({
+        contact,
+        preview: await api.getContactRemovalPreview(contact.id, contact.version),
+      });
+    } catch (removeError) {
+      setError(getErrorMessage(removeError));
+    }
+  }
+  async function confirmRemoval() {
+    if (!pendingRemoval) return;
+    setIsRemoving(true);
+    setError(null);
+    try {
+      await api.deleteContact(pendingRemoval.contact.id, {
+        expectedVersion: pendingRemoval.contact.version,
+        expectedRevokedGrantIds: pendingRemoval.preview.revokedGrantIds,
+      });
+      setPendingRemoval(null);
+      await refreshContacts();
+    } catch (removeError) {
+      setError(getErrorMessage(removeError));
+    } finally {
+      setIsRemoving(false);
+    }
+  }
+  async function retryPermission() {
+    setIsRetrying(true);
+    setError(null);
+    try {
+      await api.retryRecipientPolicy();
+      await refreshContacts();
+    } catch (retryError) {
+      setError(getErrorMessage(retryError));
+    } finally {
+      setIsRetrying(false);
     }
   }
 
   const contacts = contactsQuery.data ?? [];
-
+  const retryable = contacts.some((contact) => contact.permission.retryable);
   return (
     <section aria-label="Destinatarios de confianza">
       <div className="flex items-center justify-between gap-2">
@@ -102,18 +221,14 @@ export function AddTrustedRecipient({
           type="button"
           variant="outline"
           className="press min-h-10 shrink-0 text-sm font-extrabold"
-          onClick={() => {
-            resetForm();
-            setIsFormOpen(true);
-          }}
+          onClick={openCreate}
           data-testid="add-recipient"
         >
           <UserPlus className="size-5" aria-hidden="true" />
           Agregar
         </Button>
       </div>
-
-      {isFormOpen ? (
+      {editor ? (
         <form
           onSubmit={saveRecipient}
           className="mt-3 space-y-3 rounded-2xl border border-border bg-card p-4"
@@ -127,21 +242,12 @@ export function AddTrustedRecipient({
           <Input
             value={address}
             onChange={(event) => setAddress(event.target.value)}
-            placeholder="Dirección o CBU"
+            placeholder="Dirección de Solana"
             aria-label="Dirección"
           />
-          <label className="block space-y-1 text-sm font-bold" htmlFor="trusted-recipient-network">
-            Red de la dirección
-            <select
-              id="trusted-recipient-network"
-              value={network}
-              onChange={(event) => setNetwork(event.target.value as "evm" | "solana-devnet")}
-              className="min-h-12 w-full rounded-xl border border-input bg-background px-3 text-base"
-            >
-              <option value="evm">EVM (red configurada)</option>
-              <option value="solana-devnet">Solana devnet</option>
-            </select>
-          </label>
+          <p className="text-sm text-muted-foreground">
+            Solo podés agregar direcciones de Solana devnet.
+          </p>
           {error ? (
             <p className="text-base font-bold text-destructive" role="alert">
               {error}
@@ -152,24 +258,96 @@ export function AddTrustedRecipient({
               type="button"
               variant="outline"
               className="press min-h-10 font-extrabold"
-              onClick={() => {
-                resetForm();
-                setIsFormOpen(false);
-              }}
+              onClick={resetEditor}
             >
               Cancelar
             </Button>
             <Button type="submit" className="press min-h-10 font-extrabold" disabled={isSaving}>
-              {isSaving ? "Guardando" : "Guardar"}
+              {isSaving ? "Guardando" : editor.contact ? "Guardar cambios" : "Guardar"}
             </Button>
           </div>
         </form>
       ) : null}
-
+      {error && !editor ? (
+        <p className="mt-3 text-base font-bold text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {pendingRemoval ? (
+        <div
+          className="mt-3 rounded-2xl border border-destructive/40 bg-destructive-surface p-4"
+          role="alertdialog"
+          aria-label="Confirmar eliminación de destinatario"
+        >
+          <p className="text-base font-extrabold">
+            ¿Querés quitar a {pendingRemoval.contact.name}?
+          </p>
+          {pendingRemoval.preview.revokedGrantIds.length > 0 ? (
+            <p className="mt-2 text-sm">
+              También se revocarán {pendingRemoval.preview.revokedGrantIds.length} pago
+              {pendingRemoval.preview.revokedGrantIds.length === 1
+                ? " automático"
+                : "s automáticos"}{" "}
+              asociado{pendingRemoval.preview.revokedGrantIds.length === 1 ? "" : "s"}. La
+              revocación queda pendiente hasta que Privy la verifique.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm">No hay pagos automáticos que revocar.</p>
+          )}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" onClick={() => setPendingRemoval(null)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void confirmRemoval()}
+              disabled={isRemoving}
+            >
+              {isRemoving ? "Quitando" : "Quitar"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {pendingAddressChange ? (
+        <div
+          className="mt-3 rounded-2xl border border-destructive/40 bg-destructive-surface p-4"
+          role="alertdialog"
+          aria-label="Confirmar cambio de dirección"
+        >
+          <p className="text-base font-extrabold">
+            ¿Querés cambiar la dirección de {pendingAddressChange.contact.name}?
+          </p>
+          {pendingAddressChange.preview.revokedGrantIds.length > 0 ? (
+            <p className="mt-2 text-sm">
+              Este cambio revocará {pendingAddressChange.preview.revokedGrantIds.length} pago
+              {pendingAddressChange.preview.revokedGrantIds.length === 1
+                ? " automático"
+                : "s automáticos"}{" "}
+              asociado{pendingAddressChange.preview.revokedGrantIds.length === 1 ? "" : "s"}. La
+              revocación queda pendiente hasta que Privy la verifique.
+            </p>
+          ) : (
+            <p className="mt-2 text-sm">No hay pagos automáticos que revocar.</p>
+          )}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button type="button" variant="outline" onClick={() => setPendingAddressChange(null)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void confirmAddressChange()}
+              disabled={isSaving}
+            >
+              {isSaving ? "Guardando" : "Confirmar cambio"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {contacts.length === 0 ? (
         <p className="mt-3 text-base text-muted-foreground">
-          Todavía no agregaste personas de confianza. Sin destinatarios no se puede activar el
-          permiso de pagos.
+          Todavía no agregaste personas de confianza.
         </p>
       ) : (
         <ul className="lg-row-list mt-3">
@@ -183,25 +361,53 @@ export function AddTrustedRecipient({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-bold">{contact.name}</span>
-                {contact.network === "solana-devnet" ? (
-                  <span className="block text-xs font-bold text-brand-ink">Solana devnet</span>
-                ) : null}
+                <span className="block text-xs font-bold text-brand-ink">Solana devnet</span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {contact.address}
                 </span>
+                <span className="block text-xs text-muted-foreground">
+                  {permissionLabel(contact.permission)}
+                </span>
               </span>
-              <Button
-                type="button"
-                variant="ghost"
-                className="press min-h-9 shrink-0 text-sm font-bold text-destructive"
-                onClick={() => void removeRecipient(contact)}
-              >
-                Quitar
-              </Button>
+              <span className="flex shrink-0 flex-col gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="press min-h-9 text-sm font-bold"
+                  onClick={() => openEdit(contact)}
+                >
+                  <Pencil className="size-4" aria-hidden="true" />
+                  Editar
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="press min-h-9 text-sm font-bold text-destructive"
+                  onClick={() => void requestRemoval(contact)}
+                >
+                  Quitar
+                </Button>
+              </span>
             </li>
           ))}
         </ul>
       )}
+      {retryable ? (
+        <Button
+          type="button"
+          variant="outline"
+          className="press mt-3 min-h-10 font-extrabold"
+          onClick={() => void retryPermission()}
+          disabled={isRetrying}
+        >
+          {isRetrying ? (
+            <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+          ) : (
+            <RotateCw className="size-5" aria-hidden="true" />
+          )}
+          Reintentar verificación
+        </Button>
+      ) : null}
     </section>
   );
 }

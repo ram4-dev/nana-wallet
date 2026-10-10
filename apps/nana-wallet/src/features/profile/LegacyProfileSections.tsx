@@ -198,6 +198,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
           description,
           address,
           expectedVersion: contactForm.contact.version,
+          expectedPolicyRevision: contactForm.contact.permission.desiredRevision,
         });
         toast.success(`Actualizamos a ${name}.`);
       } else {
@@ -217,7 +218,11 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
     setContactActionId(contact.id);
     setContactError(null);
     try {
-      await api.deleteContact(contact.id);
+      const preview = await api.getContactRemovalPreview(contact.id, contact.version);
+      await api.deleteContact(contact.id, {
+        expectedVersion: contact.version,
+        expectedRevokedGrantIds: preview.revokedGrantIds,
+      });
       toast.success(`Sacamos a ${contact.name} de tu familia guardada.`);
       void contactsQuery.refetch();
     } catch (error) {

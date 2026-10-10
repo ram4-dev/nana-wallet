@@ -566,18 +566,19 @@ describe("personal balances API (WP-003/WP-004/WP-013)", () => {
   });
 });
 
-describe("bodyless requests (contact removal fix)", () => {
-  it("does not set content-type on a DELETE without body", async () => {
+describe("contact removal requests", () => {
+  it("sends the server-owned removal CAS body on DELETE", async () => {
     setApiTokenSource({ getToken: async () => "token-x" });
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValue(jsonResponse({ ok: true, data: { id: "c1" } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.deleteContact("c1");
+    await api.deleteContact("c1", { expectedVersion: 2, expectedRevokedGrantIds: ["grant-1"] });
 
     const [, init] = fetchMock.mock.calls[0] ?? [];
-    expect(new Headers(init?.headers).get("Content-Type")).toBeNull();
+    expect(new Headers(init?.headers).get("Content-Type")).toBe("application/json");
+    expect(init?.body).toBe(JSON.stringify({ expectedRevokedGrantIds: ["grant-1"] }));
     vi.unstubAllGlobals();
   });
 

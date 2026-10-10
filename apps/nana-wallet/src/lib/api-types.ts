@@ -30,7 +30,13 @@ export type ErrCode =
   | "wallet_not_ready"
   | "wallet_config_error"
   | "wallet_unavailable"
-  | "wallet_feature_unavailable";
+  | "wallet_feature_unavailable"
+  | "CONFLICTO_POLITICA"
+  | "REVISION_POLITICA_OBSOLETA"
+  | "COBERTURA_DESCONOCIDA"
+  | "PERMISO_CONFIGURACION_BLOQUEADA"
+  | "COMPOSICION_VACIA_NO_SOPORTADA"
+  | "PROPUESTA_OBSOLETA";
 
 export type Money = {
   amount: string;
@@ -115,12 +121,35 @@ export type Contact = {
   status: "active" | "inactive";
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+  permission: ContactPermission;
+};
+
+/**
+ * Read-only policy readiness for a trusted recipient. `applied` is returned
+ * only after the backend has verified Privy's signed readback.
+ */
+export type PolicyReadiness =
+  | "saved_not_configured"
+  | "pending"
+  | "syncing"
+  | "applied"
+  | "retryable_failure"
+  | "blocked_conflict"
+  | "blocked_configuration";
+
+export type ContactPermission = {
+  state: PolicyReadiness;
+  desiredRevision: number;
+  appliedRevision: number;
+  retryable: boolean;
+  reason?: string;
 };
 
 export type CreateContactInput = {
   name: string;
   description: string;
   address: string;
+  /** The only configured network; callers never select a chain. */
   network?: "solana-devnet";
 };
 
@@ -130,6 +159,60 @@ export type UpdateContactInput = {
   address?: string;
   network?: "solana-devnet" | null;
   expectedVersion: number;
+  expectedPolicyRevision?: number;
+  expectedRevokedGrantIds?: string[];
+};
+
+export type ContactRemovalPreview = {
+  contactId: string;
+  contactVersion: number;
+  revokedGrantIds: string[];
+  lastAlias: boolean;
+};
+
+export type DeleteContactInput = {
+  expectedVersion: number;
+  expectedRevokedGrantIds: string[];
+};
+
+export type DeleteContactResponse = {
+  contact: Contact;
+  permission?: ContactPermission;
+  revocation: {
+    grantIds: string[];
+    state: "pending" | "applied" | "retryable_failure";
+  };
+};
+
+export type ContactAction = "create" | "edit" | "remove";
+export type ContactActionProposalStatus = "open" | "consumed" | "superseded" | "expired";
+
+/** Immutable server-owned proposal rendered by the review card. */
+export type ContactActionProposal = {
+  proposalId: string;
+  proposalVersion: number;
+  action: ContactAction;
+  contactId: string | null;
+  contactVersion: number | null;
+  address: string;
+  previousAddress?: string | null;
+  revokedGrantIds: string[];
+  revocationDisclosure?: string | null;
+  expiresAt: ISODateTime;
+  status: ContactActionProposalStatus;
+};
+
+/** LiveKit carries only this wakeup; the UI reloads the canonical proposal by id. */
+export type ContactActionProposalNotification = {
+  type: "contact_action_proposal";
+  proposalId: string;
+  proposalVersion: number;
+  conversationId: string;
+};
+
+export type ReplaceContactActionAddressInput = {
+  address: string;
+  expectedProposalVersion: number;
 };
 
 export type RevealedCbu = { id: string; address: string };

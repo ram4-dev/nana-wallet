@@ -134,6 +134,12 @@ const seededContact = (
   address,
   version: 1,
   status: "active",
+  permission: {
+    state: "applied",
+    desiredRevision: 1,
+    appliedRevision: 1,
+    retryable: false,
+  },
   createdAt: "2026-08-01T12:00:00-03:00",
   updatedAt: "2026-08-01T12:00:00-03:00",
 });
@@ -495,6 +501,12 @@ export const handlers = [
       ...(input.network ? { network: input.network } : {}),
       version: 1,
       status: "active",
+      permission: {
+        state: "pending",
+        desiredRevision: 1,
+        appliedRevision: 0,
+        retryable: true,
+      },
       createdAt: now,
       updatedAt: now,
     };
@@ -530,6 +542,13 @@ export const handlers = [
     return ok(updated);
   }),
 
+  http.get(apiPath("/contacts/:id/removal-preview"), ({ params }) => {
+    const contactId = String(params["id"]);
+    const contact = contacts.find((item) => item.id === contactId && item.status === "active");
+    if (!contact) return err("NO_ENCONTRADO", "No encontramos a esa persona.", 404);
+    return ok({ contactId, contactVersion: contact.version, revokedGrantIds: [], lastAlias: true });
+  }),
+
   http.delete(apiPath("/contacts/:id"), ({ params }) => {
     const contactId = String(params["id"]);
     const current = contacts.find((item) => item.id === contactId);
@@ -540,8 +559,19 @@ export const handlers = [
       updatedAt: new Date().toISOString(),
     };
     contacts = contacts.map((item) => (item.id === contactId ? archived : item));
-    return ok(archived);
+    return ok({
+      contact: archived,
+      revocation: { grantIds: [], state: "pending" as const },
+    });
   }),
+
+  http.get(apiPath("/recipient-policy"), () =>
+    ok({ state: "applied" as const, desiredRevision: 1, appliedRevision: 1, retryable: false }),
+  ),
+
+  http.post(apiPath("/recipient-policy/retry"), () =>
+    ok({ state: "syncing" as const, desiredRevision: 1, appliedRevision: 0, retryable: true }, 202),
+  ),
 
   http.post(apiPath("/contacts/:id/reveal-cbu"), ({ params }) => {
     const contactId = String(params["id"]);
