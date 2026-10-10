@@ -1,0 +1,17 @@
+# Self-hosted LiveKit for the isolated voice e2e stack.
+#
+# Same shape as docker/livekit.yaml and docker/privy-livekit.yaml, with its own
+# RTC port range so the three stacks can run side by side on one machine.
+#
+# Why a dedicated range instead of remapping ports in compose: LiveKit
+# advertises the rtc.udp_port range to clients from THIS file, not from the
+# compose port mapping. Publishing different host ports while the server keeps
+# announcing 7881 would hand peers unreachable candidates and ICE would fail.
+# The host range must equal this range.
+port: 7880
+rtc:
+  udp_port: "38881-38891"
+  tcp_port: 38881
+  use_external_ip: false
+  node_ip: "127.0.0.1"
+  advertise_internal_ip: true

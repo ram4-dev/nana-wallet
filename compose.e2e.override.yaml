@@ -1,0 +1,36 @@
+# Isolated fixture stack for the voice e2e harness.
+#
+# Layered on top of compose.yaml:
+#
+#   docker compose -p nana-e2e \
+#     -f compose.yaml -f compose.e2e.override.yaml \
+#     --profile worker up -d
+#
+# Why an override instead of a new compose file: compose.yaml already defines
+# the fixture stack (db + livekit + voice-worker, WDK_TOOLS_SOURCE defaulting to
+# fixture). Only the host ports and the LiveKit config need to differ, and
+# Compose v5 supports `!override` for exactly that.
+#
+# Why the ports differ at all: on this machine the base ports are already
+# taken. TCP 5432 is squatted by an ssh tunnel, and `nana-real-livekit-1`
+# publishes UDP 7881-7891 plus TCP 7881. Remapping keeps every stack intact
+# instead of stopping someone else's.
+name: nana-e2e
+
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:5433:5432"
+
+  livekit:
+    # The base config advertises udp 7881-7891; this stack owns 38881-38891.
+    # See docker/e2e-livekit.yaml for why the host range must match it.
+    command: --config /etc/livekit.e2e.yaml
+    volumes: !override
+      - ./docker/e2e-livekit.yaml:/etc/livekit.e2e.yaml:ro
+    ports: !override
+      # Host signaling. The base maps 127.0.0.1:7882:7880 because 7880 is taken
+      # by the ssh tunnel; the e2e harness connects to ws://127.0.0.1:7882.
+      - "127.0.0.1:7882:7880"
+      - "38881-38891:38881-38891/udp"
+      - "127.0.0.1:38881:38881/tcp"
