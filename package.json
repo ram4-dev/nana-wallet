@@ -39,6 +39,7 @@
   "dependencies": {
     "@ai-sdk/mcp": "2.0.36",
     "@ai-sdk/openai-compatible": "3.0.35",
+    "@bonfida/spl-name-service": "3.0.23",
     "@circle-fin/developer-controlled-wallets": "10.8.0",
     "@fastify/cors": "^11.3.0",
     "@huggingface/transformers": "4.2.0",
