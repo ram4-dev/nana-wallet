@@ -400,7 +400,42 @@ export class DelegatedGrantService {
     idempotencyKey: string;
   }): Promise<ClaimConsumptionResult> {
     return this.database.withUserTransaction(input.userId, async (client) => {
-      // Serialize all consumption decisions for this grant across app instances.
+      // W0(S) — the state slot of the canonical lock order, taken FIRST
+      // (`docs/architecture.md` §"Wallet policy lock order", design §1.2).
+      //
+      // WHY IT IS FIRST AND NOT LAST: the apply and removal transactions take
+      // `W0(U)` on this row and *then* the grant rows (`L1`/`L2`). A claim takes
+      // the grant rows and would then need this row, which is the classic cycle
+      // (apply: state → grant row; claim: grant row → state). Prepending the
+      // read makes every writer monotone in one global order, so no cycle can
+      // form. Moving this statement below the advisory lock below reintroduces
+      // the deadlock — `tests/unit/lock-order-vector.test.ts` fails if it moves.
+      //
+      // WHAT IT IS NOT: this read is a lock, not yet a gate. The wallet's state
+      // row is resolved through the grant's own `wallet_id`, so no new input is
+      // needed, and a wallet with NO state row locks nothing and stays claimable
+      // exactly as it is today. Deciding what an absent or unverified row means
+      // for the claim is task 2.11; turning that into a refusal here would be a
+      // behaviour regression this task must not introduce.
+      //
+      // The statement resolves the wallet through the grant itself, so no new
+      // input is needed and the claim cannot be pointed at another wallet: the
+      // join binds exactly the caller's own grant row (RLS-scoped) and locks
+      // only the state row (`FOR SHARE OF state`).
+      await client.query(
+        `SELECT 1
+           FROM recipient_policy_state AS state
+           JOIN delegated_grants AS grant_row
+             ON grant_row.wallet_id = state.wallet_id
+          WHERE grant_row.id = $1
+            AND grant_row.user_id = $2
+            AND state.user_id = $2
+          FOR SHARE OF state`,
+        [input.grantId, input.userId],
+      );
+
+      // L1 — serialize all consumption decisions for this grant across app
+      // instances. Same advisory key the removal transaction takes.
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
         `dgc-grant-${input.grantId}`,
       ]);

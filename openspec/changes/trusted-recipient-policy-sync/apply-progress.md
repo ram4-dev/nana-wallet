@@ -1615,3 +1615,165 @@ writes stayed inside the assigned worktree root
 (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout
 (`/Users/ramiro/Desktop/projects/colloseum`) and the untracked `compose.privy-local.ports.yaml` were
 not touched. No review, receipt or delivery gate was started.
+
+### Task 1.9 — document and install the single lock order, prepending `W0` to the claim path
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `docs/architecture.md` | New §"Wallet policy lock order" (`+158`): the canonical vector, the two rules, the `W0`-before-`L1` cycle reasoning, the `LX` rule, the per-writer chains, claim-vs-removal, and where the `lease_reclaimed` audit belongs. |
+| `src/wallet/grants/consumption.ts` | Modified (`+37/-1`). `claimConsumption` opens with a `recipient_policy_state … FOR SHARE` read in the `W0` slot, BEFORE its `dgc-grant` advisory lock (`L1`). Existing comments for that advisory now name the `L1` slot. No other statement, predicate or ordering changed. |
+| `tests/unit/lock-order-vector.test.ts` | New (18 cases). Declarative order vector + source-position scan. |
+| `tests/integration/lock-order-concurrency.test.ts` | New (4 cases). Real contention under two connections with per-transaction `statement_timeout`, plus its own falsification. |
+
+#### The claim-path change, and what it deliberately is not
+
+One added statement, prepended. It resolves the wallet through the caller's own
+grant (`JOIN delegated_grants … WHERE grant_row.id = $1 AND grant_row.user_id = $2`),
+so no new input, no widened signature and no new authority: RLS still scopes the
+grant, and `FOR SHARE OF state` locks only the state row. The claim cannot be
+pointed at another wallet.
+
+**A missing `recipient_policy_state` row locks nothing and stays claimable.**
+`SELECT … FOR SHARE` locks no row that does not exist, so a wallet with no policy
+state behaves exactly as it did before this commit. That is intentional and is
+pinned by a test: the read is a **lock, not yet a gate**. Deciding that an absent
+or unverified row refuses the claim is task 2.11, and turning it into a refusal
+here would have been a behaviour regression this task is forbidden to introduce.
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED (unit) | `tests/unit/lock-order-vector.test.ts` written first, run against the pre-change claim path (`git stash push src/wallet/grants/consumption.ts`): **3 failed / 15 passed**, all three failures `expected -1 to be greater than or equal to 0` — the `W0` read does not exist in the body. Honest RED: the failures are the missing position, not a missing fixture. |
+| RED (concurrency) | `tests/integration/lock-order-concurrency.test.ts` run against the pre-change claim path (pre-fix file restored from `HEAD~1`): **2 failed / 2 passed**. The two failures are `the claim never blocked on recipient_policy_state … expected 0 to be greater than 0` for `claim ‖ apply` and `claim ‖ removal`; the pre-fix claim takes `L1`/`L2` (which do not conflict with a held `W0`) and returns while the other transaction holds `W0`, so the wait is never observed. The falsification case and the missing-row case pass on both trees, as they must. |
+| GREEN | Post-change: 18/18 vector cases, 4/4 concurrency cases, `delegated-grants-consumption` + 6 sibling grant suites unchanged at 58/58. |
+| TRIANGULATE | The harness is falsified **three** ways, not asserted once: (1) the pre-fix order is re-run inside the suite and must produce a real `40P01 deadlock detected` — if that case stops deadlocking, every "no 40P01" case above it is vacuous; (2) both claim cases require the claim to be *blocked on `recipient_policy_state`* while the other side holds ONLY `W0`, so a claim path without the prepend fails them (proven by the RED above); (3) the unit guard is falsified by mutation — moving the `W0` statement *below* the `L1` advisory lock (not deleting it) fails exactly two cases: the monotonicity check (`[L1, L2, W0]` is not sorted) and `opens the claim path with W0, before its advisory L1` (`expected 2031 to be less than 1887`). Each guard therefore has a demonstrated failing state. |
+| REFACTOR | None needed. One added statement; no existing lock's order relative to another existing lock changed; `npm run lint` and `npm run typecheck` clean. |
+
+#### How the concurrency test was proven able to detect a deadlock
+
+`proves a pre-fix lock order really deadlocks (the harness detects 40P01)` writes
+the PRE-FIX claim chain on purpose — `L1` advisory → `L2` grant row → *then* `W0`
+— inverts it against the apply chain (`W0(U)` → `L2`) behind a two-party barrier,
+and requires **exactly one** side to fail with `code === "40P01"` and
+`"deadlock detected"`, while the survivor really commits. The chain is written in
+the test on purpose rather than reached through the production path, because the
+production path no longer contains the inverted order (that is the point of the
+change) and a guard whose failing state cannot be produced is not a guard.
+`statement_timeout` is 5 s and `deadlock_timeout` is the 1 s default, so the
+deadlock is reported as `40P01` rather than as a timeout.
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/delegated-grants-consumption.test.ts tests/integration/delegated-grant-execution.test.ts tests/integration/grant-claim-release.test.ts tests/integration/delegated-grant-candidates.test.ts tests/integration/nani-grant-creation.test.ts tests/integration/delegated-grants-schema.test.ts tests/unit/grants-engine.test.ts` (BEFORE the change) | **7 files passed, 58 tests passed** |
+| same command (AFTER the change) | **7 files passed, 58 tests passed** — identical by file and by test name, no new failure, no changed failure |
+| `npx vitest run tests/unit/lock-order-vector.test.ts` (RED, pre-change) | 3 failed / 15 passed |
+| `npx vitest run tests/unit/lock-order-vector.test.ts` (moved `W0` below `L1`) | 2 failed / 16 passed |
+| `npx vitest run tests/integration/lock-order-concurrency.test.ts` (RED, pre-change) | 2 failed / 2 passed |
+| `npx vitest run tests/unit/lock-order-vector.test.ts tests/integration/lock-order-concurrency.test.ts` | **2 files passed, 22 tests passed** |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` | **11 files passed, 194 tests passed** (1.1–1.8 unchanged) |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`) |
+
+**Existing tests changed by this unit: NONE.** No existing suite, case, assertion
+or fixture was edited; the new suites were added beside them. The pre-existing
+backend failures named by the parent (`api-voice-auth`,
+`conversation-preview-claim-race`, `wallets-sync`, `realtime-agent-session`,
+`realtime-tool-binding`, `realtime-tools`) were not touched and are outside this
+suite set, which is green on both sides of the change.
+
+#### Deviations from the design and from the task text
+
+1. **The `lease_reclaimed` audit is NOT added here, and must not be.** Design §5.2
+   step 3 places it in the reconciler's restart-recovery branch (the intent row
+   whose lease holder expired), not in the claim path — the claim path holds no
+   lease and no intent. Task 1.9's wording ("audit `lease_reclaimed` where §5.2
+   step 3 requires it") is therefore satisfied by recording the requirement where
+   the design requires it: `docs/architecture.md` §"Where the `lease_reclaimed`
+   audit belongs" states the site, and states the prerequisite slice 2 owes — the
+   table `recipient_policy_audit` is owner-only, so an append from the reconciler's
+   anonymous system transaction is RLS-denied until a matching system-access
+   policy is added deliberately. That carried-over note (1.1, 1.2, 1.3) stands
+   unchanged; adding the authority pre-emptively would be design drift, and
+   implementing reconciler code inside a lock-ordering task would violate the
+   unit's own "changes lock ordering ONLY" constraint.
+2. **`tests/integration/grant-consumption.test.ts` (named in the task's verify
+   line) does not exist.** The claim suite is
+   `tests/integration/delegated-grants-consumption.test.ts`; it was run as the
+   control, together with every other grant/consumption/concurrency suite found
+   by `find tests/integration tests/unit -iname '*grant*' -o -iname '*consumption*'`.
+3. **The `apply` side of `claim ‖ apply` is the §1.3 apply chain, not the apply
+   service.** Slice 1 ships no apply orchestration (task 2.8 supplies it), so the
+   case drives `W0(U) → L2` through `RecipientPolicyRepository` — the same
+   statements the apply transaction will take, in the same order. Recorded rather
+   than hidden: when 2.8 lands, this case should be re-pointed at the real
+   orchestrator.
+4. **The vector test records three measured chains that differ from design §1.3**
+   and says so in the source: `settleGrantReservation` takes only `L1` (its CAS
+   locks `conversation_transfer_attempts`, not `delegated_grants`);
+   `getGrant` takes **no** lock at all, contradicting §1.1's row for it; and
+   `create`/`edit` do not take `W1` today (§1.3 lists it as pending, and the
+   removal's abort-and-retry guard exists for exactly that reason). The declared
+   chains assert what the code does, and the design's intent is listed as
+   `pending` so it cannot be silently dropped.
+5. **`W0` is resolved through the grant, in one statement.** The alternative — a
+   new `walletId` parameter on `claimConsumption` — would have changed a
+   money-path signature and every call site for a lock. The join keeps the diff at
+   one statement and keeps the wallet binding server-side.
+
+#### Process incident recorded (not a code defect)
+
+While producing the RED evidence I ran `git stash push -- src/wallet/grants/consumption.ts`
+on a tree that had **no** local change for that file, so the push was a no-op and
+the following `git stash pop` popped an **unrelated** stash that belongs to another
+worktree's history (`On slice2-provider-solana-devnet: slice2-recovery-protect-five`),
+leaving four unrelated files with conflict markers in the index. It was fully
+reverted with `git reset` (index only) plus `git checkout HEAD --` on the four
+files; `git status --porcelain` is now empty apart from the two pre-existing
+untracked files, and all three unrelated stash entries are **still present and
+unmodified**. The RED evidence above was re-taken correctly afterwards by writing
+the pre-fix file from `HEAD~1` and restoring it from `HEAD`. No commit, no
+published state and no stash entry was lost.
+
+#### Remaining tasks in slice 1
+
+```text
+- [ ] **1.10 Extend the structural guard suite to make a second full-rule writer unreachable by construction.**
+- [ ] **1.11 Run the slice-1 gate and record the slice-1 work-unit commits.**
+```
+
+Parent-owned lifecycle rows in `tasks.md` (lines 172-173) were left byte-for-byte
+untouched — both still carry `<!-- sdd-owner: parent -->` and remain unchecked —
+and no bounded review, receipt, refutation, correction or delivery gate was started
+by this phase.
+
+#### Workload / PR boundary
+
+One commit, one work unit: `docs/architecture.md` (`+158`),
+`src/wallet/grants/consumption.ts` (`+37/-1`), plus the two new suites (18 + 4
+cases, ~700 lines of authored test/doc text). The doc is the deliverable's first
+half — it is what stops the next writer from reintroducing the cycle — and
+`gentle-ai-work-unit-commits` forbids shrinking it. It sits inside the
+parent-assigned `PR 3` slice (tasks 1.7–1.11, rollback boundary `embedded.ts`,
+grants provisioner/runtime, `consumption.ts`, docs), needs no migration change, and
+no `size:exception` is requested.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the
+resolved work unit, the authoritative artifact paths (including
+`apply-progress.md`) and the delivery path directly. Readiness was resolved against
+the artifacts before any edit — `tasks.md` (task 1.9, terminal
+`<!-- sdd-owner: implementation -->`), `design.md` §1.1/§1.2/§1.3/§1.7, §5.2, §12.1,
+the 1.1–1.8 apply-progress entries, and the source of every writer named in §1.1.
+`actionContext`: all writes stayed inside the assigned worktree root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main
+checkout and the untracked `compose.privy-local.ports.yaml` were not touched. Task
+1.10 was not started, and no push and no PR happened.

@@ -249,3 +249,161 @@ unavailable indexer, or a missing hash.
 Every fixture must contain `status`, recipient, token, amount, fee, and error
 fields. The checked-in fixtures deliberately use `not-run`/blocked status and
 null live values, so they cannot be mistaken for a real wallet result.
+
+## Wallet policy lock order
+
+Every transaction that decides whether money moves — the delegated-grant claim,
+the recipient mutation, the policy apply, the reconciliation — touches the same
+few rows in PostgreSQL. Two of them can run at the same time on the same wallet,
+so the order in which they take their locks is not a style choice: it is what
+decides whether PostgreSQL can find a cycle and abort one of them with `40P01`.
+A `40P01` on the claim path is a refused payment the user did not cause, so this
+section defines ONE order and every writer follows it. Do not add a lock without
+re-reading this section.
+
+### The canonical vector
+
+```text
+W1 → W0 → L1 → L2 → L3 → L4 → L5 → R
+```
+
+Slot by slot:
+
+```text
+W1   recipient_policy_leases      the wallet's serialized writer: a row lease held
+                                  in its own short transaction, NEVER nested inside
+                                  another transaction and never held across remote I/O
+W0   recipient_policy_state       FOR SHARE in read/claim transactions,
+                                  FOR UPDATE in the applying transaction
+L1   advisory xact  dgc-grant-<id>  one per grant, ASCENDING id
+L2   row lock       delegated_grants  FOR UPDATE, ascending id
+L3   row lock       recipients         FOR UPDATE, ascending id
+L4   advisory xact  dgc-wallet-<id>   legacy shim, kept only for compatibility
+L5   appends        grant_audit_log / grant_claim_ledger / recipient_policy_state /
+                    recipient_policy_sync_intent / contact_action_proposals /
+                    recipient_policy_audit
+----- transaction boundary -----
+R    provider I/O (createPolicy / patchPolicy / getPolicy / getWallet), strictly
+     AFTER commit
+```
+
+`R` is not a lock: it is the transaction boundary written down so no writer keeps
+one open while it waits on the provider.
+
+`LX` is a separate, user-scoped order:
+
+```text
+LX   advisory xact  nana-wallet-sync:<userId>   wallet sync only, touches no grant
+                                                or recipient row (src/wallet/embedded.ts)
+```
+
+### The two rules
+
+1. **A policy-affecting writer takes `W1` first.** Any writer that must take
+   `L1..L5` either holds the wallet lease (`W1`) or is a read/claim path that
+   takes `W0` in `FOR SHARE` mode.
+2. **No transaction ever takes a lower-numbered lock after a higher-numbered
+   one.** Chains may skip slots and may repeat a slot; they may never go
+   backwards. This is what makes the order total, and a total order is what makes
+   acquisition monotone — and monotone acquisition is deadlock-free *by
+   construction*, not by luck.
+
+### Why `W0` precedes `L1` — the one decision that was actually wrong
+
+The apply and removal transactions take `recipient_policy_state` `FOR UPDATE`
+(`W0`) and *then* lock the grant rows (`L1`/`L2`). The claim transaction already
+took the grant rows (`L1`/`L2`) as its first act. Left alone, the two chains are:
+
+```text
+apply  : W0  →  L2          (state first, then the grant row)
+claim  : L1  →  L2  →  W0   (grant row first, then the state row)   ← the cycle
+```
+
+If the claim's state read came last, apply would hold the state row and wait for
+the grant row while the claim held the grant row and waited for the state row:
+the classic two-resource cycle. PostgreSQL resolves it by aborting one
+transaction with `40P01`, which on the claim path means a payment refused for no
+reason the user can see.
+
+The fix is a **prepend, not a reorder**: the claim opens with the state read in
+the `W0` slot, before `L1`. Both chains then run in one direction
+(`W0 → L1 → L2`), `W0` is first in all of them, and the cycle cannot be formed.
+This is the single most important ordering decision in the change, which is why
+`tests/unit/lock-order-vector.test.ts` asserts the *position* of that statement
+in the source and `tests/integration/lock-order-concurrency.test.ts` asserts the
+absence of `40P01` under two real connections.
+
+The same reasoning is why no new lock may be *inserted* between `L1` and `L2`:
+the invariant that already held everywhere — grant advisory lock before grant row
+lock — is what the rest of the analysis leans on. New locks are prepended or
+appended, never inserted.
+
+### The `LX` rule
+
+`LX` is user-scoped (`nana-wallet-sync:<userId>`) and used only by the wallet sync
+path, which touches no grant and no recipient row. No current path nests `LX`
+with `W1..L5`, so the two orders never meet. If a future path needs both, the
+order is:
+
+```text
+W1 → LX → W0 → L1 → L2 → L3 → L4 → L5
+```
+
+and the lock-order test must be extended to assert it. Until then, do not take
+`LX` inside a transaction that also takes a `W`/`L` slot.
+
+### Per-writer chains
+
+Each chain is a subsequence of the canonical vector, which is exactly why no
+cycle exists. `L5` appends are listed for completeness but are not locks the order
+constrains.
+
+```text
+claim            : W0(S) → L1 → L2 → L5
+                   src/wallet/grants/consumption.ts (claimConsumption). The W0
+                   read is the prepend described above.
+settle/revoke    : L1 → L2 → L5
+                   consumption.ts (settleGrantReservation, revokeGrant). They
+                   need no W0, so they skip it rather than take it late.
+grant sync       : L1 → L2 → L4 → L5
+                   src/wallet/grants/privy-policy-sync.ts (syncGrant,
+                   syncRevocation). The dgc-wallet advisory is the legacy L4
+                   shim; slice 1 routes these paths through the composer, and
+                   the shim goes away with them.
+removal          : W1 → tx{ W0(U) → L1(all affected, asc) → L2 → L3 → L5 } → R
+                   src/wallet/policy/service.ts (remove → applyRemoval). W1 is
+                   held OUTSIDE the transaction so it is never held across
+                   provider I/O, and it is what makes this removal the wallet's
+                   serialized writer.
+create/edit      : tx{ W0(U) → L3 → L5 } → R
+                   service.ts (runMutation). Takes W0 first for the same reason
+                   as the claim: it locks the state row and then the contact row.
+enrollment       : tx{ W0(U) → L5 } → R
+                   service.ts (recordEnrollmentIntent).
+apply/reconciler : W1 → tx{ W0(U) → L2 → L5 } → R
+                   the single writer of the applied revision (arrives in slice 2).
+contact mutation : L3
+                   src/memory/contacts-repository.ts (update, archive).
+wallet sync      : LX = nana-wallet-sync:<userId>
+```
+
+### Claim against removal, and revoked scopes
+
+The removal takes the same locks in the same order plus `L3` after `L2`, so it
+cannot form a cycle with a claim. The ordering between them is resolved by `L1`
+contention instead of by a deadlock: a concurrent claim on the same grant either
+completes first — and the removal then observes `state='revoked'` and skips it —
+or blocks until the removal commits and then sees the revoked scope and refuses.
+**A claim can never succeed against a revoked scope**, and that is asserted under
+two real connections in `tests/integration/lock-order-concurrency.test.ts`.
+
+### Where the `lease_reclaimed` audit belongs
+
+`lease_reclaimed` is audit §5.2 step 3 of the design: the reconciler's
+restart-recovery branch, which finds an intent whose lease holder expired and
+reclaims it. It is **not** a claim-path audit — the claim path holds no lease and
+no intent — and it must not be added here. When slice 2 implements it, the append
+needs an explicit system-context policy on `recipient_policy_audit`: the table is
+owner-only today, so an anonymous system transaction would be RLS-denied. That
+requirement is recorded rather than pre-emptively granted, so no authority is
+added that the design does not describe.
