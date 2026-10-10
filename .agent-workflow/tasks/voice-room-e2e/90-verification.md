@@ -242,6 +242,39 @@ corta y se calla rápido puede volver a caer en la ventana. La causa raíz —el
 depende de un evento asincrónico que puede llegar después del tool call— sigue en
 el producto y **necesita decisión de Rama**.
 
+## Estabilidad verificada
+
+El suite de voz quedó en **6 corridas verdes consecutivas** después del fix del
+silencio: 3 del spec de transferencias y 3 del suite completo (4/4). Se hizo a
+propósito: hoy la lección más caras fue que **verde aislado no es verde en
+conjunto** — Slice 4 pasó solo y falló al correr todo junto.
+
+## Pasada de honestidad sobre artefactos
+
+Dos tests del repo decían cubrir más de lo que cubren, y la clase de defecto es la
+misma que el resto del día: un artefacto que miente sobre la realidad.
+
+**`tests/e2e/livekit-smoke.e2e.test.ts`** — crea sala, despacha el agente y borra
+la sala. **Nunca entra a la sala**, así que no distingue un camino de voz sano de
+uno roto: como el worker espera participante y después se bloquea en el RPC de
+binding, una sala despachada y vacía da el mismo resultado funcione el agente o no.
+Ahora su header lo dice, y aclara que es complementario de `tests/e2e/voice-room/`
+(este verifica el *deployment*, aquel la *conversación*).
+
+**`tests/simulation/livekit-voice.simulation.test.ts`** — no importa LiveKit ni
+abre sala. Su `simulateConversation` es una máquina de estados definida **en el
+propio archivo**, no el reducer del producto, así que no puede fallar cuando el
+reducer real se rompe. Su header ahora lo aclara y apunta a los tres lugares donde
+sí está cubierto: `tests/unit/resolution-phrases.test.ts`,
+`live-voice-reducer.test.ts` del front, y `tests/e2e/voice-room/`.
+
+**Ninguno se borró.** El smoke sigue cubriendo algo real que el stack aislado no:
+que un deployment vivo (Cloud o self-hosted) sea alcanzable y despachable. El de
+simulation todavía atrapa regresiones en cómo se **componen** las frases en
+secuencia, algo que los unit tests directos no ven. Se documentaron en vez de
+reestructurarlos: renombrar el segundo dejaría huérfano el script
+`test:simulation`, que existe solo para ese archivo.
+
 ## No-regresión
 
 Suite completa: **860 pasan, 174 skipped, 16 fallan**. Los mismos 16 fallos en

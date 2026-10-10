@@ -1,3 +1,32 @@
+/**
+ * A deterministic flow over the resolution phrases.
+ *
+ * WHAT THIS IS, HONESTLY
+ * ----------------------
+ * The name says "livekit" and "voice simulation"; it is neither. This file
+ * imports no LiveKit and opens no room. `simulateConversation` below is a
+ * hand-written state machine defined IN THIS FILE, not the product's reducer, so
+ * it cannot fail when the real reducer breaks: it tests a model of the flow, not
+ * the flow.
+ *
+ * What it genuinely exercises is the shared decision vocabulary —
+ * `isConfirmation` / `isCancellation` from src/livekit/resolution-phrases.ts —
+ * across a plausible sequence of phases.
+ *
+ * THE REAL COVERAGE LIVES ELSEWHERE
+ * ---------------------------------
+ *   - tests/unit/resolution-phrases.test.ts  → the phrases themselves, directly
+ *   - apps/nana-wallet/src/features/agent/voice/live-voice-reducer.test.ts → the
+ *     actual reducer this file only imitates
+ *   - tests/e2e/voice-room/                  → the real thing end to end: a
+ *     caller speaks, the worker binds, and the phrases are matched against what
+ *     the model actually heard (npm run test:e2e:voice-room)
+ *
+ * Kept rather than deleted because it still catches a regression in how the
+ * phrases compose across a sequence, which the direct unit tests do not. Its name
+ * is a known wart; renaming it would orphan the `test:simulation` script, which
+ * exists for this single file, so the header carries the correction instead.
+ */
 import { describe, expect, it } from 'vitest';
 import { isCancellation, isConfirmation } from '../../src/livekit/resolution-phrases.js';
 

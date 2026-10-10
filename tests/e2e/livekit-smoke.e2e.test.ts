@@ -1,3 +1,35 @@
+/**
+ * Opt-in smoke against a LIVE LiveKit deployment (Cloud, or self-hosted).
+ *
+ * WHAT THIS PROVES, AND WHAT IT DOES NOT
+ * --------------------------------------
+ * It proves the deployment is reachable and that the plumbing around it works:
+ * a room can be created, the agent can be dispatched to it under the configured
+ * name, the room can be deleted, and an application binding token verifies.
+ *
+ * It does NOT exercise a conversation. This suite never joins the room, so it
+ * cannot tell a healthy voice path from a broken one: the worker awaits
+ * `ctx.waitForParticipant()` and then blocks on an RPC `bind_conversation`, so a
+ * dispatched-but-empty room produces exactly the same result here whether the
+ * agent works or not. A reader who assumed "livekit smoke e2e" covered the voice
+ * path would be wrong, and that assumption is the reason this header exists.
+ *
+ * The voice path IS covered, end to end against the isolated fixture stack, by
+ * `tests/e2e/voice-room/` (`npm run test:e2e:voice-room`): that suite joins, binds
+ * over RPC, hears the greeting, publishes recorded turns and asserts on captured
+ * audio plus backend state.
+ *
+ * So the two are complements, not duplicates:
+ *
+ *   - this file  → is the live deployment reachable and dispatachable?
+ *   - voice-room → does a real conversation actually work?
+ *
+ * The binding-token assertions at the bottom are also covered directly, and more
+ * thoroughly, by `tests/unit/live-binding.test.ts`.
+ *
+ * Run: LIVEKIT_E2E=1 npm run test:e2e:livekit-smoke
+ * See docs/livekit-development-runbook.md for the required inputs.
+ */
 import { AccessToken, AgentDispatchClient } from 'livekit-server-sdk';
 import { describe, expect, it } from 'vitest';
 import { verifyLiveVoiceBinding } from '../../src/auth/live-binding.js';
@@ -44,7 +76,9 @@ async function roomRequest(room: string, method: string, body: Record<string, un
   });
 }
 
-describe.skipIf(!enabled)('opt-in LiveKit Cloud smoke', () => {
+// The name shown in test output is where the old assumption started, so it states
+// the scope too: this is a deployment smoke, not voice coverage.
+describe.skipIf(!enabled)('opt-in live LiveKit deployment smoke (deployment only, not the voice path)', () => {
   it('fails closed when provider credentials or binding verification inputs are absent', () => {
     expect(missing, `Set the explicit LiveKit smoke inputs before running this suite: ${missing.join(', ')}`).toEqual([]);
   });
