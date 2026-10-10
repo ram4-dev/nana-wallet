@@ -96,6 +96,62 @@ el RMS dentro del loop que envía, contra el RMS que recibe el otro lado, distin
 - Runbook en `docs/voice-room-e2e-runbook.md`, incluidos los puertos del stack,
   por qué el rango de media no es libre, y las cuatro trampas de API.
 
+## Slice 4 — asertos sobre estado del backend: RESUELTO
+
+`npm run test:e2e:voice-room` → **3/3 PASS**: el round trip de saldo, la
+transferencia confirmada y la cancelada. Evidencia cruda en la DB:
+
+```
+ e2e00000-...-0003 | status=confirmed | has_tx=t
+ e2e00000-...-0004 | status=cancelled | has_tx=f
+```
+
+El aserto negativo —una cancelación no deja transferencia activa— es el que más
+valor tiene, y es el que atrapa bugs de plata reales.
+
+### Tres defectos reales que el slice destapó
+
+Los tres tenían el mismo síntoma (*"la conversación se ve sana, la transferencia
+no se concreta"*) y **ninguno era del agente**. Vale la pena escribirlos porque el
+síntoma es idéntico en los tres y cada uno se arregla en un lugar distinto:
+
+**1. Faltaba el esquema `extensions`.** Toda conexión de la app fija
+`search_path=public,extensions`, y CI lo crea explícitamente
+(`.github/workflows/ci.yml:39`). Una DB construida solo con `runMigrations()` nunca
+lo tiene, y el error aparece recién al confirmar, *después* de escribir la fila
+`previewed`.
+
+**2. Faltaba el grant.** Con el esquema creado pero sin
+`GRANT USAGE ON SCHEMA extensions TO recipient_app`, el error pasa a
+`permission denied for schema extensions`. La transacción de runtime hace
+`SET ROLE`, así que el esquema es inusable sin ese grant.
+
+**3. Las extensiones estaban en el esquema equivocado.**
+`src/db/migrations/001_recipient_memory.sql` las instala sin `WITH SCHEMA`, así que
+caen en `public`, mientras la cadena de supabase que CI aplica las instala
+`WITH SCHEMA extensions`. La SQL de la app **califica** el llamado
+([postgres-repository.ts:372](/Users/ramiro/Desktop/projects/colloseum.feat-voice-e2e-harness/src/conversations/postgres-repository.ts:372)
+usa `extensions.gen_random_uuid()`), así que con pgcrypto en `public` el confirm
+muere con `function extensions.gen_random_uuid() does not exist`.
+
+Conclusión de fondo: **las dos cadenas de migración no son equivalentes**, y el
+fixture de voz tenía que reproducir el estado de CI, no el de la cadena local.
+
+### Un cuarto defecto, este sí del harness
+
+El caller se desconectaba a los ~16 s de llamar `confirm_transfer`, abortando la
+transferencia en vuelo. Una confirmación hablada **no** es una transferencia
+asentada: el broadcast sobrevive al turno. Se agregó un hook `afterTurns` que
+espera a que el estado deje de moverse **con la sala abierta**, en vez de dormir un
+tiempo fijo — por la misma razón que el detector de turno espera silencio y no un
+timer.
+
+### Verificación
+
+`test:e2e:voice-room` 3/3 verde con el stack recreado desde cero (volumen borrado),
+que también valida el camino de arranque limpio. Suite default **sin cambios**: 16
+fallos preexistentes, 860 pasan, 174 skipped. `typecheck` y `lint` limpios.
+
 ## No-regresión
 
 Suite completa: **860 pasan, 174 skipped, 16 fallan**. Los mismos 16 fallos en

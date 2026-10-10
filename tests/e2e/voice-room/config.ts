@@ -29,10 +29,26 @@ export const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 /** The host-side signaling URL of the isolated e2e stack (compose maps 7882 -> 7880). */
 export const DEFAULT_LIVEKIT_HOST_URL = 'ws://127.0.0.1:7882';
-/** The isolated e2e Postgres (compose maps 5433 -> 5432). */
-export const DEFAULT_DATABASE_URL = 'postgresql://postgres@127.0.0.1:5433/wdk_agent';
+/**
+ * The isolated e2e Postgres (compose maps 5433 -> 5432).
+ *
+ * The `search_path` option is NOT decoration and must match compose.yaml and
+ * .github/workflows/ci.yml exactly: the application schema-qualifies
+ * `extensions.gen_random_uuid()` (postgres-repository.ts:372), and `pgcrypto`
+ * lives in the `extensions` schema. Connecting without it makes migrations fail
+ * with `type "vector" does not exist` and, later, confirm/cancel fail with
+ * `function extensions.gen_random_uuid() does not exist`.
+ */
+export const DEFAULT_DATABASE_URL =
+  'postgresql://postgres@127.0.0.1:5433/wdk_agent?options=-csearch_path%3Dpublic,extensions';
 export const DEFAULT_AGENT_NAME = 'nani-agent';
 export const DEFAULT_TURN_FIXTURE = 'balance-question.wav';
+/** The transfer scenario's request turn: it names the recipient that is actually seeded. */
+export const TRANSFER_REQUEST_FIXTURE = 'transfer-to-lucas.wav';
+/** A clear spoken affirmative, the way a real person agrees. */
+export const TRANSFER_CONFIRM_FIXTURE = 'confirm-transfer.wav';
+/** A clear spoken rejection. */
+export const TRANSFER_CANCEL_FIXTURE = 'cancel-transfer.wav';
 
 export const ENV_FILE_PATH = resolve(REPO_ROOT, '.env');
 export const FIXTURES_DIR = resolve(REPO_ROOT, 'tests/e2e/voice-room/fixtures');

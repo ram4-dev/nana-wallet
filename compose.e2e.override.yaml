@@ -59,4 +59,15 @@ services:
       # wallet it has always had. Never combine with WDK_TOOLS_SOURCE=live; the
       # entrypoint throws on that pair rather than serving fixture balances.
       VOICE_E2E_FIXTURE_WALLET: "1"
+    # The recipient-memory embedding model, shared with the host.
+    #
+    # The base image ships an empty /app/.cache/recipient-memory-model, so the
+    # worker downloads the sentence-transformers model on its first recipient
+    # lookup. That is a ~360 MB download inside the container, on a path the
+    # transfer scenarios need (search_recipients embeds the caller's phrasing),
+    # and it makes the first transfer run both slow and network-dependent.
+    # Binding the host cache makes the stack reproducible and offline-capable,
+    # and it is the same cache the host-side recipient fixture writes.
+    volumes:
+      - ./.cache/recipient-memory-model:/app/.cache/recipient-memory-model
 

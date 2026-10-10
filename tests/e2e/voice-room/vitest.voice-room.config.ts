@@ -21,8 +21,10 @@ export default defineConfig({
     include: ['tests/e2e/voice-room/**/*.test.ts'],
     // A round trip runs two real turns through a speech-to-speech model; the
     // per-test timeout is set in the spec, but the file-level budget needs room.
-    testTimeout: 240_000,
-    hookTimeout: 60_000,
+    // The transfer scenarios run TWO turns each on top of the greeting, so their
+    // per-test budgets are larger than the single-turn balance spec's.
+    testTimeout: 600_000,
+    hookTimeout: 300_000,
     // These tests share one room and one worker, and a second concurrent run would
     // fight over the single conversation lease.
     fileParallelism: false,

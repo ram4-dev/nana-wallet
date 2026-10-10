@@ -106,8 +106,33 @@ Both failure paths name the fix rather than leaving a bare error.
 | `missing credentials: ...` | the named keys are absent from the root `.env`; the suite injects them explicitly and never inherits ambient ones |
 | `the isolated LiveKit stack is not reachable at ...` | run the `docker compose ... up -d` command from step 1 |
 | `bind_conversation answered ok:false (conversation_already_live)` | a previous run died holding the lease; re-running reseeds and clears it |
+| `function extensions.gen_random_uuid() does not exist` or `type "vector" does not exist` | the database is missing CI's extension layout. The fixture fixes this itself, so seeing it means an older fixture seeded the database first: drop the stack's volume and let it rebuild (`docker compose -p nana-e2e ... down`, `docker volume rm nana-e2e_recipient_memory_postgres`, then `up -d`) |
+| A transfer stays at `previewed` and never confirms | the caller disconnected before the broadcast finished. The scenario waits for the state to settle with the room open (`afterTurns`); if it still happens, check the worker log for the tool's own error |
+| The recipient turn cannot find the contact | the scenario seeds its own recipient into the fixture user's memory before running; a failure here means the seed step was skipped or pointed at another user |
+| The embedding model downloads for minutes on first run | expected once. The cache lives in `.cache/recipient-memory-model` and the worker mounts it; the fp32 model is ~470 MB |
 | `the agent did not answer with speech` | the worker received audio it could not act on. Check `docker logs nana-e2e-voice-worker-1`, then confirm the caller published real audio: the report's `microphoneSource` must be true and the turn must not be silent |
 | No audio in the WAVs, but frames arrive | almost always the media range mismatch described in step 1 |
+
+## What the suite covers
+
+| Spec | Question it answers |
+| --- | --- |
+| `voice-room.e2e.test.ts` | does a spoken turn reach the agent and come back as speech? |
+| `voice-room-transfer-state.e2e.test.ts` | does a confirmed transfer actually reach `confirmed` in the database, and does a cancelled one leave nothing behind? |
+
+The second one is the discriminating pair, and the negative half is the one that
+matters: it is what would catch a transfer that was acknowledged aloud and never
+properly cancelled.
+
+### Why the transfer scenarios wait before asserting
+
+A spoken confirmation is not a settled transfer. The confirmation is acknowledged
+quickly, but the broadcast that actually moves money outlives the turn, so tearing
+the room down as soon as the answer goes quiet cancelled it mid-flight and left the
+row at `previewed` — which is indistinguishable from an agent that never acted.
+The scenarios therefore poll `conversation_transfer_attempts` until it stops
+moving, with the room still open, for the same reason the turn detector waits on
+silence rather than on a timer.
 
 ## Notes for maintainers
 
