@@ -66,6 +66,21 @@ suite("recipient policy repository (task 1.3)", () => {
   let repository: RecipientPolicyRepository;
   let secondRepository: RecipientPolicyRepository;
 
+  /**
+   * ISOLATION (task 2.8 fix). This suite drives a SHARED local database. Before
+   * this teardown every run left its `recipient_policy_sync_intent` rows behind:
+   * 196 had accumulated (103 of them due), and because the reconciler's system
+   * scan is `ORDER BY next_attempt_at ASC LIMIT 50`, a freshly inserted row
+   * sorted past the limit and the due-intent case failed for a reason that had
+   * nothing to do with the behaviour it proves. A test that only passes on an
+   * empty shared table is not deterministic, so the suite now sweeps its own
+   * rows.
+   *
+   * `recipient_policy_audit` is append-only by trigger (015) and is deliberately
+   * NOT swept: audits cannot affect the due scan's ordering or limit.
+   */
+  const provisioned: Array<{ userId: string; walletId: string }> = [];
+
   beforeAll(() => {
     database = createDatabaseClient(databaseUrl!);
     secondConnection = createDatabaseClient(databaseUrl!);
@@ -74,8 +89,30 @@ suite("recipient policy repository (task 1.3)", () => {
   });
 
   afterAll(async () => {
+    const walletIds = provisioned.map((entry) => entry.walletId);
+    if (walletIds.length > 0) {
+      for (const table of [
+        "recipient_policy_leases",
+        "contact_action_proposals",
+        "recipient_policy_sync_intent",
+        "recipient_policy_state",
+      ]) {
+        await database.query(
+          `DELETE FROM ${table} WHERE wallet_id = ANY($1::uuid[])`,
+          [walletIds],
+        );
+      }
+    }
     await Promise.all([database.close(), secondConnection.close()]);
   });
+
+  /**
+   * The due scan is `ORDER BY next_attempt_at ASC LIMIT 50` over a shared table,
+   * so a suite that owns its row anchors it explicitly instead of depending on
+   * the table being empty. `1970-01-01` is older than anything a test writes, so
+   * the row is deterministically inside the limit.
+   */
+  const DUE_SCAN_ANCHOR = new Date("1970-01-01T00:00:00.000Z");
 
   /** user + `ready` solana wallet, provisioned as the migration owner. */
   async function provision(): Promise<{ userId: string; walletId: string }> {
@@ -91,7 +128,9 @@ suite("recipient policy repository (task 1.3)", () => {
        VALUES ($1, 'fixture', $2, 'solana', $3, 'ready') RETURNING id`,
       [userId, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
     );
-    return { userId, walletId: wallet.rows[0]!.id };
+    const provisionedWallet = { userId, walletId: wallet.rows[0]!.id };
+    provisioned.push(provisionedWallet);
+    return provisionedWallet;
   }
 
   /** A saved contact. `network: null` is the legacy EVM row (migration 012). */
@@ -744,6 +783,19 @@ suite("recipient policy repository (task 1.3)", () => {
         composedRules: [],
         composedHash: "hash-1",
       });
+
+      // Anchor this suite's own row inside the scan's `LIMIT 50` (see
+      // DUE_SCAN_ANCHOR). The guarantee below is "the system scan reaches a due
+      // intent", not "the shared table happens to be empty"; without the anchor
+      // the assertion measures the other runs' leftovers.
+      await database.withSystemTransaction((client) =>
+        client.query(
+          `UPDATE recipient_policy_sync_intent
+              SET next_attempt_at = $2
+            WHERE id = $1`,
+          [intent.id, DUE_SCAN_ANCHOR],
+        ),
+      );
 
       // The reconciler runs with no `app.user_id`, so it must be able to
       // enumerate due intents across wallets and resolve each owner. That is the
