@@ -1,5 +1,5 @@
 import { getWalletAgentConfig } from '../../agent/instructions.js';
-import { createWalletAgentDefinition, type WalletAgentContext } from '../../agent/definition.js';
+import { createWalletAgentDefinition, type ContactActionPort, type WalletAgentContext } from '../../agent/definition.js';
 import { toLivekitRealtimeTools } from '../../agent/livekit-realtime-adapter.js';
 import type { ConversationLanguage } from '../../conversations/language.js';
 import type { ConversationSession } from '../../conversations/session-state.js';
@@ -48,6 +48,8 @@ export type RealtimeToolsDependencies = {
   conversations?: ConversationRepository;
   voiceDecisionGate?: VoiceDecisionGate;
   confirmationArbiter?: ConfirmationArbiter;
+  /** Server-owned contact proposals. Absent ⇒ the lifecycle tools fail closed. */
+  contactActions?: ContactActionPort;
   /** Retained for seam stability; the service publishes revisions via financialTasks. */
   publishRevision?: (revision: number) => void;
 };
@@ -93,6 +95,7 @@ export function createRealtimeTools(dependencies: RealtimeToolsDependencies) {
     ...(dependencies.conversations ? { voiceConversations: dependencies.conversations } : {}),
     ...(dependencies.voiceDecisionGate ? { voiceDecisionGate: dependencies.voiceDecisionGate } : {}),
     ...(dependencies.confirmationArbiter ? { confirmationArbiter: dependencies.confirmationArbiter } : {}),
+    ...(dependencies.contactActions ? { contactActions: dependencies.contactActions } : {}),
   };
   return toLivekitRealtimeTools(createWalletAgentDefinition(), context, {
     refreshContext: async (ctx) => {

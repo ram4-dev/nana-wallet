@@ -92,7 +92,7 @@ export type ContactActionPort = {
     /** Display metadata only; it cannot identify a wallet address. */
     name?: string;
     description?: string;
-  }): Promise<{ status: 'staged' | 'confirmation_required' | 'conflict_active_window' | 'address_review_required'; proposalId?: string; proposalVersion?: number; message: string }>;
+  }): Promise<{ status: 'staged' | 'confirmation_required' | 'conflict_active_window' | 'address_review_required' | 'proposal_not_published'; proposalId?: string; proposalVersion?: number; message: string }>;
   confirm?(input: { userId: string; conversationId: string; proposalId: string; proposalVersion: number; source: 'text' | 'voice' }): Promise<{ status: string; message: string }>;
 };
 

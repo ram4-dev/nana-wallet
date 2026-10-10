@@ -4579,3 +4579,140 @@ parent-assigned `PR 6` slice (tasks 4.1–4.9). No push beyond the assigned bran
 #### Commit
 
 `feat(policy): persist and consume contact proposals exactly once` — see the report envelope for the SHA.
+
+---
+
+### Task 4.6 — publish the proposal card reliably and gate the voice window on publication
+
+#### What was built
+
+`src/livekit/contact-proposal-publication.ts` is the worker's `ContactActionPort` for the voice
+surface (`createVoiceContactActions`). It owns exactly one rule, from design §8.1/§8.2:
+
+```
+persist (ContactActionService.stage) → publishData (await) → stamp published_at → arbiter.open({kind:'contact'})
+```
+
+`src/livekit/worker.ts` wires it inside `startSession`, where the binding is already verified:
+
+- `boundParticipantIdentity` is set only when `ctx.room.remoteParticipants.has(participant.identity)`,
+  i.e. the identity `RoomConversation.bind` already accepted as matching `binding.sub`
+  (`src/livekit/room-conversation.ts:67-74`). **Absent ⇒ no bound visual client ⇒ `stage` returns
+  `address_review_required` before persisting anything** (`REVIEW_CHANNEL_MESSAGE` asks for the review
+  channel). No proposal row, no publish, no window.
+- `publish` is `agentParticipant.publishData(bytes, { reliable: true, topic:
+  "contact_action_proposal", destination_identities: [boundIdentity] })` — exactly one destination,
+  never the room at large (same seam as the existing `conversation_state_changed` revision publish).
+- A rejected `publishData` returns `proposal_not_published` and **leaves `published_at` NULL**: the
+  stamp is unreachable because it is sequenced after the awaited delivery.
+- A zero-row `UPDATE … SET published_at=now() WHERE id=$1 AND user_id=$2 AND version=$3
+  AND status='open' AND expires_at > now()` also returns `proposal_not_published` — the row stopped
+  being open between the write and the stamp, so the user is not reviewing a card that still exists.
+- **Only when both succeed** does the module call `arbiter.open({kind:'contact', actionId, userId,
+  conversationId, version, createdAt})`; a conflicting open window is reported as
+  `conflict_active_window` without preempting it.
+- `confirm` delegates to `arbiter.waitAndConsume` and then to the injected persisted one-use consume
+  (`ContactActionService.consumeInTransaction` inside `database.withUserTransaction`, the worker
+  shape of the `L5` slot); `false` ⇒ `confirmation_required`.
+
+`createRealtimeTools` now accepts `contactActions?: ContactActionPort` and forwards it into the shared
+`WalletAgentContext`, so the lifecycle tools created by `createWalletAgentDefinition()` reach the voice
+port instead of the `unavailable` fallback (the concrete unlock this task owed). `ContactActionPort.stage`'s
+status union gained `proposal_not_published`; no field was removed and no schema widened.
+
+#### `published_at` is publication evidence, not proof of reading
+
+Asserted three ways, against both a fake row and the real table: a delivered card with no spoken
+evidence leaves the row `status='open'` and refuses with `no_evidence`; the window is still needed for
+a consume; and a window that was cleared (superseded/replaced) is not reopened by the stamp. The
+publication stamp can never authorize anything on its own.
+
+#### RED → GREEN and mutation evidence
+
+The unit suite (8 cases) and the integration suite (4 cases) were run **first against the production
+module as it stood**, both green, so the RED evidence here is the mutation RED table below — this run
+continued an interrupted unit rather than authoring it from zero, and I am not claiming a pre-edit RED
+I did not observe. The one pre-edit RED I did observe is recorded: the integration suite's first run
+was **2 failed / 2 passed**, both failures mine — `proposalId` is deliberately absent from the
+`proposal_not_published` response, so the suite had to read the row back by user. The code was right;
+the test was wrong, and the assertion was rewritten to read the real row.
+
+Each guard, removed one at a time, attributed by name (unit + integration run together, 12 cases):
+
+| Mutation | Attributed failures |
+|---|---|
+| M1 remove the no-bound-visual-client guard | `refuses permission creation and requests the review channel when no bound visual client exists` (1 failed / 11 passed) |
+| M2 remove the `publish` try/catch | `re-publishes nothing and opens no window when the publish rejects`, `leaves published_at NULL, opens no window and re-publishes nothing when the delivery rejects` (2 failed / 10) |
+| M3 remove the zero-row stamp guard | `opens no window when the published_at stamp affects zero rows`, `opens no window when the row stops being open between the write and the stamp` (2 failed / 10) |
+| M4 stamp before delivery (order inverted) | the four order/gate cases, incl. `stamps published_at and opens the window only after a reliable delivery…` (4 failed / 8) |
+| M5 deliver to nobody (`destination_identities: []`) | the three delivery cases, incl. `never derives an address from the spoken name and never addresses the room at large` (3 failed / 9) |
+| M6 never open the window | six cases, incl. `treats publication as delivery evidence, never as proof of reading` (6 failed / 6) |
+
+All restorations verified: module back to 194 lines and the suites green again.
+
+Two assertions were **added by this run** because the mutation run showed they were missing:
+`markPublished` is never invoked when the delivery rejects (and `["publish","markPublished"]` is the
+exact order on success), plus the real-table row-set cases in the integration suite. Without them, M4
+was the only mutation that caught an inverted order, and the fake `markPublished: async () => null`
+asserted the branch rather than the predicate.
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/contact-proposal-publication.test.ts` | **1 file passed, 8 tests passed** |
+| `npx vitest run tests/integration/contact-proposal-publication.integration.test.ts` | **1 file passed, 4 tests passed** (first run: 2 failed / 2 passed — see above) |
+| `python3 /tmp/mutate.py` (M1–M6, unit+integration) | every guard load-bearing, attributed by name; restored → green |
+| `npx vitest run tests/unit/confirmation-arbiter.test.ts tests/unit/livekit/voice-decision-gate.test.ts tests/unit/livekit/voice-decision-gate-arbiter-adapter.test.ts tests/unit/livekit/voice-decision-gate-wait.test.ts tests/unit/livekit/voice-decision-transcripts.test.ts` | **5 files passed, 52 tests passed** |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts` (separated run) | **9 files passed, 119 tests passed** |
+| `npx vitest run tests/unit/policy-*.test.ts` (separated run) | **14 files passed, 174 tests passed** |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`) |
+
+The arbiter and `voice-decision-gate` suites stay green unchanged.
+
+#### Executed vs. merely implemented
+
+**Executed:** the full gate chain with a fake transport but the real persisted row — real
+`ContactActionService.stage`, real awaited delivery call, real `published_at` stamp read back, real
+`consumeInTransaction` in a real transaction; the rejected delivery leaving `published_at` NULL with no
+window and no possible consume; a row really consumed between the write and the stamp producing
+`proposal_not_published`; publication-as-delivery-evidence-only; the no-bound-visual-client refusal;
+the delivery contract (`reliable: true`, topic, single `destinationIdentities` = the bound identity);
+the resolution of the bound identity from `ctx.room.remoteParticipants`; `contactActions` reaching the
+shared tool context.
+
+**Implemented but NOT executed here:** anything that needs a live/real LiveKit session — a real
+`publishData` against a real participant, a real bound `RoomConversation` binding, the reconnect/reload
+render, and a spoken-only address arriving through the real listener. Those are task 4.8's suite
+(`tests/integration/livekit-trusted-recipient.e2e.test.ts`).
+
+#### Deviations from the design
+
+1. **The Verify line names a file that does not exist.** Task 4.6's `Verify` cites
+   `tests/integration/livekit-contact-proposal.e2e.test.ts`; the real-session E2E suite is task 4.8's
+   deliverable (`tests/integration/livekit-trusted-recipient.e2e.test.ts`), so this run added
+   `tests/integration/contact-proposal-publication.integration.test.ts` — worker-seam proof with a fake
+   transport and the real row — instead. No file was created under the name the task line mentions.
+2. **The arbiter `open` call lives in the publication module, not inline in `worker.ts`.** The worker
+   passes its arbiter instance and its `publishData` into `createVoiceContactActions`; the ordering rule
+   is therefore unit-testable without a LiveKit session. The worker still owns every dependency
+   (§8.1's "the worker calls `arbiter.open`" is satisfied through its own arbiter instance).
+3. **`published_at` is stamped with a `user_id` predicate as well** (`id, user_id, version, status,
+   expires_at`), matching the owner-path pattern the service already uses. Same one-row semantics.
+4. Additive typing only: `proposal_not_published` added to the `ContactActionPort` status union and
+   `contactActions?` added to `RealtimeToolsDependencies`. No existing member changed.
+
+#### Open risk (reported, not fixed here)
+
+A failed publication leaves an orphan `status='open'` row, and the partial unique index
+(`contact_action_proposals_one_open_idx`) is per conversation — so a retry in the same conversation
+raises `ContactActionProposalConflictError` from `stage` until that row is superseded or expires (5 min
+TTL). Neither the design nor this task says who cleans it up; task 4.7's review endpoint is the natural
+owner. Flagged for verify rather than silently widening this task.
+
+#### Workload / PR boundary
+
+One commit: the new publication module, its unit suite, its integration suite, the `worker.ts` wiring,
+the `create-realtime-tools.ts` forwarding, the additive `definition.ts` status union, `tasks.md` and
+this entry. Inside the parent-assigned `PR 6` slice (tasks 4.1–4.9). No push, no PR.

@@ -23,6 +23,8 @@ import { createAgentSession } from "./create-agent-session.js";
 import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
 import { createConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
+import { ContactActionService } from "../wallet/policy/contact-actions.js";
+import { createVoiceContactActions } from "./contact-proposal-publication.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
 import { attachVoiceDecisionTranscripts } from "./voice-decision-transcripts.js";
 import {
@@ -180,6 +182,43 @@ async function runJob(
         })),
       });
       const memoryService = getConfiguredRecipientMemoryService();
+      const contactActions = createVoiceContactActions({
+        actions: new ContactActionService(dependencies.database),
+        // The bound authenticated participant. `RoomConversation.bind` already
+        // rejected a caller whose identity differs from `binding.sub`, so this is
+        // the only participant a card may be delivered to. A room without it has
+        // no bound visual client, and permission creation is refused.
+        ...(ctx.room.remoteParticipants.has(participant.identity)
+          ? { boundParticipantIdentity: participant.identity }
+          : {}),
+        publish: (payload) =>
+          agentParticipant.publishData(payload.bytes, {
+            reliable: payload.reliable,
+            topic: payload.topic,
+            destination_identities: payload.destinationIdentities,
+          }),
+        arbiter: confirmationArbiter,
+        // The persisted one-use consume. It runs as the single conditional
+        // UPDATE in its own transaction here; the review endpoint (task 4.7)
+        // runs the same call inside the contact mutation transaction's
+        // `beforeCommit` hook, which is the `L5` slot the design names. The
+        // guarantee is identical because the row update is the serialization
+        // point, not the transaction that surrounds it.
+        consume: async ({ userId, conversationId, proposalId, proposalVersion }) => {
+          const consumed = await dependencies.database.withUserTransaction(
+            userId,
+            (client) =>
+              new ContactActionService(dependencies.database).consumeInTransaction(client, {
+                userId,
+                proposalId,
+                proposalVersion,
+                consumedByTool: "confirm_trusted_recipient_action",
+                consumedBySession: conversationId,
+              }),
+          );
+          return consumed !== null;
+        },
+      });
       const wallet = dependencies.walletForUser
         ? bindLiveKitWalletForUser(
             dependencies.walletForUser,
@@ -213,6 +252,7 @@ async function runJob(
         ...(memoryService ? { recipientMemory: memoryService } : {}),
         voiceDecisionGate,
         confirmationArbiter,
+        contactActions,
       });
       const created = createAgentSession({ tools });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
