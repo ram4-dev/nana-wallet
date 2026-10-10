@@ -48,15 +48,20 @@ function call(name: string, args: Record<string, unknown>, callId = `call_${name
 }
 
 describe('realtime tool binding — declaration', () => {
-  it('declares exactly the 5 production tools with JSON Schema parameters', () => {
+  it('declares exactly the current production catalog with JSON Schema parameters', () => {
     const stack = createRealtimeFixtureStack();
     const binding = createRealtimeToolBinding(stack.deps);
     const names = binding.tools.map((t) => t.name).sort();
     // Unified surface: voice exposes the shared definition tools (parity)
-    // plus the voice-only spoken-decision gate tools.
+    // plus the voice-only spoken-decision gate tools, which are exactly the two
+    // names below. The recipient lifecycle tools (task 4.2) belong to the single
+    // shared definition, so they must appear here too — this list is the parity
+    // obligation: adding, removing, or renaming any tool without updating it
+    // fails this assertion.
     expect(names).toEqual([
       'cancel_transfer',
       'confirm_transfer',
+      'confirm_trusted_recipient_action',
       'create_grant',
       'get_address',
       'get_balance',
@@ -67,6 +72,9 @@ describe('realtime tool binding — declaration', () => {
       'search_recipients',
       'search_user_memory',
       'send_token',
+      'stage_trusted_recipient',
+      'stage_trusted_recipient_edit',
+      'stage_trusted_recipient_removal',
       'stage_user_memory',
       'write_user_memory',
     ]);
