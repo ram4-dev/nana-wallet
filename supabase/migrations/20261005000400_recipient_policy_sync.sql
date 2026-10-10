@@ -1,5 +1,5 @@
 -- 015_recipient_policy_sync.sql
--- Trusted recipient policy sync (task 1.1): the durable state the single
+-- Trusted recipient policy sync (tasks 1.1, 1.2): the durable state the single
 -- composer needs. Local mirror: src/db/migrations/015_recipient_policy_sync.sql.
 --
 -- WHY five new tables for one feature: each one removes a way the current code
@@ -391,3 +391,148 @@ BEGIN
   END IF;
 END
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Task 1.2 — recipient policy lease functions (design §1.4, §2.4).
+--
+-- The lease is the `W1` slot of the canonical lock order: a short-lived row
+-- that serializes compose+apply for one wallet ACROSS PROCESSES, held outside
+-- any transaction and never across remote I/O. Only the row can do that job —
+-- §1.2 forbids holding a database lock while a provider call is in flight.
+--
+-- Shape mirrors `acquire_reconciliation_lease`
+-- (src/db/migrations/013_wallet_notifications.sql:106): same
+-- delete-expired-then-upsert-on-conflict, same table-qualified column
+-- references inside the `RETURNS TABLE (lease_token)` OUT-variable trap, and no
+-- `SECURITY DEFINER` (recipient_app holds the privileges on the table).
+--
+-- Reclaim happens ONLY through `expires_at`: a crashed holder cannot corrupt
+-- anything, because the lease serializes work whose result is revision-verified
+-- (§1.5) and fully recomposed from persisted intent (§5.2). Worst case after a
+-- crash is one recomposition, never a partial rule set.
+--
+-- Declared here rather than beside the table above so that every task in this
+-- slice keeps a purely additive diff.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.acquire_recipient_policy_lease(
+  p_wallet_id UUID,
+  p_user_id UUID,
+  p_owner_id TEXT,
+  p_lease_seconds INTEGER DEFAULT 60
+) RETURNS TABLE (lease_token TEXT)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_token TEXT;
+  v_desired_revision BIGINT;
+BEGIN
+  -- Diagnostic, not authorization: it lets a later inspection tell whether the
+  -- holder's intent was superseded while it waited. 0 when the wallet has no
+  -- state row yet, which is why the column defaults to 0 as well.
+  SELECT rps.desired_revision INTO v_desired_revision
+  FROM public.recipient_policy_state AS rps
+  WHERE rps.wallet_id = p_wallet_id;
+
+  IF v_desired_revision IS NULL THEN
+    v_desired_revision := 0;
+  END IF;
+
+  -- Expired lease rows are reclaimable by any holder.
+  DELETE FROM public.recipient_policy_leases
+  WHERE wallet_id = p_wallet_id
+    AND expires_at <= now();
+
+  -- Insert a fresh lease, or reclaim only an expired row on conflict. When
+  -- another holder has a live lease, the WHERE skips the update and no row is
+  -- produced: the caller receives NULL (excluded). Column references are
+  -- table-qualified to avoid clashing with the RETURNS TABLE(lease_token) OUT
+  -- variable inside plpgsql.
+  WITH upserted AS (
+    INSERT INTO public.recipient_policy_leases AS existing
+      (wallet_id, user_id, lease_token, owner_id,
+       desired_revision_at_acquire, acquired_at, expires_at)
+    VALUES (
+      p_wallet_id, p_user_id,
+      md5(random()::text || clock_timestamp()::text || p_owner_id),
+      p_owner_id, v_desired_revision, now(),
+      now() + make_interval(secs => p_lease_seconds)
+    )
+    ON CONFLICT (wallet_id) DO UPDATE
+      SET lease_token = EXCLUDED.lease_token,
+          user_id = EXCLUDED.user_id,
+          owner_id = EXCLUDED.owner_id,
+          desired_revision_at_acquire = EXCLUDED.desired_revision_at_acquire,
+          acquired_at = EXCLUDED.acquired_at,
+          expires_at = EXCLUDED.expires_at
+      WHERE existing.expires_at <= now()
+    RETURNING existing.lease_token AS granted_token
+  )
+  SELECT granted_token INTO v_token FROM upserted;
+
+  RETURN QUERY SELECT v_token;
+END;
+$$;
+
+-- Token-guarded renewal. `false` means the caller no longer holds the lease:
+-- either it was reclaimed after expiry, or the holder has passed the hard hold
+-- ceiling and must release and re-acquire instead of renewing forever. The
+-- ceiling is enforced here, by the same authority that owns the row, so no
+-- caller can opt out of it.
+CREATE OR REPLACE FUNCTION public.renew_recipient_policy_lease(
+  p_wallet_id UUID,
+  p_lease_token TEXT,
+  p_lease_seconds INTEGER DEFAULT 60,
+  p_max_hold_seconds INTEGER DEFAULT 300
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_updated INTEGER;
+BEGIN
+  UPDATE public.recipient_policy_leases
+     SET expires_at = now() + make_interval(secs => p_lease_seconds)
+   WHERE wallet_id = p_wallet_id
+     AND lease_token = p_lease_token
+     AND acquired_at > now() - make_interval(secs => p_max_hold_seconds);
+
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+  RETURN v_updated > 0;
+END;
+$$;
+
+-- Token-guarded release. A stale holder's release matches no row, so it can
+-- never evict the holder that reclaimed the lease.
+CREATE OR REPLACE FUNCTION public.release_recipient_policy_lease(
+  p_wallet_id UUID,
+  p_lease_token TEXT
+) RETURNS BOOLEAN
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_deleted INTEGER;
+BEGIN
+  DELETE FROM public.recipient_policy_leases
+   WHERE wallet_id = p_wallet_id
+     AND lease_token = p_lease_token;
+
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN v_deleted > 0;
+END;
+$$;
+
+-- The acquire function records `desired_revision_at_acquire` by reading
+-- recipient_policy_state, and acquire runs in the anonymous system context
+-- (§1.4). Every other policy on that table is owner-scoped, so without this one
+-- the read returns zero rows, the function falls back to its 0 default, and the
+-- diagnostic reports "the intent never moved" forever. A column that lies is
+-- worse than no column, so the read is granted explicitly.
+--
+-- SELECT only: the system context (the reconciler and the lease holders) gains
+-- no write authority over policy state, and user transactions keep their
+-- existing owner isolation unchanged.
+DROP POLICY IF EXISTS recipient_policy_state_system_read ON public.recipient_policy_state;
+CREATE POLICY recipient_policy_state_system_read ON public.recipient_policy_state
+  FOR SELECT
+  USING (current_setting('app.user_id', true) IS NULL
+         OR current_setting('app.user_id', true) = '');
