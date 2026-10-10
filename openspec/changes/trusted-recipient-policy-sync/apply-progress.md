@@ -4241,3 +4241,78 @@ None. No production file was changed by this task; only its persisted completion
 
 One commit: the persisted completion record for 4.1 (no source change). Inside the parent-assigned
 `PR 6` slice (tasks 4.1–4.9). No push beyond the assigned branch, no PR.
+
+### Task 4.2 — add the version-bound recipient lifecycle tools to the single shared definition
+
+Status: **completed**. Persisted checkbox updated (`- [x]`).
+
+#### The gap actually found
+
+The production side was already in place — `stage_trusted_recipient`,
+`stage_trusted_recipient_edit`, `stage_trusted_recipient_removal` and
+`confirm_trusted_recipient_action` are produced by `createContactActionOperations` inside
+`createWalletAgentDefinition()` (`src/agent/definition.ts:515-571`), `src/agent/definition.ts` has **zero**
+`@livekit/` imports, and `src/livekit/realtime-tools/create-realtime-tools.ts` maps the shared
+definition instead of restating tool bodies. The gap was exactly the missing proof:
+**`tests/unit/recipient-lifecycle-tools.test.ts` did not exist**. It now does (10 cases).
+
+#### What the new suite proves
+
+- Both surfaces expose the four lifecycle tools from the ONE definition, with identical zod schemas
+  (compared by reference through the LiveKit adapter), and the only divergence stays
+  `VOICE_ONLY_TOOLS = ['confirm_transfer','cancel_transfer']`.
+- Delegation with server-owned identity (positive control): `action`, `origin` (`text`/`voice`),
+  `userId`, `conversationId` and the exact `expectedVersion` the model named reach the
+  server-owned `ContactActionPort`; a voice context flips `origin` to `voice`.
+- Fail-closed when no port is wired: every lifecycle tool returns `address_review_required` instead
+  of staging anything.
+- `.strict()` rejection set for all four tools, each with its positive control: `address`, `network`,
+  `policyId`, `signerId`, `cap`, `maxPerTransfer`, `amount`, `confirmationId`, `timestamp`,
+  `turnCount`, `userId`, `conversationId` are each `unrecognized_keys`, not ignored extras.
+- No contact selection by an ambiguous label: a `name` (alone, or alongside the id) is rejected, a
+  non-uuid `contactId`, a missing/fractional/non-positive `expectedVersion` are each reported on
+  their own path — the model must ask which recipient it means.
+- A stale version is forwarded unchanged and its refusal is surfaced verbatim (no `proposalVersion`,
+  no `staged`) while a fresh version stages — the tool cannot launder a stale selector into a mutation.
+- Confirmation binds to `{proposalId, proposalVersion}` only; `source` is server-derived, never a
+  model argument; the agent-visible schema JSON contains no `address|network|policy|signer|cap|
+  confirmationId|timestamp|turnCount` key.
+- Structural guards: the voice realtime module defines no `z.object(` schema and never restates a
+  lifecycle tool name; the shared definition imports no `@livekit/*`.
+
+#### RED → GREEN and the mutation record
+
+The suite passed on its first run against existing production code (no production gap existed), so the
+honest RED evidence is the mutation record — each guard removed, attributed by name, restored:
+
+| Mutation to `src/agent/definition.ts` | Attributed failures |
+|---|---|
+| removed `.strict()` from `contactCreateInputSchema` and `contactChangeInputSchema` | 1 — `rejects model-supplied address, chain, policy, signer, cap and confirmation evidence` (`stage_trusted_recipient accepted a model-supplied address`) |
+| removed the `!context.contactActions` fail-closed guard | 1 — `fails closed to a review request when no server-owned port is wired` |
+| made `contactId` optional and accepted `name` on the change schema, and hard-coded `origin: 'text'` | 2 — `cannot select a contact by an ambiguous name or an unversioned identifier` (`accepted {"name":"Marta","expectedVersion":3}`), `delegates to the server-owned port with server-owned identity` |
+
+The first ambiguity draft was itself a **false green** and was fixed: `{name:"Marta"}` failed only
+because `expectedVersion` was also missing, so it passed for the wrong reason. The assertions now check
+the failing *issue path* (`contactId` / `expectedVersion`) and the `unrecognized_keys` code, which is
+why the mutation above is caught.
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/recipient-lifecycle-tools.test.ts` | **1 file passed, 10 tests passed** |
+| `npx vitest run … (mutated: `.strict()` removed, fail-closed guard removed)` | **2 failed / 8 passed** — exactly the two named cases |
+| `npx vitest run … (mutated: name-selectable schema, hard-coded origin)` | **1 failed / 9 passed** — the ambiguity case, then **1 failed** for origin after the assertion fix |
+| `npx vitest run tests/unit/recipient-lifecycle-tools.test.ts tests/unit/agent-tools-parity.test.ts` | **2 files passed, 15 tests passed** — the existing parity suite is unchanged |
+| `git diff --stat src/agent/definition.ts` (after restore) | empty |
+
+#### Deviations
+
+None in production code: this task's gap was proof, not behaviour. Two recorded observations: the
+`ContactActionPort` is the model-facing seam and its production implementation lands with task 4.5, and
+`createRealtimeTools` does not yet pass `contactActions` into the voice context, so voice lifecycle
+tools fail closed to `address_review_required` until task 4.6 wires publication.
+
+#### Workload / PR boundary
+
+One commit: the missing suite (10 cases). Inside the parent-assigned `PR 6` slice (tasks 4.1–4.9).
