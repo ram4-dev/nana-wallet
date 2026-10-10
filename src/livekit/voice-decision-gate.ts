@@ -32,6 +32,7 @@ export type VoiceDecisionGate = ReturnType<typeof createVoiceDecisionGate>;
 export function createVoiceDecisionGate(classifiers: {
   isConfirmation(text: string): boolean;
   isCancellation(text: string): boolean;
+  onObservation?(event: Record<string, string | number | boolean | null>): void;
 }) {
   let activePreviewId: string | undefined;
   let previewCreatedAt: number | undefined;
@@ -53,6 +54,7 @@ export function createVoiceDecisionGate(classifiers: {
       activePreviewId = previewId;
       previewCreatedAt = Number.isFinite(createdAt) ? createdAt : Date.now();
       evidence = undefined;
+      classifiers.onObservation?.({ event: "prepare", previewCreatedAt, observedAt: Date.now() });
     },
 
     recordTranscript(input: {
@@ -62,7 +64,7 @@ export function createVoiceDecisionGate(classifiers: {
       authenticatedSpeaker: boolean;
       createdAt: number;
     }): void {
-      if (
+      const eligible = !(
         previewCreatedAt === undefined ||
         !input.isFinal ||
         input.authenticatedSpeaker !== true ||
@@ -72,17 +74,33 @@ export function createVoiceDecisionGate(classifiers: {
         // was part of the instruction that created the preview — is not a
         // decision about it.
         input.createdAt <= previewCreatedAt
-      ) {
-        return;
-      }
-      if (classifiers.isConfirmation(input.text)) evidence = "confirmed";
-      else if (classifiers.isCancellation(input.text)) evidence = "cancelled";
+      );
+      const decision = eligible
+        ? classifiers.isConfirmation(input.text) ? "confirmed"
+          : classifiers.isCancellation(input.text) ? "cancelled" : undefined
+        : undefined;
+      classifiers.onObservation?.({
+        event: "transcript",
+        observedAt: Date.now(),
+        createdAt: input.createdAt,
+        previewCreatedAt: previewCreatedAt ?? null,
+        isFinal: input.isFinal,
+        authenticatedSpeaker: input.authenticatedSpeaker,
+        afterPreview: previewCreatedAt !== undefined && input.createdAt > previewCreatedAt,
+        decision: decision ?? null,
+      });
+      if (decision) evidence = decision;
     },
 
     consume(previewId: string, decision: VoiceDecision): VoiceDecisionResult | undefined {
-      if (previewId !== activePreviewId) return undefined;
       const expected = decision === "confirm" ? "confirmed" : "cancelled";
-      if (evidence !== expected) return undefined;
+      const accepted = previewId === activePreviewId && evidence === expected;
+      classifiers.onObservation?.({
+        event: "consume", observedAt: Date.now(),
+        matchesPreview: previewId === activePreviewId,
+        evidence: evidence ?? null, accepted,
+      });
+      if (!accepted) return undefined;
       evidence = undefined;
       return expected;
     },

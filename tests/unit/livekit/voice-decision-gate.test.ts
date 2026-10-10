@@ -45,6 +45,28 @@ function createGate() {
   return createVoiceDecisionGate({ isConfirmation, isCancellation });
 }
 
+describe("voice gate diagnostics", () => {
+  it("observes refusal then delayed evidence without exposing spoken text", () => {
+    const observations: unknown[] = [];
+    const gate = createVoiceDecisionGate({
+      isConfirmation,
+      isCancellation,
+      onObservation: (event) => observations.push(event),
+    });
+    open(gate);
+    expect(gate.consume("preview-1", "confirm")).toBeUndefined();
+    record(gate, "sí, confirmo");
+    expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
+    expect(observations).toEqual([
+      expect.objectContaining({ event: "prepare", previewCreatedAt: PREVIEW_AT }),
+      expect.objectContaining({ event: "consume", accepted: false, evidence: null }),
+      expect.objectContaining({ event: "transcript", isFinal: true, authenticatedSpeaker: true, afterPreview: true, decision: "confirmed" }),
+      expect.objectContaining({ event: "consume", accepted: true, evidence: "confirmed" }),
+    ]);
+    expect(JSON.stringify(observations)).not.toContain("confirmo");
+  });
+});
+
 /** Opens the decision window: the preview now exists. */
 function open(
   gate: ReturnType<typeof createGate>,

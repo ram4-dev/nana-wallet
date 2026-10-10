@@ -146,7 +146,13 @@ async function runJob(
     throw new Error("LiveKit worker requires LIVE_VOICE_BINDING_PUBLIC_KEY.");
   await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
   const participant = await ctx.waitForParticipant();
-  const voiceDecisionGate = createVoiceDecisionGate({ isConfirmation, isCancellation });
+  const voiceDecisionGate = createVoiceDecisionGate({
+    isConfirmation,
+    isCancellation,
+    onObservation: (observation) => console.info(JSON.stringify({
+      type: "voice_confirmation_gate", pid: process.pid, ...observation,
+    })),
+  });
   const roomConversation = new RoomConversation({
     publicKey: config.publicKey,
     conversations: dependencies.conversations,
