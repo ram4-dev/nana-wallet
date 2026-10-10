@@ -109,6 +109,37 @@ export class ContactActionService {
     });
   }
 
+  /**
+   * The proposal a conversation currently has OPEN AND PUBLISHED, if any.
+   *
+   * Only used to make a refusal actionable: when a confirmation presents a stale
+   * or unknown proposal id, the tool answers with THIS handle so the next turn
+   * can confirm the right one instead of repeating the superseded id forever (the
+   * paste happens over HTTP, in another process, so the agent can never learn the
+   * new version by itself). It authorizes nothing by itself and it is deliberately
+   * narrower than `read`:
+   *
+   *  - `published_at IS NOT NULL` is required because only a delivered card may
+   *    ever open a window (§8.2);
+   *  - `expires_at > now()` is required because the consume predicate rejects an
+   *    expired row, so offering it would be a handle that cannot work.
+   *
+   * The partial unique index (§2.3) already allows at most one open row per
+   * conversation; the ORDER BY is belt-and-braces for the same guarantee.
+   */
+  public async readOpen(userId: string, conversationId: string): Promise<ContactActionProposal | null> {
+    return this.database.withUserTransaction(userId, async (client) => {
+      const result = await client.query<ProposalRow>(
+        `SELECT ${columns} FROM contact_action_proposals
+          WHERE user_id=$1 AND conversation_id=$2 AND status='open'
+            AND published_at IS NOT NULL AND expires_at > now()
+          ORDER BY version DESC, created_at DESC LIMIT 1`,
+        [userId, uuidSchema.parse(conversationId)],
+      );
+      return result.rows[0] ? map(result.rows[0]) : null;
+    });
+  }
+
   public async markPublished(userId: string, proposalId: string, proposalVersion: number): Promise<ContactActionProposal | null> {
     return this.database.withUserTransaction(userId, async (client) => {
       const result = await client.query<ProposalRow>(

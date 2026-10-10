@@ -96,6 +96,26 @@ export type VoiceContactActionDependencies = {
    * visual client to review the card on.
    */
   boundParticipantIdentity?: string;
+  /**
+   * The persisted authority for WHICH proposal is open right now: the same row
+   * the card renders (`status='open'`, published, unexpired, owner + conversation
+   * bound). The worker wires it from `ContactActionService.readOpen`.
+   *
+   * It exists because the review channel runs over HTTP in ANOTHER process: after
+   * a paste creates a new immutable version, the worker's in-memory window still
+   * points at the version the agent staged, and nothing in the session can learn
+   * the new one by itself. This is the server-owned source of that fact, and it is
+   * used for exactly two things: reporting the current handle on a refusal, and
+   * aligning the in-process window to the row the card actually shows.
+   *
+   * Optional so a caller that owns neither (a text-only wiring) keeps the
+   * fail-closed behaviour: without it the in-process window is the only authority
+   * and a refusal offers no handle.
+   */
+  currentOpenProposal?: (input: {
+    userId: string;
+    conversationId: string;
+  }) => Promise<{ proposalId: string; proposalVersion: number } | null>;
   /** Reliable delivery seam. The worker passes the agent participant's `publishData`. */
   publish: (payload: {
     bytes: Uint8Array;
@@ -190,16 +210,92 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
     },
 
     async confirm(input) {
-      const window = dependencies.arbiter?.current();
-      if (!dependencies.arbiter || !window) return { status: "confirmation_required", message: "No hay ninguna tarjeta esperando confirmación." };
-      const decision = await dependencies.arbiter.waitAndConsume({
+      const arbiter = dependencies.arbiter;
+      // The window the arbiter holds right now. A window of ANOTHER kind is never
+      // preempted (spec: a collision fails closed in both opening orders), so a
+      // contact confirmation cannot use a transfer window's evidence or slot.
+      const window = arbiter?.current();
+      if (window && window.kind !== "contact") {
+        return {
+          status: "conflict_active_window",
+          message: "Ya hay otra acción esperando tu confirmación. Cancelala o confirmala antes de continuar.",
+        };
+      }
+
+      // Which proposal is open is a server-owned fact, read from the persisted row.
+      // Without that lookup the in-process window is the only authority.
+      const current = dependencies.currentOpenProposal
+        ? await dependencies.currentOpenProposal({
+            userId: input.userId,
+            conversationId: input.conversationId,
+          })
+        : window
+          ? { proposalId: window.actionId, proposalVersion: window.version }
+          : null;
+
+      const matchesCurrent =
+        current !== null &&
+        current.proposalId === input.proposalId &&
+        current.proposalVersion === input.proposalVersion;
+      if (!matchesCurrent) {
+        // STALE FAILS CLOSED. A proposal that is not the current open one is never
+        // consumed — not even when its own window is still armed — and nothing is
+        // auto-confirmed in its place. The refusal carries the handle that IS
+        // open, so the next turn can confirm the right one instead of repeating a
+        // superseded id forever; with nothing open it says so and offers none.
+        return current
+          ? {
+              status: "confirmation_required",
+              message: `Esta propuesta cambió: la abierta es la versión ${current.proposalVersion} (${current.proposalId}). Confirmá esa.`,
+              currentProposalId: current.proposalId,
+              currentProposalVersion: current.proposalVersion,
+            }
+          : {
+              status: "confirmation_required",
+              message: "Esta propuesta ya no está disponible y no hay ninguna otra abierta para esta conversación; generá una nueva.",
+            };
+      }
+
+      if (!arbiter) {
+        return { status: "confirmation_required", message: "No hay ninguna tarjeta esperando confirmación." };
+      }
+
+      // The requested handle IS the current open proposal, so the in-process
+      // window is aligned to it. Only server-owned values open a window, and the
+      // move DROPS any evidence recorded for the superseded window: an affirmative
+      // spoken for another version never authorizes this one (spec: "evidence for
+      // another or stale preview MUST fail closed").
+      if (
+        !window ||
+        window.actionId !== current.proposalId ||
+        window.version !== current.proposalVersion
+      ) {
+        if (window) arbiter.clear(window.actionId);
+        arbiter.open({
+          kind: "contact",
+          actionId: current.proposalId,
+          userId: input.userId,
+          conversationId: input.conversationId,
+          version: current.proposalVersion,
+          createdAt: Date.now(),
+        });
+      }
+
+      const decision = await arbiter.waitAndConsume({
         kind: "contact",
         actionId: input.proposalId,
         userId: input.userId,
         version: input.proposalVersion,
         tool: "confirm_trusted_recipient_action",
       });
-      if (decision.status !== "consumed") return { status: "confirmation_required", message: "Todavía no tengo tu confirmación para esta tarjeta." };
+      if (decision.status !== "consumed") {
+        return {
+          status: "confirmation_required",
+          message: "Todavía no tengo tu confirmación para esta tarjeta.",
+          currentProposalId: input.proposalId,
+          currentProposalVersion: input.proposalVersion,
+        };
+      }
       const consumed = await dependencies.consume({
         userId: input.userId,
         conversationId: input.conversationId,
@@ -207,7 +303,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         proposalVersion: input.proposalVersion,
       });
       if (!consumed) return { status: "confirmation_required", message: "Esta propuesta ya no está disponible; generá una nueva." };
-      dependencies.arbiter.clear(input.proposalId);
+      arbiter.clear(input.proposalId);
       return { status: "consumed", message: "Listo, ya registré tu confirmación." };
     },
   };

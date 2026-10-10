@@ -182,6 +182,12 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
         return undefined;
       },
       arbiter: input.arbiter,
+      // The persisted authority for WHICH proposal is open: the same row the card
+      // renders, which is how a refusal can hand the model the current handle.
+      currentOpenProposal: async ({ userId: owner, conversationId: conversation }) => {
+        const open = await input.actions.readOpen(owner, conversation);
+        return open ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion } : null;
+      },
       consume: async (consumeInput) => {
         let consumed = false;
         await database.withUserTransaction(consumeInput.userId, async (client) => {
@@ -513,10 +519,102 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
     expect(published.find((row) => row.id === staged.proposalId)!.published_at).not.toBeNull();
   });
 
+  it("authorizes a published contact window from the REAL listener, and refuses a stale version", async () => {
+    const userId = await provisionUser();
+    const conversationId = randomUUID();
+    const { session, arbiter } = transferRig({ userId, conversationId });
+    const actions = new ContactActionService(database);
+    const { port, delivered } = contactPort({ actions, arbiter, boundParticipantIdentity: "participant-1" });
+
+    // The proposal is staged, its card is delivered, and the window holds the
+    // exact proposal version: the positive control for every refusal below.
+    const staged = await port.stage({
+      userId,
+      conversationId,
+      origin: "voice",
+      action: "create",
+      name: "Sofía",
+    });
+    expect(staged.status).toBe("staged");
+    expect(delivered).toEqual([
+      { topic: CONTACT_PROPOSAL_TOPIC, destinationIdentities: ["participant-1"], reliable: true },
+    ]);
+    const window = arbiter.current()!;
+    expect(window).toMatchObject({
+      kind: "contact",
+      actionId: staged.proposalId,
+      version: staged.proposalVersion,
+    });
+
+    // THE GAP THIS CLOSES: this affirmative is delivered through the real
+    // `attachVoiceDecisionTranscripts` listener for a CONTACT window. Before the
+    // fix the listener returned early on the missing transfer preview, so the
+    // speech never reached `arbiter.recordEvidence` and a card could never be
+    // authorized by voice. Same words, same after-window timestamp, only the
+    // speaker differs: a foreign speaker still arms nothing.
+    session.emit({
+      transcript: "sí",
+      isFinal: true,
+      speakerId: "uninvited-guest",
+      createdAt: window.createdAt + 1,
+    });
+    expect(
+      await port.confirm!({
+        userId,
+        conversationId,
+        proposalId: staged.proposalId!,
+        proposalVersion: staged.proposalVersion!,
+        source: "voice",
+      }),
+    ).toMatchObject({ status: "confirmation_required" });
+
+    // Positive control: the bound authenticated participant's final affirmative
+    // reaches the arbiter and consumes the exact proposal, once, through the real
+    // persisted one-use UPDATE.
+    session.emit({
+      transcript: "sí, dale",
+      isFinal: true,
+      speakerId: "participant-1",
+      createdAt: window.createdAt + 2,
+    });
+    const confirmed = await port.confirm!({
+      userId,
+      conversationId,
+      proposalId: staged.proposalId!,
+      proposalVersion: staged.proposalVersion!,
+      source: "voice",
+    });
+    expect(confirmed.status).toBe("consumed");
+    expect(arbiter.current()).toBeUndefined();
+    expect(await rows(userId, conversationId)).toEqual([
+      expect.objectContaining({ version: 1, status: "consumed" }),
+    ]);
+
+    // Replay: the same speech, and a fresh affirmative, cannot authorize the
+    // consumed proposal a second time, and no handle is offered for it.
+    session.emit({
+      transcript: "sí",
+      isFinal: true,
+      speakerId: "participant-1",
+      createdAt: window.createdAt + 3,
+    });
+    const replay = await port.confirm!({
+      userId,
+      conversationId,
+      proposalId: staged.proposalId!,
+      proposalVersion: staged.proposalVersion!,
+      source: "voice",
+    });
+    expect(replay.status).toBe("confirmation_required");
+    expect(replay).not.toHaveProperty("currentProposalId");
+    expect((await rows(userId, conversationId))[0]!.status).toBe("consumed");
+  });
+
   it("never derives an address from a spoken name, and a paste creates the new version", async () => {
     const userId = await provisionUser();
     const conversationId = randomUUID();
-    const arbiter = createConfirmationArbiter({ isConfirmation, isCancellation, boundedWaitMs: 0 });
+    // The real session rig: real listener, real gate, real arbiter (task 4.8's gap).
+    const { session, arbiter } = transferRig({ userId, conversationId });
     const actions = new ContactActionService(database);
     const { port } = contactPort({ actions, arbiter, boundParticipantIdentity: "participant-1" });
 
@@ -554,14 +652,18 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
     ]);
 
     // A spoken affirmative for the SUPERSEDED version cannot consume anything,
-    // even with an armed window still pointing at the old proposal id.
-    arbiter.recordEvidence({
-      text: "sí",
+    // even with an armed window still pointing at the old proposal id. The
+    // speech is delivered by the REAL listener: the worker's window still holds
+    // version 1 because the paste happened over HTTP, in another process.
+    const replacement = pasted.json().data as { proposalId: string; proposalVersion: number };
+    expect(await actions.markPublished(userId, replacement.proposalId, replacement.proposalVersion)).not.toBeNull();
+    const window = arbiter.current()!;
+    expect(window).toMatchObject({ actionId: staged.proposalId, version: 1 });
+    session.emit({
+      transcript: "sí",
       isFinal: true,
-      authenticatedSpeaker: true,
-      createdAt: Date.now() + 1_000,
-      userId,
-      conversationId,
+      speakerId: "participant-1",
+      createdAt: window.createdAt + 1,
     });
     const stale = await port.confirm!({
       userId,
@@ -570,13 +672,61 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       proposalVersion: 1,
       source: "voice",
     });
-    expect(stale.status).toBe("confirmation_required");
+    // Fails closed — a stale version is never confirmable — and the refusal
+    // carries the CURRENT open handle read from the persisted row, so the model
+    // is no longer stuck repeating the id it staged.
+    expect(stale).toMatchObject({
+      status: "confirmation_required",
+      currentProposalId: replacement.proposalId,
+      currentProposalVersion: 2,
+    });
+    expect((await rows(userId, conversationId))[1]!.status).toBe("open");
 
-    // The superseded window stayed consumed-but-open (see the handoff note at
-    // the foot of this file); close it so the next proposal can be reviewed.
-    arbiter.clear(staged.proposalId!);
+    // Recovery (live, in this session): the retry with the server-owned handle is
+    // accepted and the window moves to version 2. Evidence bound to the superseded
+    // window is DROPPED by that move — an affirmative spoken for version 1 can
+    // never authorize version 2 — so this attempt legitimately still asks.
+    const aligned = await port.confirm!({
+      userId,
+      conversationId,
+      proposalId: replacement.proposalId,
+      proposalVersion: replacement.proposalVersion,
+      source: "voice",
+    });
+    expect(aligned).toMatchObject({
+      status: "confirmation_required",
+      currentProposalId: replacement.proposalId,
+      currentProposalVersion: 2,
+    });
 
-    // Positive control: the new version's window consumes on the same evidence.
+    // With the window now on version 2, the user's confirmation for THAT version
+    // consumes the new proposal exactly once.
+    const alignedWindow = arbiter.current()!;
+    expect(alignedWindow).toMatchObject({
+      actionId: replacement.proposalId,
+      version: replacement.proposalVersion,
+    });
+    session.emit({
+      transcript: "sí",
+      isFinal: true,
+      speakerId: "participant-1",
+      createdAt: alignedWindow.createdAt + 1,
+    });
+    const recovered = await port.confirm!({
+      userId,
+      conversationId,
+      proposalId: replacement.proposalId,
+      proposalVersion: replacement.proposalVersion,
+      source: "voice",
+    });
+    expect(recovered.status).toBe("consumed");
+    expect((await rows(userId, conversationId)).map((row) => [row.version, row.status])).toEqual([
+      [1, "superseded"],
+      [2, "consumed"],
+    ]);
+
+    // Positive control: a fresh conversation stages and confirms from its own
+    // window and its own evidence.
     const freshConversationId = randomUUID();
     const fresh = await port.stage({
       userId,

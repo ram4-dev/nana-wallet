@@ -145,6 +145,57 @@ export function createVoiceDecisionGate(classifiers: {
       }
     },
 
+    /**
+     * Binds an incoming FINAL transcript to whichever decision window the
+     * arbiter currently holds, transfer or contact.
+     *
+     * THE BUG THIS FIXES
+     * ------------------
+     * The session listener used to require a transfer preview
+     * (`currentPreviewId()`) before recording anything. A trusted-recipient card
+     * has no transfer preview, so in a contact window every spoken "sí" was
+     * dropped here and never reached `arbiter.recordEvidence` — voice
+     * authorization of a contact card was impossible (spec: "Explicit
+     * confirmation is authorized by final user speech" — the session MUST record
+     * final user transcript evidence independently of model tool selection).
+     *
+     * WHAT DID NOT CHANGE
+     * -------------------
+     * Only WHICH window an incoming transcript is offered to is widened. Whether
+     * it authorizes is still decided entirely by the arbiter, which stamps the
+     * window it holds and matches `{kind, actionId, userId, version}`: final-only,
+     * authenticated-speaker-only, strictly after the window existed, one use per
+     * action, and never cross-kind. A stale window is not evidence for the
+     * current one — moving a window drops the evidence recorded for the old one.
+     */
+    recordDecisionTranscript(input: {
+      text: string;
+      isFinal: boolean;
+      authenticatedSpeaker: boolean;
+      createdAt: number;
+    }): void {
+      const window = classifiers.arbiter?.current();
+      if (classifiers.arbiter && window && window.kind !== "transfer") {
+        // A contact window has no preview id to match against, so the evidence is
+        // recorded against the window the arbiter holds. Every rule above is
+        // enforced there, exactly as it is for a transfer.
+        classifiers.arbiter.recordEvidence({
+          text: input.text,
+          isFinal: input.isFinal,
+          authenticatedSpeaker: input.authenticatedSpeaker,
+          createdAt: input.createdAt,
+          userId: classifiers.userId ?? "voice-unbound",
+          conversationId: classifiers.conversationId ?? "voice-unbound",
+        });
+        return;
+      }
+      // Transfer windows keep the delegation's behaviour untouched. Without an
+      // arbiter the gate's own transfer preview remains the only window.
+      const previewId = window?.actionId ?? activePreviewId;
+      if (!previewId) return;
+      this.recordTranscript({ previewId, ...input });
+    },
+
     consume(previewId: string, decision: VoiceDecision): VoiceDecisionResult | undefined {
       const expected = decision === "confirm" ? "confirmed" : "cancelled";
       const accepted =

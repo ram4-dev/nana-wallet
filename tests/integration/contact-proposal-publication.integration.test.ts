@@ -38,6 +38,8 @@ import {
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 const IDENTITY = "participant-1";
+/** A canonical Solana public key; the paste path re-validates this form. */
+const ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 
 suite("contact proposal publication gate", () => {
   let database: DatabaseClient;
@@ -86,6 +88,10 @@ suite("contact proposal publication gate", () => {
         await (overrides.publish?.(payload) ?? Promise.resolve());
       },
       arbiter,
+      currentOpenProposal: async ({ userId: owner, conversationId: conversation }) => {
+        const open = await actions.readOpen(owner, conversation);
+        return open ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion } : null;
+      },
       consume: async ({ userId, conversationId, proposalId, proposalVersion }) =>
         (await database.withUserTransaction(userId, (client) =>
           actions.consumeInTransaction(client, {
@@ -212,6 +218,86 @@ suite("contact proposal publication gate", () => {
     expect((await h.port.confirm!({ userId, conversationId, proposalId: staged.proposalId!, proposalVersion: 1, source: "voice" })).status)
       .toBe("consumed");
     expect((await actions.read(userId, staged.proposalId!))!.status).toBe("consumed");
+    expect(h.arbiter.current()).toBeUndefined();
+  });
+
+  it("turns a stale refusal into an actionable handle and recovers on the retry", async () => {
+    const userId = await provisionUser();
+    const conversationId = randomUUID();
+    const actions = new ContactActionService(database);
+    const h = seam(actions);
+
+    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    expect(staged.status).toBe("staged");
+    const window = h.arbiter.current()!;
+    expect(window).toMatchObject({ actionId: staged.proposalId, version: 1 });
+
+    // The user pastes the address in the review channel: a NEW immutable version
+    // supersedes version 1, and its card is delivered (the real endpoint stamps
+    // `published_at` only after a successful re-publication).
+    const replacement = await actions.replaceAddress(userId, {
+      proposalId: staged.proposalId!,
+      expectedProposalVersion: 1,
+      address: ADDRESS,
+    });
+    expect(replacement).not.toBeNull();
+    expect(await actions.markPublished(userId, replacement!.proposalId, replacement!.proposalVersion)).not.toBeNull();
+
+    // The worker's window still points at version 1: it never saw the HTTP paste.
+    expect(h.arbiter.current()).toMatchObject({ actionId: staged.proposalId, version: 1 });
+    h.arbiter.recordEvidence({ text: "dale", isFinal: true, authenticatedSpeaker: true, createdAt: window.createdAt + 1, userId, conversationId });
+
+    // The model confirms the id it staged. A stale version is never confirmable,
+    // and the refusal carries the row that IS open, read from the real table.
+    const stale = await h.port.confirm!({
+      userId,
+      conversationId,
+      proposalId: staged.proposalId!,
+      proposalVersion: 1,
+      source: "voice",
+    });
+    expect(stale).toMatchObject({
+      status: "confirmation_required",
+      currentProposalId: replacement!.proposalId,
+      currentProposalVersion: replacement!.proposalVersion,
+    });
+    // Fails closed for real: the superseded row and the new row are both untouched.
+    expect((await actions.read(userId, staged.proposalId!))!.status).toBe("superseded");
+    expect((await actions.read(userId, replacement!.proposalId))!.status).toBe("open");
+
+    // The retry with the server-owned handle is accepted and the window moves to
+    // version 2; the evidence bound to the superseded window is dropped by that
+    // move, so an affirmative spoken for version 1 never authorizes version 2.
+    const aligned = await h.port.confirm!({
+      userId,
+      conversationId,
+      proposalId: replacement!.proposalId,
+      proposalVersion: replacement!.proposalVersion,
+      source: "voice",
+    });
+    expect(aligned).toMatchObject({
+      status: "confirmation_required",
+      currentProposalId: replacement!.proposalId,
+      currentProposalVersion: replacement!.proposalVersion,
+    });
+    const alignedWindow = h.arbiter.current()!;
+    expect(alignedWindow).toMatchObject({
+      actionId: replacement!.proposalId,
+      version: replacement!.proposalVersion,
+    });
+
+    // With the window on version 2, the user's own confirmation consumes the new
+    // proposal exactly once, through the real conditional UPDATE.
+    h.arbiter.recordEvidence({ text: "dale", isFinal: true, authenticatedSpeaker: true, createdAt: alignedWindow.createdAt + 1, userId, conversationId });
+    const recovered = await h.port.confirm!({
+      userId,
+      conversationId,
+      proposalId: replacement!.proposalId,
+      proposalVersion: replacement!.proposalVersion,
+      source: "voice",
+    });
+    expect(recovered.status).toBe("consumed");
+    expect((await actions.read(userId, replacement!.proposalId))!.status).toBe("consumed");
     expect(h.arbiter.current()).toBeUndefined();
   });
 });

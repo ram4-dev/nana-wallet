@@ -17,14 +17,17 @@ export function attachVoiceDecisionTranscripts(
     speakerId: string | null;
     createdAt: number;
   }) => {
-    // Bind this incoming event to the exact preview active at listener time.
-    // The transcript payload has no persisted-preview identity of its own, so
-    // a sentinel would either reject all real speech or let an old event cross
-    // a preview boundary.
-    const previewId = gate.currentPreviewId();
-    if (!previewId) return;
-    gate.recordTranscript({
-      previewId,
+    // Offer this incoming event to whichever window the gate currently holds —
+    // transfer or contact (design §7.2: the arbiter owns "which kind may be
+    // authorized right now"). The gate binds it to that window's own identity;
+    // the transcript payload has no persisted-window identity of its own, so a
+    // sentinel would either reject all real speech or let an old event cross a
+    // window boundary. Requiring a transfer preview here dropped every contact
+    // affirmative and made voice authorization of a trusted-recipient card
+    // impossible (spec: "Explicit confirmation is authorized by final user
+    // speech" — final transcript evidence is recorded independently of model
+    // tool selection).
+    gate.recordDecisionTranscript({
       text: event.transcript,
       isFinal: event.isFinal,
       authenticatedSpeaker: isAuthenticatedSpeaker(event.speakerId),

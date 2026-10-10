@@ -198,6 +198,19 @@ async function runJob(
             destination_identities: payload.destinationIdentities,
           }),
         arbiter: confirmationArbiter,
+        // The persisted authority for which proposal is open. The review channel
+        // runs over HTTP in the backend process, so after a paste creates a new
+        // immutable version this is the only way the worker can learn its handle:
+        // it is what makes a stale refusal actionable instead of a dead end.
+        currentOpenProposal: async ({ userId, conversationId }) => {
+          const open = await new ContactActionService(dependencies.database).readOpen(
+            userId,
+            conversationId,
+          );
+          return open
+            ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion }
+            : null;
+        },
         // The persisted one-use consume. It runs as the single conditional
         // UPDATE in its own transaction here; the review endpoint (task 4.7)
         // runs the same call inside the contact mutation transaction's
