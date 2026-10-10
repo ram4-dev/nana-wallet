@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { DatabaseClient, Queryable } from "../../db/client.js";
 import { isValidSolanaAddress } from "../../memory/address.js";
+import { ContactActionProposalConflictError } from "./repository.js";
 
 const actionSchema = z.enum(["create", "edit", "remove"]);
 const originSchema = z.enum(["text", "voice", "screen"]);
@@ -86,7 +87,17 @@ export class ContactActionService {
          VALUES ($1,$2,$3,$4,$5,NULL,$6::uuid[],1,$7,$8,now() + ($9::bigint * interval '1 millisecond'),$10::jsonb)
          RETURNING ${columns}`,
         [input.userId, conversationId, action, contactId, input.expectedVersion ?? null, input.revokedGrantIds ?? [], proposalHash, origin, this.ttlMs, JSON.stringify(payload)],
-      );
+      ).catch((error: unknown) => {
+        // The partial unique index is the cross-process "one open proposal per
+        // conversation" rule (§2.3): two processes cannot both hold an open
+        // window, no matter which one wins the race.
+        if (uniqueIndex(error) === "contact_action_proposals_one_open_idx") {
+          throw new ContactActionProposalConflictError(
+            "This conversation already has an open trusted-recipient proposal.",
+          );
+        }
+        throw error;
+      });
       return map(result.rows[0]!);
     });
   }
@@ -131,16 +142,31 @@ export class ContactActionService {
     });
   }
 
-  /** Used only inside RecipientPolicyService's existing transaction hook. */
-  public async consumeInTransaction(client: Queryable, input: { userId: string; proposalId: string; proposalVersion: number; consumedByTool: string; consumedBySession: string }): Promise<ContactActionProposal | null> {
+  /**
+   * Used only inside RecipientPolicyService's existing transaction hook (the
+   * `L5` slot of design §1.2/§7.2). The conditional UPDATE is the whole
+   * authorization: id AND version AND owner AND `open` AND unconsumed AND
+   * unexpired. Two processes presenting the same evidence cannot both consume,
+   * because the row update is the serialization point. `confirmedUserTurn` is
+   * recorded for audit only; it is never a predicate here.
+   */
+  public async consumeInTransaction(client: Queryable, input: { userId: string; proposalId: string; proposalVersion: number; consumedByTool: string; consumedBySession: string; confirmedUserTurn?: number }): Promise<ContactActionProposal | null> {
     const result = await client.query<ProposalRow>(
-      `UPDATE contact_action_proposals SET status='consumed', consumed_at=now(), consumed_by_tool=$4, consumed_by_session=$5
+      `UPDATE contact_action_proposals SET status='consumed', consumed_at=now(), consumed_by_tool=$4, consumed_by_session=$5, confirmed_user_turn=COALESCE($6, confirmed_user_turn)
         WHERE id=$1 AND user_id=$2 AND version=$3 AND status='open' AND consumed_at IS NULL AND expires_at > now()
         RETURNING ${columns}`,
-      [uuidSchema.parse(input.proposalId), input.userId, input.proposalVersion, input.consumedByTool, input.consumedBySession],
+      [uuidSchema.parse(input.proposalId), input.userId, input.proposalVersion, input.consumedByTool, input.consumedBySession, input.confirmedUserTurn ?? null],
     );
     return result.rows[0] ? map(result.rows[0]) : null;
   }
+}
+
+/** The `23505` constraint name an insert broke, if it was one. */
+function uniqueIndex(error: unknown): string | undefined {
+  const candidate = error as { code?: unknown; constraint?: unknown };
+  return candidate.code === "23505" && typeof candidate.constraint === "string"
+    ? candidate.constraint
+    : undefined;
 }
 
 function hash(value: unknown): string {

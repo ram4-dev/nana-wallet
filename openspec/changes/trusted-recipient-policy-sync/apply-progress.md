@@ -4492,3 +4492,90 @@ The branch update was **refused by the harness** ("Gentle AI safety policy requi
 confirmation before this command"). No remote branch was created or updated by this run; the five
 commits stay local on `feat/solana-operational`, which is now 5 commits ahead of its remote at
 `984dd04`.
+
+### Task 4.5 — persist server-owned contact proposals and consume them exactly once in both processes
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`[x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/conversations/session-state.ts` | The text path's window: `PendingContactAction`, `stageContactAction`, `currentContactAction`, `clearContactAction`, `confirmContactAction`. The turn ordinal is derived from the session and is **not** a parameter. |
+| `src/wallet/policy/contact-actions.ts` | `consumeInTransaction` records `confirmed_user_turn` (audit only, `COALESCE($6, confirmed_user_turn)`); `stage` translates the `23505` on `contact_action_proposals_one_open_idx` into the typed `ContactActionProposalConflictError`. |
+| `tests/integration/contact-action-proposals.test.ts` | New. Six cases over two real connection pools. |
+
+#### What the unit delivers
+
+- **Exactly-once (design §7.2).** The conditional `UPDATE … WHERE id AND version AND user_id AND
+  status='open' AND consumed_at IS NULL AND expires_at > now()` is the whole authorization and runs in
+  the caller's mutation transaction (the `L5` slot via `RecipientMutationOptions.beforeCommit`). Two
+  concurrent real consumers produce exactly one winner; the loser re-evaluates the predicate against
+  the committed row and gets zero rows.
+- **The partial unique index as the second, independent guard.** `(user_id, conversation_id) WHERE
+  status='open'` refuses a second open proposal; asserted both through the typed service error and by
+  naming the index the database actually broke. Triangulated as *per conversation*, not global.
+- **Expiry is a predicate, not a courtesy.** A negative-TTL row stages successfully and cannot be
+  consumed, with a live row consuming first as the positive control.
+- **Immutable versions.** A corrected address is a NEW row identity (new `id`, `version + 1`,
+  `supersedes_id` = the old row, old row `status='superseded'`), so `(id, version)` is the consumable
+  tuple and a window opened for version 1 can never be consumed while version 2 is prepared. This is
+  the design's §8.3 reconciliation and it is why the one-open index does not fight the supersede.
+- **Text-path evidence is server-side only (design §7.5).** `confirmContactAction` takes no ordinal —
+  it is read from `userTurnCount(session)` — and a call whose ordinal is not strictly after proposal
+  creation is refused. A consumed proposal is never re-armed by a second call.
+- **No shared affirmative.** The text window (per `ConversationSession`) and the voice window (the
+  arbiter in the worker process) share no state: a voice affirmative with no open voice window is
+  dropped even while the text session holds evidence for the same proposal id, and a consumed voice
+  window authorizes nothing on the text path.
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED (honest) | The suite was written and run before the two production edits. **1 failed / 5 passed (6)**: `supersedes the old row when the review channel creates a new version` (`expected [ [ 1, 'superseded' ] ] to deeply equal [ [ 1, 'superseded' ], [ 2, 'open' ] ]`). This is the discovery that the replacement is a NEW row identity, not a new version on the same id — the test's expectation was wrong, not the code. The other five cases passed against pre-existing behaviour, so their RED is recorded as the mutation REDs below rather than claimed as a pre-edit RED. |
+| RED (mutation: the conditional consume) | Removing `status='open' AND consumed_at IS NULL AND expires_at > now()` from `consumeInTransaction` failed exactly `consumes a proposal exactly once under two concurrent real connections` and `refuses to consume an expired proposal`. The concurrent case failing is the proof that the two-connection race is real and that the predicate is the serializer. |
+| RED (mutation: the conflict translation) | Removing the `23505` → `ContactActionProposalConflictError` translation failed exactly `rejects a second open proposal for the same conversation` (the raw-index assertion still passed, which is why the typed error needed its own case). |
+| RED (mutation: the ordinal guard) | Removing `if (current <= pending.stagedUserTurn) return { status: 'confirmation_required' }` failed exactly `refuses a text turn ordinal that is not strictly after proposal creation` and the text half of `never shares an affirmative between the text and voice paths`. Both attributed by name. |
+| Mutation run summary | All three mutations applied together: **5 failed / 1 passed (6)**, every failure the intended case. Restored → **6 passed / 6**. |
+| GREEN | **1 file passed, 6 tests passed** (271 ms). |
+| TRIANGULATE | Added after GREEN: the one-open rule proven per conversation (a second conversation's proposal is accepted while the first is open); the supersede proven in both directions (old row terminal *and* new row open with its `supersedes_id`); the live-proposal consume asserted before the expired refusal; a new user turn asserted as the positive control before the ordinal refusal; the "never re-armed" pair. |
+| REFACTOR | None needed; `npm run lint` and `npm run typecheck` clean. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/contact-action-proposals.test.ts` (pre-edit) | **1 failed / 5 passed (6)** |
+| same, with the three mutations applied | **5 failed / 1 passed (6)**, attributed by name |
+| `npx vitest run tests/integration/contact-action-proposals.test.ts` | **1 file passed, 6 tests passed** |
+| `npx vitest run tests/unit/confirmation-arbiter.test.ts tests/unit/livekit/voice-decision-gate.test.ts tests/unit/livekit/voice-decision-gate-wait.test.ts tests/unit/livekit/voice-decision-transcripts.test.ts tests/unit/livekit/voice-decision-gate-arbiter-adapter.test.ts` | **5 files passed, 52 tests passed** — the arbiter and the transfer gate are unchanged |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts` (separated run) | **9 files passed, 119 tests passed** |
+| `npx vitest run tests/unit/policy-*.test.ts` (separated run) | **14 files passed, 174 tests passed** |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`, exit 0) |
+
+#### Executed vs. merely implemented
+
+Executed here: the exactly-once race under two real connections, the partial-index rejection (both
+surfaces), the expiry refusal, the supersede/new-version pair, the text ordinal refusal and the
+text/voice non-sharing — all against the real database. Not executed here: any live LiveKit session
+(that is 4.8's suite) and the HTTP review endpoint (4.7).
+
+#### Deviations from the design
+
+One, additive: `ContactActionService.stage` now raises the typed `ContactActionProposalConflictError`
+(a task 1.3 type) instead of leaking the driver error. The design describes the collision handler
+returning `conflict_active_window` at the arbiter level (§7.4) and says nothing about the service
+surface; mapping the index violation to the existing typed error is what lets the caller answer with
+that status instead of a 500. No predicate, index or authority was added.
+
+#### Workload / PR boundary
+
+One commit: the two production files plus the integration suite, `tasks.md` and this entry. Inside the
+parent-assigned `PR 6` slice (tasks 4.1–4.9). No push beyond the assigned branch, no PR.
+
+#### Commit
+
+`feat(policy): persist and consume contact proposals exactly once` — see the report envelope for the SHA.
