@@ -113,7 +113,7 @@ describe('recipient memory tool contracts', () => {
     await expect(tools.write_user_memory({ confirmationId: expiring.confirmationId })).resolves.toEqual({ status: 'confirmation_expired' });
   });
 
-  it('RED: rejects invalid EVM addresses before staging and invalid stored values before resolution', async () => {
+  it('rejects invalid addresses before staging and invalid stored values before resolution', async () => {
     const session = createSession();
     const invalid = 'not-an-evm-address';
     const memoryService = service({ getRecipientForVersion: vi.fn().mockResolvedValue({ id: RECIPIENT_ID, version: 3, address: invalid }) });

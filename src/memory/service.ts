@@ -188,7 +188,7 @@ export class RecipientMemoryService {
   public async writeConfirmed(userId: string, draft: RecipientMemoryWriteDraft): Promise<RecipientMemoryWriteResult> {
     if (draft.kind === 'recipient') {
       if (!isValidRecipientAddress(draft.address, 'solana-devnet')) {
-        throw new Error('Recipient address must be a valid EVM address.');
+        throw new Error('Recipient address must be a canonical Solana address.');
       }
       const embedding = await this.embeddings.embed(recipientEmbeddingText(draft.name, draft.description));
       const recipient = await this.repository.insertRecipient(userId, {

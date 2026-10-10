@@ -173,7 +173,7 @@ describe('recipient-memory ranking', () => {
     },
   );
 
-  it('RED: rejects an invalid address before it reaches the repository and again when resolving a legacy record', async () => {
+  it('rejects an invalid address before it reaches the repository and again when resolving a legacy record', async () => {
     const memoryRepository = repository({
       getRecipientForVersion: vi.fn().mockResolvedValue({ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', version: 1, address: 'not-an-evm-address' }),
     });
@@ -184,7 +184,7 @@ describe('recipient-memory ranking', () => {
     });
 
     await expect(memory.writeConfirmed(USER_A, { kind: 'recipient', name: 'Lucas', description: 'mi nieto', address: 'not-an-evm-address' }))
-      .rejects.toThrow('valid EVM address');
+      .rejects.toThrow('Recipient address must be a canonical Solana address.');
     expect(memoryRepository.insertRecipient).not.toHaveBeenCalled();
     await expect(memory.getRecipientForVersion(USER_A, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1)).resolves.toBeUndefined();
   });
