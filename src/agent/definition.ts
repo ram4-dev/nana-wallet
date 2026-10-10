@@ -807,7 +807,12 @@ async function voicePreviewTransfer(
   try {
     const playout = await context.speakPreview(readback);
     context.voiceDecisionGate.completeNarration(previewId, { interrupted: playout.interrupted });
-  } catch {
+  } catch (error) {
+    // A read-back that could not be spoken is NOT an interruption the user
+    // caused, so it is logged as the fault it is and then reported as one.
+    // Swallowing it here is what let an unspokable preview look like a user
+    // talking over the assistant, and refuse every confirmation forever.
+    console.error("the transfer preview could not be read aloud", error);
     context.voiceDecisionGate.completeNarration(previewId, { interrupted: true });
   }
   return {
