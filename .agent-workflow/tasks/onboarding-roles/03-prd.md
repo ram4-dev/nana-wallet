@@ -1,6 +1,6 @@
 # PRD: onboarding de persona usuaria y responsable
 
-Estado: **PRD completo propuesto; pendiente de aprobación**. Fecha: 2026-10-10.
+Estado: **PRD completo aprobado**. Fecha: 2026-10-10.
 
 ## Persona y problema
 
@@ -80,7 +80,7 @@ Decision / allowed mutation: aprobar comportamiento de producto; luego elaborar 
 Explicit exclusions: implementación, cambios de políticas, fondos y credenciales.
 Owning artifact / revision or hash: este PRD, revisión 3.
 Decision owner: Ramiro.
-Approved by / trusted identity: —
-Approved at: —
-Status: proposed
+Approved by / trusted identity: Ramiro, respuesta directa “Sí, apruebo el PRD completo (recomendado)” a la pregunta sobre esta revisión.
+Approved at: 2026-10-10.
+Status: approved
 Invalidated by: —
