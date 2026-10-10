@@ -53,6 +53,11 @@ export const ISOLATED_PROVIDER_ENV_KEYS = [
   "PRIVY_AUTHORIZATION_PUBLIC_KEY",
   "PRIVY_AUTHORIZATION_KEY_QUORUM_ID",
   "PRIVY_API_BASE_URL",
+  // A fixture must not retain a live sidecar signing capability either.
+  "PRIVY_SIGNER_URL",
+  "PRIVY_SIGNER_TOKEN",
+  "PRIVY_SIGNER_KEY_FILE",
+  "PRIVY_SIGNER_TIMEOUT_MS",
   // Live voice binding + LiveKit
   "LIVE_VOICE_ENABLED",
   "LIVE_VOICE_BINDING_PRIVATE_KEY",
