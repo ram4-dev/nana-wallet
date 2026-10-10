@@ -37,6 +37,24 @@ The `.sol`/`.sns` names are NFTs and can be transferred, so `name → address` i
 - **v3 → v4 is not backward compatible.** Read the migration notes before adding the dependency.
 - **Devnet has no domains.** The devnet module is `import { devnet } from "@bonfida/spl-name-service"`, and its bindings require existing devnet domains; `registerDomainNameV2` registers one for testing. **Testing this requires registering our own devnet domain first.**
 
+## Registered devnet names (live, reusable for tests)
+
+Both were registered through the legacy registrar and verified by decoding the name account header on-chain:
+
+| Name | Resolves to | Name account (PDA) | Registered with |
+| --- | --- | --- | --- |
+| **`sophie.sns`** | `3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2` (Sophie's own keypair) | `ELMUa8M5cqHMzF12WgbyGQu28Kdm39fD2fSkNxBGvCew` | tx `3pwsxGLusetLSfdQ7LakbKJyAKnwLuWsK6XVU16VBqqyYtdWFWruToVYSQWKHP9Y133eQronVKMWVXa3CcbTE3jD` |
+| `nanatest.sns` | `BsNFJHm85Yk2hcugJG16KFm4bfdB5DwnTqfoSW4BuLFv` (the payer) | `6Kcihb6KARkTtrnps8TbPp7H3b69jFxEe5i4hUrxkBps` | tx `4gZ9rJcY2Lj64rVqzEM9wXYrwznkJ1DXbhQo1GNKvHtnhswCpgBxoa7zrP2NrZYSo7TDuCMHKpizH2T3oz2oiBGH` |
+
+Both have `parentName = 5eoDkP6vCQBXqDV9YN2NdUs3nmML3dMRNmEYpiyVNBm2` (the devnet root), so they are genuine TLD children.
+
+**How the split works, which matters for the design:** with the paid registrar the **buyer becomes the name owner**. So the name's target address is chosen by *who pays*.
+
+- `sophie.sns` was bought **by Sophie's own keypair** (`3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2`, funded from the payer), so the name resolves to Sophie — the semantically correct arrangement for a demo: a third party's name pointing at the third party's address, not at ours.
+- `nanatest.sns` was bought by the payer, so it resolves to the payer.
+
+Local keypairs (both gitignored under `.secrets/`): `sns-devnet-payer.json` (holds ~4.9 devnet SOL) and `sophie-devnet.json` (Sophie's identity).
+
 ## Probe results (read-only, no dependency installed)
 
 Run against the live cluster with the already-present `@solana/web3.js`, no install:
