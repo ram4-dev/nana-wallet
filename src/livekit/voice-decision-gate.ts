@@ -1,6 +1,18 @@
 export type VoiceDecision = "confirm" | "cancel";
 export type VoiceDecisionResult = "confirmed" | "cancelled";
 
+/**
+ * Whether the active preview's read-back has played in full.
+ *
+ * `interrupted` is not a dead end, it is a REQUEST TO RE-READ: the user did not
+ * hear the preview, so no decision can bind to it until the server reads it
+ * again. That fact used to be invisible — the gate simply refused, forever, and
+ * nothing could tell the difference between "the user has not answered yet" and
+ * "this preview can never be confirmed". A user who spoke over the read-back
+ * (the most natural thing to do) was stuck with no way forward.
+ */
+export type VoiceReadbackStatus = "none" | "interrupted" | "completed";
+
 export type VoiceDecisionGate = ReturnType<typeof createVoiceDecisionGate>;
 
 /**
@@ -13,7 +25,7 @@ export function createVoiceDecisionGate(classifiers: {
   isCancellation(text: string): boolean;
 }) {
   let activePreviewId: string | undefined;
-  let armed = false;
+  let readback: VoiceReadbackStatus = "none";
   let narrationCompletedAt: number | undefined;
   let evidence: VoiceDecisionResult | undefined;
 
@@ -21,22 +33,30 @@ export function createVoiceDecisionGate(classifiers: {
     prepare(previewId: string): void {
       if (!previewId) {
         activePreviewId = undefined;
-        armed = false;
+        readback = "none";
         narrationCompletedAt = undefined;
         evidence = undefined;
         return;
       }
       activePreviewId = previewId;
-      armed = false;
+      readback = "none";
       narrationCompletedAt = undefined;
       evidence = undefined;
     },
 
     completeNarration(previewId: string, result: { interrupted: boolean }): void {
       if (activePreviewId !== previewId) return;
-      armed = !result.interrupted;
+      readback = result.interrupted ? "interrupted" : "completed";
       narrationCompletedAt = result.interrupted ? undefined : Date.now();
       evidence = undefined;
+    },
+
+    /**
+     * Why the pending preview cannot be decided yet. `interrupted` means the
+     * read-back has to happen again; `none` means it never played.
+     */
+    readbackStatus(previewId: string): VoiceReadbackStatus {
+      return previewId === activePreviewId ? readback : "none";
     },
 
     recordTranscript(input: {
@@ -47,7 +67,7 @@ export function createVoiceDecisionGate(classifiers: {
       createdAt: number;
     }): void {
       if (
-        !armed ||
+        readback !== "completed" ||
         !input.isFinal ||
         input.authenticatedSpeaker !== true ||
         narrationCompletedAt === undefined ||
@@ -63,16 +83,16 @@ export function createVoiceDecisionGate(classifiers: {
     consume(previewId: string, decision: VoiceDecision): VoiceDecisionResult | undefined {
       if (previewId !== activePreviewId) return undefined;
       const expected = decision === "confirm" ? "confirmed" : "cancelled";
-      if (!armed || evidence !== expected) return undefined;
+      if (readback !== "completed" || evidence !== expected) return undefined;
       evidence = undefined;
-      armed = false;
+      readback = "none";
       return expected;
     },
 
     clear(previewId: string): void {
       if (previewId !== activePreviewId) return;
       activePreviewId = undefined;
-      armed = false;
+      readback = "none";
       narrationCompletedAt = undefined;
       evidence = undefined;
     },

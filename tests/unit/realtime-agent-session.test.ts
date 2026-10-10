@@ -255,8 +255,62 @@ describe("OpenAI realtime agent session composition", () => {
     expect(persona).toContain(
       'A "yes" answering any other question of yours is NOT a transfer confirmation',
     );
-    // A refusal must name the way forward instead of dead-ending the user.
-    expect(persona).toContain("call send_token instead");
+  });
+
+  /**
+   * The user's own words: "la confirmacion no tendria que ser tan exacta".
+   * The prompt used to demand "an exact confirmation such as yes or sí", and
+   * the classifier behind it demanded an exact sentence, so an ordinary "dale"
+   * was refused with no way to find out why. The prompt now names the ordinary
+   * answers, and the classifier accepts them.
+   */
+  it("tells the model that ordinary short agreements count as confirmation", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    createAgentSession({ tools: [] });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    expect(persona).toContain('"sí", "dale", "listo", "ok", "confirmo" and the like all count');
+    expect(persona).not.toMatch(/exact confirmation such as/iu);
+    // A plain "no" cancels: it did not, because it was not in any list.
+    expect(persona).toMatch(/cancel_transfer: call it when the user declines the pending transfer, including a plain "no"/iu);
+  });
+
+  /**
+   * The user's other complaint: "Nani esta dando de mas informacion sobre las
+   * tools y demas". The prompt used to enumerate internal error codes and tell
+   * the model to narrate them, which is an invitation to talk about the
+   * machinery to someone who only asked to move money.
+   */
+  it("forbids the model from talking about tools, codes and internal states", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    createAgentSession({ tools: [] });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    expect(persona).toMatch(
+      /never mention tools, codes, servers, systems, networks, providers or internal states/iu,
+    );
+    // No internal error vocabulary in a prompt that is spoken to the user.
+    for (const internal of ['policy_rejected', 'recipient_revalidation_required', 'stale_preview', 'wallet_unavailable']) {
+      expect(persona, internal).not.toContain(internal);
+    }
+  });
+
+  /**
+   * The recovery the interrupted read-back needs. Without it the user hits a
+   * loop: the read-back is interrupted, the decision can never be consumed, and
+   * the model is forbidden from reading the preview again.
+   */
+  it("allows one re-read when a confirmation is refused for an incomplete read-back", () => {
+    process.env.OPENAI_API_KEY = "test-key";
+
+    createAgentSession({ tools: [] });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    expect(persona).toMatch(
+      /except when a confirmation is refused because the transfer was not read out in full, in which case call send_token again to read it/iu,
+    );
   });
 
   it("spends the greeting even when the provider rejects it, so it cannot loop", () => {

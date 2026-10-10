@@ -812,38 +812,68 @@ async function voicePreviewTransfer(
   }
   return {
     ...output,
-    message: language === 'es'
-      ? 'La vista previa ya se leyó en voz alta. Esperá la respuesta explícita sin repetirla.'
-      : 'The server has read the preview aloud. Wait for the user\'s explicit decision without repeating it.',
+    // Internal note to the model, never spoken: this string is a tool RESULT,
+    // so it reaches the model and must read as an instruction to it. The user
+    // already heard the preview from the server's own voice, and repeating it
+    // here is what made the assistant narrate the machinery.
+    message: 'INTERNAL - the preview was just read aloud by the assistant. '
+      + 'Do not speak this note, do not repeat the read-back, and wait for the user to answer.',
     recipientName: recipient.name,
     estimatedFee: fee,
     network,
   };
 }
 
-/** Ported decideTransfer logic from create-realtime-tools.ts. */
-async function decideTransfer(
-  decision: 'confirm' | 'cancel',
-  context: WalletAgentContext,
-): Promise<RealtimeVoiceToolResult> {
-  if (!context.voiceService || !context.voiceConversations) {
-    return { status: 'error', code: 'wallet_unavailable', message: 'The wallet service is unavailable.' };
+  /**
+   * User-facing copy for the voice decision gate, in the session language.
+   *
+   * These lines are SPOKEN to the user, so they say what happened and what to
+   * do next, in plain words. They never name a tool, a code or an internal
+   * state: the user asked for money to move, not for a status report.
+   */
+  function decisionCopy(language: 'es' | 'en') {
+    return language === 'es'
+      ? {
+          noPreview: 'Todavía no hay ninguna transferencia preparada. Decime a quién y cuánto querés mandarle.',
+          interrupted: 'No llegué a leerte la transferencia completa. Te la leo de nuevo así la escuchás entera.',
+          notYet: 'Primero te la leo completa y después me decís si la confirmás o la cancelás.',
+        }
+      : {
+          noPreview: 'There is no transfer ready yet. Tell me who to pay and how much.',
+          interrupted: 'I did not get to read you the whole transfer. Let me read it again so you hear all of it.',
+          notYet: 'Let me read you the whole transfer first, and then tell me whether to confirm or cancel.',
+        };
   }
-  const conversations = context.voiceConversations;
-  const snapshot = await conversations.get(context.userId, context.conversationId);
-  const previewId = snapshot?.pendingTransfer?.previewId;
-  if (!previewId) {
-    return { status: 'error', code: 'stale_preview', message: 'There is no pending transfer to confirm or cancel.' };
-  }
-  if (!context.voiceDecisionGate?.consume(previewId, decision)) {
-    return {
-      status: 'error',
-      code: 'confirmation_required',
-      message: decision === 'confirm'
-        ? 'Please explicitly confirm the current preview after hearing it.'
-        : 'Please explicitly cancel the current preview after hearing it.',
-    };
-  }
+
+  /** Ported decideTransfer logic from create-realtime-tools.ts. */
+  async function decideTransfer(
+    decision: 'confirm' | 'cancel',
+    context: WalletAgentContext,
+  ): Promise<RealtimeVoiceToolResult> {
+    if (!context.voiceService || !context.voiceConversations) {
+      return { status: 'error', code: 'wallet_unavailable', message: 'The wallet service is unavailable.' };
+    }
+    const conversations = context.voiceConversations;
+    const snapshot = await conversations.get(context.userId, context.conversationId);
+    const previewId = snapshot?.pendingTransfer?.previewId;
+    const language = snapshot?.language ?? 'en';
+    if (!previewId) {
+      return { status: 'error', code: 'stale_preview', message: decisionCopy(language).noPreview };
+    }
+    if (!context.voiceDecisionGate?.consume(previewId, decision)) {
+      // An interrupted read-back is NOT a missing answer: the user never heard
+      // the preview, so no phrase can work until it is read again. Reporting it
+      // as an ordinary "confirm again" sent the user into a loop they could not
+      // escape, repeating a phrase that could never succeed.
+      if (context.voiceDecisionGate?.readbackStatus(previewId) === 'interrupted') {
+        return { status: 'error', code: 'readback_interrupted', message: decisionCopy(language).interrupted };
+      }
+      return {
+        status: 'error',
+        code: 'confirmation_required',
+        message: decisionCopy(language).notYet,
+      };
+    }
   let result: ConversationTurnResult | undefined;
   const iterable = context.voiceService.resolveDecision({
     conversationId: context.conversationId,

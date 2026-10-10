@@ -150,12 +150,17 @@ describe("fake LiveKit voice authorization E2E", () => {
     expect(worker.service.resolveDecision).not.toHaveBeenCalled();
   });
 
-  it("does not authorize after interrupted narration", async () => {
+  it("does not authorize after interrupted narration, and reports why so it can be re-read", async () => {
     const worker = harness({ interrupted: true });
     await worker.send();
     worker.speakDecision("sí");
-    expect(await worker.confirm()).toMatchObject({ status: "error", code: "confirmation_required" });
+    // The refusal still happens — no authorization, nothing dispatched. What is
+    // new is that the refusal explains itself: "confirmation_required" made an
+    // interrupted read-back look like a missing answer, so the caller kept asking
+    // the user to repeat a phrase that could never work.
+    expect(await worker.confirm()).toMatchObject({ status: "error", code: "readback_interrupted" });
     expect(worker.service.resolveDecision).not.toHaveBeenCalled();
+    expect(worker.dispatches()).toBe(0);
   });
 
   it("cancels only the active preview and never dispatches a transfer", async () => {

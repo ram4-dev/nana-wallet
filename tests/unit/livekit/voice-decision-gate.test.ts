@@ -133,6 +133,69 @@ describe("voice decision gate — arms only after uninterrupted narration", () =
   });
 });
 
+describe("voice decision gate — reports an interrupted read-back so it can be re-read", () => {
+  it("reports none, interrupted and completed across the read-back lifecycle", () => {
+    const gate = createGate();
+    expect(gate.readbackStatus("preview-1")).toBe("none");
+
+    gate.prepare("preview-1");
+    expect(gate.readbackStatus("preview-1")).toBe("none");
+
+    gate.completeNarration("preview-1", { interrupted: true });
+    expect(gate.readbackStatus("preview-1")).toBe("interrupted");
+
+    gate.completeNarration("preview-1", { interrupted: false });
+    expect(gate.readbackStatus("preview-1")).toBe("completed");
+  });
+
+  it("reports none for an unknown or replaced preview, never another preview's state", () => {
+    const gate = createGate();
+    gate.prepare("preview-1");
+    gate.completeNarration("preview-1", { interrupted: true });
+
+    expect(gate.readbackStatus("other-preview")).toBe("none");
+
+    gate.prepare("preview-2");
+    expect(gate.readbackStatus("preview-1")).toBe("none");
+    expect(gate.readbackStatus("preview-2")).toBe("none");
+  });
+
+  /**
+   * The distinction the caller needs: "the user has not answered yet" and "this
+   * preview can never be confirmed" must not look the same. A user who speaks
+   * over the read-back gets an interruption, and the recovery is to read it
+   * again — not to ask the user to repeat a phrase that can never work.
+   */
+  it("distinguishes an interrupted read-back from a missing decision", () => {
+    const interrupted = createGate();
+    interrupted.prepare("preview-1");
+    interrupted.completeNarration("preview-1", { interrupted: true });
+    record(interrupted, "sí");
+    expect(interrupted.consume("preview-1", "confirm")).toBeUndefined();
+    expect(interrupted.readbackStatus("preview-1")).toBe("interrupted");
+
+    const completed = createGate();
+    arm(completed);
+    expect(completed.consume("preview-1", "confirm")).toBeUndefined();
+    expect(completed.readbackStatus("preview-1")).toBe("completed");
+  });
+
+  it("clears the interrupted state once the preview is decided or replaced", () => {
+    const gate = createGate();
+    gate.prepare("preview-1");
+    gate.completeNarration("preview-1", { interrupted: true });
+    gate.clear("preview-1");
+    expect(gate.readbackStatus("preview-1")).toBe("none");
+
+    gate.prepare("preview-1");
+    gate.completeNarration("preview-1", { interrupted: false });
+    record(gate, "sí");
+    expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
+    // A consumed decision leaves the preview with no read-back to report.
+    expect(gate.readbackStatus("preview-1")).toBe("none");
+  });
+});
+
 describe("voice decision gate — final transcripts only, ordering enforced", () => {
   it("ignores interim transcripts even when the text is an exact phrase", () => {
     const gate = createGate();

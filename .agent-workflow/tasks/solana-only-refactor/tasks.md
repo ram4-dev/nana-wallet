@@ -443,3 +443,77 @@ A prompt is a specification, and an over-specified branch is a defect like any
 other. Asking twice felt safer and cost the whole flow: the extra question was a
 second place a "yes" could land. When two instructions can be satisfied by the
 same user answer, one of them is wrong.
+
+## Seventh defect: confirmation was a spelling test
+
+Found because the user said so: *"la confirmacion no tendria que ser tan
+exacta"*. `6b6a953` covers three defects that made voice confirmation unusable.
+
+### 7a. The phrase list was closed
+
+`isConfirmation` matched a **closed set of exact sentences**. Once the preview
+worked, the preview was read aloud and the user answered "dale" — refused.
+"listo", "ok", "perfecto", "de una", "confirmá" — all refused. And there was
+no way for the user to discover which word the system wanted, so the flow simply
+looked broken.
+
+Cancelling had the same defect: a plain **"no" matched nothing**, so the user
+could not cancel either.
+
+Proven in the container:
+
+```
+FALLA | dijo "dale"        | narration completa
+FALLA | dijo "listo"       | narration completa
+FALLA | dijo "confirmá"    | narration completa
+FALLA | dijo "de una"      | narration completa
+```
+
+The relationship that matters is not *"matches a known sentence"*. It is
+*"carries a polarity word and NOTHING ELSE"*. The rule is now compositional:
+every token must be polarity or filler, and at least one must be polarity. That
+accepts how people actually agree while keeping the load-bearing safety
+property, because **"Sí, envíale uno a Lucas, confirmo." still fails the rule**
+— it carries an amount and a recipient, so it is a new instruction, not a
+decision about the preview the user just heard.
+
+### 7b. An interrupted read-back was a dead end
+
+If the user spoke over the read-back — the most natural thing to do —
+`armed = !interrupted` made the gate refuse **forever**, and the refusal was
+indistinguishable from "the user has not answered yet". The caller kept asking
+the user to repeat a phrase that could never work, and the prompt *forbade*
+re-reading the preview. A loop with no exit.
+
+The gate now reports `readbackStatus` (`none` / `interrupted` / `completed`), and
+the refusal names the recovery: read the preview again. The safety property is
+unchanged — an interrupted read-back still authorizes nothing.
+
+### 7c. The assistant narrated the machinery
+
+The user: *"Nani esta dando de mas informacion sobre las tools y demas"*. Three
+sources fed that:
+
+1. The prompt **enumerated internal error codes** (`policy_rejected`,
+   `recipient_revalidation_required`, `stale_preview`) and told the model to
+   narrate them.
+2. The read-back completion message was phrased as speech about "the server".
+3. The decision refusals were English meta copy ("Please explicitly confirm the
+   current preview after hearing it") **on a Spanish session**.
+
+Fixed in all three places: codes removed from the prompt, an explicit "never
+mention tools, codes, servers, systems, networks, providers or internal states"
+rule, the tool result marked `INTERNAL` so it cannot pass for speech, and the
+refusals now say what happened to the transfer and what to do next, in the
+session language.
+
+### The baseline caught the fix's own regressions
+
+The first attempt at 7a **rejected "confirm the transfer" and "I confirm"** —
+two phrases a real caller uses. That was caught not by reading the diff but by
+comparing the full suite against the baseline name for name: four
+`conversation-service` tests and one simulation test failed immediately. The
+fix for that was adding the articles and pronouns (`the`, `la`, `el`, `i`, `la
+transferencia`) as filler, which is exactly the distinction the rule needs:
+words that point AT the pending transfer are filler; words that introduce new
+content (`5`, `Lucas`, `uno`) fail the rule.
