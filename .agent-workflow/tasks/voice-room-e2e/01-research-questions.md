@@ -13,6 +13,7 @@ RQ7 y RQ10 abiertas: bloquean el outline, no el spike.
 | RQ6 | ¿Cómo se captura el audio del agente y se afirma sobre él? | **CERRADA** | `AudioStream(track)` → frames PCM. Con `TrackKind.KIND_AUDIO` (numérico) como filtro. |
 | RQ7 | ¿Qué exige exactamente `gate.bind` para aceptar? | **CERRADA** | Cuatro condiciones. Ver abajo. |
 | RQ8 | ¿Puede el caller disparar barge-in de verdad? | **ABIERTA** | El worker registra un segundo RPC, `interrupt_agent`. Hay que ver si el harness debe usarlo o si el barge-in se logra publicando audio encima. |
+| RQ6b | ¿Cómo se resuelve el wallet del usuario para el fixture de voz? | **CERRADA** | Sembrando una fila `ready` en `user_wallets` para `(user_id, chain_family='solana')`. `core.wallet` es fail-closed, no un fixture: apagar las claves Privy **no** cae a fixture. Ver `02-research.md` §10. |
 | RQ9 | ¿El runner es vitest, evalite, o comando propio? | **DECIDIDA** | vitest (decisión del humano). El harness es un test de sistema, no un eval con score. |
 | RQ10 | ¿Cómo se evita que el test se vuelva flaky por tiempos de turno del modelo S2S? | **ABIERTA** | Hay que definir espera por silencio/fin de turno en vez de `sleep` fijo, o los tests van a ser inestables en CI. |
 

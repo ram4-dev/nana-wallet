@@ -133,7 +133,54 @@ Fixture mínimo derivado: usuario con id conocido → conversación de ese usuar
 id conocido → sin lease activo → token con `sub = userId` y ese
 `conversationId`.
 
-## 10. Antecedente que no hay que duplicar
+## 10. El bloqueo real del fixture: la cadena de wallet (resuelto a medias)
+
+El spike de Slice 2 pasa (bind `{ok:true}`, audio de Nani capturado), pero
+`get_balance` falla, así que Nani dice que el saldo no está disponible en vez de
+leerlo. Se investigó la cadena completa y **el diagnóstico inicial era
+incorrecto**. Vale escribirlo porque el camino obvio empeora las cosas.
+
+### Lo que NO funciona
+
+`createWorkerDependencies` (`src/runtime/dependencies.ts:199`) llama
+`createCoreDependencies(environment)` **sin inyectar wallet**. Sin inyección,
+`core.wallet` es `createUnavailableWalletProvider`, es decir un provider
+fail-closed, **no un fixture**. El código es explícito: *"A caller that injects
+neither gets the fail-closed createUnavailableWalletProvider, never a silent
+fixture."*
+
+Consecuencia: apagar `PRIVY_APP_ID` / `PRIVY_VERIFICATION_KEY` para forzar el
+camino fixture **no cae a un wallet fixture** — deja `walletForUser` indefinido y
+`core.wallet` fail-closed. Se probó: el error pasó de *"no ready Solana wallet
+binding"* a *"No wallet provider was injected"*. Se revirtió.
+
+### Lo que sí hace falta
+
+- Con los inputs Privy **presentes** (`privyIdentityConfigured` true,
+  `src/runtime/dependencies.ts:111`), el worker resuelve el camino por usuario:
+  `createSolanaWalletForUser` (`src/wallet/solana-user-wallet.ts:48`).
+- Ese resolver **no llama a Privy**: lee la DB. Exige exactamente una fila
+  `ready` en `user_wallets` para `(user_id, chain_family='solana')`.
+  Schema en `006_embedded_wallets`.
+- El resolver tiene un **seam de inyección**: `bindLiveKitWalletForUser(walletForUser, binding.userId)`
+  en `runJob`, más el `createCoreDependencies(env, {wallet, walletReads})`.
+
+**O sea: es un problema de fixture (falta una fila), no de credenciales.** El
+`.env` con Privy no es la causa raíz de este error; la causa es que no sembramos
+`user_wallets`.
+
+### Opciones para arreglarlo
+
+1. **Sembrar `user_wallets`** con una fila `ready` para el usuario del fixture.
+   Mantiene el camino real y no toca código ni compose.
+2. **Inyectar un wallet double** en el worker, como hacen los tests. Es el
+   camino que el propio código declara como seam, pero requiere un seam de
+   configuración en el worker (editar `src/**`, fuera del alcance autorizado).
+
+La opción 1 es la coherente con la decisión de "conversación sembrada por
+fixture" y no toca producción.
+
+## 11. Antecedente que no hay que duplicar
 
 `evals/voice/realtime/` ya resuelve el e2e **contra la API directa de OpenAI**
 (cliente WebSocket propio, tools bindeados a fixture en memoria, asertos de

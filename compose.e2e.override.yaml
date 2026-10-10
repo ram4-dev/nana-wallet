@@ -34,3 +34,24 @@ services:
       - "127.0.0.1:7882:7880"
       - "38881-38891:38881-38891/udp"
       - "127.0.0.1:38881:38881/tcp"
+
+  voice-worker:
+    # NOTE: Privy inputs are deliberately NOT blanked here, and this is
+    # counter-intuitive, so it is worth writing down before someone "fixes" it.
+    #
+    # Blanking PRIVY_APP_ID/PRIVY_VERIFICATION_KEY makes `privyIdentityConfigured`
+    # false (src/runtime/dependencies.ts:111), so `walletForUser` is left
+    # undefined. That does not fall back to a fixture wallet: core.wallet is the
+    # fail-closed `createUnavailableWalletProvider` (src/runtime/dependencies.ts:161)
+    # because the worker calls `createCoreDependencies(environment)` with no
+    # injected provider, and every get_balance then dies with "No wallet provider
+    # was injected".
+    #
+    # With the Privy inputs present, the worker instead resolves the per-user
+    # Solana wallet (createSolanaWalletForUser), which needs exactly one `ready`
+    # row in `user_wallets` for (user_id, chain_family='solana'). That is a seed,
+    # not a credential problem — no Privy API call happens for a balance read.
+    #
+    # So the e2e fixture must seed a ready user_wallets row for the voice user.
+    # Tracked in .agent-workflow/tasks/voice-room-e2e/02-research.md.
+
