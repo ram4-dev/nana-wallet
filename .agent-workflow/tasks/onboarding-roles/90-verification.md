@@ -14,7 +14,7 @@ Estado: **diseño y outline; implementación no iniciada**. Este registro separa
 
 ## Validaciones aún no ejecutadas
 
-- Todavía no se modificó código ni esquema de producto. Los checks de línea de base de abajo verifican el estado previo; evals, browser E2E y LiveKit E2E se correrán por slice con los servicios necesarios levantados.
+- Todavía no se modificó código ni esquema de onboarding. Se incorporó el commit posterior de la rama fuente `d277ecc` (corrección de voz para contactos) como `73ffd7b`; los checks de línea de base de abajo corren después de ese cherry-pick. Evals, browser E2E y LiveKit E2E de onboarding se correrán por slice con los servicios necesarios levantados.
 - No se ejecutó migración, PATCH de Privy ni transacción en Solana.
 - Permanecen sin prueba de transporte/runtime en esta app: consentimiento inicial para cambios posteriores del responsable, allowlist Solana sin condición de monto y playout TTS confiable. El Slice 0 los trata como puertas de capacidad, no como hechos resueltos.
 
