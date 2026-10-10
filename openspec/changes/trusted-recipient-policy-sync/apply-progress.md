@@ -6142,3 +6142,183 @@ applied.
    `recipient_policy_state.applied_policy_id`, for the reason in caveat 1. Both sources are named in
    the script output (`policyIdSource`), so the choice is visible in the evidence rather than
    implicit.
+
+---
+
+## Live devnet transfer run (2026-10-10) — task 5.7, transfer half executed
+
+Status: **partial — executed and observed**. The live money-movement clause of 5.7 (a user
+preview plus an explicit confirmation ≤ 0.01 SOL, through the app's real preview → confirm
+path) and the "ordinary-rule permit" evidence were collected. The signed remote GET
+readback (address included/removed with cap, delegated limits, signer attachment and
+unrelated signers preserved) and the U1/U4 policy writes were **not** executed and remain
+pending. No screen add/edit/remove operation was performed.
+
+### Exact commands
+
+Harness (host → container stdin; no rebuild, `/app/dist/**` reused):
+
+```text
+docker exec -i \
+  -e RECIPIENT_POLICY_RECONCILER=disabled \
+  -e NOTIFICATIONS_OUTBOX_ENABLED=false \
+  nana-privy-impl-backend-1 \
+  node --input-type=module - < /tmp/sol-live-transfer.mjs
+```
+
+The script builds the server with an injected identity only:
+`buildServer({ identity: new DemoIdentityProvider('08c462d6-44e4-4368-be4e-5de2a7e39179') })`.
+It injects **no** `wallet`, `walletReads` or `privyServer`, so the real per-user Privy
+Solana wallet and the real Privy path serve the transfer. Routes driven in order:
+`POST /v1/conversations` → `POST /v1/conversations/:id/turns`
+(`"Enviá 0.01 SOL a Test1"`) → `GET /v1/conversations/:id/state` →
+`POST /v1/conversations/:id/decisions` (`{ previewId, decision: "confirm" }`) →
+`GET /v1/conversations/:id/state`.
+
+Side-effect hygiene — process-level switches set for the in-process server so it runs no
+background worker against the shared stack database, each justified:
+`RECIPIENT_POLICY_RECONCILER=disabled` prevents the 30 s policy-apply loop (task 2.9) from
+touching `recipient_policy_*` rows and the wallet lease;
+`NOTIFICATIONS_OUTBOX_ENABLED=false` prevents the durable outbox dispatcher
+(`src/server.ts:508`) from draining and publishing shared notifications. The third worker,
+the reconciliation poller, only starts when `NOTIFICATIONS_RECONCILIATION_ENABLED === "true"`,
+which is not set, so it never started.
+
+Balance and on-chain reads:
+
+```text
+curl -s -X POST https://api.devnet.solana.com -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getBalance","params":["AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX"]}'
+curl -s -X POST https://api.devnet.solana.com -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getSignatureStatuses","params":[["2M5dPt8sZ78xjAeM9obJsxQghiqZaSMWFHdSQXnFniPmYyTkbksWoRwt2zNByqndskowB2785cswUw1TCyfFWcVa"],{"searchTransactionHistory":true}]}'
+curl -s -X POST https://api.devnet.solana.com -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getTransaction","params":["2M5dPt8sZ78xjAeM9obJsxQghiqZaSMWFHdSQXnFniPmYyTkbksWoRwt2zNByqndskowB2785cswUw1TCyfFWcVa",{"encoding":"jsonParsed","maxSupportedTransactionVersion":0}]}'
+```
+
+### Verified preview (the hard gate)
+
+Turn 1 returned `status: "confirmation_required"`; the state read carried the persisted
+`pendingTransfer`. Every field was asserted byte-for-byte before any confirmation:
+
+| Field | Observed | Expected | Pass |
+|---|---|---|---|
+| `recipient` | `DFYT4RDcvr6vL46c7iVDmfBbEYQxAZhUxkgvwzuVHMEk` | `DFYT4RDcvr6vL46c7iVDmfBbEYQxAZhUxkgvwzuVHMEk` | ✅ |
+| `network` | `solana-devnet` | `solana-devnet` | ✅ |
+| `amount` | `"0.01"` | `0.01 SOL` | ✅ |
+| `token` | `"SOL"` | Solana-native token | ✅ |
+| `previewId` | `7e927c87-0716-4715-9e72-d02e517499dd` | present | ✅ |
+| `estimatedFee` | `"0.000005 SOL"` | real fee from the preview | — |
+
+`estimatedFee` was read from the preview object (not estimated by hand): `0.000005 SOL`
+(= 5 000 lamports), and the on-chain fee matched it exactly. Conversation:
+`bd75d143-e563-45ee-99ab-65f12c688e75`.
+
+### Confirmation outcome
+
+One confirmation, sent exactly once:
+
+```text
+POST /v1/conversations/bd75d143-e563-45ee-99ab-65f12c688e75/decisions
+{ "previewId": "7e927c87-0716-4715-9e72-d02e517499dd", "decision": "confirm" }
+→ HTTP 200 { "accepted": true, "revision": 9, "state": { "activity": "idle",
+  "progress": { "phase": "completed",
+    "transactionHash": "2M5dPt8sZ78xjAeM9obJsxQghiqZaSMWFHdSQXnFniPmYyTkbksWoRwt2zNByqndskowB2785cswUw1TCyfFWcVa" },
+  "transaction": { "explorerUrl": "https://explorer.solana.com/tx/2M5dPt8sZ78xjAeM9obJsxQghiqZaSMWFHdSQXnFniPmYyTkbksWoRwt2zNByqndskowB2785cswUw1TCyfFWcVa" } } }
+```
+
+No `broadcast_uncertain`, no ambiguous result: the response was a clean `accepted: true`.
+
+### Transaction hash and devnet verification
+
+- Signature: `2M5dPt8sZ78xjAeM9obJsxQghiqZaSMWFHdSQXnFniPmYyTkbksWoRwt2zNByqndskowB2785cswUw1TCyfFWcVa`
+- Explorer URL (app-returned): `https://explorer.solana.com/tx/2M5dPt8sZ78xjAeM9obJsxQghiqZaSMWFHdSQXnFniPmYyTkbksWoRwt2zNByqndskowB2785cswUw1TCyfFWcVa`
+- `getSignatureStatuses` → `confirmationStatus: "finalized"`, `err: null`, `status: {"Ok": null}`, `slot: 509649918`
+- `getTransaction` (`jsonParsed`) → `err: null`, `fee: 5000`, `blockTime` 2026-10-10T19:44:48Z
+  - accounts: `AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX` (signer, writable) → `DFYT4RDcvr6vL46c7iVDmfBbEYQxAZhUxkgvwzuVHMEk` (writable) + system program
+  - instruction: `system.transfer` `lamports: 10000000`, `source: AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX`, `destination: DFYT4RDcvr6vL46c7iVDmfBbEYQxAZhUxkgvwzuVHMEk`
+
+### Balance before / after
+
+| | Lamports | SOL | Read at |
+|---|---|---|---|
+| Before | `4,998,995,000` | 4.998995 | 2026-10-10T19:44:20Z (slot 509649795) |
+| After | `4,988,990,000` | 4.988990 | 2026-10-10T19:44:49Z (slot 509649962) |
+| Delta | `−10,005,000` | −0.010005 | = `10,000,000` (0.01 SOL) + `5,000` fee |
+
+The decrease equals exactly the transfer plus the preview's `estimatedFee`. Source account
+pre/post in the transaction metadata: `4,998,995,000 → 4,988,990,000`; destination
+pre/post: `1,000,000 → 11,000,000` (+ exactly 10 000 000).
+
+### Policy evidence
+
+The broadcast went through Privy's policy-evaluated `signAndSendTransaction` wallet RPC
+(`src/wallet/solana-devnet-provider.ts`, `POST /v1/wallets/{wallet_id}/rpc`). A transaction
+the attached policy did not permit would have been rejected by the policy engine instead of
+being signed and finalized. The transfer therefore **is the `observed as permitted` evidence**:
+it proves the wallet's **ordinary rule permitted** this transfer — `Transfer.to` ∈ {own
+address, `DFYT4RDcvr…HMEk`} and `Transfer.lamports lte "10000000"` (0.01 SOL = 10 000 000,
+exactly at the `lte` cap).
+
+What this does **not** prove: **U1's multi-family composition** and **U4's empty-composition
+deny**. Those require live policy writes (`probeRuleComposition` and the empty-composition
+write) and remain unproven; U4 step (iii) additionally needs a separately authorized signed
+transfer. Neither was performed here — this run performed only the transfer the user
+confirmed.
+
+### Task 5.7 — satisfied vs pending
+
+**Satisfied by this run:** the "any live money movement requires a separate user preview and
+explicit confirmation ≤ 0.01 SOL" clause, exercised end-to-end on the real path (a real
+agent turn produced the preview; the confirmation produced a real, finalized devnet
+transfer to the user-named recipient `Test1`). Plus the ordinary-rule permit evidence above.
+
+**Still pending (task 5.7 stays `[ ]`):** the screen add/edit/remove operations; the
+**signed remote GET** proving the address is included (add/edit) or absent (remove) while
+the ordinary cap, delegated limits, canonical signer attachment and unrelated signers stay
+byte-identical — that needs a live policy write. U1 and U4 remain unproven for the same
+reason. Their collection step is unchanged: design §11 `probeRuleComposition` and the
+empty-composition write.
+
+### Deviations
+
+1. **Deployment defect found and worked around at the transport layer (no source change).**
+   `src/agent/model.ts` builds the `opencode-go` chat model without the `x-opencode-session`
+   header, so every LLM completion is rejected: `HTTP 400 {"type":"MissingSessionID",
+   "message":"Request is missing x-opencode-session and cannot be routed efficiently."}`.
+   Verified directly: the same request with the header returns `HTTP 200` and a completion.
+   The key is valid; the header is the only obstacle. A plain agent turn therefore failed
+   with `internal_error` (mapped from `agent_error`) before this workaround. The harness
+   installs a `globalThis.fetch` wrapper that adds `x-opencode-session` for the
+   `opencode.ai` host only; the real model, base URL, key and model id are unchanged and the
+   call is unchanged otherwise. This is a harness adaptation, not a fixture and not a source
+   edit — but it **is** a real, unfixed defect in the deployed chat path that the owning team
+   should fix in `src/agent/model.ts`. The deterministic runtime is not a substitute: its
+   `SEND_PATTERN` (`src/agent/deterministic-intent.ts`) only accepts a raw `0x…` address and
+   cannot resolve a named contact.
+2. **Projection artifact (cosmetic, not on-chain truth).** The returned
+   `state.transaction.network` reads `"sepolia"` while the explorer URL is Solana. In
+   `projectConversationState` (`src/conversations/state-projection.ts:63`) the network comes
+   from `snapshot.pendingTransfer?.network ?? "sepolia"` and the pending transfer is already
+   cleared after finalize, so it falls back to the literal `"sepolia"`. `explorerUrlFor`
+   correctly falls back to the Solana explorer. The on-chain transaction is Solana devnet
+   (proven above). Reported as an observation, not fixed here.
+
+### Structured status consumed
+
+Artifact store `openspec`. Readiness resolved directly against the artifacts before any edit
+(`tasks.md` owner markers; `design.md` §11 U1/U4; `spec.md`; `openspec/config.yaml`
+`strict_tdd: false`). `actionContext`: one allowed root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed
+inside it, and the stack database was read only (no mutation). The Review Workload Forecast
+guard (`Decision needed before apply: Yes`, `Chained PRs recommended: Yes`, budget risk
+`High`) concerns code slices; this work unit mutates **no source, test or config** — it is a
+live verification that appends documentation only — so no delivery-path decision and no
+`size:exception` apply, and none is requested.
+
+### Secrets
+
+Nothing secret was read, printed or logged. The script emitted only the public preview,
+ids, addresses, amounts, the transaction hash and the balance; the environment-value probe
+used `docker inspect | jq` on the non-secret mode keys (`AGENT_RUNTIME`, `WDK_NETWORK`,
+`WDK_TOKEN`, `LIVE_VOICE_ENABLED`, `RECIPIENT_MEMORY_ENABLED`) and a key-name-only listing.
+No `.env`, token, key, payload or signature appears in any output or in this file.
