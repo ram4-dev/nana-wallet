@@ -6,10 +6,16 @@ import {
 import type { PrivyPolicyAdmin } from "./privy-policy-admin.js";
 import { createPrivyPolicyAdmin } from "./privy-policy-admin.js";
 import {
-  createSolanaGrantPolicyProvisioner,
   type GrantPolicyInput,
   type PrivyPolicyAdminClient,
 } from "./solana-policy-provisioner.js";
+import { RecipientPolicyRepository } from "../policy/repository.js";
+import {
+  RecipientPolicyService,
+  createUnavailablePolicyApplyPort,
+  type RecipientContactMutationPort,
+} from "../policy/service.js";
+import { PolicyApplyCapabilityUnwiredError } from "../policy/errors.js";
 import {
   createUnavailableGrantPolicyProvisioner,
   GrantPolicyProvisioner,
@@ -142,12 +148,43 @@ export function createPrivyPolicyAdminClient(
   };
 }
 
+/**
+ * Design §3.3, task 1.8. The legacy full-rule writer
+ * (`createSolanaGrantPolicyProvisioner(...).provisionPolicy` /
+ * `.revokePolicyRules`) is DELETED: it recomputed the whole rule set and PATCHed
+ * it as a complete replacement, which overwrote the enrollment allowlist rule
+ * (design §0 C1) and made the grant path a second policy creator.
+ *
+ * Both methods of the `GrantPolicyProvisioner` port — which
+ * `PrivyPolicySyncService` depends on and which is kept unchanged — now delegate
+ * to the composer service entry point, `RecipientPolicyService.composeRevision`,
+ * so no rule set can be derived anywhere else.
+ *
+ * Slice 1 deliberately ships no signed apply capability (design §12.1, task 1.6
+ * `apply_capability_unwired`), so the composer composes and records intent but
+ * cannot create, attach or PATCH a policy. The delegation therefore ENDS in ONE
+ * typed `blocked_configuration` refusal instead of a fabricated policy id: this
+ * port can never report success while no policy exists, and it never falls back
+ * to a direct provider call. The failure mode this forbids is a grant reported
+ * as policy-bound on the strength of an id nobody verified (design §3.4).
+ */
 export function createRuntimeGrantPolicyProvisioner(
   deps: PrivyPolicyRuntimeDependencies,
 ): GrantPolicyProvisioner {
-  const composed = createSolanaGrantPolicyProvisioner(
-    createPrivyPolicyAdminClient(deps),
-  );
+  const admin = createPrivyPolicyAdminClient(deps);
+  const composer = createRuntimePolicyComposer(deps.database, admin);
+
+  const refuse = async (
+    userId: string,
+    walletId: string,
+  ): Promise<never> => {
+    // Consult the composer FIRST, so a composition refusal (empty composition,
+    // unproven rule union, an unsupported ceiling) is reported as its own typed
+    // stop instead of being masked by this one.
+    await composer.composeRevision(userId, walletId);
+    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync");
+  };
+
   return {
     async provisionPolicy(input) {
       if (input.chain !== SOLANA_LEDGER_CHAIN) {
@@ -155,13 +192,7 @@ export function createRuntimeGrantPolicyProvisioner(
           `Privy Solana grant policies only support the ledger chain family ${SOLANA_LEDGER_CHAIN}; received "${input.chain}".`,
         );
       }
-      const result = await composed.provisionPolicy(input);
-      if (!result.policyId) {
-        throw new Error(
-          result.error ?? "Privy Solana policy readback was not verified.",
-        );
-      }
-      return { policyId: result.policyId };
+      return refuse(input.userId, input.walletId);
     },
     async revokePolicy(input) {
       if (input.chain !== SOLANA_LEDGER_CHAIN) {
@@ -169,18 +200,49 @@ export function createRuntimeGrantPolicyProvisioner(
           `Privy Solana grant policies only support the ledger chain family ${SOLANA_LEDGER_CHAIN}; received "${input.chain}".`,
         );
       }
-      const result = await composed.revokePolicyRules({
-        grantId: input.grantId,
-        walletId: input.walletId,
-        userId: input.userId,
-        chain: input.chain,
-      });
-      if (!result.revoked) {
-        throw new Error(result.error ?? "Privy Solana policy revoke failed.");
-      }
+      return refuse(input.userId, input.walletId);
     },
   };
 }
+
+/** The composer entry point this port delegates to (design §3.5 steps 1-3). */
+function createRuntimePolicyComposer(
+  database: DatabaseClient,
+  admin: PrivyPolicyAdminClient,
+): RecipientPolicyService {
+  return new RecipientPolicyService({
+    database,
+    repository: new RecipientPolicyRepository(database),
+    // The grant-sync path never reaches the contact mutation port: composition
+    // reads contacts through the repository. A refusal keeps it honest if a
+    // future caller wires it here by mistake.
+    contacts: refusingContactPort,
+    listActiveGrants: (walletId, userId, chain) =>
+      admin.listActiveGrants(walletId, userId, chain),
+    provider: createUnavailablePolicyApplyPort(
+      "The signed apply capability is unwired in this slice; the composer records the desired revision and the reconciler applies it.",
+    ),
+  });
+}
+
+/**
+ * No contact mutation can be routed through the grant-sync port. Every member
+ * throws a typed service refusal rather than silently doing nothing.
+ */
+const refusingContactPort: RecipientContactMutationPort = {
+  create: () => {
+    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.create");
+  },
+  update: () => {
+    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.update");
+  },
+  archive: () => {
+    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.archive");
+  },
+  readActive: () => {
+    throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync.contacts.readActive");
+  },
+};
 
 export function createGrantPolicySyncService(input: {
   database: DatabaseClient;

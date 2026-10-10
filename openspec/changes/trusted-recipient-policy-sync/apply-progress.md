@@ -1294,3 +1294,171 @@ stayed inside the assigned worktree root
 (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout and the
 untracked `compose.privy-local.ports.yaml` were not touched. The database was left on the Supabase
 chain this worktree provisions from, and `npm run db:migrate` was not used.
+
+### Task 1.8 — delete the legacy full-rule writer entry points and route their callers through the composer (PARTIAL)
+
+Status: **partial — deliberately NOT checked off.** `tasks.md` still shows `- [ ]` for task 1.8,
+and this entry says exactly which of the four deliverables landed and which did not. The persisted
+checkbox was left untouched because the run hit its hard 20-minute cap (three earlier runs on this
+unit died at the same wall); claiming completion would be a lie the checkbox would then carry.
+
+#### What landed in this commit (green, coherent, strictly safer than `HEAD`)
+
+| File | Role |
+|---|---|
+| `src/wallet/grants/solana-policy-provisioner.ts` | The two direct writer entry points are DELETED (`createSolanaGrantPolicyProvisioner`, `provisionPolicy`, `revokePolicyRules`) together with their dead helpers (`mergeGrants`, `ProvisionerOptions`, `ProvisionPolicyResult`, `RevokePolicyRulesResult`, `sameRules`, the `node:util` import). What remains is the PURE rule builder (`composeGrantRules`) and the provider port types. The module no longer reaches a provider at all. |
+| `src/wallet/grants/privy-policy-runtime.ts` | `createRuntimeGrantPolicyProvisioner` keeps the `GrantPolicyProvisioner` port that `PrivyPolicySyncService` depends on, and both methods delegate to the composer service entry point `RecipientPolicyService.composeRevision`. Because slice 1 deliberately ships no signed apply capability (task 1.6 `apply_capability_unwired`), the delegation ends in ONE typed `blocked_configuration` refusal — never a fabricated `policyId`, never a silent success, never a direct provider fallback. |
+| `tests/unit/policy-provisioner-delegation.test.ts` | New (5 cases). Replaces the deleted `tests/unit/grants-policy-provisioner.test.ts`. |
+| `tests/unit/grants-policy-runtime.test.ts` | 5 cases CHANGED (see below). |
+
+#### The fail-visible assertion (the safety framing's requirement)
+
+`tests/unit/policy-provisioner-delegation.test.ts` → *"routes provisionPolicy through the composer
+and never issues an independent full-rule write"*. Its structure:
+
+1. **Positive control first** — the composer's own reads are asserted to have run
+   (`FROM user_wallets`, `FROM recipients`, `FROM recipient_policy_state`), so the refusal is
+   provably the composer's successor and not an early bail that never consulted it. Without this the
+   case could pass on a module that does nothing.
+2. **Fail-visible** — the call REJECTS, and the rejection is a `PolicyCompositionRefusalError` with
+   `failureClass === "blocked_configuration"` and `reason === "apply_capability_unwired"`. This is
+   the assertion that fails the instant a future edit makes the path silently succeed: the mutation
+   recorded below turns exactly these two cases red.
+3. **No second full-rule writer** — `server.createPolicy`, `server.patchPolicy` and
+   `admin.attachPolicyToSigner` are instrumented `vi.fn()`s that WOULD record if called (this is not
+   a negative over an unreachable module: the deleted writer called all three), and they are
+   asserted uncalled.
+
+The invariant it protects is the spec's "never detach to unrestricted authority": a path that used
+to create or attach a policy and now cannot obtain one through the composer stops visibly instead of
+reporting permission as ready with nothing attached.
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED (module) | `tests/unit/policy-provisioner-delegation.test.ts` was written against the un-edited tree first: `npm run typecheck` → `error TS2305: Module '"../../src/wallet/grants/solana-policy-provisioner.js"' has no exported member 'createSolanaGrantPolicyProvisioner'` — the suite cannot even load without the unit. |
+| GREEN | `npx vitest run tests/unit/policy-provisioner-delegation.test.ts` → **1 file passed, 5 tests passed** (386 ms). |
+| MUTATION (the fail-visible guard) | `throw new PolicyApplyCapabilityUnwiredError("grant_policy_sync")` → `return { policyId: "policy-1" } as never` (a silent success with no policy attached). Result: **2 failed / 3 passed (5)**, exactly `routes provisionPolicy through the composer and never issues an independent full-rule write` and `routes revokePolicy through the composer too, with the same visible refusal`. The guard is load-bearing and attributed by name. Restored from a pristine copy; re-run green; `grep` for the mutation string returns nothing. |
+| GREEN (after the existing-suite update) | `npx vitest run tests/unit/grants-policy-runtime.test.ts tests/unit/policy-provisioner-delegation.test.ts` → **2 files passed, 20 tests passed**. |
+
+#### Existing tests changed, and why (none deleted without replacing its intent)
+
+1. `tests/unit/grants-policy-provisioner.test.ts` — **DELETED** (14 tests). Every case drove
+   `createSolanaGrantPolicyProvisioner(...).provisionPolicy`/`.revokePolicyRules`, i.e. exactly the
+   direct-call behaviour task 1.8 removes; the suite could not exist without the deleted writer. Its
+   intent is not dropped, it moved: the flat-rule shape, deterministic per-grant name, no fabricated
+   cumulative rule and the static-expiry encoding are asserted by
+   `tests/unit/policy-composer.test.ts` (byte-identity + composition invariants, unit 1.4) and by
+   the surviving builder case in the new delegation suite; the readback/fail-closed intent is
+   asserted by `tests/unit/policy-readback.test.ts` (1.5) and by the new typed-refusal cases.
+2. `tests/unit/grants-policy-runtime.test.ts` — 5 cases CHANGED, all in the
+   `createRuntimeGrantPolicyProvisioner` / wiring describes:
+   - *"accepts the stored Solana ledger chain and emits the flat Solana rule shape (no chain field)"*
+     → now *"accepts the stored Solana ledger chain, then refuses visibly instead of writing a
+     policy"*. The chain-acceptance half is preserved verbatim; the PATCH-body half has no subject
+     left (the composer owns rule composition) and is replaced by the typed refusal + zero provider
+     writes.
+   - *"provisions through the composed provisioner with verbatim lamports strings"* → now
+     *"delegates provision to the composer, which emits no provider write in this slice"*. The
+     lamports-never-reformatted intent is asserted by `tests/unit/policy-composer.test.ts`; here the
+     assertion is that no provider write exists to carry them.
+   - *"throws on provision failure so the sync service keeps its fail-closed audit path"* → kept by
+     name, **strengthened**: the original body asserted only `rejects.toThrow(/provider timeout/)`;
+     it now asserts the refusal is a typed `PolicyCompositionRefusalError` with reason
+     `apply_capability_unwired`. Same rejection (so the sync service's fail-closed catch path still
+     runs), stronger evidence.
+   - *"revoke succeeds through the composed revoke and throws on an uncertain outcome"* → now
+     *"refuses revoke visibly instead of reporting a revocation nobody performed"*: both halves
+     assert the same contract, because resolving `revokePolicy` requires a verified remote rule set
+     and slice 1 has no writer that could produce one.
+   - the wiring case *"returns the runtime service when Privy + canonical signer config are
+     available"* keeps its `kind: "runtime"` assertion and its END-TO-END `syncGrant` call, but the
+     end state changed from `policyId: "policy-new"` to `policyId: null` + a recorded refusal +
+     `createPolicy` never called. This is the whole-unit expression of the fail-closed end state.
+   No assertion was deleted without its intent being re-homed, and no suite was weakened.
+
+#### Commands run and results
+
+```text
+# PRE-CHANGE CONTROL (before any edit) — the mandated named set
+npx vitest run tests/unit/grants-policy-provisioner.test.ts tests/unit/grants-policy-runtime.test.ts \
+  tests/unit/privy-policy-sync.test.ts tests/unit/privy-policy-admin.test.ts \
+  tests/integration/privy-policy-sync.test.ts tests/integration/wallets-enrollment.test.ts \
+  tests/integration/privy-policy-admin-migration.test.ts tests/integration/privy-wallet-runtime-fail-closed.test.ts
+  → Test Files 8 passed (8) | Tests 88 passed (88)      ← BASELINE
+
+# the unit's own suite
+npx vitest run tests/unit/policy-provisioner-delegation.test.ts         → 5 passed (5)
+npx vitest run tests/unit/grants-policy-runtime.test.ts tests/unit/policy-provisioner-delegation.test.ts
+  → 2 files passed (2) | Tests 20 passed (20)
+
+# slice-1 regression (units 1.1-1.7 stayed green)
+npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts
+  → Test Files 11 passed (11) | Tests 194 passed (194)
+
+# POST-CHANGE, SAME CONTROL SET, compared BY TEST NAME
+npx vitest run <the 8 pre-change paths>
+  → Test Files 7 passed (7) | Tests 74 passed (74)
+    88 → 74 tests, 8 → 7 files: the ONLY difference is the deletion of the
+    writer suite (14 tests, 1 file), replaced by 5 cases at
+    tests/unit/policy-provisioner-delegation.test.ts. NO OTHER test name
+    changed state: every one of the remaining 74 passes, and the 6 known
+    backend failures named in .agent-workflow/.../91-test-baseline.md are
+    outside this set and were not touched.
+
+npm run lint      → eslint src tests --max-warnings=0 : clean, exit 0
+npm run typecheck → tsc -p tsconfig.test.json --noEmit : clean, exit 0
+```
+
+#### What did NOT land, and why
+
+1. **Deliverable 2 — `preparePermission` (`task 1.8` part 2).** NOT DONE. `privyServer.createPolicy(...)`
+   and the stale pending-policy reuse are still in place. `tests/integration/enrollment-composed.test.ts`
+   does not exist. Rationale for stopping rather than starting it: it changes enrollment from "returns a
+   policyId" to "records a `recipient_policy_sync_intent` with `origin='enrollment'` and then fails
+   visibly", which invalidates `tests/integration/wallets-enrollment.test.ts` and requires its own
+   integration suite. Starting it without the time to update that suite and write the new one would have
+   left the tree red or, worse, shipped an enrollment that completes with no policy attached — the exact
+   failure mode the parent's safety framing forbids. The tree as committed is strictlier safe than `HEAD`:
+   enrollment still creates its policy directly (unchanged authority), while the grant side can no longer
+   write at all.
+2. **Deliverable 3 — `completePermission` verifying against `recipient_policy_state.applied_policy_id`
+   plus `applied_rules_hash`.** NOT DONE (`src/wallet/embedded.ts:1238-1269` still validates the pending
+   row's stored id). This is the guard that makes "a pending row whose stored id no longer matches the
+   applied revision cannot activate permission" true, and it is the highest-value remainder of this unit.
+3. **The enrollment-composition integration test.** NOT DONE (blocked by 1).
+
+#### Handover to the next run on task 1.8
+
+- Deliverables 2 and 3 are untouched and independent of what landed; start from
+  `src/wallet/embedded.ts` (`preparePermission` ~`:906-975`, `completeSolanaPermission` ~`:1238-1369`).
+- `PolicyApplyCapabilityUnwiredError("grant_policy_sync")` is the typed refusal the grant path now
+  emits; per task 1.6's carried note it must be DELETED (not relaxed) when slice 2 wires the signed
+  port, and `tests/unit/policy-provisioner-delegation.test.ts` plus the five changed cases in
+  `tests/unit/grants-policy-runtime.test.ts` are the assertions that will have to change with it.
+- The delegation calls `composer.composeRevision(userId, walletId)` BEFORE refusing, deliberately: a
+  composition refusal (empty composition, unproven rule union, unsupported ceiling) is reported as
+  its own typed stop rather than being masked by `apply_capability_unwired`.
+- `tests/unit/policy-provisioner-delegation.test.ts` answers the composer's reads with a database
+  double that returns one active contact and no state row, so composition SUCCEEDS and the only
+  observable is the refusal. A future edit that gives the composer a real policy id will be caught
+  by the provider-surface `not.toHaveBeenCalled()` assertions.
+
+#### Workload / PR boundary
+
+One commit, one PARTIAL work unit: `solana-policy-provisioner.ts` (net deletion of the two writer
+entry points and their helpers), `privy-policy-runtime.ts` (delegation + typed refusal), the new
+5-case suite and the 5 changed existing cases. It sits inside the parent-assigned `PR 3` slice (tasks
+1.7–1.11). No push, no PR, and no work started on tasks 1.9–1.11.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit,
+the authoritative artifact paths and the delivery path directly. Readiness was resolved against the
+artifacts before any edit — `tasks.md` (task 1.8, terminal `<!-- sdd-owner: implementation -->`),
+`design.md` §0 C1/C6, §3.3, §3.4, §3.5, §12.1 and the 1.1–1.7 apply-progress. `actionContext`: all
+writes stayed inside the assigned worktree root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout
+(`/Users/ramiro/Desktop/projects/colloseum`) and the untracked `compose.privy-local.ports.yaml` were
+not touched. No review, receipt or delivery gate was started.

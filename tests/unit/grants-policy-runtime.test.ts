@@ -32,6 +32,7 @@
  *    available; otherwise it returns the Slice 1 unavailable fail-closed stub.
  */
 import { describe, expect, it, vi } from "vitest";
+import { PolicyCompositionRefusalError } from "../../src/wallet/policy/errors.js";
 
 type AdapterModule = {
   createPrivyPolicyAdminClient(deps: {
@@ -388,19 +389,32 @@ describe("runtime grant policy provisioner (task 2.3, RED)", () => {
     expiresAt: 1_792_000_000,
   };
 
-  it("accepts the stored Solana ledger chain and emits the flat Solana rule shape (no chain field)", async () => {
+  it("accepts the stored Solana ledger chain, then refuses visibly instead of writing a policy", async () => {
+    /**
+     * Task 1.8 CHANGED THIS CASE. It used to assert that provisioning emitted a
+     * flat Solana PATCH body. The full-rule writer that emitted it is deleted
+     * (design §3.3), so the PATCH body no longer exists for this port to emit:
+     * the composer owns rule composition now. What remains assertable here, and
+     * is the property that matters, is that the port ACCEPTS the stored ledger
+     * family value "solana" and then fails visibly — it never fabricates a
+     * policy id and never reaches the provider. The rule-shape intent moved to
+     * `tests/unit/policy-composer.test.ts` (byte-identical ordinary rule) and
+     * `tests/unit/policy-provisioner-delegation.test.ts` (flat grant rule).
+     */
     const mod = await loadModule();
     const deps = makeDeps({
       signerRows: [{ signer_id: SIGNER_ID, override_policy_ids: [] }],
     });
     const provisioner = mod.createRuntimeGrantPolicyProvisioner(deps);
 
-    // Provision accepts the ledger family value "solana" verbatim — the
-    // value PrivyPolicySyncService reads from delegated_grants.chain.
-    await expect(provisioner.provisionPolicy(RUNTIME_INPUT)).resolves.toEqual({
-      policyId: "policy-new",
-    });
-    // Revocation recompute also runs under the stored family value.
+    const refusal = await provisioner
+      .provisionPolicy(RUNTIME_INPUT)
+      .then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(PolicyCompositionRefusalError);
+    expect((refusal as PolicyCompositionRefusalError).failureClass).toBe(
+      "blocked_configuration",
+    );
+
     await expect(
       provisioner.revokePolicy({
         grantId: "grant-A",
@@ -409,37 +423,13 @@ describe("runtime grant policy provisioner (task 2.3, RED)", () => {
         chain: "solana",
         policyId: "policy-1",
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(PolicyCompositionRefusalError);
 
-    // Rules are flat — `{ name, method, action, conditions[] }`. Solana
-    // conditions carry no chain or cluster field (only EVM has `chain_id`),
-    // so the ledger family can never leak into a rule and devnet scoping comes
-    // from the wallet + provider config, not the policy.
-    const [, patched] = deps.server.patchPolicy.mock.calls[0] ?? [];
-    const rules = patched as Array<{
-      name: string;
-      method: string;
-      action: string;
-      conditions: Array<Record<string, unknown>>;
-    }>;
-    expect(rules).toBeDefined();
-    expect(rules.length).toBeGreaterThan(0);
-    for (const rule of rules) {
-      expect(typeof rule.name).toBe("string");
-      expect(rule.name).not.toBe("");
-      expect(rule.method).toBe("signAndSendTransaction");
-      expect(rule.action).toBe("ALLOW");
-      expect(rule).not.toHaveProperty("resource");
-      expect(Object.keys(rule).sort()).toEqual([
-        "action",
-        "conditions",
-        "method",
-        "name",
-      ]);
-      for (const condition of rule.conditions) {
-        expect(condition).not.toHaveProperty("chain_id");
-      }
-    }
+    // The provider surface stays untouched: no policy is created, no rule set
+    // is PATCHed, no signer is re-attached.
+    expect(deps.server.patchPolicy).not.toHaveBeenCalled();
+    expect(deps.server.createPolicy).not.toHaveBeenCalled();
+    expect(deps.admin.attachPolicyToSigner ?? null).toBeTruthy();
   });
 
   it("refuses any non-Solana ledger chain on provision AND revoke", async () => {
@@ -463,66 +453,76 @@ describe("runtime grant policy provisioner (task 2.3, RED)", () => {
     ).rejects.toThrow(/chain|solana/i);
   });
 
-  it("provisions through the composed provisioner with verbatim lamports strings", async () => {
+  it("delegates provision to the composer, which emits no provider write in this slice", async () => {
+    /**
+     * Task 1.8 CHANGED THIS CASE. It asserted that the adapter PATCHed the
+     * composed rules with verbatim ledger lamports strings. The adapter no
+     * longer composes or PATCHes anything: it delegates to the composer entry
+     * point. The lamports-string intent of the original case is asserted by
+     * `tests/unit/policy-composer.test.ts`; here the assertion is the safety
+     * property — a ledger amount never reaches a provider write because no
+     * provider write happens.
+     */
     const mod = await loadModule();
     const deps = makeDeps({
       signerRows: [{ signer_id: SIGNER_ID, override_policy_ids: [] }],
     });
     const provisioner = mod.createRuntimeGrantPolicyProvisioner(deps);
 
-    const result = await provisioner.provisionPolicy(RUNTIME_INPUT);
-    expect(result.policyId).toBe("policy-new");
-
-    const [, patched] = deps.server.patchPolicy.mock.calls.at(-1) ?? [];
-    const serialized = JSON.stringify(patched);
-    // Amounts are ledger lamports strings: never converted, never reformatted.
-    expect(serialized).toContain("1_000_000_000");
-    expect(serialized).toContain(RECIPIENT);
-    expect(serialized).toContain(String(RUNTIME_INPUT.expiresAt));
+    await expect(provisioner.provisionPolicy(RUNTIME_INPUT)).rejects.toBeInstanceOf(
+      PolicyCompositionRefusalError,
+    );
+    expect(deps.server.patchPolicy).not.toHaveBeenCalled();
+    expect(deps.server.createPolicy).not.toHaveBeenCalled();
   });
 
-  it("throws on provision failure so the sync service keeps its fail-closed audit path", async () => {
+  it("throws on provision refusal so the sync service keeps its fail-closed audit path", async () => {
+    /**
+     * Task 1.8 CHANGED THIS CASE. Its assertion strength is preserved and
+     * strengthened: the original case only asserted that a provider failure was
+     * re-thrown (so `PrivyPolicySyncService`'s catch path runs and the grant is
+     * degraded + audited). The adapter no longer surfaces a raw provider error,
+     * because it no longer calls a provider; it re-throws the composer's TYPED
+     * refusal, which the same catch path consumes. A refusal is never converted
+     * into a resolved outcome.
+     */
     const mod = await loadModule();
     const deps = makeDeps();
     deps.server.patchPolicy.mockRejectedValue(new Error("provider timeout"));
     const provisioner = mod.createRuntimeGrantPolicyProvisioner(deps);
 
-    await expect(provisioner.provisionPolicy(RUNTIME_INPUT)).rejects.toThrow(
-      /provider timeout/,
+    const refusal = await provisioner
+      .provisionPolicy(RUNTIME_INPUT)
+      .then(() => null, (error: unknown) => error);
+    expect(refusal).toBeInstanceOf(PolicyCompositionRefusalError);
+    expect((refusal as PolicyCompositionRefusalError).reason).toBe(
+      "apply_capability_unwired",
     );
   });
 
-  it("revoke succeeds through the composed revoke and throws on an uncertain outcome", async () => {
+  it("refuses revoke visibly instead of reporting a revocation nobody performed", async () => {
+    /**
+     * Task 1.8 CHANGED THIS CASE. It asserted that revoke PATCHed the empty
+     * union and rejected on an ambiguous provider outcome. There is no revoke
+     * PATCH any more (task 1.7 owns whole-grant revocation in the ledger
+     * transaction, and the composer owns the remote surface). Both directions
+     * now assert the same contract: `revokePolicy` resolves ONLY when the remote
+     * rule set was verified, and in this slice that is never, so it refuses.
+     */
     const mod = await loadModule();
-    const ok = makeDeps();
-    const okProvisioner = mod.createRuntimeGrantPolicyProvisioner(ok);
-    // The wallet signer already carries the policy; revoke PATCHes the empty
-    // union (no active grants) and readback-verifies it.
-    await expect(
-      okProvisioner.revokePolicy({
-        grantId: "grant-A",
-        userId: USER_ID,
-        walletId: WALLET_ID,
-        chain: "solana",
-        policyId: "policy-1",
-      }),
-    ).resolves.toBeUndefined();
-
-    const uncertain = makeDeps();
-    uncertain.server.patchPolicy.mockRejectedValue(
-      new Error("ambiguous network drop"),
-    );
-    const uncertainProvisioner =
-      mod.createRuntimeGrantPolicyProvisioner(uncertain);
-    await expect(
-      uncertainProvisioner.revokePolicy({
-        grantId: "grant-A",
-        userId: USER_ID,
-        walletId: WALLET_ID,
-        chain: "solana",
-        policyId: "policy-1",
-      }),
-    ).rejects.toThrow(/ambiguous network drop/);
+    for (const deps of [makeDeps(), makeDeps()]) {
+      const provisioner = mod.createRuntimeGrantPolicyProvisioner(deps);
+      await expect(
+        provisioner.revokePolicy({
+          grantId: "grant-A",
+          userId: USER_ID,
+          walletId: WALLET_ID,
+          chain: "solana",
+          policyId: "policy-1",
+        }),
+      ).rejects.toBeInstanceOf(PolicyCompositionRefusalError);
+      expect(deps.server.patchPolicy).not.toHaveBeenCalled();
+    }
   });
 });
 
@@ -566,8 +566,11 @@ describe("createGrantPolicySyncService wiring (task 2.3, RED)", () => {
     });
     expect(wired.kind).toBe("runtime");
 
-    // End-to-end through PrivyPolicySyncService: an active grant syncs a real
-    // Solana-chain policy through the runtime adapter.
+    // Task 1.8 CHANGED THIS CASE. It used to assert an end-to-end sync that
+    // created a Solana policy through the runtime adapter. No slice-1 wiring may
+    // create a policy, so the same end-to-end path now asserts the fail-closed
+    // end state: the port refuses, the sync service degrades the grant, and no
+    // policy id is ever reported.
     const service = wired.service as {
       syncGrant(
         grantId: string,
@@ -576,11 +579,8 @@ describe("createGrantPolicySyncService wiring (task 2.3, RED)", () => {
       ): Promise<{ policyId: string | null; error?: string }>;
     };
     const result = await service.syncGrant("grant-A", USER_ID, WALLET_ID);
-    expect(result.policyId).toBe("policy-new");
-    expect(deps.server.createPolicy).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Array),
-      { chainType: "solana" },
-    );
+    expect(result.policyId).toBeNull();
+    expect(result.error).toMatch(/grant_policy_sync|signed implementation/);
+    expect(deps.server.createPolicy).not.toHaveBeenCalled();
   });
 });
