@@ -10,6 +10,13 @@ Nana Wallet hoy lleva a cualquier visitante a un único ingreso de Privy. No exp
 
 Ramiro eligió **una cuenta del responsable para ambos perfiles**. Esto define que el responsable inicia con su cuenta de Privy y puede acceder a su propio perfil y al perfil de la persona a cargo. Falta precisar si la persona usuaria también tendrá un ingreso propio vinculado a su perfil o si comparte el ingreso del responsable. Esa diferencia afecta quién puede confirmar pagos y qué puede atribuirse a cada persona.
 
+| Forma de entrar de la persona usuaria | Qué puede distinguir Nana | Implicación para la billetera |
+| --- | --- | --- |
+| Misma credencial Privy del responsable | Sólo un DID; ambos usan la misma autoridad | El responsable controla la billetera y no se puede atribuir quién escuchó a Nani o confirmó un pago. |
+| Otro método de ingreso asociado a la misma cuenta Privy | Sigue siendo un DID para esta API | Diferentes correos o teléfonos no equivalen a distintos actores autorizados. |
+| Identidad Privy propia vinculada al perfil creado por el responsable | Dos DID y acciones atribuibles | Requiere definir titular de la billetera, consentimiento y delegación de gestión. El responsable conserva acceso a ambos perfiles desde su cuenta. |
+| La persona usuaria no entra | Sólo el responsable opera | Nana funciona para la persona a cargo exclusivamente a través del responsable; no preserva el uso directo anterior. |
+
 ## Flujo propuesto
 
 1. Al abrir Nana sin sesión, aparece una pantalla simple: “¿Vas a usar tu billetera o acompañás a otra persona?” con acciones “Uso mi billetera” y “Soy responsable”. Se explica qué permite cada opción antes de pedir datos.
