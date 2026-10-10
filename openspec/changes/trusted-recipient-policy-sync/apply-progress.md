@@ -1777,3 +1777,157 @@ the 1.1–1.8 apply-progress entries, and the source of every writer named in §
 (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main
 checkout and the untracked `compose.privy-local.ports.yaml` were not touched. Task
 1.10 was not started, and no push and no PR happened.
+
+---
+
+### Task 1.10 — extend the structural guard suite to make a second full-rule writer unreachable by construction
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `tests/unit/policy-writer-structural.test.ts` | New (9 cases, 2 describes). Reads the real `src/**` tree (idiom: `tests/unit/signer-worker-path.test.ts:256-290`) and compares the measured sets for **exact equality** with the frozen boundaries. |
+
+No production file was touched. This unit is assertion-only, which is why it is one
+new file plus this entry.
+
+#### What the unit delivers
+
+Two describes, nine cases, all over the source tree rather than over prose:
+
+- **`the composer is the only full-rule policy writer`** (5 cases):
+  1. `.createPolicy(`/`.patchPolicy(` outside `src/wallet/policy/**` + `src/wallet/signer/**` must equal
+     exactly `["src/wallet/grants/privy-policy-runtime.ts"]` — the provider adapter that implements the
+     composer's `PrivyPolicyAdminClient` port and forwards the rules it is handed.
+  2. `.addPolicyToSigner(`/`.attachPolicyToSigner(` outside those paths must equal exactly
+     `[embedded.ts, privy-policy-admin.ts, privy-policy-runtime.ts]` — the provider implementation and
+     the narrow complete-list attach design §5.7 keeps (it binds an EXISTING policy id and composes
+     nothing).
+  3. `composeGrantRules` must be mentioned only by its definition and `policy/composer.ts` (design §3.3
+     row 1: "imported nowhere else").
+  4. `buildSolanaEnrollmentRules` must be mentioned only by its definition and `policy/composer.ts`
+     (design §3.3: "no longer imported by `embedded.ts`").
+  5. The deleted legacy writer is absent **at module level**: `createSolanaGrantPolicyProvisioner`,
+     `provisionPolicy` and `revokePolicyRules` are asserted NOT to be exported by
+     `solana-policy-provisioner.ts`, with `composeGrantRules` as the positive control so the case cannot
+     pass on an import that resolved to nothing.
+- **`ContactsRepository mutations stay behind the policy path and its HTTP vertical`** (4 cases):
+  6. the importer set is exactly `{src/api/contacts.ts, src/server.ts}`;
+  7. **no** file under `src/wallet/policy/**` imports `ContactsRepository` (design §3.3);
+  8. `contacts.create|update|archive(` call sites exist only under `src/wallet/policy/**` (the injected
+     mutation port) and `src/api/contacts.ts`;
+  9. `src/server.ts` constructs the repository (`new ContactsRepository(`, asserted first as the
+     positive control) and never calls a mutation member.
+
+Every set is asserted for exact equality, not containment: a new caller changes the measured set and
+fails the case. That is what makes these guards fail-closed against a future second writer instead of
+becoming a snapshot of today's tree.
+
+#### Honest scope note: the literal task wording is not satisfiable at HEAD
+
+The task text (and design §12.1's structural line) reads "no file outside `src/wallet/policy/**` and
+`src/wallet/signer/**` calls `createPolicy`, `patchPolicy`, or `addPolicyToSigner`". **Measured against
+HEAD, that literal claim is false, and a guard asserting it would be red today.** The exact conflicts:
+
+| File:line | Call | Why it is not the regression the guard exists for |
+|---|---|---|
+| `src/wallet/grants/privy-policy-runtime.ts:63` | `server.createPolicy(...)` | Provider adapter implementing `PrivyPolicyAdminClient`. It composes nothing; it forwards `input.rules`. The grant provisioner that used to drive it (`createRuntimeGrantPolicyProvisioner`, same file `:171-206`) now delegates to `composer.composeRevision` and refuses with `apply_capability_unwired`. |
+| `src/wallet/grants/privy-policy-runtime.ts:79` | `server.patchPolicy(...)` | Same adapter, same reason. |
+| `src/wallet/grants/privy-policy-runtime.ts:143` | `admin.attachPolicyToSigner(...)` | Same adapter; attach only. |
+| `src/wallet/grants/privy-policy-admin.ts:168` | `privy.addPolicyToSigner(...)` | Design §5.7 keeps `attachPolicyToSigner` as "the narrow, complete-list mutation"; it binds an existing policy id. |
+| `src/wallet/embedded.ts:1348` | `this.privyServer!.addPolicyToSigner(...)` | `completeSolanaPermission` attaching the **applied** policy id (task 1.8 deliverable 3 replaced the verification, not the attach). Unreachable in slice 1 — no signed apply capability — and live only once an applied revision exists (slice 2). |
+
+So this unit encodes the design's actual invariant (**one rule *composer*; a policy create/patch/attach
+site is legal only on the frozen provider boundary, and the boundary is asserted by exact name**) and
+reports the five near-misses above rather than claiming a property the tree does not have. Two of the
+five were already carried in the task-1.9 record for the lock-order vector (`getGrant` takes no lock)
+under the same principle: record what the code does, and list the design's intent as pending.
+**Handover to slice 2:** design §3.4 step 2 puts the attach inside the composer's apply path, so when
+2.8 lands the `embedded.ts` entry should move into `src/wallet/policy/**` and the exception list above
+should shrink — at which point case 2 fails until the list is updated deliberately. Recorded as an open
+design/code divergence, not silently absorbed.
+
+#### TDD Cycle Evidence
+
+Honest framing: the invariant **holds at HEAD**, so there is no implementation-free RED to observe for
+this unit — a green first run is the expected state, and by itself would be decoration. The RED is
+therefore produced by **mutation**, per the task's own instruction ("prove the guard is load-bearing:
+temporarily add a violating call, observe the named failure, remove it"). Seven mutations, one anchor
+each, every one restored and the suite re-run green (9/9) afterwards.
+
+| # | Mutation (appended to a real module outside the boundary) | Case that failed, by name |
+|---|---|---|
+| M1 | `createPolicy(...)` call in `src/wallet/grants/privy-policy-sync.ts` | `issues no policy create or patch call outside the policy path and the frozen provider boundary` |
+| M2 | `export { composeGrantRules } from "./solana-policy-provisioner.js"` in `privy-policy-sync.ts` | `builds the delegated-grant rules in one module only` |
+| M3 | `contacts.archive("probe")` in `privy-policy-sync.ts` | `mutates contacts only from the policy service and the contacts route` |
+| M4 | re-export `createSolanaGrantPolicyProvisioner` from `solana-policy-provisioner.ts` | `deletes the legacy writer so no module can construct it` |
+| M5 | a second `buildSolanaEnrollmentRules` mention in `solana-policy-provisioner.ts` | `builds the ordinary enrollment rule in the composer only` |
+| M6 | `admin.attachPolicyToSigner({...})` in `privy-policy-sync.ts` | `attaches a policy only through the frozen boundary set` |
+| M7 | a `ContactsRepository` type-import in `privy-policy-sync.ts` | `is imported by the composition root and the contacts route only` |
+
+Each mutation produced **exactly one** failure (1 failed / 8 passed), named above — not a cluster, so
+each case is attributed to its own guard. `git status --porcelain src/` is empty after the last revert.
+
+**A real defect this unit found in its own guard, fixed before commit:** the scan helpers used `g`-flagged
+regexes with `RegExp.test`, which is stateful (`lastIndex` persists between files) and made the attach
+case fail spuriously on the first run (`expected [...(1)] to deeply equal [...(2)]`). The flags were
+removed and the run is deterministic. Worth recording because a stateful guard is worse than no guard:
+it passes or fails by file order. RED before the fix: the attach case; GREEN after: 9/9, reproduced.
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/policy-writer-structural.test.ts` (first run, pre-fix) | **1 failed / 8 passed** — the `g`-flag statefulness defect above |
+| `npx vitest run tests/unit/policy-writer-structural.test.ts` (post-fix) | **1 file passed, 9 tests passed** |
+| … seven mutation runs, each restored | **1 failed / 8 passed** each time, exactly the case named in the table |
+| `npx vitest run tests/unit/policy-writer-structural.test.ts` (final) | **1 file passed, 9 tests passed** |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` | **12 files passed, 203 tests passed** (1.1–1.9 were 194; +9 is this suite) |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`, exit 0) |
+
+#### Deviations from the design and from the task text
+
+1. **Exact-equality sets with a frozen exception list instead of the literal "nothing outside
+   policy/signer"**, with the five measured near-misses listed above and each one's reason stated in the
+   test source. Deliberate: the alternative is an assertion that is red today and therefore not a guard.
+2. **Two guards the task did not ask for**, both strictly stronger and both currently true:
+   `buildSolanaEnrollmentRules`'s single builder (the ordinary rule, design §3.3 row 1) and the
+   module-level absence of the deleted writer's exports. The second is the case that fails if anyone
+   resurrects `createSolanaGrantPolicyProvisioner`.
+3. **`src/server.ts` is exempted for `ContactsRepository`** and the exemption is asserted, not assumed:
+   case 6 freezes the importer set and case 9 proves the file constructs without mutating. The task text
+   ("no module outside `src/wallet/policy/**` and `src/api/contacts.ts` imports `ContactsRepository` for
+   mutation") is satisfied in substance — the composition root imports to *wire*, it does not mutate —
+   but not in the letter, so it is recorded rather than papered over.
+
+#### Remaining tasks in slice 1
+
+```text
+- [ ] **1.11 Run the slice-1 gate and record the slice-1 work-unit commits.**
+```
+
+Parent-owned lifecycle rows in `tasks.md` were left byte-for-byte untouched — both still carry
+`<!-- sdd-owner: parent -->` and remain unchecked — and no bounded review, receipt, refutation,
+correction or delivery gate was started by this phase.
+
+#### Workload / PR boundary
+
+One commit, one work unit: one new 200-line test file. No production change, so the unit is well inside
+the 400-line review budget. It sits inside the parent-assigned `PR 3` slice (tasks 1.7–1.11, rollback
+boundary `embedded.ts`, grants provisioner/runtime, `consumption.ts`, docs). No push, no PR, and no
+slice-2 work started.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit, the
+authoritative artifact paths (including `apply-progress.md`) and the delivery path directly. Readiness
+was resolved against the artifacts before any edit — `tasks.md` (task 1.10, terminal
+`<!-- sdd-owner: implementation -->`), `design.md` §3.3, §3.4, §5.7, §12.1 and the 1.1–1.9
+apply-progress. `actionContext`: all writes stayed inside the assigned worktree root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); the main checkout
+(`/Users/ramiro/Desktop/projects/colloseum`) and the untracked `compose.privy-local.ports.yaml` were not
+touched. No `git stash` command was run at any point.
