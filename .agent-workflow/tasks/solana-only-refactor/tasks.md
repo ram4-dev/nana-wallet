@@ -336,3 +336,60 @@ A deployment can be answering every balance request with 503 and still look
 skipped), which proves only that nothing **else** broke. A green suite says
 nothing about a surface whose default is silently wrong — someone has to open the
 screen.
+
+## Fifth defect: no transfer could ever be previewed
+
+Found by reading the voice worker's logs after a real browser session, not by a
+test. `98d1c3d`.
+
+`solanaDevnetRpc.getFeeForTransferMessage` built its transfer message without a
+`recentBlockhash`, so `compileMessage()` threw **"Transaction recentBlockhash
+required"** on every single call. `previewTransfer` catches that and refuses to
+guess a fee, so **every preview failed — every recipient, every amount, in both
+the text and the voice paths.** The money path was 100% dead in live mode.
+
+Introduced in `897db70`, before this refactor. It survived because every test
+injected an rpc double whose `getFeeForTransferMessage` resolved `5000n`: the
+real adapter had **no test coverage at all**. A double that answers the question
+cannot discover that the real implementation cannot ask it.
+
+### Two bare catches made it invisible
+
+The failure travelled through two swallowing catches:
+
+1. `previewTransfer` converted it to `"Fee evidence unavailable from devnet RPC; refusing to guess."`
+2. `src/conversations/service.ts:1060` — a `catch {}` with **no error binding** —
+   flattened it to `wallet_unavailable`, so the agent said
+   **"The wallet is temporarily unavailable."**
+
+A deterministic local bug became indistinguishable from a provider outage, on
+screen and in the logs. The worker log did record the tool result, but nothing
+anywhere recorded **why**.
+
+### Diagnosis method that worked
+
+The logs gave the symptom (`wallet_unavailable`) but never the cause. The cause
+came from reproducing each link in the container against real credentials:
+
+| Step | Result |
+| --- | --- |
+| `POST /v1/voice/room-token` | 200 — token issuance fine |
+| LiveKit room logs | browser joined (Chrome, 68 s), agent assigned and joined |
+| Worker log | agent transcribed speech and called `send_token` — **voice worked** |
+| Tool result | `wallet_unavailable` |
+| Backend request log | **no request at that instant** → failure was client-side in the worker |
+| `listWalletsForChain(did, 'solana')` | 1 wallet, id and address match the binding — resolver fine |
+| `provider.previewTransfer(real request)` | **THREW** "Fee evidence unavailable" |
+| `buildDevnetSolTransfer(...).compileMessage()` | **THREW** "Transaction recentBlockhash required" |
+| same, with a blockhash | `compileMessage OK, fee = 5000` |
+
+The decisive clue was the **absence** of a backend request: a tool that failed
+without any HTTP call never reached the API, so the fault was local. Absence of
+evidence in a request log is evidence.
+
+### Lesson
+
+A `catch {}` with no binding is not defensive, it is a **blind spot**: it
+preserves the outcome the author wanted to prevent ("don't crash") while
+destroying the only thing needed to fix it ("what broke"). Two of them in a row,
+amplified.

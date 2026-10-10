@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { Transaction } from "@solana/web3.js";
+import { Transaction, type Connection } from "@solana/web3.js";
 import {
   APIConnectionTimeoutError,
   APIError,
@@ -18,6 +18,7 @@ import {
   createPrivySignAndSendClient,
   privySignAndSendFromEnvironment,
   serializeUnsignedTransaction,
+  solanaDevnetRpc,
   SOLANA_DEVNET_NETWORK,
   SOLANA_DEVNET_CAIP2,
   type PrivySolanaRpcInput,
@@ -574,6 +575,77 @@ function isBase64(value: string): boolean {
       value.replace(/=+$/u, "")
   );
 }
+
+describe("solanaDevnetRpc (the live adapter)", () => {
+  /**
+   * The provider refuses to guess a fee, so its evidence has to come from a
+   * REAL compiled transfer message. Compiling one requires a recent blockhash:
+   * without it `compileMessage()` throws "Transaction recentBlockhash
+   * required", which the provider reports as an unavailable RPC and the
+   * conversation service flattens into "the wallet is temporarily
+   * unavailable". Nothing downstream can tell that apart from an outage, so
+   * this adapter is where the guarantee has to hold.
+   */
+  const BLOCKHASH = "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq";
+
+  function connectionDouble(value: number | null) {
+    const getFeeForMessage = vi
+      .fn()
+      .mockResolvedValue({ context: { slot: 1 }, value });
+    const connection = {
+      getLatestBlockhash: vi
+        .fn()
+        .mockResolvedValue({ blockhash: BLOCKHASH, lastValidBlockHeight: 1 }),
+      getFeeForMessage,
+    } as unknown as Connection;
+    return { connection, getFeeForMessage };
+  }
+
+  it("quotes the fee from a message that carries a recent blockhash", async () => {
+    const { connection, getFeeForMessage } = connectionDouble(5_000);
+    const rpc = solanaDevnetRpc(connection, async () => SENDER);
+
+    await expect(
+      rpc.getFeeForTransferMessage?.(RECIPIENT, 500_000_000n),
+    ).resolves.toBe(5_000n);
+
+    // The message actually handed to the node is the assertion: a fee quoted
+    // against an uncompilable message is not evidence.
+    const quoted = getFeeForMessage.mock.calls[0]?.[0] as {
+      recentBlockhash?: string;
+    };
+    expect(quoted.recentBlockhash).toBe(BLOCKHASH);
+  });
+
+  it("fails closed when the node returns no fee value", async () => {
+    const { connection } = connectionDouble(null);
+    const rpc = solanaDevnetRpc(connection, async () => SENDER);
+
+    await expect(
+      rpc.getFeeForTransferMessage?.(RECIPIENT, 500_000_000n),
+    ).rejects.toThrow(/No fee evidence/);
+  });
+
+  it("lets previewTransfer quote a fee through the live adapter", async () => {
+    const { connection } = connectionDouble(5_000);
+    const provider = new SolanaDevnetProvider(
+      { walletId: WALLET_ID, senderAddress: SENDER },
+      {
+        rpc: solanaDevnetRpc(connection, async () => SENDER),
+        signAndSend: signerDouble(),
+      },
+    );
+
+    await expect(
+      provider.previewTransfer({ ...CONTEXT, token: "SOL", to: RECIPIENT, amount: "0.5" }),
+    ).resolves.toMatchObject({
+      network: SOLANA_DEVNET_NETWORK,
+      recipient: RECIPIENT,
+      amount: "0.5",
+      estimatedFee: "0.000005 SOL",
+    });
+  });
+});
 
 describe("Privy Solana dispatch through the official SDK (S4)", () => {
   it("calls the SDK's signAndSendTransaction with the devnet caip2 and the base64 transaction", async () => {

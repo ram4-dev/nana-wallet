@@ -648,6 +648,8 @@ export function solanaDevnetRpc(
   connection: Connection,
   getSenderAddress: () => Promise<string>,
 ): SolanaRpc {
+  const latestBlockhash = async (): Promise<string> =>
+    (await connection.getLatestBlockhash()).blockhash;
   return {
     async getBalance(address) {
       return BigInt(await connection.getBalance(new PublicKey(address)));
@@ -670,17 +672,23 @@ export function solanaDevnetRpc(
       );
     },
     async getRecentBlockhash() {
-      const { blockhash } = await connection.getLatestBlockhash();
-      return blockhash;
+      return latestBlockhash();
     },
     async getFeeForTransferMessage(recipient, lamports) {
       // Fee evidence for THIS transfer's unsigned message (never empty input):
       // build with the real sender, compile, and quote lamports-per-signature.
+      //
+      // The blockhash is REQUIRED here, not decoration: `compileMessage()`
+      // throws "Transaction recentBlockhash required" without one, so omitting
+      // it made every quote fail and every transfer preview report the wallet
+      // as unavailable. The hash only has to make the message compilable; the
+      // node charges the same lamports-per-signature either way.
       const sender = await getSenderAddress();
       const message = buildDevnetSolTransfer(
         sender,
         recipient,
         lamports,
+        await latestBlockhash(),
       ).compileMessage();
       const fee = await connection.getFeeForMessage(message);
       if (typeof fee.value !== "number")
