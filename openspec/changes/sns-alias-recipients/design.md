@@ -1161,3 +1161,42 @@ step issues a PATCH, creates or revokes a grant, changes a signer or alters the 
 (b) dependency removal is a one-module change — uninstall `@bonfida/spl-name-service` together with
 `src/wallet/sns/transport.ts` and the lockfile entry, which is why the structural assertion that
 exactly one module imports it is part of the design rather than a nicety.
+
+---
+
+## 15. Decisions settled before apply
+
+### D-A. The idempotency body binding needs a column — **ACCEPTED**
+
+The proposal's "no new column" wording predates the finding that
+`replayIdempotentMutation` (`src/wallet/policy/service.ts`) matches on
+`(wallet_id, idempotency_key)` alone. So a replay carrying a **different body**
+silently returns the first result. That is invisible on the paste path, where the
+body *is* the address, and user-visible on the alias path, where the same key with
+a different alias returns the wrong contact.
+
+`request_hash` on `recipient_policy_sync_intent` is **accepted** as an additive
+column. The no-column alternative was rejected because it fails in a way that
+matters: it falsely conflicts after a legitimate rename (the composed policy hash
+changes for a reason unrelated to the request) and it cannot see a differing
+`description` at all. A guard that fires on valid operations and misses invalid
+ones is worse than the hole it closes.
+
+This is a deliberate, recorded divergence from the proposal's wording, not an
+oversight. A mismatch is reported as a typed conflict (`409`), never applied.
+
+### D-B. Review workload — **no PR, therefore no exception to request**
+
+The forecast is honest and large (~4,900–7,200 changed lines; seven of eight units
+exceed 400 lines). It does **not** gate anything operationally here: this
+worktree's standing instruction is **no PR** — work-unit commits pushed to
+`feat/solana-operational` — so `size-exception` describes review size, not a
+Gentle-owned PR policy to invoke. The consequence to respect is that each unit
+still lands as its **own** commit so a reviewer can read the change in slices, and
+no diff is shrunk by dropping tests or comments to reach a number.
+
+### D-C. The resequencing that follows from D-A
+
+`request_hash` is additive to a table this change does not otherwise own, so its
+migration lands with the idempotency unit, not with the provenance unit, keeping
+the schema delta and the behaviour it enables in the same commit.
