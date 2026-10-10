@@ -143,6 +143,36 @@ export class ContactActionService {
   }
 
   /**
+   * Frees a conversation whose proposal was never published (design §8.2).
+   *
+   * WHY THIS EXISTS
+   * ---------------
+   * `stage` inserts the row and only THEN delivers the card. If delivery fails
+   * (participant gone, transport error) the process deliberately leaves the row
+   * behind, because a row that was written and then rolled back would be a lie
+   * about what the user was shown. But the row is still `status='open'`, and the
+   * partial unique index `contact_action_proposals_one_open_idx` would make the
+   * retry for the same conversation fail with
+   * `ContactActionProposalConflictError` until it was superseded or expired —
+   * i.e. the user could not fix a torn card without waiting out the TTL.
+   *
+   * `published_at IS NULL` is the load-bearing part of the predicate, and it is
+   * what makes calling this safe: §8.2 stamps `published_at` BEFORE the arbiter
+   * window opens, so an unpublished open row can never be a live window. A row
+   * whose card WAS delivered is left untouched here, whatever else is asked.
+   */
+  public async supersedeUnpublished(userId: string, conversationId: string): Promise<number> {
+    return this.database.withUserTransaction(userId, async (client) => {
+      const result = await client.query(
+        `UPDATE contact_action_proposals SET status='superseded'
+          WHERE user_id=$1 AND conversation_id=$2 AND status='open' AND published_at IS NULL`,
+        [userId, uuidSchema.parse(conversationId)],
+      );
+      return result.rowCount ?? 0;
+    });
+  }
+
+  /**
    * Used only inside RecipientPolicyService's existing transaction hook (the
    * `L5` slot of design §1.2/§7.2). The conditional UPDATE is the whole
    * authorization: id AND version AND owner AND `open` AND unconsumed AND

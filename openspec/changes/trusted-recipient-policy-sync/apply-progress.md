@@ -4716,3 +4716,205 @@ owner. Flagged for verify rather than silently widening this task.
 One commit: the new publication module, its unit suite, its integration suite, the `worker.ts` wiring,
 the `create-realtime-tools.ts` forwarding, the additive `definition.ts` status union, `tasks.md` and
 this entry. Inside the parent-assigned `PR 6` slice (tasks 4.1–4.9). No push, no PR.
+
+---
+
+### Task 4.7 — the paste/scan address endpoint and the review card UI
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/api/contact-actions.ts` | New. `registerContactActionRoutes`: `GET /v1/contact-actions/:proposalId` (the reconstruction path) and `POST /v1/contact-actions/:proposalId/address`, plus the pure `contactActionProposalResponse` / `contactActionRevocationDisclosure`. |
+| `src/livekit/contact-card-republication.ts` | New. `createContactCardPublisher` / `createOptionalContactCardPublisher`: reliable data packet on the card topic to the **bound participant only**, resolved from `conversation_live_leases`; `false` (never a throw) when there is no bound identity or the transport fails. |
+| `src/wallet/policy/contact-actions.ts` | Added `supersedeUnpublished(userId, conversationId)` — the orphan-row fix (below). |
+| `src/livekit/contact-proposal-publication.ts` | `createVoiceContactActions` supersedes the conversation's unpublished orphan before staging. New optional `supersedeUnpublished` dependency with the predicate documented. |
+| `src/contracts/http.ts` | Contract delta: `address` is nullable (the `review_required` state) and `cancelled` joins the closed status vocabulary. |
+| `apps/nana-wallet/src/lib/api-types.ts` | Same delta mirrored in the same commit (`AGENTS.md`), plus `ContactActionProposalCard` (the card packet the backend publishes). |
+| `apps/nana-wallet/src/lib/contact-action-topic.ts` | New. The dedicated card topic bus (`contact_action_proposal`): a wakeup channel with an identity guard, carrying no value any consumer may read. |
+| `apps/nana-wallet/src/features/agent/voice/livekit-web-client.ts` | Routes the card topic packet into that bus (the packet is a wakeup; the card reloads the row). |
+| `apps/nana-wallet/src/features/wallet/address-scanner.ts` | New. The Capacitor scan seam: native-shell check, plugin resolved from the Capacitor registry, honest `unavailable`/`cancelled` results. |
+| `apps/nana-wallet/src/features/wallet/ContactActionProposalCard.tsx` | New. The review card: renders the persisted row, offers paste/scan only on an `open` row, echoes the reviewed version. |
+| `apps/nana-wallet/src/lib/api.ts` | `queryKeys.contactAction(userId, proposalId)` — the card's own cache key. |
+| `src/server.ts` | Wires the routes with the neighbouring contacts DI shape and the optional LiveKit publisher. |
+| `tests/fixtures/test-server.ts` | `actionCardPublisher` injection seam. |
+| `tests/integration/contact-action-address.test.ts` | New. 7 cases, real HTTP + real database. |
+| `apps/nana-wallet/src/features/wallet/ContactActionProposalCard.test.tsx` | New. 17 cases covering every rendered state. |
+| `apps/nana-wallet/src/lib/contact-action-topic.test.ts` | New. 8 cases: the topic name, delivery/unsubscribe, and the identity guard. |
+| `apps/nana-wallet/src/features/wallet/address-scanner.test.ts` | New. 3 cases: web is unscannable, no plugin is unscannable, a real barcode is trimmed, an empty read is cancelled. |
+
+#### What the unit delivers
+
+- **`GET /v1/contact-actions/:proposalId`** returns the persisted row; a foreign proposal is a 404, not
+  a served row. The only derived field is the displayed status: a row still `open` past `expires_at`
+  renders `expired`, because `expires_at > now()` is the predicate that makes it unconsumable — reporting
+  `open` for it would be a lie the UI would then have to guess about.
+- **`POST /v1/contact-actions/:proposalId/address`** re-validates the canonical base58 form at the route
+  (so a malformed key is a `422 DATOS_INVALIDOS`, not the 500 a thrown service error would become),
+  creates the new immutable version, and re-publishes the card. Publication success is what stamps
+  `published_at` on the **new** version; a failed or absent publisher stamps nothing, so no window can
+  open for an unstamped version (design §8.2, fail closed).
+- **The card** renders address, previous address, action, version, revocation effects and expiry from the
+  row; a paste or a scan is only ever a draft that the explicit submit sends with the reviewed version.
+- **The dedicated topic** carries the packet to the card, which reloads the canonical row on a strictly
+  newer version and ignores anything else.
+
+#### How the orphan-row risk (carried from 4.6) is resolved
+
+The deferred risk was: a failed publication leaves an open, `published_at IS NULL` row, and
+`contact_action_proposals_one_open_idx` then makes a same-conversation retry raise
+`ContactActionProposalConflictError` until supersede/expiry — the user could not fix a torn card without
+waiting out the TTL.
+
+**Fix:** `ContactActionService.supersedeUnpublished(userId, conversationId)` marks the conversation's
+open **and unpublished** rows superseded, and `createVoiceContactActions.stage` calls it before staging
+a new proposal. Two properties make it safe rather than merely convenient:
+
+1. **`published_at IS NULL` is the guard, and it is load-bearing.** §8.2 stamps `published_at` *before*
+   the arbiter window opens, so an unpublished open row can never be a live window; a row whose card was
+   delivered is never touched. The test that proves the direction that matters: a published open row
+   returns `0` from `supersedeUnpublished` and stays `open`.
+2. **It is not inside `stage`.** Adding the cleanup to `ContactActionService.stage` would have made the
+   one-open-per-conversation rule vanish for every caller, including the HTTP path. It is called only on
+   the voice retry path, where a failed publication is what created the orphan, so
+   `tests/integration/contact-action-proposals.test.ts`'s "rejects a second open proposal for the same
+   conversation" still asserts the real index by name.
+
+The retry result is a **fresh** proposal (a new row id, version 1, no `supersedes_id`), not a chained
+version 2: a row that was never published was never reviewed, so there is no reviewed version for it to
+supersede. Asserted explicitly (`after[1].id !== after[0].id`, `supersedes_id` null).
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED (backend) | Suite written first, run before the route module existed: **7 failed / 7**. Every endpoint case failed with `404` from Fastify (no such route) and the orphan case failed with the real `ContactActionProposalConflictError` from `contact-actions.ts:95` — i.e. the carried risk reproduced by name before any fix. |
+| RED (frontend) | Card and its colocated suite written first; with `ContactActionProposalCard.tsx` absent, the suite reported **1 file failed, no tests** (module unresolvable). |
+| RED (scanner / topic) | No module-absent RED was possible for these two (they were authored with their tests in the same pass), so RED is the mutation evidence below rather than a claimed failure that did not happen. |
+| GREEN (backend) | **7 passed / 7** (`tests/integration/contact-action-address.test.ts`). |
+| GREEN (frontend) | **28 passed / 28** across the card (17), the topic bus (8) and the scanner (3). |
+| Mutation 1 — route address validation | `if (!isValidSolanaAddress(address))` → `if (false)`: **1 failed** — `re-validates the canonical base58 form and creates exactly one new version`. |
+| Mutation 2 — the orphan guard | Dropped `AND published_at IS NULL` from `supersedeUnpublished`: **1 failed** — `supersedes an unpublished orphan on the retry instead of colliding` (its published-row control returned 1 instead of 0). |
+| Mutation 3 — the publication stamp | `if (delivered)` → `if (false && delivered)`: **1 failed** — `re-publishes the corrected card to the bound participant only, via the route`. |
+| Mutation 4 — the expired derivation | `status: expired ? "expired" : proposal.status` → `proposal.status`: **1 failed** — `renders an expired row as expired and refuses to consume it`. |
+| Mutation 5 — the topic identity guard | Removed the `isContactActionProposalNotification` check: **5 failed** — every `refuses to wake a card for …` case (wrong type, non-integer version, empty id, non-object, null). |
+| Mutation 6 — the native-shell guard | `canScanAddress()` → `return true`: **1 failed** — `reports the web platform as unscannable`. |
+| Mutation 7 — the wakeup version comparison | Dropped `notification.proposalVersion <= proposal.proposalVersion`: **1 failed** — `reloads the row on a newer version wakeup and ignores the same or older one` (it reloaded twice instead of once). |
+| Mutation 8 — the client-side pre-check | `if (!solanaAddressPattern.test(candidate))` → `if (false)`: **1 failed** — `refuses a locally implausible address without calling the server`. |
+| Mutation 9 — the confirmable gate | `const readable = proposal.status === "open"` → `true`: **4 failed** — the `consumed`, `superseded`, `expired` and `cancelled` renders, i.e. a dead version must not offer the address path. |
+| TRIANGULATE | Added after GREEN: `expires_at` in the future vs. negative-TTL; the live version accepting after the superseded row refused (both directions of `PROPUESTA_OBSOLETA`); a full backend card packet accepted as a wakeup while the same-version wakeup is ignored; a scanned-but-unsubmitted value (draft) vs. a submitted one; a rejected scan leaving the input empty. |
+| REFACTOR | Three real defects found and fixed after the first GREEN pass: the route re-implemented the summary that `contactProposalSummary` already owns (now imported, no second authority); the `status` guard narrowing was not preserved inside the hoisted `submitAddress` function (version captured once, outside the closure — caught by `npm run typecheck`, not by the runtime suite); and `handleScan` awaited the scanner without a `catch`, so a throwing plugin would have surfaced as an unhandled rejection instead of the honest `unavailable` notice. |
+| False-green guard | Every negative assertion has a preceding positive control: the 404 for a foreign proposal follows a 200 for the owner's own row; every `422`/`409` refusal is preceded by the accepted write, and after the stale refusal the row set is asserted **byte-identical** to the snapshot taken before it; the refused consume for version 1 is preceded by the accepted consume for version 2; the expired row's refusal follows a live row of the same shape rendering `open`; the topic's six refusal cases each end by asserting the declared wakeup DOES arrive. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/contact-action-address.test.ts` (RED) | **7 failed / 7** — 6 × `404` (route absent), 1 × `ContactActionProposalConflictError` |
+| … (GREEN) | **1 file passed, 7 tests passed** |
+| … × 4 mutation runs (`-t` scoped) | **1 failed** each, by the case name listed above |
+| `npx vitest run tests/integration/contact-action-proposals.test.ts tests/integration/contact-proposal-publication.integration.test.ts` | **2 files passed, 10 tests passed** — the 4.5/4.6 suites stayed green (the one-open rule is still asserted by name) |
+| `npx vitest run tests/unit/livekit/voice-decision-gate.test.ts tests/unit/livekit/voice-decision-gate-arbiter-adapter.test.ts tests/unit/livekit/voice-decision-transcripts.test.ts tests/integration/contact-action-address.test.ts` | **4 files passed, 41 tests passed** |
+| `npx vitest run tests/unit/contracts-recipient-policy.test.ts tests/unit/confirmation-arbiter.test.ts tests/unit/voice-observability.test.ts` | **3 files passed, 27 tests passed** — the widened contract schema did not break its mirror guard |
+| `npm run lint` / `npm run typecheck` (root) | clean (`eslint src tests --max-warnings=0`; `tsc -p tsconfig.test.json --noEmit`), exit 0 |
+| `npx vitest run tests/integration/recipient-policy-repository.test.ts tests/integration/recipient-policy-lease.test.ts` | **2 files passed, 30 tests passed** |
+| `npx vitest run tests/integration/recipient-policy-migration.test.ts tests/integration/recipient-policy-migration-rls.test.ts` | **2 files passed, 24 tests passed** |
+| `npx vitest run tests/unit/policy-composer.test.ts tests/unit/policy-composer-hash.test.ts` | **2 files passed, 35 tests passed** |
+| `npx vitest run tests/unit/policy-apply-transport.test.ts tests/unit/policy-composer-unproven-refusal.test.ts tests/unit/policy-probe-u1..u4.test.ts` | **6 files passed, 41 tests passed** |
+| `npx vitest run tests/unit/policy-provisioner-delegation.test.ts tests/unit/policy-readback.test.ts tests/unit/policy-service-contract.test.ts` | **3 files passed, 70 tests passed** |
+| `npx vitest run tests/unit/policy-signer-compose-structural.test.ts tests/unit/policy-signer-probe.test.ts tests/unit/policy-writer-structural.test.ts` | **3 files passed, 28 tests passed** |
+| `(cd apps/nana-wallet && npm run lint && npm run typecheck)` | clean, exit 0 (after `npx eslint --fix` on the new files) |
+| `(cd apps/nana-wallet && npx vitest run)` | **24 files passed, 156 tests passed** |
+| `(cd apps/nana-wallet && npx vitest run src/features/wallet/ContactActionProposalCard.test.tsx)` (RED, module absent) | **1 file failed, no tests** |
+| … × 5 frontend mutation runs | **1 / 1 / 4 / 1 / 5 failed** by the names listed above |
+| `npm run db:migrate` | **not run** — it fails locally on `relation "conversations" already exists` (pre-existing, recorded in the change's earlier entries); the database already reflects the Supabase chain and every suite above ran against it. |
+
+#### Deviations from the design
+
+Five, all deliberate:
+
+1. **`contactActionProposalSchema.address` is nullable and `cancelled` was added to the status
+   vocabulary.** The row can legitimately hold no address yet — `stage` inserts `address = NULL` with
+   `payload.addressSource = 'review_required'`, and §8.3's card renders its input in exactly that state —
+   so a `z.string().min(1)` contract could not describe the row the endpoint is required to reconstruct.
+   `cancelled` is a legal `status` value in the table's CHECK and had no token in the contract's closed
+   vocabulary; the card covers it. Both widened in `src/contracts/http.ts` and
+   `apps/nana-wallet/src/lib/api-types.ts` in the same commit, and the existing contract suite still
+   passes.
+2. **The GET response reports an expired row as `expired`.** The row is still `open` in the table (only
+   `expires_at` has passed). A derived field is the honest reading of §8.4's "an expired row renders as
+   expired and cannot be consumed"; the persisted status is unchanged, and the row is still not
+   consumable because the predicate is in the database.
+3. **Re-publication is a port, and its production implementation is LiveKit's `RoomServiceClient.sendData`
+   to the bound identity only.** §8.3 says the corrected card is re-published; the address change happens
+   in the HTTP process, which has no in-process room, so the packet is issued through the server SDK to
+   `destination_identities: [boundIdentity]` resolved from `conversation_live_leases`. An expired or
+   absent lease yields `false` and no stamp — there is deliberately **no** room-wide fallback, because
+   §8.1 says a card never goes to the room at large.
+4. **The window's re-opening for the new version is proven where it is actually enforced.** The arbiter
+   window lives in the voice worker's process, so the HTTP route cannot open it; what the route owns is
+   the new immutable version plus the delivery that authorizes a window. The guarantee that a window for
+   version *n* cannot be consumed while *n+1* is prepared is the consume predicate's `id AND version`,
+   and the suite asserts it against the real database with a genuinely open version-1 window: the late
+   consume returns `null` while the version-2 consume succeeds.
+5. **The Capacitor scanner resolves its plugin from the Capacitor registry instead of importing one.**
+   No barcode plugin is a dependency of `apps/nana-wallet`, and adding a native dependency is outside
+   this task. The seam is real (native-shell check → registry lookup → trimmed `rawValue`), the honest
+   degradation is tested, and installing a plugin is what makes the scan path live; until then the paste
+   path is the review channel's route.
+
+Two smaller, documented choices: the card's local base58 pre-check is deliberately duplicated from
+`AddTrustedRecipient.tsx` (the frontend may not import the root `src/`, and the server re-validates
+canonically either way); and the card's topic bus accepts the full backend card packet — which is what the
+backend actually publishes — while nothing downstream may read a value out of it, because the card
+re-reads the row.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **Task 4.8** can now drive the real `contact_action_proposal` packet end to end: `publishContactActionProposal`
+  is the browser-side consumer, and the `RoomEvent.DataReceived` handler in
+  `livekit-web-client.ts` already routes that topic into it. A spoken-only address is still refused upstream by the strict tool schema
+  (§8.3), which this task did not touch.
+- **The reconciliation of the two publication sites is deliberate and worth a reviewer's eye:** the voice
+  worker publishes in-process (`createVoiceContactActions`), the HTTP route publishes through the server
+  SDK (`createOptionalContactCardPublisher`). Both target the same topic and both must resolve a bound
+  identity; if a third caller appears, that pair is what should be unified, not duplicated.
+- No secret, token or key value appears in any file, test or command in this unit; `room_reference`
+  and others are unchanged, and nothing was added to `.env`.
+
+#### Remaining tasks in slice 4
+
+```text
+- [ ] **4.8 Add the LiveKit session E2E suite.**
+- [ ] **4.9 Add the agent evals for both text and voice contexts.**
+```
+
+Parent-owned lifecycle rows in `tasks.md` (the bounded native review and the post-apply verify/archive)
+were left byte-for-byte untouched, and no review, receipt or delivery gate was started by this phase.
+
+#### Workload / PR boundary
+
+**One** conventional work-unit commit, as the task required (the two halves were staged as
+back-to-back work units and landed together; the SHA is in the report envelope): the review endpoints,
+the card publisher, the orphan fix, the contract mirror in both files, the backend integration suite,
+the card with its topic bus and scan seam, the frontend suites, `tasks.md` and this entry.
+
+Inside the parent-assigned `PR 6` slice (tasks 4.1–4.9). No push, no PR, no slice-5 work started.
+
+#### Commit
+
+`feat(policy): review a persisted contact proposal and version its address from the screen` — see the
+report envelope for the SHA.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work unit, the
+authoritative artifact paths and the delivery path directly. Readiness was resolved against the artifacts
+before any edit — `tasks.md` (task 4.7, terminal `<!-- sdd-owner: implementation -->`), `design.md`
+§7.4/§8.1–§8.4/§9.2, `spec.md`, and the 4.5/4.6 apply-progress entries. `actionContext`: all writes
+stayed inside the assigned worktree root; the main checkout, the untracked `compose.privy-local.ports.yaml`
+and the three unrelated stashes were not touched, and no `git stash`/`checkout`/`reset`/`restore`/`clean`
+was run.

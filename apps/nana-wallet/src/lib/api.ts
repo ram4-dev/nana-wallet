@@ -715,6 +715,9 @@ export const queryKeys = {
   currentWallet: (userId: string | undefined) => ["wallet", "current", userId] as const,
   walletPermission: (userId: string | undefined) => ["wallet", "permission", userId] as const,
   contacts: (userId: string | undefined) => ["contacts", userId] as const,
+  /** Design §8.4: the review card's canonical row, keyed by proposal id. */
+  contactAction: (userId: string | undefined, proposalId: string) =>
+    ["contactAction", userId, proposalId] as const,
   grants: (userId: string | undefined) => ["grants", userId] as const,
   notifications: (userId: string | undefined) => ["notifications", userId] as const,
   agenda: (userId: string | undefined, from: string, to: string) =>

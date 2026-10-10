@@ -185,7 +185,8 @@ export type DeleteContactResponse = {
 };
 
 export type ContactAction = "create" | "edit" | "remove";
-export type ContactActionProposalStatus = "open" | "consumed" | "superseded" | "expired";
+export type ContactActionProposalStatus =
+  "open" | "consumed" | "superseded" | "expired" | "cancelled";
 
 /** Immutable server-owned proposal rendered by the review card. */
 export type ContactActionProposal = {
@@ -194,7 +195,8 @@ export type ContactActionProposal = {
   action: ContactAction;
   contactId: string | null;
   contactVersion: number | null;
-  address: string;
+  /** `null` while the review channel has not received an address yet. */
+  address: string | null;
   previousAddress?: string | null;
   revokedGrantIds: string[];
   revocationDisclosure?: string | null;
@@ -213,6 +215,24 @@ export type ContactActionProposalNotification = {
 export type ReplaceContactActionAddressInput = {
   address: string;
   expectedProposalVersion: number;
+};
+
+/**
+ * The LiveKit wakeup for a card (backend: `ContactProposalPublication`). The
+ * payload only ever names the proposal; the UI reloads the canonical row by id
+ * through `GET /v1/contact-actions/:proposalId` (design §8.4), so the card can
+ * never drift from what the server persisted.
+ */
+export type ContactActionProposalCard = ContactActionProposalNotification & {
+  action: ContactAction;
+  contactId: string | null;
+  contactVersion: number | null;
+  address: string | null;
+  previousAddress: string | null;
+  revokedGrantIds: string[];
+  summary: string;
+  revocationDisclosure: string | null;
+  expiresAt: ISODateTime;
 };
 
 /** `POST /v1/contact-actions/:proposalId/address` — the newly created version. */

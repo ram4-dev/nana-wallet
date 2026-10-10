@@ -9,6 +9,10 @@ import {
 } from "livekit-client";
 
 import { api } from "@/lib/api";
+import {
+  CONTACT_ACTION_PROPOSAL_TOPIC,
+  publishContactActionProposal,
+} from "@/lib/contact-action-topic";
 
 import type { VoiceClient } from "./voice-client";
 
@@ -180,6 +184,16 @@ export function createLiveKitWebClient(options: LiveKitWebClientOptions = {}): V
       if (!manuallyDisconnected && !reconnecting) options.onConnectionLost?.();
     });
     room.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+      // The review card's own topic (design §8.1): the packet is a wakeup only,
+      // and the card answers it by re-reading the canonical row from Fastify.
+      if (topic === CONTACT_ACTION_PROPOSAL_TOPIC) {
+        try {
+          publishContactActionProposal(JSON.parse(new TextDecoder().decode(payload)));
+        } catch {
+          // A malformed card packet wakes nothing; the row stays readable.
+        }
+        return;
+      }
       if (topic !== "conversation_state_changed") return;
       try {
         const event = JSON.parse(new TextDecoder().decode(payload)) as {

@@ -84,6 +84,12 @@ import { dispatchPendingAssistantOutbox } from "./notifications/outbox-dispatche
 import { startAssistantOutboxWorker } from "./notifications/outbox-worker.js";
 import { createOptionalLiveKitInvalidationPublisher } from "./notifications/livekit-invalidation-publisher.js";
 import { registerGrantsRoutes } from "./api/grants.js";
+import { registerContactActionRoutes } from "./api/contact-actions.js";
+import { ContactActionService } from "./wallet/policy/contact-actions.js";
+import {
+  createOptionalContactCardPublisher,
+  type ContactCardPublisher,
+} from "./livekit/contact-card-republication.js";
 import { DelegatedGrantService } from "./wallet/grants/consumption.js";
 import { createGrantGate } from "./conversations/grant-gate.js";
 import { createGrantPolicySyncService } from "./wallet/grants/privy-policy-runtime.js";
@@ -154,6 +160,8 @@ export function buildServer(options: {
   identity?: RequestIdentityProvider;
   wallet?: WalletProvider;
   walletReads?: WalletProvider;
+  /** Overrides the LiveKit-backed card re-publication seam (task 4.7). */
+  actionCardPublisher?: ContactCardPublisher;
 } = {}) {
   const app = Fastify({
     logger: !process.env.VITEST,
@@ -463,6 +471,20 @@ export function buildServer(options: {
       contacts: contactsRepository,
       embedder: createContactsEmbedder(),
       recipientPolicy,
+    });
+
+    // Task 4.7 (design §8.3/§8.4/§9.2): the review channel. The card is built
+    // from the persisted row, the pasted/scanned address is re-validated here,
+    // and a corrected address becomes a NEW immutable version whose card is
+    // re-published to the bound participant. Without a LiveKit configuration the
+    // publisher is `undefined`, so a corrected version stays unpublished and no
+    // window can open for it — the honest, fail-closed outcome.
+    app.register(registerContactActionRoutes, {
+      resolveUserId,
+      actions: new ContactActionService(database),
+      publishCard:
+        options.actionCardPublisher ??
+        createOptionalContactCardPublisher(process.env, database),
     });
 
     // Contact creation embeds the name through the transformers.js model;

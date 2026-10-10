@@ -428,12 +428,17 @@ export const contactActionProposalSchema = z.object({
   action: z.enum(["create", "edit", "remove"]),
   contactId: z.string().uuid().nullable().optional(),
   contactVersion: z.number().int().positive().nullable().optional(),
-  address: z.string().min(1),
+  /**
+   * `null` is the `review_required` state (design §8.3): the proposal exists and
+   * is published, but no address has been pasted or scanned yet, which is exactly
+   * the state in which the card renders its input. It is NOT "no address field".
+   */
+  address: z.string().min(1).nullable(),
   previousAddress: z.string().nullable().optional(),
   revokedGrantIds: z.array(z.string().uuid()),
   revocationDisclosure: z.string().nullable().optional(),
   expiresAt: z.string(),
-  status: z.enum(["open", "consumed", "superseded", "expired"]),
+  status: z.enum(["open", "consumed", "superseded", "expired", "cancelled"]),
 });
 export type ContactActionProposal = z.infer<typeof contactActionProposalSchema>;
 

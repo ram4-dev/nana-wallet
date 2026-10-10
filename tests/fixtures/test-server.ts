@@ -7,6 +7,7 @@ import { createLegacyToolSourceWalletReads } from "../../src/runtime/dependencie
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
 import type { WalletProvider } from "../../src/wallet/provider.js";
 import type { PrivyServerClient } from "../../src/wallet/privy-server-client.js";
+import type { ContactCardPublisher } from "../../src/livekit/contact-card-republication.js";
 
 /**
  * The fixed identity every fixture-based suite resolves to by default.
@@ -69,6 +70,8 @@ export function buildTestServer(
     userId?: string;
     wallet?: WalletProvider;
     walletReads?: WalletProvider;
+    /** Overrides the LiveKit-backed card re-publication seam (task 4.7). */
+    actionCardPublisher?: ContactCardPublisher;
   } = {},
 ) {
   const { userId, ...serverOptions } = options;

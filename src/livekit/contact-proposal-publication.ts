@@ -79,6 +79,18 @@ export const REVIEW_CHANNEL_MESSAGE =
 export type VoiceContactActionDependencies = {
   actions: Pick<ContactActionService, "stage" | "markPublished" | "read" | "consumeInTransaction">;
   /**
+   * Frees a conversation whose earlier proposal was never published (design
+   * §8.2). Optional so a caller that owns no cleanup keeps the collision
+   * behaviour it had; when present, the retry supersedes the orphan instead of
+   * colliding with the one-open-per-conversation index. The predicate lives in
+   * the service (`published_at IS NULL`), so this seam cannot supersede a row
+   * whose card was actually delivered.
+   */
+  supersedeUnpublished?: (input: {
+    userId: string;
+    conversationId: string;
+  }) => Promise<number>;
+  /**
    * The bound authenticated participant's identity, resolved by the worker from
    * `verifyLiveVoiceBinding` / `RoomConversation.bind`. Absent ⇒ there is no bound
    * visual client to review the card on.
@@ -117,6 +129,14 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         // review channel. The contact may still be saved as not enabled.
         return { status: "address_review_required", message: REVIEW_CHANNEL_MESSAGE };
       }
+      // A previous attempt for THIS conversation that never got its card
+      // delivered is not a window (§8.2): supersede it first, so the retry
+      // creates a fresh version instead of breaking the one-open index.
+      await dependencies.supersedeUnpublished?.({
+        userId: input.userId,
+        conversationId: input.conversationId,
+      });
+
       const proposal = await dependencies.actions.stage({
         userId: input.userId,
         conversationId: input.conversationId,
