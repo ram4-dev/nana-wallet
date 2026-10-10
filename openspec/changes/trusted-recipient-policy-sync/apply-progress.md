@@ -4918,3 +4918,128 @@ before any edit — `tasks.md` (task 4.7, terminal `<!-- sdd-owner: implementati
 stayed inside the assigned worktree root; the main checkout, the untracked `compose.privy-local.ports.yaml`
 and the three unrelated stashes were not touched, and no `git stash`/`checkout`/`reset`/`restore`/`clean`
 was run.
+
+---
+
+### Task 4.8 — add the LiveKit session E2E suite
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `tests/integration/livekit-trusted-recipient.e2e.test.ts` | New. 13 cases driving the real `attachVoiceDecisionTranscripts` listener through a fake `AgentSession` transport, plus the real gate/arbiter/contact seam and the real HTTP address endpoint. |
+
+#### What the unit delivers
+
+- **The real listener, never re-implemented.** `FakeAgentSession` implements only
+  `on`/`off`/`emit` for `user_input_transcribed` and the suite asserts the event name the
+  listener registers on, so the listener's own early return
+  (`gate.currentPreviewId()` ⇒ drop) is exercised rather than described.
+- **Transfer scenarios (real gate + real arbiter with the inherited 2 000 ms bound):**
+  authenticated final affirmative succeeds; foreign speaker fails closed and the identical
+  words succeed for the bound speaker; no speech fails closed and the same call completes
+  once speech arrives; a pre-proposal affirmative is dropped at the listener; an expired
+  affirmative is refused; a replay is refused; a consumed action id is never re-armed while
+  a different id opens normally.
+- **The inherited 2 s bound is exercised for real** (`gate.waitAndConsume` with no
+  `timeoutMs`), with the transcript emitted ~40 ms late.
+- **Contact/transfer collisions fail closed in both orders**, with a positive control in each
+  direction: transfer-then-contact returns `conflict_active_window` and stages once the
+  transfer window is consumed; contact-then-transfer makes `prepare` return `false` and the
+  window opens only after the contact window is closed.
+- **Publication gates the window:** an absent bound participant returns
+  `address_review_required`, publishes nothing, opens no window and persists no row; a
+  rejecting `publish` returns `proposal_not_published`, leaves `published_at` NULL and
+  `arbiter.current()` undefined (so `confirm` is `confirmation_required`); a delivered card
+  opens the window and *then* stamps `published_at` — publication evidence, never proof of
+  reading.
+- **Spoken-only address refused / pasted address versioned:** a caller-supplied `address`
+  never reaches the row (`address` stays `null`), and `POST
+  /v1/contact-actions/:id/address` creates version 2 with version 1 superseded. An
+  affirmative aimed at the superseded version cannot consume even with an armed window;
+  the new version's window does consume.
+
+#### Executed versus merely implemented
+
+- **Executed here:** every scenario above, against the real listener, the real
+  `createVoiceDecisionGate`, the real `createConfirmationArbiter`, the real
+  `createVoiceContactActions` seam, real `contact_action_proposals` rows in the worktree
+  database, and the real HTTP address route via `buildTestServer()`.
+- **NOT executed (fake):** no live LiveKit room/model provider is reachable in this
+  environment, so the provider transport (`AgentSession` events) and the card delivery
+  (`publishData`) are fakes. The live-stack rerun is task 5.5's job.
+- **Contact-side speech arming uses `arbiter.recordEvidence` directly** for the
+  pasted-address case, because the real listener is the *transfer* path's adapter; the
+  contact card path has no equivalent listener in this slice.
+
+#### RED / mutation evidence
+
+The behaviour under test landed in 4.1–4.7, so the RED half is the mutation record below
+(plus the honest first-run RED described next), not a module-absent failure.
+
+| Phase | Evidence |
+|---|---|
+| RED (first run, honest) | `1 failed / 12 passed` — `refuses an expired affirmative as evidence_expired, and accepts a current one`: `expected { status: 'refused', code: 'no_evidence' }`. The gate only forwards *evidence* to the arbiter (`if (decision) arbiter.recordEvidence(...)`), so out-of-window speech never reaches the arbiter through this seam and its typed `evidence_expired` code is only reachable when the arbiter itself receives that speech. The test was corrected to assert the gate refusal (`undefined`) at the real seam and then feed the arbiter directly for the typed code — an expectation error fixed, not a guard weakened. |
+| GREEN | **13 passed / 13** (2.0 s). |
+| Mutation M1 — listener authentication mapping | `isAuthenticatedSpeaker(event.speakerId)` → `true` in `src/livekit/voice-decision-transcripts.ts`: **1 failed** — `fails closed for a foreign speaker, and the same words succeed for the bound one`. Proves the listener's own speaker mapping is load-bearing. |
+| Mutation M2 — contact stage ignores the arbiter conflict | `if (opened && opened.status === "conflict")` → `if (false && …)`: **1 failed** — `refuses a contact window while a transfer window is open (transfer first)`. |
+| Mutation M3 — gate always re-arms a consumed id | `if (previewId !== consumedPreviewId) consumedPreviewId = undefined;` → `consumedPreviewId = undefined;`: **1 failed** — `never re-arms a consumed action id even when the same preview is prepared again`. |
+| Mutation M4 — arbiter's ordering clause | `afterWindow` drops `input.createdAt > window.createdAt`: **1 failed** — `refuses an expired affirmative…`, `expected { status: 'consumed' }`. |
+| Mutation M5 — the gate's own ordering clause | `input.createdAt <= previewCreatedAt` → `false`: **1 passed / 0 failed**. **This guard is NOT outcome-load-bearing at this seam**: the arbiter re-checks the same ordering rule, so the two clauses are redundant for the *decision* (the gate clause still drives the `afterPreview` observation). Recorded as a finding, not papered over — the reachable guard is M4's. |
+| Restore | All four source files diffed byte-identical to their backups after each mutation (`RESTORED_CLEAN`). |
+| False-green guard | Every negative assertion has a positive control in the same test (foreign speaker → bound speaker; no speech → speech; pre-proposal → post-proposal; expired → current; replay → different id; transfer-first refusal → stages after consumption; contact-first refusal → opens after clear; unpublished → published; superseded version → new version). |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/livekit-trusted-recipient.e2e.test.ts` (RED, first run) | **1 failed / 12 passed** — the expectation error above |
+| … after the correction | **1 file passed, 13 tests passed** (2.0 s) |
+| Mutation reruns (`-t` filtered, one per mutation) | **1 failed** each (M1–M4), **1 passed** for M5 — see the table |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` (`tsc -p tsconfig.test.json --noEmit`) | clean (exit 0) |
+| `npx vitest run tests/unit/confirmation-arbiter.test.ts tests/unit/contact-proposal-publication.test.ts` | **2 files passed, 19 tests passed** |
+| `npx vitest run tests/integration/contact-action-proposals.test.ts tests/integration/contact-proposal-publication.integration.test.ts tests/integration/contact-action-address.test.ts` | **3 files passed, 17 tests passed** |
+
+#### Deviations from the design
+
+1. **The expired case splits into two assertions.** §12.2 lists "expired affirmatives fail
+   closed" as one scenario. Because the gate forwards only evidence (see the RED row), the
+   gate-level assertion is `undefined`, and the typed `evidence_expired` code is asserted by
+   feeding the arbiter directly. Both are in the same case so the refusal is never a bare
+   `undefined`.
+2. **`supersedeUnpublished` is wired in the contact seam** exactly as §8.2's orphan-row retry
+   describes, so a refused/expired attempt does not block the next one by colliding with the
+   one-open-per-conversation index.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **A consumed-but-open arbiter window blocks the next proposal for the same conversation.**
+  After `confirm` on a proposal whose persisted row is already superseded, the arbiter marks
+  the action consumed but leaves `active` set, so a later `stage` on the same conversation
+  returns `conflict_active_window` until something calls `clear`. The suite closes the window
+  explicitly and says so. This is 4.6/4.7 territory (the retry path), not 4.8's, and no
+  production behaviour was changed here.
+- **The gate's ordering clause is redundant at the decision level** (mutation M5). Worth
+  keeping for the `afterPreview` observation; worth knowing before anyone "simplifies" the
+  arbiter by assuming the gate already filtered.
+
+#### Workload / PR boundary
+
+One commit, one work unit: `tests/integration/livekit-trusted-recipient.e2e.test.ts` plus the
+`tasks.md` checkbox and this progress entry. Tests ship with the behaviour they prove. It sits
+inside the parent-assigned slice-4 boundary (tasks 4.1–4.9). No push, no PR.
+
+#### Commit
+
+`test(voice): prove the trusted-recipient session window end to end` — see the report envelope.
+
+#### Task 4.9 — NOT STARTED (budget cap reached)
+
+The 20-minute cap was reached after 4.8 was green and committed. Task 4.9 (the `evals/` cases
+for both contexts per design §12.2 and `AGENTS.md` rule 2) remains **unimplemented**: no file
+was created under `evals/` and `npm run eval` was not run for it. It is not partially done and
+nothing about it is claimed as passing. Its checkbox stays `- [ ]`.
