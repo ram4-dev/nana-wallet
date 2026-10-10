@@ -12,8 +12,8 @@ const USER_A = '11111111-1111-4111-8111-111111111111';
 const USER_B = '22222222-2222-4222-8222-222222222222';
 const GRANDSON_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const ELECTRICIAN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-const GRANDSON_ADDRESS = '0x1234567890123456789012345678901234567890';
-const ELECTRICIAN_ADDRESS = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
+const GRANDSON_ADDRESS = 'So11111111111111111111111111111111111111112';
+const ELECTRICIAN_ADDRESS = '4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq';
 
 const modelUsage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
@@ -77,8 +77,15 @@ function memoryService(overrides: Partial<RecipientMemoryService> = {}): Recipie
       facts: [{ id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', fact: 'Lucas is my grandson', kind: 'relationship', version: 1, evidence: 'Lucas is my grandson', score: 0.96 }],
     }),
     getRecipientForVersion: vi.fn(async (_userId: string, recipientId: string) => {
-      if (recipientId === GRANDSON_ID) return { id: GRANDSON_ID, version: 1, address: GRANDSON_ADDRESS };
-      if (recipientId === ELECTRICIAN_ID) return { id: ELECTRICIAN_ID, version: 1, address: ELECTRICIAN_ADDRESS };
+      // RAM-009: the recipient record carries the chain scope, and the
+      // revalidation gate validates against it, so a Solana recipient record must
+      // declare `solana-devnet` next to its canonical base58 key.
+      if (recipientId === GRANDSON_ID) {
+        return { id: GRANDSON_ID, version: 1, address: GRANDSON_ADDRESS, network: 'solana-devnet' };
+      }
+      if (recipientId === ELECTRICIAN_ID) {
+        return { id: ELECTRICIAN_ID, version: 1, address: ELECTRICIAN_ADDRESS, network: 'solana-devnet' };
+      }
       return undefined;
     }),
     writeConfirmed: vi.fn().mockResolvedValue({ kind: 'recipient', id: GRANDSON_ID, version: 1, name: 'Lucas' }),
@@ -146,8 +153,10 @@ describe('recipient-memory release flow', () => {
         status: 'confirmation_required',
         message: 'Previsualización lista para Lucas. ¿Confirmás?',
         preview: {
-          network: 'sepolia',
-          token: 'usdt-test',
+          // The preview reports the single configured scope (Solana devnet with
+          // the canonical SOL alias); there is no chain mode switch to set.
+          network: 'solana-devnet',
+          token: 'SOL',
           recipient: GRANDSON_ADDRESS,
           amount: '0.01',
         },
