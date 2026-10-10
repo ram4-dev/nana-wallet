@@ -1,6 +1,6 @@
 # Proposed design — revision 1
 
-Status: proposed; no implementation approval. User requested mapping including agent operation.
+Status: design approved by Ramiro on 2026-10-10 ("si apruebo"). Implementation outline approval remains pending.
 
 ## Desired flow
 
@@ -63,7 +63,7 @@ Delegated policy composition is a required integration boundary, not an unrelate
 A synchronous-only contact PATCH is smaller but loses recovery and truthful state after timeout/restart. Durable intent plus immediate attempt meets normal immediacy while preserving evidence. Separate composers are rejected because complete-rule updates race and overwrite permissions.
 
 ## Open controlling decision
-Q1: Removing the last active contact for an address also revokes its delegated automatic-payment grants, or preserves them with an explicit warning? Recommendation: revoke them so removal means withdrawal of trust. Asked in chat; response pending. Address edits should retire old-address grants under that same approved semantics rather than transferring them.
+Q1: Removing the last active contact for an address also revokes its delegated automatic-payment grants, or preserves them with an explicit warning? Recommendation: revoke them so removal means withdrawal of trust. Approved by Ramiro ("si apruebo") together with the proposed design. Address edits should retire old-address grants under that same approved semantics rather than transferring them.
 
 ## Gate record
 Gate ID: trusted-recipient-design-r1
@@ -71,8 +71,8 @@ Decision / allowed mutation: review this proposed integrated design; no code or 
 Explicit exclusions: changing caps, unrelated refactor, credentials, transfers, push/PR.
 Owning artifact / revision: this file, revision 1.
 Decision owner: Ramiro.
-Approved by / trusted identity: mapping requested; design approval pending.
-Status: proposed.
+Approved by / trusted identity: Ramiro, 2026-10-10, "si apruebo".
+Status: approved.
 Invalidated by: removal-semantics answer or other scope/design revision.
 
-After Q1 and design approval: draft vertical implementation outline, independent Pi review under the RPI skill, explicit outline approval, then SDD. No outline created while Q1 is unresolved.
+Next: draft vertical implementation outline and independent native-subagent review, then explicit outline approval and SDD. Ramiro explicitly instructed "Hacelo todo inline o con subagentes nativos" on 2026-10-10; this overrides the skill requirement for Pi/Herdr review. No external agent session or extra worktree for review. Implementation continues in the user-designated worktree and branch; no push/PR.

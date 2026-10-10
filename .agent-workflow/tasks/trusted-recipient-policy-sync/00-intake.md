@@ -23,7 +23,7 @@ Route: HumanLayer RPI; contact persistence, external authorization, agent confir
 Gate ID: trusted-recipient-design-r1
 Allowed next action: complete evidence-backed mapping and design discussion.
 Owner: 03-design-discussion.md revision 1.
-Decision owner: Ramiro. Mapping authorized by user request; implementation design approval pending.
+Decision owner: Ramiro. Design and delegated-revocation semantics approved 2026-10-10 ("si apruebo"). Outline review/approval pending. Explicit execution instruction: inline or native subagents; no Pi/Herdr required.
 
 ## Non-goals
 No new chain switch, local transfer-policy gate, rolling-limit provider claim, key rotation, pending broadcast recovery, or unrelated refactor. Previous voice follow-up items remain open separately.
