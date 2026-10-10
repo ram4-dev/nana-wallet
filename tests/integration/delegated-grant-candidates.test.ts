@@ -18,6 +18,7 @@ import {
   type DelegatedGrantRow,
 } from "../../src/wallet/grants/consumption.js";
 import { classifyGrantCoverage } from "../../src/conversations/grant-coverage.js";
+import { seedWalletPolicyState } from "./helpers/policy-state.js";
 import { createWalletConversationService } from "../../src/conversations/service.js";
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
 import type { ConversationRepository } from "../../src/conversations/repository.js";
@@ -88,6 +89,10 @@ suite(
           [user, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
         )
       ).rows[0]!.id;
+      // Task 2.11: a claimable wallet is a wallet whose applied policy is
+      // verified (design §4.1) — the refusal itself is pinned in
+      // `grant-consumption-revision.test.ts`.
+      await seedWalletPolicyState(database, user, walletId);
       return { userId: user, walletId };
     }
 

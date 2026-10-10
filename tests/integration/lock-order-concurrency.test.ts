@@ -34,6 +34,7 @@ import {
 } from "../../src/db/client.js";
 import { DelegatedGrantService } from "../../src/wallet/grants/consumption.js";
 import { RecipientPolicyRepository } from "../../src/wallet/policy/repository.js";
+import { seedWalletPolicyState } from "./helpers/policy-state.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -116,7 +117,10 @@ suite("wallet policy lock order under contention (task 1.9)", () => {
   // Fixtures
   // -------------------------------------------------------------------------
 
-  async function provision(walletId?: string): Promise<{
+  async function provision(
+    walletId?: string,
+    options: { policyState?: boolean } = {},
+  ): Promise<{
     userId: string;
     walletId: string;
     grantId: string;
@@ -145,11 +149,16 @@ suite("wallet policy lock order under contention (task 1.9)", () => {
     );
     provisionedUserIds.push(userId);
     // The state row exists before any contention: the wallet has a policy, so a
-    // claim MUST serialize on it. A missing row is the documented no-lock case
-    // and is asserted separately.
-    await database.withUserTransaction(userId, (client) =>
-      repository.lockPolicyState(userId, grantedWalletId, client),
-    );
+    // claim MUST serialize on it. Since task 2.11 that read is also a GATE, so
+    // the row is seeded VERIFIED (design §4.1) and the claim still reaches its
+    // grant locks; the absent/unverified refusal is asserted at the end of this
+    // file.
+    if (options.policyState !== false) {
+      await database.withUserTransaction(userId, (client) =>
+        repository.lockPolicyState(userId, grantedWalletId, client),
+      );
+      await seedWalletPolicyState(database, userId, grantedWalletId);
+    }
     return { userId, walletId: grantedWalletId, grantId: grant.rows[0]!.id };
   }
 
@@ -395,22 +404,30 @@ suite("wallet policy lock order under contention (task 1.9)", () => {
   });
 
   // -------------------------------------------------------------------------
-  // The documented missing-row case
+  // Task 2.11: the same read became a GATE
   // -------------------------------------------------------------------------
 
-  it("locks nothing when the wallet has no state row, and stays claimable", async () => {
-    // A wallet with no `recipient_policy_state` row must not become
-    // un-claimable: the prepended read is a LOCK, not yet a gate (task 2.11 owns
-    // the decision). This case pins the behaviour the diff must not change.
-    const { userId, walletId } = await provision();
-    await database.query(`DELETE FROM recipient_policy_state WHERE wallet_id = $1`, [
-      walletId,
-    ]);
-    const user = await database.query<{ id: string }>(
-      `SELECT user_id AS id FROM user_wallets WHERE id = $1`,
-      [walletId],
+  it("refuses a wallet with no state row as policy_unverified (task 2.11)", async () => {
+    // The prepended read used to be a lock only, so a wallet without a state row
+    // stayed claimable. Task 2.11 inverts that: nothing about this wallet is
+    // proven, so the budget is not granted.
+    //
+    // The row is left ABSENT rather than deleted: `recipient_app` holds no
+    // DELETE privilege on `recipient_policy_state` (`015` grants SELECT, INSERT,
+    // UPDATE only), which is why the naming case here is "no policy state" and
+    // not "a deleted state".
+    const { userId } = await provision(undefined, { policyState: false });
+    const wallet = await database.query<{ id: string }>(
+      `SELECT id FROM user_wallets WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+      [userId],
     );
-    expect(user.rows[0]!.id).toBe(userId);
+    const walletId = wallet.rows[0]!.id;
+    expect(walletId).toBeTruthy();
+    const state = await database.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM recipient_policy_state WHERE user_id = $1`,
+      [userId],
+    );
+    expect(state.rows[0]!.count).toBe(0);
 
     const grant = await database.query<{ id: string }>(
       `INSERT INTO delegated_grants
@@ -423,6 +440,13 @@ suite("wallet policy lock order under contention (task 1.9)", () => {
     );
 
     const outcome = await claimBudget(userId, grant.rows[0]!.id);
-    expect(outcome).toEqual({ consumed: true, amount: "1000000" });
+    expect(outcome).toEqual({ consumed: false, reason: "policy_unverified" });
+    const rejection = await observer.query<{ reason: string | null }>(
+      `SELECT reason FROM grant_audit_log
+        WHERE grant_id = $1 AND event = 'rejected'
+        ORDER BY created_at DESC LIMIT 1`,
+      [grant.rows[0]!.id],
+    );
+    expect(rejection.rows[0]?.reason).toBe("policy_unverified");
   });
 });

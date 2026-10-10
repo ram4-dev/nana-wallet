@@ -14,6 +14,11 @@
  */
 
 import type { DatabaseClient, Queryable } from "../../db/client.js";
+import {
+  isWalletPolicyVerified,
+  POLICY_UNVERIFIED_DECISION,
+  type GrantGatePolicyEvidence,
+} from "../../conversations/grant-gate.js";
 
 export type DelegatedGrantRow = {
   id: string;
@@ -88,6 +93,53 @@ export type ReleaseReservationResult = {
 
 const GRANT_COLUMNS =
   "id, user_id, wallet_id, action, chain, max_per_transfer, max_cumulative, window_seconds, recipients, state, provider_policy_id, created_at, expires_at, revoked_at";
+
+/**
+ * Task 2.11 (design §4.2): the claim's refusal reason. Reused from the shared
+ * coverage-gate decision instead of restating the string, so the claim and the
+ * conversation gate cannot drift into two spellings of "this wallet's policy was
+ * never verified".
+ */
+const POLICY_UNVERIFIED_REASON = POLICY_UNVERIFIED_DECISION.reason;
+
+/** The single refusal value every unverified claim returns. */
+const POLICY_UNVERIFIED_CLAIM: ClaimConsumptionResult = {
+  consumed: false,
+  reason: POLICY_UNVERIFIED_REASON,
+};
+
+/** The §4.1 predicate columns as PostgreSQL returns them on the `W0` read. */
+type PolicyStateCoverageRow = {
+  status: string;
+  desired_revision: string;
+  applied_revision: string;
+  desired_rules_hash: string | null;
+  applied_rules_hash: string | null;
+  applied_policy_id: string | null;
+  applied_signer_id: string | null;
+  verified_at: Date | null;
+};
+
+/**
+ * Project the `W0` row onto the shared §4.1 evidence. An absent row is `null`,
+ * which `isWalletPolicyVerified` refuses: a wallet with no state row has proven
+ * nothing, so it is exactly as unverified as a row that failed a predicate.
+ */
+function policyCoverageEvidence(
+  row: PolicyStateCoverageRow | undefined,
+): GrantGatePolicyEvidence | null {
+  if (!row) return null;
+  return {
+    status: row.status,
+    desiredRevision: Number(row.desired_revision),
+    appliedRevision: Number(row.applied_revision),
+    desiredRulesHash: row.desired_rules_hash,
+    appliedRulesHash: row.applied_rules_hash,
+    appliedPolicyId: row.applied_policy_id,
+    appliedSignerId: row.applied_signer_id,
+    verifiedAt: row.verified_at ? row.verified_at.toISOString() : null,
+  };
+}
 
 type GrantSqlRow = {
   id: string;
@@ -411,19 +463,27 @@ export class DelegatedGrantService {
       // form. Moving this statement below the advisory lock below reintroduces
       // the deadlock — `tests/unit/lock-order-vector.test.ts` fails if it moves.
       //
-      // WHAT IT IS NOT: this read is a lock, not yet a gate. The wallet's state
-      // row is resolved through the grant's own `wallet_id`, so no new input is
-      // needed, and a wallet with NO state row locks nothing and stays claimable
-      // exactly as it is today. Deciding what an absent or unverified row means
-      // for the claim is task 2.11; turning that into a refusal here would be a
-      // behaviour regression this task must not introduce.
+      // Task 2.11 (design §4.2): this read is now a GATE, not only a lock. It
+      // returns the six §4.1 predicate columns of the wallet's applied policy,
+      // so the claim can refuse a wallet whose policy was never verified to
+      // match its desired revision. The decision itself is taken below, once the
+      // grant row is known to exist: the `rejected` audit row carries the grant
+      // id and `grant_audit_log` holds a foreign key to the grant, so a refusal
+      // is only auditable for a grant this user really owns.
       //
       // The statement resolves the wallet through the grant itself, so no new
       // input is needed and the claim cannot be pointed at another wallet: the
       // join binds exactly the caller's own grant row (RLS-scoped) and locks
       // only the state row (`FOR SHARE OF state`).
-      await client.query(
-        `SELECT 1
+      const policyState = await client.query<PolicyStateCoverageRow>(
+        `SELECT state.status,
+                state.desired_revision,
+                state.applied_revision,
+                state.desired_rules_hash,
+                state.applied_rules_hash,
+                state.applied_policy_id,
+                state.applied_signer_id,
+                state.verified_at
            FROM recipient_policy_state AS state
            JOIN delegated_grants AS grant_row
              ON grant_row.wallet_id = state.wallet_id
@@ -433,6 +493,7 @@ export class DelegatedGrantService {
           FOR SHARE OF state`,
         [input.grantId, input.userId],
       );
+      const policyEvidence = policyCoverageEvidence(policyState.rows[0]);
 
       // L1 — serialize all consumption decisions for this grant across app
       // instances. Same advisory key the removal transaction takes.
@@ -491,6 +552,21 @@ export class DelegatedGrantService {
         // RLS hides a foreign or missing grant, so there is no row to audit
         // against and no state to reject.
         return { consumed: false, reason: "grant_not_found" };
+      }
+      // Task 2.11 (design §4.1/§4.2): the wallet-level gate. A grant that still
+      // carries `provider_policy_id` is NOT sufficient on its own — an applied
+      // policy that was never verified against the desired revision authorizes
+      // nothing, so the claim fails closed here and says why in the trail. An
+      // absent state row is the same refusal: nothing about this wallet has been
+      // proven.
+      if (!isWalletPolicyVerified(policyEvidence)) {
+        await this.appendRejection(
+          client,
+          input,
+          POLICY_UNVERIFIED_REASON,
+          null,
+        );
+        return POLICY_UNVERIFIED_CLAIM;
       }
       const grant = mapGrant(grantRow);
       // DGC-8.7 (R4): validate the amount before ANY integer math. A malformed

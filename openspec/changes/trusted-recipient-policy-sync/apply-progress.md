@@ -2959,3 +2959,83 @@ Two, both deliberate:
 - **`readPolicyState` is owner-scoped**, so the gate cannot read a wallet the acting user does not own:
   a mismatched `(userId, walletId)` pair yields `null` and therefore `policy_unverified`, never another
   wallet's verified state. That property is relied upon by 2.11 as well.
+
+---
+
+### Task 2.11 — the `policy_unverified` claim gate (design §4.1, §4.2)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/grants/consumption.ts` | The sequential W0 read (`FOR SHARE OF state`, still first, still a lock) is extended to project the six §4.1 predicate columns, and the gate is evaluated after the grant row is confirmed. Reuses `isWalletPolicyVerified` and derives the reason from `POLICY_UNVERIFIED_DECISION`, both exported by task 2.10, so the claim cannot drift from the coverage gate. |
+| `tests/integration/grant-consumption-revision.test.ts` | **New.** 6 cases: missing row (audited, no ledger row), applied revision behind desired, readback never verified, the verified positive control (with the fixture's own six predicates re-asserted), the sibling `FOR SHARE` case, and the revoked-scope case in both forms. |
+| `tests/integration/helpers/policy-state.ts` | **New.** `seedWalletPolicyState` (defaults ARE the verified state; overrides break one predicate) and `invalidateWalletPolicyState` (the 2.12-shaped loss of binding). Owner-scoped, because the table is owner-only under RLS. |
+| `tests/integration/{delegated-grants-consumption,delegated-grant-candidates,delegated-grant-execution,grant-claim-release,lock-order-concurrency}.test.ts` | Fixtures only: those claim suites seed the now-required verified state in their wallet-provisioning helper, so they keep isolating caps/expiry/revocation/idempotency/settlement. No assertion was weakened. `lock-order-concurrency`'s last case is *inverted* by design — it pinned "a wallet with no state row stays claimable", which is exactly what 2.11 changes — and now pins the refusal plus its audit row. |
+
+#### What the unit delivers
+
+- **The gate is the claim's last word.** `policy_unverified` is decided before the amount, the grant
+  state, the expiry re-check and the `provider_policy_id` check, so a wallet whose applied policy was
+  never verified cannot consume budget through ANY of those paths. `provider_policy_id` stays required
+  (`policy_not_ready`) but is no longer sufficient — the §4.1 rationale, now enforced in both planes.
+- **The refusal is attributable.** The `rejected` audit row carries reason `policy_unverified` in the
+  same transaction, so a refused execution is never invisible; `grant_claim_ledger` holds nothing.
+- **`FOR SHARE` is load-bearing, not decorative.** A held `FOR SHARE` on the wallet's state row (what a
+  sibling claim holds for the duration of its own transaction) does NOT block a claim on another grant
+  of the same wallet: proven with a bounded 3 s race against a real second connection, so a `FOR UPDATE`
+  regression fails the case by name instead of hanging.
+- **The gate is reached only for a grant this user owns.** The decision sits *after* the
+  `delegated_grants … FOR UPDATE` read, because `grant_audit_log` carries a `grant_id` foreign key: a
+  refusal can only be audited against a real grant row, and a foreign/missing grant keeps its existing
+  `grant_not_found` return (RLS hides it, so there is nothing to audit against).
+- **No migration.** `grant_audit_log.reason` is free text with no CHECK (`008_delegated_grants.sql:67-77`);
+  `policy_unverified` needed no schema change, exactly as §4.2 states.
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED | `tests/integration/grant-consumption-revision.test.ts` written first against the unchanged claim path: **4 failed / 2 passed (6)** — every refusal case returned the fleet-strength `{ amount: "1000000", consumed: true }`, i.e. an unverified wallet was claiming budget. The two passes were the verified positive control and the sibling `FOR SHARE` case; both are asserted as controls there. |
+| GREEN | After the gate: **6 passed / 6**. The fixture's own six predicates are re-read in the positive control, so the pass cannot be blamed on a fixture that would satisfy any gate. |
+| Mutation | `if (!isWalletPolicyVerified(policyEvidence))` → `if (false && …)`: **4 failed / 2 passed (6)**, failing by name exactly the four gate cases — "refuses a wallet with NO state row and audits the refusal", "refuses a wallet whose applied revision has fallen behind the desired one", "refuses a wallet whose readback was never verified", "never returns consumed:true for a revoked scope, and fails closed after the state is gone" — and NOT the verified or sibling cases. File restored from a byte copy before the GREEN re-run. |
+| TRIANGULATE | Added after GREEN: the missing-row case (not only an unverified row), the behind-revision and never-verified variants, the `grant_claim_ledger` count assertion (a refusal consumes nothing), the sibling-claim race, and the revoked scope asserted twice (grant revoked ⇒ `grant_revoked`; binding lost ⇒ `policy_unverified`). |
+| REFACTOR | The reason string is derived from 2.10's `POLICY_UNVERIFIED_DECISION.reason` and the evidence projection is one local mapper, so there is a single definition of "verified" in the codebase. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/grant-consumption-revision.test.ts` (RED) | **4 failed / 2 passed (6)** — refusals allowed; attributed by name above |
+| `npx vitest run tests/integration/grant-consumption-revision.test.ts` (after the mutation) | **4 failed / 2 passed (6)** — exactly the four gate cases |
+| `npx vitest run tests/integration/grant-consumption-revision.test.ts` | **6 passed / 6** |
+| `npx vitest run tests/integration/{grant-consumption-revision,delegated-grants-consumption,delegated-grant-execution,delegated-grant-candidates,grant-claim-release}.test.ts` | **5 files passed, 36 tests passed** |
+| `npx vitest run tests/integration/lock-order-concurrency.test.ts tests/unit/lock-order-vector.test.ts` | **2 files passed, 22 tests passed** (the claim's `W0` position and `FOR SHARE OF state` are unchanged for the source-level vector test) |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`) |
+
+#### Deviations from the design
+
+1. **The check runs after the grant row is locked, not literally at the top of the transaction.** §4.2's
+   "one lock and one check" is satisfied — the W0 read is still the first statement and the check is the
+   first decision — but a refusal is only *auditable* once the grant row is known to exist, because the
+   `rejected` row carries `grant_id` into a table with a foreign key to `delegated_grants`. Deciding
+   earlier would have turned the existing, correct `grant_not_found` return into a foreign-key error for
+   a missing or foreign grant.
+2. **Five pre-existing claim suites now seed a verified state row.** They were written before the gate
+   existed and their fixtures stopped describing a claimable wallet the moment 2.11 landed. Seeding the
+   verified state (never weakening an assertion) is what lets them keep testing what they were written
+   for. `lock-order-concurrency`'s "no state row stays claimable" case is genuinely inverted, since
+   2.11 is the task that changes that behaviour; it now asserts the refusal and its audit row.
+3. **One import edge the reviewers should weigh.** `consumption.ts` now imports the pure predicate from
+   `src/conversations/grant-gate.ts`, which imports `DelegatedGrantService` back from `consumption.ts` as
+   a **type-only** import — erased at runtime, so there is no runtime cycle, but the module direction is
+   wallet → conversations. Extracting `isWalletPolicyVerified` (plus its evidence type) into a small
+   `src/wallet/policy/` module and re-exporting it from `grant-gate.ts` would remove the edge without
+   touching any caller; it is left for the reviewer rather than done under this unit's budget.
+4. **The 2.11 fixture cannot delete a state row.** `recipient_app` holds no `DELETE` on
+   `recipient_policy_state` (`015` grants SELECT, INSERT, UPDATE), so "the binding is gone" is expressed
+   as the row becoming unverified — which is also what 2.12 will do. Worth knowing for 2.12's tests.

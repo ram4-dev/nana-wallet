@@ -14,6 +14,7 @@ import {
   type DatabaseClient,
 } from "../../src/db/client.js";
 import { DelegatedGrantService } from "../../src/wallet/grants/consumption.js";
+import { seedWalletPolicyState } from "./helpers/policy-state.js";
 import { createWalletConversationService } from "../../src/conversations/service.js";
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
 import type { ConversationSnapshot } from "../../src/conversations/types.js";
@@ -238,6 +239,10 @@ suite("delegated grant execution ordering (phase 4 RED)", () => {
         [user, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
       )
     ).rows[0]!.id;
+    // Task 2.11: a claimable wallet is a wallet whose applied policy is
+    // verified (design §4.1) — the refusal itself is pinned in
+    // `grant-consumption-revision.test.ts`.
+    await seedWalletPolicyState(database, user, walletId);
     const grant = await grants.createGrant({
       userId: user,
       walletId,

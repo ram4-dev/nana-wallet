@@ -19,6 +19,7 @@ import {
 } from "../../src/wallet/grants/consumption.js";
 import { createWalletConversationService, type ConversationEvent } from "../../src/conversations/service.js";
 import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
+import { seedWalletPolicyState } from "./helpers/policy-state.js";
 import type { ConversationSnapshot } from "../../src/conversations/types.js";
 
 /**
@@ -104,7 +105,12 @@ async function provisionWallet(userId_: string): Promise<string> {
      VALUES ($1, 'fixture', $2, 'solana', $3, 'ready') RETURNING id`,
     [userId_, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
   );
-  return result.rows[0]!.id;
+  const walletId = result.rows[0]!.id;
+  // Task 2.11: a claimable wallet is a wallet whose applied policy is verified
+  // (design §4.1) — the refusal itself is pinned in
+  // `grant-consumption-revision.test.ts`.
+  await seedWalletPolicyState(database, userId_, walletId);
+  return walletId;
 }
 
 async function provisionGrant(

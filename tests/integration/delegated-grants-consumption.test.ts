@@ -14,6 +14,7 @@ import {
   PrivyPolicySyncService,
   type GrantPolicyProvisioner,
 } from "../../src/wallet/grants/privy-policy-sync.js";
+import { seedWalletPolicyState } from "./helpers/policy-state.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -53,7 +54,14 @@ async function provisionWallet(
      VALUES ($1, 'fixture', $2, 'solana', $3, 'ready') RETURNING id`,
     [userId, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
   );
-  return result.rows[0]!.id;
+  const walletId = result.rows[0]!.id;
+  // Task 2.11 turned the claim's `W0` read into a gate, so a claimable wallet is
+  // now a wallet whose applied policy is verified (design §4.1). This suite is
+  // about caps, expiry, revocation and idempotency, so it seeds the verified
+  // state and keeps isolating those; the refusal it does not test any more is
+  // pinned in `grant-consumption-revision.test.ts`.
+  await seedWalletPolicyState(database, userId, walletId);
+  return walletId;
 }
 
 describe("delegated grant consumption & audit (DGC-3)", () => {
