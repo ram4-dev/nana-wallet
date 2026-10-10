@@ -4188,3 +4188,56 @@ One work unit, one commit: the seam fix, its tests, and the contract comment (~1
 across four files), inside the parent-assigned `PR 5` slice (tasks 3.1–3.4). No production behaviour
 outside the address-change mutation changed; no review, receipt, or delivery gate is started by this
 phase.
+
+---
+
+## Continuation run — slice 4 (tasks 4.1–4.4)
+
+### Task 4.1 — replace EVM recipient validation with the configured chain validator (RAM-009)
+
+Status: **completed — verified, no code gap found**. Persisted checkbox updated (`- [x]`).
+
+#### The gap actually found
+
+None in production code. Every site named by the task routes through `isValidRecipientAddress`
+(`src/memory/address.ts:43`): `src/memory/service.ts:185` (versioned selected-address lookup, via
+`resolveRecipientNetwork`) and `:193` (recipient write), `src/memory/tools.ts:14` (`.strict`-style
+recipient schema refine) and `:56` (write service call), `src/agent/definition.ts:257`/`:366`/`:1074`,
+`src/agent/wallet-agent.ts:246`. `resolveRecipientNetwork` (`:38`) resolves an ABSENT network to
+`CONFIGURED_RECIPIENT_NETWORK` (`solana-devnet`), so the EVM regex is unreachable for
+`solana-devnet`/absent-network records and is only the documented legacy-EVM branch — the hole closed
+by commit `ce4ea06`. The two named suites exist and are green, and together cover every clause of the
+task text: canonical base58 accepted on draft+write, EVM-shaped/malformed failing closed with a typed
+error and persisting nothing (`wroteARecipient` asserted `false`), the handoff returning only a
+canonical Solana key while refusing an unversioned/stale/malformed record, and confirmed fact memory
+staying on its separate path with no trusted-recipient write.
+
+#### Mutation evidence (guard is load-bearing)
+
+Mutation: in `src/memory/address.ts`, disabled the Solana branch of `isValidRecipientAddress`
+(`if (false && network === "solana-devnet")`) and reverted `resolveRecipientNetwork` to the EVM
+fallback (`return network ?? "eip155:1"`).
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/recipient-address-solana-validation.test.ts tests/unit/recipient-address-handoff.test.ts` (mutated) | **2 files failed, 8 failed / 4 passed (12)** — the Solana acceptance and handoff cases fail by name; restored afterwards (`git diff --stat src/memory/address.ts` empty) |
+| same command, restored | **2 files passed, 12 tests passed** (175 ms) |
+
+No false green: the negative assertions ("persists nothing", "refuses") are each preceded by the
+positive control that the canonical key is accepted/persisted in the same suite.
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/recipient-address-solana-validation.test.ts tests/unit/recipient-address-handoff.test.ts` | **2 files passed, 12 tests passed** |
+| `npm run typecheck` (at the slice gate below) | clean |
+
+#### Deviations
+
+None. No production file was changed by this task; only its persisted completion record.
+
+#### Workload / PR boundary
+
+One commit: the persisted completion record for 4.1 (no source change). Inside the parent-assigned
+`PR 6` slice (tasks 4.1–4.9). No push beyond the assigned branch, no PR.
