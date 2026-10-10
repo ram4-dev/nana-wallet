@@ -9,6 +9,7 @@ import {
   readBalanceReadConfig,
   type BalanceReader,
 } from "../../src/wallet/balances.js";
+import { SOLANA_DEVNET_RPC_URL } from "../../src/wallet/solana-devnet-provider.js";
 import type { CurrentWallet } from "../../src/wallet/embedded.js";
 
 /**
@@ -193,30 +194,37 @@ describe("FixtureBalanceReader (WP-009)", () => {
 });
 
 describe("readBalanceReadConfig (WP-009)", () => {
-  it("defaults to fixture without any configuration", () => {
+  it("reads the devnet RPC by default, with no configuration at all", () => {
+    // The deployment is Solana-devnet only, so the node is not a deployment
+    // choice: it is the same constant the wallet provider already uses.
+    // Defaulting to the fixture reader left every real balance read failing.
     expect(readBalanceReadConfig({})).toEqual({
-      source: "fixture",
-      fixtureBalances: undefined,
+      source: "rpc",
+      rpcUrl: SOLANA_DEVNET_RPC_URL,
     });
+    expect(createBalanceReader(readBalanceReadConfig({})).source).toBe("rpc");
   });
 
-  it("demands BALANCE_RPC_URL for rpc and rejects unknown sources", () => {
-    expect(() => readBalanceReadConfig({ BALANCE_READ_SOURCE: "rpc" })).toThrow(
-      /BALANCE_RPC_URL/,
-    );
-    expect(() => readBalanceReadConfig({ BALANCE_READ_SOURCE: "ws" })).toThrow(
-      /fixture.*rpc/,
-    );
+  it("accepts an explicit RPC override and rejects unknown sources", () => {
     expect(
       readBalanceReadConfig({
-        BALANCE_READ_SOURCE: "rpc",
         BALANCE_RPC_URL: "http://n",
       }).source,
     ).toBe("rpc");
+    expect(
+      readBalanceReadConfig({ BALANCE_RPC_URL: "http://n" }).rpcUrl,
+    ).toBe("http://n");
+    expect(
+      readBalanceReadConfig({ BALANCE_READ_SOURCE: "rpc" }).rpcUrl,
+    ).toBe(SOLANA_DEVNET_RPC_URL);
+    expect(() => readBalanceReadConfig({ BALANCE_READ_SOURCE: "ws" })).toThrow(
+      /fixture.*rpc/,
+    );
   });
 
   it("normalizes fixture map keys to lowercase", () => {
     const config = readBalanceReadConfig({
+      BALANCE_READ_SOURCE: "fixture",
       BALANCE_FIXTURE_BALANCES: JSON.stringify({ [OWN_ADDRESS]: "7" }),
     });
     const reader = createBalanceReader(config);

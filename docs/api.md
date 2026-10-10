@@ -56,33 +56,36 @@ against the configured `WDK_NETWORK` + `WDK_WALLET_NAME`). In fixture mode
 
 ## `GET /v1/wallets/current/balances`
 
-Personal USDC balance for the authenticated user (wallet-profile, WP-003..WP-009).
-Read-only: the owner, chain and token are resolved server-side and cannot be
-selected from query or body — a non-empty query or a body answers `400` with
-code `INVALID_QUERY` without reading anything. Every response (success and
-error) carries `Cache-Control: private, no-store`.
+Personal native SOL balance for the authenticated user (wallet-profile,
+WP-003..WP-009). Read-only: the owner, chain and token are resolved server-side
+and cannot be selected from query or body — a non-empty query or a body answers
+`400` with code `INVALID_QUERY` without reading anything. Every response
+(success and error) carries `Cache-Control: private, no-store`.
 
 - Wallet ready → `200` `{ ok: true, data }` with `walletState: "ready"`, the
-  user's own `address`, fixed Arc testnet catalog (`chainId: 5042002`,
-  USDC ERC-20 with `decimals: 6`), `source: "fixture" | "rpc"`, `observedAt`
-  ISO UTC, and exactly one asset with `balanceAtomic` (canonical decimal
-  `uint256` string, `"0"` is a valid balance).
+  user's own `address`, the fixed Solana devnet catalog (`chainId` is the CAIP-2
+  string `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`, native SOL with
+  `decimals: 9`), `source: "fixture" | "rpc"`, `observedAt` ISO UTC, and exactly
+  one asset with `balanceAtomic` (canonical decimal lamport string, `"0"` is a
+  valid balance).
 - Wallet not ready (`unprovisioned`, `provisioning`, `recovery_required`,
   `conflict`, `unavailable`) → `200` with that state, `observedAt: null`,
   `assets: []`; `address` and `source` are omitted and the reader is never
   called.
-- Inconsistent ready binding (bad address or non-`arc` chain family) →
+- Inconsistent ready binding (bad address or non-Solana chain family) →
   `409` `WALLET_DATOS_INVALIDOS`.
 - Fixture miss, RPC failure, invalid chain/decimals or an 8 s deadline →
   `503` `BALANCE_NO_DISPONIBLE` with a sanitized message.
 - Missing/expired identity → `401`.
 
 Configuration (server env only, never selectable from HTTP):
-`BALANCE_READ_SOURCE=fixture|rpc` (default `fixture`); `rpc` requires
-`BALANCE_RPC_URL` (example: `BALANCE_RPC_URL=https://rpc.arc.testnet.example/v1`);
-`BALANCE_FIXTURE_BALANCES` optionally maps addresses to atomic balances as
-JSON. `WDK_TOOLS_SOURCE` is unaffected and no signing credentials are
-involved; the read never mutates bindings, grants or operations.
+`BALANCE_READ_SOURCE=fixture|rpc` (default `rpc`); `rpc` reads the balance from
+`BALANCE_RPC_URL`, which defaults to the Solana devnet RPC the wallet provider
+already signs against (`https://api.devnet.solana.com`) — an unconfigured
+deployment still serves a real balance. `BALANCE_FIXTURE_BALANCES` optionally
+maps addresses to atomic balances as JSON, and only applies when the fixture
+source is asked for explicitly. No signing credentials are involved; the read
+never mutates bindings, grants or operations.
 
 ## `POST /v1/conversations`
 

@@ -6,6 +6,7 @@ import type {
 import {
   SOLANA_DEVNET_CAIP2,
   SOLANA_DEVNET_NETWORK,
+  SOLANA_DEVNET_RPC_URL,
 } from "./solana-devnet-provider.js";
 import type { CurrentWallet } from "./embedded.js";
 
@@ -228,27 +229,27 @@ export type BalanceReadConfig = {
 };
 
 /**
- * Server-side configuration (WP-009). BALANCE_READ_SOURCE defaults to
- * `fixture`; `rpc` demands BALANCE_RPC_URL (it has no safe default: silently
- * pointing the balance read at an unconfigured node would hide a
- * misconfiguration). Values are never printed, and nothing here can be chosen
- * from a public HTTP surface: both the source and the RPC URL are read from the
- * process environment only.
+ * Server-side configuration (WP-009). The read defaults to the Solana devnet
+ * RPC, so an unconfigured deployment still serves a real balance; the fixture
+ * source stays available for offline work but has to be asked for explicitly,
+ * because a fixture default silently turned every real read into a 503.
+ * Values are never printed, and nothing here can be chosen from a public HTTP
+ * surface: both the source and the RPC URL are read from the process
+ * environment only.
  */
 export function readBalanceReadConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): BalanceReadConfig {
-  const source = environment.BALANCE_READ_SOURCE ?? "fixture";
+  const source = environment.BALANCE_READ_SOURCE ?? "rpc";
   if (source !== "fixture" && source !== "rpc") {
     throw new Error("BALANCE_READ_SOURCE must be 'fixture' or 'rpc'.");
   }
   if (source === "rpc") {
-    const rpcUrl = environment.BALANCE_RPC_URL;
-    if (!rpcUrl) {
-      throw new Error(
-        "BALANCE_RPC_URL is required for BALANCE_READ_SOURCE=rpc.",
-      );
-    }
+    // Solana devnet is the only chain this deployment serves, so the node is
+    // not a deployment decision: it defaults to the same constant the wallet
+    // provider already signs against. BALANCE_RPC_URL stays available to point
+    // the read at a dedicated node, but its absence is no longer a misconfig.
+    const rpcUrl = environment.BALANCE_RPC_URL ?? SOLANA_DEVNET_RPC_URL;
     return { source, rpcUrl };
   }
   let fixtureBalances: Record<string, string> | undefined;

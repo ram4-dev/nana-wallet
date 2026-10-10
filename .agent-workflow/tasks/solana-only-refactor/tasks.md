@@ -291,3 +291,48 @@ baseline **name for name**, not by reading the code and not by a green unit run.
 Three separate regressions in this refactor — the mid-flight transfer gate, the
 13 enrollment failures, and the Ethereum-gates-Solana return — first appeared as
 a count that did not match.
+
+## Fourth defect: the balance surface was never switched on
+
+Found by opening the wallet screen on the emulator, not by reading code.
+`906acc3`.
+
+`readBalanceReadConfig` defaulted to `source: "fixture"` with an **empty**
+balance map, so `FixtureBalanceReader.readSolAtomic` threw
+`BALANCE_NO_DISPONIBLE` for every address.
+`GET /v1/wallets/current/balances` answered **503** for every authenticated
+caller, and the screen rendered "No pudimos leer tu saldo" over a leftover demo
+sentence: "Todavía no tenemos un saldo de demostración para tu billetera."
+
+Why it survived the whole conversion: `compose.privy-local.yaml` deliberately
+omitted `BALANCE_READ_SOURCE`/`BALANCE_RPC_URL`, with a comment explaining that
+the reader was an Arc `eth_call` path with no Solana implementation yet. True
+before `c47c949`, false after it. The comment outlived the code it described, and
+nothing failed loudly enough to notice: a 503 on one screen reads as "the wallet
+has no funds", which was also true.
+
+The fix defaults the source to `rpc` and the URL to `SOLANA_DEVNET_RPC_URL`, the
+constant the signing provider already uses. This deployment serves exactly one
+chain, so the node is not a deployment decision and its absence is no longer a
+misconfiguration. `BALANCE_READ_SOURCE=fixture` still exists for offline work but
+now has to be asked for.
+
+### The stale bundle hid half the bug
+
+After the backend fix the screen still read "Arc testnet · USD Coin · 0 USDC".
+The frontend image predated the balance commit by ~10 hours, so the served bundle
+carried `arc-testnet` labels and requested
+`/v1/wallet/balance?network=arc-testnet&token=USDC`; the source had none of it.
+Rebuilding the image removed every `arc-testnet` reference from the bundle.
+
+Two caches had to be cleared before the fix was even visible: the container
+image, and the WebView's HTTP cache. A rebuilt image plus `adb reverse` is not
+enough; `Network.setCacheDisabled` + `Page.reload({ignoreCache: true})` was.
+
+### Lesson
+
+A deployment can be answering every balance request with 503 and still look
+"green". Counts matched the baseline exactly (19 failed / 983 passed / 13
+skipped), which proves only that nothing **else** broke. A green suite says
+nothing about a surface whose default is silently wrong — someone has to open the
+screen.

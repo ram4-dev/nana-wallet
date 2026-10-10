@@ -63,11 +63,11 @@ services:
       CORS_ORIGINS: https://nana-privy.localhost
       AGENT_RUNTIME: llm
       OPENCODE_GO_API_KEY: ${OPENCODE_GO_API_KEY:?}
-      # NOTE: no BALANCE_READ_SOURCE/BALANCE_RPC_URL. That reader is an Arc
-      # ERC-20 eth_call path guarded on chain family "arc", so pointing it at an
-      # Arc RPC in a Solana deployment could only refuse or mislabel. The
-      # balances endpoint has no Solana implementation yet; until it does it
-      # reports unavailable instead of serving another chain's numbers.
+      # The balance reader needs no configuration here: it defaults to the
+      # same Solana devnet RPC the wallet provider signs against, so an
+      # unconfigured deployment serves a real balance. Set BALANCE_RPC_URL to
+      # point the read at a dedicated node; BALANCE_READ_SOURCE=fixture is
+      # only for offline work and must never be used in a live deployment.
     ports: ["127.0.0.1::3000"]
     volumes:
       - ${PRIVY_SOURCE_DIR:-.}/src:/app/src:ro
