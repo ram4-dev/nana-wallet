@@ -1209,16 +1209,19 @@ own install did not touch the main checkout. Nothing in this artifact installed 
 
 Each is a real gap. None is filled with a plausible-sounding decision.
 
-1. **Dedup: refuse (Option A) or disclose (Option B)?** — §6. The intake asserts a rule that the
-   published spec does not contain, and the spec's own aliasing model points the other way. **Needs
-   Ramiro.** Recommendation: Option B + the unconditional self-address refusal.
+**RESOLVED BY RAMIRO, 2026-10-10** (see §14 for the record): Q1 (D13 → disclose),
+Q3 (D11 → v3 approved), Q9 (dedicated `SNS_RPC_URL`, now configured in `.env` and
+`.env.example`). The remaining questions below are still open.
+
+1. ~~**Dedup: refuse (Option A) or disclose (Option B)?**~~ — **ANSWERED: Option B, disclose
+   and proceed**, plus the unconditional self-address refusal. Recorded as D13.
 2. **Does a reverse domain exist for any devnet name?** — §4.3/N3. If it does not, "mitigation 2" is
    a mainnet-only mitigation and the devnet demo can only ever show the honest `none` state. This
    affects how the feature is *described* to a user, so it is a product question as much as a
    technical one.
-3. **Approve the v3 SDK choice explicitly.** — §2.5. It is the only version that works on devnet, and
-   it is also the legacy line; the repo gains a new dependency with a known `--legacy-peer-deps`
-   constraint. Cost unmeasured (N5).
+3. ~~**Approve the v3 SDK choice explicitly.**~~ — **ANSWERED: approved.** The repo gains the
+   dependency; `--legacy-peer-deps` is a known constraint; bundle cost (N5) stays unmeasured and is
+   tracked as residual risk, not as a blocker.
 4. **Where does drift evidence live?** — §3.3 recommends widening
    `recipient_policy_audit.event`'s CHECK with `alias_destination_changed`, plus
    `provenance.drift`. *Alternative considered:* reuse `drift_repaired`, which is already in the
@@ -1239,9 +1242,13 @@ Each is a real gap. None is filled with a plausible-sounding decision.
    address is useful and cheap (`recipients.provenance` is already read with the row), but it is an
    additive contract field on `GET /v1/contacts` plus a mirrored frontend type. Recommend yes;
    flagged because it is contract surface.
-9. **`SNS_RPC_URL`: dedicated variable, or reuse an existing one?** — §2.2 recommends a dedicated
-   variable defaulting to `SOLANA_DEVNET_RPC_URL` (the `BALANCE_RPC_URL` pattern). Reusing
-   `BALANCE_RPC_URL` would couple name resolution to a balance-reading preference.
+9. ~~**`SNS_RPC_URL`: dedicated variable, or reuse an existing one?**~~ — **ANSWERED: dedicated,
+   and configured.** `SNS_RPC_URL` now exists in `.env` and is documented in `.env.example`,
+   defaulting to `https://api.devnet.solana.com`. Isolation from the balance/transfer preference is
+   the reason. **Measured, and the honest limit is recorded there:** the keyless endpoint is fine
+   for the real pattern (one resolution per user action, paced — 10/10, p95 ~181ms) but returns
+   `Connection rate limits exceeded` on every call in a 30-request burst, so it cannot serve a CI
+   test loop. A keyed provider is the drop-in upgrade, not a code change.
 10. **The reported `getPrimaryDomain` error shape is not reproducible here** — §4.3. Classifying
     "no primary domain" versus "resolver error" is a load-bearing distinction (a misclassification
     turns a failure into a false all-clear) and it needs one recorded live observation before it is
@@ -1266,9 +1273,9 @@ Each is a real gap. None is filled with a plausible-sounding decision.
 | D8 | Ambiguity preferred over invention: `ambiguous` is a narrow, labelled refusal pending a real fixture | Invent a broad ambiguity taxonomy now | design (open: §11 Q4) |
 | D9 | Confirm-time re-verification: a difference supersedes the proposal (new immutable version); unreachable proceeds with the displayed address, labelled | No re-verification; adopt the new address silently; fail closed on any re-verification failure | design |
 | D10 | `.sns` only; other suffixes are typed refusals with no fallback | Support `.sol`; try `.sol` then `.sns` | design |
-| D11 | SDK **v3.0.23** for this slice, version-tagged in every provenance record, confined to one module | v4 (cannot resolve devnet); the `@solana-name-service/sns-sdk-kit` stack | Ramiro (D3 approval) |
+| D11 | SDK **v3.0.23** for this slice, version-tagged in every provenance record, confined to one module | v4 (cannot resolve devnet); the `@solana-name-service/sns-sdk-kit` stack | **Ramiro: approved** |
 | D12 | The alias lives in `provenance`, never in `recipients.name`; an address edit rewrites or clears provenance atomically | Put the alias in `name`; leave provenance alone on an address edit | design |
-| D13 | Duplicate-address add: disclose (Option B) + unconditional self-address refusal | Refuse on any duplicate address (Option A) | **Ramiro (open: §11 Q1)** |
+| D13 | Duplicate-address add: disclose (Option B) + unconditional self-address refusal | Refuse on any duplicate address (Option A) | **Ramiro: disclose** |
 
 ---
 
@@ -1282,11 +1289,25 @@ Each is a real gap. None is filled with a plausible-sounding decision.
   design work that follows from it, and none of it should be implemented before that text is
   approved — a partial implementation would ship an alias path against a spec that still says the
   address is never derived from a name.
-- Secondary decisions awaiting Ramiro: **D11** (SDK version) and **D13** (§6 Option A vs B).
+- Secondary decisions awaiting Ramiro: **none.** D11 (SDK version) approved, D13 resolved to
+  disclose, Q9 resolved to a dedicated `SNS_RPC_URL` (configured).
 - Explicit exclusions: no send-time resolution; no other name services; `.sol` is not supported; no
   subdomain support; no change to the delegated-grant or transfer-policy model; no alias for the
   wallet's own address; no name registration or primary-domain write of any kind.
 - Next after approval: `openspec/changes/sns-alias-recipients/` — proposal → spec (this delta) →
   design (the mechanical resolution of §2–§6) → tasks, with the stage-2 rules of `AGENTS.md`.
-- Invalidated by: a decision against D1, or any answer on §11 Q1 that selects Option A (it becomes a
-  second spec delta and changes §6).
+- Invalidated by: a decision against D1.
+
+---
+
+## 14. Decisions resolved by Ramiro — 2026-10-10
+
+| Question | Decision | Consequence |
+| --- | --- | --- |
+| **D13** — a resolved address that already belongs to another active contact | **Disclose and proceed** (Option B), plus the unconditional self-address refusal | No second spec delta. The dedup rule becomes “disclose, change no authority” rather than “refuse”, which keeps alias and paste symmetric: refusing only the alias path would make the same action succeed or fail depending on how the user entered the address. Implemented as the §6 Option B disclosure. |
+| **D11** — SNS SDK version | **v3.0.23 approved** | The dependency is added with `--legacy-peer-deps`. Version pinned, tagged in every provenance record, and confined to the single resolver module so a future v4 (or an SRS-era SDK) is a local swap. Bundle/peer cost stays an accepted, unmeasured residual risk. |
+| **§11 Q9** — resolver RPC | **Dedicated `SNS_RPC_URL`**, and it is **configured** | Present in `.env` and documented in `.env.example`, defaulting to the keyless public devnet endpoint. Kept separate from the balance/transfer preference so resolution can be swapped independently. The keyless default is enough for real use and **not** enough for a CI loop — a keyed provider drops into the same variable with no code change. |
+
+**Still blocking: D1, the spec revision in §1.3.** The three decisions above resolve the secondary
+questions; they do not approve the revision of the “no address is ever derived from a name” MUST,
+and nothing should be implemented against a spec that still says that.
