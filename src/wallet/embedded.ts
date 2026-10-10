@@ -16,7 +16,13 @@ import {
 } from "./enrollment-policy.js";
 import { buildSolanaEnrollmentRules } from "./grants/solana-enrollment-rules.js";
 
-const SOLANA_MAX_PER_TRANSFER_LAMPORTS = "10000000";
+/**
+ * The one ordinary trusted-contact transfer ceiling, in lamports (0.01 SOL).
+ * Exported as the single source of the value the composer composes; a second
+ * literal would be a second authority over the same consent (design §3.2
+ * guarantee 1).
+ */
+export const SOLANA_MAX_PER_TRANSFER_LAMPORTS = "10000000";
 import {
   PrivyServerClient,
   PrivyServerError,
@@ -1570,7 +1576,12 @@ export class EmbeddedWalletService {
   }
 }
 
-function deterministicPolicyHash(
+/**
+ * The consent-envelope hash (`limit|window|recipients`). This is `policy_hash`,
+ * the compatibility field, NOT the authoritative `applied_rules_hash` over the
+ * composed rules; see `src/wallet/policy/composer.ts` and design §0 C6.
+ */
+export function deterministicPolicyHash(
   input: GrantInput,
   override?: { unit: string; amount: string },
 ): string {

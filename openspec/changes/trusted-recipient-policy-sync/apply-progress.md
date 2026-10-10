@@ -461,3 +461,185 @@ the main checkout and the untracked `compose.privy-local.ports.yaml` were not to
 
 `feat(policy): persist recipient policy intent behind a revision CAS` — see the report envelope for
 the SHA.
+
+### Task 1.4 — build the pure composer and prove the composition invariants in unit tests
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/errors.ts` | New. The composition domain's typed, fail-closed refusals: `PolicyCompositionRefusalError` (carrying `failureClass` + `reason`) and the four refusals `PolicyEmptyCompositionUnprovenError`, `PolicyRuleCompositionUnprovenError`, `PolicyOrdinaryCapUnsupportedError`, `PolicyComposerRequiredError`. |
+| `src/wallet/policy/composer.ts` | New. The pure `ComposeInput → ComposedPolicy` function, `composedRulesHash`, and the re-export of the existing `composeGrantRules`. |
+| `tests/unit/policy-composer.test.ts` | New. 24 cases: the ordinary rule, the consent boundary, delegated limits, determinism/locale independence, empty composition, the two rule families, metadata edits, the module boundary and the refusal contract. |
+| `tests/unit/policy-composer-hash.test.ts` | New. 7 cases: the pinned canonical digest, key-order independence, value/order/extra-key sensitivity, and the composed-vs-consent hash distinction. |
+| `src/wallet/embedded.ts` | Two `export` keywords only (`SOLANA_MAX_PER_TRANSFER_LAMPORTS`, `deterministicPolicyHash`) so the composer reuses the single lamport ceiling and the unit suite compares against the real consent-envelope hash. No behaviour change. |
+
+#### What the unit delivers
+
+- **The ordinary rule (design §3.2 guarantee 1).** Built by the existing
+  `buildSolanaEnrollmentRules` with the ceiling taken from the single constant
+  `SOLANA_MAX_PER_TRANSFER_LAMPORTS`, so the composed rule is byte-identical to
+  the legacy enrollment rule. A caller-supplied `ordinaryCapLamports` that is not
+  that constant — wider *or* narrower — is refused instead of composed, so the
+  ceiling cannot be re-authored by a call site.
+- **No consent expansion (guarantee 2).** The ordinary allowlist is
+  `sorted-unique(baseline ∪ active contacts)`. Grant recipients appear exclusively
+  in their own conditioned rules and are never folded into the 0.01 SOL allowlist.
+- **Delegated limits untouched (guarantee 3).** Grant rules come from the existing
+  `composeGrantRules` (re-exported from `composer.ts`, restated nowhere), one rule
+  per active grant, each carrying the ledger's own `max_per_transfer` and the
+  stored `expires_at`.
+- **Determinism (guarantee 4).** Grants ascending by `grantId` byte order, every
+  address array sorted by code-unit comparison and deduplicated (`localeCompare`
+  is never used: it would make the hash locale-dependent), so shuffling the input
+  arrays cannot change the composition or the hash.
+- **`applied_rules_hash` (guarantee 5).** `sha256` over an explicitly key-ordered
+  canonical form — declared keys first in declared order, any other key appended
+  in code-unit order, so a key set is never silently dropped and the encoding does
+  not depend on `Object.keys` order. The digest is `sha256:<64 hex>`, distinct
+  from the `pol_…` consent-envelope `deterministicPolicyHash` (design §0 C6).
+- **Fail-closed defaults (§3.2 guarantee 8, §11 U1/U4).** An empty composition
+  refuses with `empty_composition_unproven` unless `empty_composition='proven_deny'`;
+  ordinary+grant coexistence refuses with `rule_composition_semantics_unproven`
+  until the U1 probe records `union`, while a single-family composition (ordinary
+  only, or grants only) composes without the probe. Every refusal is a typed
+  `blocked_configuration` carrying the reason it must be persisted with, and it is
+  thrown **before** any rule set exists, so no PATCH body can be derived from a
+  refusal.
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED (module) | Both suites written first, run against the absent module: **2 files failed, 0 tests**, `Cannot find module '../../src/wallet/policy/composer.js'`. |
+| RED (mutation: the three refusal paths) | Removing the multi-family refusal, the ordinary-cap validation, and the empty-composition guard produced **3 failed / 25 passed**, exactly and only: `refuses an ordinary cap that does not come from the single lamport constant`, `refuses an empty composition unless empty_composition is proven_deny`, `refuses ordinary + grant coexistence until the probe records union`. |
+| RED (mutation: ordering) | Replacing the code-unit comparator with `localeCompare` and dropping the grant sort/allowlist sort produced **2 failed / 26 passed**: `orders addresses by code-unit order, never by a locale comparator`, `composes identically and hashes identically across runs and input orders`. |
+| RED (mutation: consent and canonical form) | Folding grant recipients into the ordinary allowlist and canonicalizing with `Object.keys` order produced **3 failed / 25 passed**: `is independent of the key insertion order of a rule and of a condition`, `never folds a grant recipient into the ordinary allowlist`, `composes both families once the probe records union (positive control)`. |
+| RED (mutation: dedupe) | Dropping `Set` dedupe from the sorted-union produced **1 failed / 30 passed**: `deduplicates an address that is both the baseline and a contact`. |
+| GREEN | **31 passed / 31** (`policy-composer` + `policy-composer-hash`), `npm run lint` and `npm run typecheck` clean. |
+| TRIANGULATE | Added after GREEN: an address that is both baseline and contact is deduplicated to one allowlist entry and tagged `contact`; an address that is both a contact and a grant recipient is composed in **both** rules while tagged `grant`; and `Object.keys(provenance)` equals exactly `ordinaryRecipients ∪ grantRecipients`, which is the address union design §5.1(d) will compare the readback against. |
+| REFACTOR | One export removed before commit: an initially exported `sameRuleSet` wrapper was dropped, because unit 1.5 needs the *existing* comparator (`isDeepStrictEqual`, as used by `solana-policy-provisioner.ts:97-99`) and a second indirection for the same call would be a new abstraction around an existing one. No other refactor; lint and typecheck clean. |
+| False-green guard | Every assertion is a positive one on the composed value, not a negative that could pass on an absent module: the module-absent RED is stated separately, the byte-identity assertion compares against the real `buildSolanaEnrollmentRules` output, the pinned digest was computed **before** implementation from an independent reproduction of the canonical form in `/tmp/gentle-canonical.mjs` (not from this module's output), and the locale test asserts that the two comparators disagree for its fixture before asserting which one the composer used. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/policy-composer.test.ts tests/unit/policy-composer-hash.test.ts` (RED, module absent) | **2 files failed, 0 tests**, `Cannot find module '../../src/wallet/policy/composer.js'` |
+| … (mutation passes: refusals / ordering / consent+canonical / dedupe) | **3 failed / 25 passed**, **2 failed / 26 passed**, **3 failed / 25 passed**, **1 failed / 30 passed** — each mutation caught by exactly the intended cases |
+| `npx vitest run tests/unit/policy-composer.test.ts tests/unit/policy-composer-hash.test.ts` | **2 files passed, 31 tests passed** (0.3 s) |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts` | **4 files passed, 53 tests passed** (see the environment note below for the one pre-existing fragility this run exposed) |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`, exit 0) |
+
+#### Environment note (not a defect in this unit, not a code change)
+
+The first cumulative run reported **1 failed / 53 passed**:
+`recipient-policy-repository.test.ts` → “claims a due intent from the system context and
+leaves a foreign user unable to see it” (`expected undefined to be defined`). The cause is
+accumulated database residue from repeated suite runs, proven directly: the table held
+**144** `recipient_policy_sync_intent` rows, **60** of them due-now, while the case asserts
+that a freshly inserted intent appears inside `listDueIntents({ limit: 50 })`. Postgres
+orders `next_attempt_at ASC` with NULLs last, so the limit window is filled by older rows
+and the fresh row is only *sometimes* inside it — the suite has no teardown, so its own
+past runs create the flakiness. No SQL, schema or DB object was touched by this unit.
+Deleting the 144 residue rows (all of them created by these suites; the table is
+introduced by this change and is written by nothing else) restored **4 files passed /
+53 tests passed**. Handed forward: whoever owns task 1.3's suite should scope the query to
+its own fixture or clean up after itself, otherwise the slice-1/5 gates will stay
+run-count sensitive.
+
+#### Deviations from the design
+
+Three, all deliberate and additive:
+
+1. **A third refusal class, and a fourth, for two refusals the named pair cannot carry.**
+   Task/design name `PolicyEmptyCompositionUnprovenError` and `PolicyComposerRequiredError`.
+   §11 U1's blocking stop (`blocked_configuration` / `rule_composition_semantics_unproven`)
+   and §3.2 guarantee 1's ceiling refusal need their own types, otherwise U1's refusal would
+   have to be reported through an error whose meaning is “this path cannot route through the
+   composer”. All four extend one base that carries `failureClass` and `reason`, which is what
+   lets the service map a refusal onto `recipient_policy_state.status`/`status_reason` without
+   matching message text.
+2. **`ComposeInput.ruleComposition` is an added input field.** §3.1's literal shape has no
+   signal for the U1 probe outcome, but §11 U1 requires the composer to refuse multi-family
+   composition until the probe records `union`, and task 1.4 requires that refusal in the unit
+   suite. The field mirrors `status_detail.rules_union`, defaults to `unproven`, and its
+   default is the refusal.
+3. **Two `export` keywords in `src/wallet/embedded.ts`.** The composer imports the raw
+   `SOLANA_MAX_PER_TRANSFER_LAMPORTS` value instead of restating `"10000000"`, because a
+   second literal would be a second authority over the same consent. `deterministicPolicyHash`
+   is exported for one reason: the unit suite must compare the composed hash against the
+   *real* consent-envelope function, and a test-local copy would have proven nothing.
+
+Two smaller, documented choices: rule/condition canonicalization is an array of `[key, value]`
+pairs with declared keys first and any unknown key appended in code-unit order (a rule set is
+never lossily canonicalized); and `walletId`/`userId` are accepted as identity context and
+deliberately excluded from the hash, so `applied_rules_hash` is a pure function of the rule set
+and the composer can never derive the identity it composes for.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **`BaselineProvenance` is carried, not interpreted.** §3.1 passes the frozen consent record
+  into the composer and §2.1 defines its content as the `signer_grants` snapshot
+  (`consent_baseline` = `allowlisted_recipients`, `consent_provenance` =
+  `signer_enrollment_snapshot`), so the composer takes `Record<string, unknown>` — exactly the
+  type task 1.3's `PolicyStateRecord` already exposes — and derives the address union from
+  `baseline.addresses`. Task 1.6 must assemble both from the wallet's newest `state='active'`
+  `signer_grants` row; the composer deliberately does not police a shape the design does not
+  fix, so it cannot block slice 2 on a mapping choice.
+- **The `union` flag is the only thing standing between the shipped behaviour and
+  multi-family composition.** Until task 2.1 records `union`, every mutation on a wallet that
+  has both trusted contacts and an active grant will stop as `blocked_configuration` with
+  `rule_composition_semantics_unproven` and no PATCH. That is the intended slice-1 end state
+  (§11 U1), but it means the grant paths stay non-executable until the probe lands — task 2.1
+  and task 2.8 must therefore wire the flag before the slice-2 gate.
+- **`PolicyComposerRequiredError` has no producer in this unit.** It is shipped for the
+  callers that must fail visibly (the legacy entry points deleted in task 1.8 and the
+  grant/expiry paths routed in tasks 1.8/2.13); its contract is pinned by a unit case now so
+  those tasks map it instead of inventing a second error.
+
+#### Remaining tasks in slice 1
+
+```text
+- [ ] **1.5 Implement the readback comparator as a pure function with its failure classes.**
+- [ ] **1.6 Add `RecipientPolicyService` with server-owned identity, wallet, and network, plus the strict service-seam types.**
+- [ ] **1.7 Implement the atomic removal transaction with whole-grant revocation.**
+- [ ] **1.8 Delete the legacy full-rule writer entry points and route their callers through the composer.**
+- [ ] **1.9 Document and install the single lock order, prepending `W0` to the claim path.**
+- [ ] **1.10 Extend the structural guard suite to make a second full-rule writer unreachable by construction.**
+- [ ] **1.11 Run the slice-1 gate and record the slice-1 work-unit commits.**
+```
+
+Parent-owned lifecycle rows in `tasks.md` (the bounded native review and the post-apply
+verify/archive rows) were left byte-for-byte untouched, and no review, receipt or delivery gate
+was started by this phase.
+
+#### Workload / PR boundary
+
+One commit, one work unit: two new modules (~470 lines), two new suites (~700 lines) and two
+`export` keywords — **~1 180 changed lines**, above the 400-line review budget and reported,
+not hidden. It cannot be split further without breaking the unit: the composer and its
+invariants are one artifact, and the `gentle-ai-work-unit-commits` rule forbids shrinking the
+diff by dropping tests, comments or documentation. It sits inside the parent-assigned `PR 2`
+slice (tasks 1.4–1.6, rollback boundary
+`src/wallet/policy/{composer,readback,service,errors}.ts`), needs no migration change, and no
+`size:exception` is requested. No push, no PR, and no slice-2 work started.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work
+unit, the authoritative artifact paths and the delivery path directly. Readiness was resolved
+against the artifacts before any edit — `tasks.md` (task 1.4, terminal
+`<!-- sdd-owner: implementation -->`), `design.md` §0 C1/C5/C6, §3.1–§3.3, §3.5, §5.1, §11 U1/U4,
+§12.1, `spec.md` (single composer, invariants preserved, consent provenance, empty composition)
+and the 1.1–1.3 apply-progress. `actionContext`: all writes stayed inside the assigned worktree
+root; the main checkout and the untracked `compose.privy-local.ports.yaml` were not touched.
+
+#### Commit
+
+`feat(policy): compose one rule set per wallet from consent and grants` — see the report
+envelope for the SHA.
