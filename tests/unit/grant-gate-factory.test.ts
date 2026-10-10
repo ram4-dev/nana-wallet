@@ -63,8 +63,22 @@ function fixtures(options: {
     ),
   } as unknown as WalletProvider;
   const walletForUser = vi.fn(async () => provider);
-  const gate = createGrantGate({ grants, walletForUser });
-  return { gate, grants, walletForUser, provider };
+  // Task 2.10: the wallet's applied policy is verified, so these cases keep
+  // isolating the intent-binding/classification behaviour they were written
+  // for. The wallet-level refusal has its own suite
+  // (`tests/unit/grant-gate-revision.test.ts`).
+  const readPolicyCoverage = vi.fn(async () => ({
+    status: "applied",
+    desiredRevision: 1,
+    appliedRevision: 1,
+    desiredRulesHash: "sha256:verified",
+    appliedRulesHash: "sha256:verified",
+    appliedPolicyId: "policy_1",
+    appliedSignerId: "signer_1",
+    verifiedAt: "2026-10-05T00:00:00.000Z",
+  }));
+  const gate = createGrantGate({ grants, walletForUser, readPolicyCoverage });
+  return { gate, grants, walletForUser, provider, readPolicyCoverage };
 }
 
 const baseInput = {

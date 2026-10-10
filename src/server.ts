@@ -284,6 +284,9 @@ export function buildServer(options: {
     });
 
     const conversations = new PostgresConversationRepository(database);
+    // Task 2.10: hoisted above the conversation service because the grant gate
+    // needs the wallet's `recipient_policy_state` before it may list grants.
+    const policyRepository = new RecipientPolicyRepository(database);
     const financialTasks = new FinancialTaskRegistry();
     const service = createWalletConversationService({
       conversations,
@@ -301,6 +304,14 @@ export function buildServer(options: {
             grantGate: createGrantGate({
               grants,
               walletForUser,
+              // Design §4.1: the wallet-level applied-revision evidence. Read
+              // in the caller's own scope, so a foreign wallet id cannot be
+              // used to borrow another wallet's verified state.
+              readPolicyCoverage: (input) =>
+                policyRepository.readPolicyState(
+                  input.userId,
+                  input.walletId,
+                ),
             }),
             // AD-6: the atomic ledger claim is the sole execution
             // authority; same grants service as the HTTP lifecycle.
@@ -364,7 +375,6 @@ export function buildServer(options: {
 
     // PMU-008..013: user-scoped contacts CRUD.
     const contactsRepository = new ContactsRepository(database);
-    const policyRepository = new RecipientPolicyRepository(database);
     // The contacts surface (`/v1/contacts`, `/v1/recipient-policy`) recomposes
     // through the same recipient-policy service the grant-sync runtime builds:
     // the contact projection is written by the only adapter allowed to write it,

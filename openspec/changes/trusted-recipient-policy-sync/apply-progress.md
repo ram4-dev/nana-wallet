@@ -2882,3 +2882,80 @@ the artifacts before any edit — `tasks.md` (2.9, terminal `<!-- sdd-owner: imp
 all writes stayed inside `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`; the main
 checkout and the untracked `compose.privy-local.ports.yaml` were untouched; no `git stash`, `checkout`,
 `reset`, `restore` or `clean` was run.
+
+---
+
+### Task 2.10 — add the wallet-level coverage gate (design §4.1)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/conversations/grant-gate.ts` | The §4.1 gate: a required `readPolicyCoverage` dependency, the narrow `GrantGatePolicyEvidence` projection, the exported `isWalletPolicyVerified` six-predicate check, the shared `POLICY_UNVERIFIED_DECISION`, and a `GrantGateDecision` union that now carries the explicit refusal. The read is taken after the wallet resolves and before `listGrants`. |
+| `src/server.ts` | Two edits: `policyRepository` is hoisted above the conversation service (the gate needs it), and the gate is wired with `readPolicyCoverage: (input) => policyRepository.readPolicyState(input.userId, input.walletId)` — read in the caller's own scope, so a foreign wallet id cannot borrow another wallet's verified state. |
+| `tests/unit/grant-gate-revision.test.ts` | New. 7 cases: the verified positive control, the evaluated-grant-and-sibling refusal, the `provider_policy_id`-only refusal, a missing state row, a per-predicate sweep over all six predicates, a read failure, and the unchanged unsupported-network short circuit. |
+| `tests/unit/grant-gate-factory.test.ts` | Fixture only: the existing 9 factory cases now inject a **verified** reader, so they keep isolating the intent-binding/classification behaviour they were written for. No assertion changed. |
+
+#### What the unit delivers
+
+- **The gate is wallet-level, not grant-level.** Order is wallet → evidence → `listGrants`, so an
+  unverified wallet never enumerates the grants it refuses. A grant that carries
+  `provider_policy_id = policy_1` and covers its own recipient is refused exactly like its sibling
+  bound for another recipient, which is what makes "a bound policy id alone is insufficient" true.
+- **All six predicates are load-bearing** (`status='applied'`, `applied_revision = desired_revision`,
+  `applied_rules_hash = desired_rules_hash`, `applied_policy_id`, `applied_signer_id`, `verified_at`),
+  and the per-predicate sweep proves each one individually rather than only the conjunction.
+- **Unknown evidence fails closed with the same refusal.** A missing row and an unreadable row both
+  return `policy_unverified` instead of a bare `null`, so no surface can read an unknown wallet as
+  covered. `classifyGrantCoverage` and `tests/unit/grant-coverage.test.ts` are byte-identical.
+- **No new authority, no migration.** One owner-scoped read of an existing table through the existing
+  repository method.
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED | `tests/unit/grant-gate-revision.test.ts` written first against the unchanged adapter: **6 failed / 1 passed (7)** — every refusal case failed with the fleet-strength `covered: true` (the gate allowed a wallet whose applied revision was behind), and the read-failure case with `expected undefined to be false`. The single pass was the unsupported-network case, whose negative assertion is only meaningful next to the positive control in case 1; both are asserted there (`toHaveBeenCalledWith({userId, walletId})`) and it is stated as such in the file. |
+| GREEN | After the gate and the server wiring: **42 passed / 42** across `grant-gate-revision` + `grant-gate-factory` + `grant-coverage`. |
+| Mutation | The guard `if (!isWalletPolicyVerified(evidence)) return POLICY_UNVERIFIED_DECISION;` was replaced with `if (false) { … }`; the run failed **exactly and only** the five guard cases, by name: “an unverified wallet degrades the evaluated grant and its sibling…”, “a grant bound only by provider_policy_id is refused”, “a missing state row fails closed”, “fails closed on every single missing predicate”, “degrades closed when the state read itself fails” — **5 failed / 2 passed**. The file was restored from a byte copy before the GREEN re-run, so the guard is proven load-bearing and not decorative. |
+| TRIANGULATE | Added after GREEN: the per-predicate sweep (one broken predicate at a time, all six), plus the sibling assertion on a *second* recipient and a second evaluation, and a positive control that the reader is called with the resolved wallet id and that `listGrants` runs only when verified. |
+| REFACTOR | One: the verification predicate is exported as `isWalletPolicyVerified` and the refusal object as `POLICY_UNVERIFIED_DECISION`, so the claim gate of 2.11 and the coverage gate cannot drift into two slightly different definitions of "verified". Lint and typecheck clean afterwards. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/grant-gate-revision.test.ts` (RED) | **6 failed / 1 passed (7)** — the refusals were allowed; attributed by name above |
+| `npx vitest run tests/unit/grant-gate-revision.test.ts` (after the mutation) | **5 failed / 2 passed (7)** — exactly the five guard cases |
+| `npx vitest run tests/unit/grant-gate-revision.test.ts tests/unit/grant-gate-factory.test.ts tests/unit/grant-coverage.test.ts` | **3 files passed, 42 tests passed** |
+| `npx vitest run tests/unit/policy-*.test.ts tests/unit/grant-*.test.ts` | **17 files passed, 216 tests passed** |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`, exit 0) |
+
+#### Deviations from the design
+
+Two, both deliberate:
+
+1. **The reader is a required dependency rather than an inline database call.** §4.1 describes the read
+   as living "in the adapter's database read"; the adapter here is a factory whose ledger and wallet
+   seams are injected, so the state read is injected the same way and wired in `src/server.ts` to the
+   existing `RecipientPolicyRepository.readPolicyState`. The predicate itself is a pure exported
+   function, which is what lets 2.11 reuse it instead of restating it.
+2. **An unreadable state row returns the same `policy_unverified` refusal instead of `null`.** The
+   module's catch-all `null` means "degrade to the preview flow" and is indistinguishable from "the
+   wallet is fine but no grant covers this" — for a *state read failure* that ambiguity would hide a
+   real outage behind a normal-looking path. The read is therefore wrapped and mapped to the explicit
+   refusal. No behaviour change at the consumer (`decision?.covered` is falsey either way); the
+   difference is only that the reason is now reportable.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **The refusal is currently reported as a non-covered decision; no surface renders the reason yet.**
+  `src/conversations/service.ts` consumes only `decision?.covered`, so today the reason is available but
+  unused. Task 3.2 owns the HTTP readiness surface that must report it.
+- **`readPolicyState` is owner-scoped**, so the gate cannot read a wallet the acting user does not own:
+  a mismatched `(userId, walletId)` pair yields `null` and therefore `policy_unverified`, never another
+  wallet's verified state. That property is relied upon by 2.11 as well.

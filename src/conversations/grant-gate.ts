@@ -40,22 +40,93 @@ export type GrantGateInput = {
   };
 };
 
-export type GrantGateDecision = {
-  covered: boolean;
-  source?: "delegated_grant";
-  grantId?: string;
-  /** Exact smallest-unit amount (AD-6 claim input). Required when covered. */
-  amountSmallestUnits?: string;
-  /**
-   * ALL statically eligible candidates in Q3 order (AD-4/AD-6): the service
-   * claims them sequentially; each rejection falls back to the next.
-   */
-  orderedCandidates?: Array<{ grantId: string; amountSmallestUnits: string }>;
-} | null;
+export type GrantGateDecision =
+ | {
+    covered: true;
+    source: "delegated_grant";
+    grantId: string;
+    /** Exact smallest-unit amount (AD-6 claim input). */
+    amountSmallestUnits: string;
+    /**
+     * ALL statically eligible candidates in Q3 order (AD-4/AD-6): the service
+     * claims them sequentially; each rejection falls back to the next.
+     */
+    orderedCandidates: Array<{ grantId: string; amountSmallestUnits: string }>;
+   }
+ | {
+    /**
+     * Task 2.10 / design §4.1: the wallet's applied policy is not verified, so
+     * EVERY grant of that wallet is refused here — a bound
+     * `provider_policy_id` is required at the claim but no longer sufficient.
+     */
+    covered: false;
+    mode: "not_covered";
+    reason: "policy_unverified";
+   }
+ | null;
+
+/**
+ * The wallet-level evidence of design §4.1: exactly the six predicates the
+ * coverage gate reads off `recipient_policy_state`. Deliberately a narrow
+ * projection rather than the whole state record, so the gate cannot start
+ * depending on fields the gate does not decide.
+ */
+export type GrantGatePolicyEvidence = {
+ status: string;
+ desiredRevision: number;
+ appliedRevision: number;
+ desiredRulesHash: string | null;
+ appliedRulesHash: string | null;
+ appliedPolicyId: string | null;
+ appliedSignerId: string | null;
+ verifiedAt: string | null;
+};
+
+/**
+ * The `recipient_policy_state` read the coverage gate depends on. `null` means
+ * the wallet has no state row at all, which is the same refusal as an
+ * unverified row: nothing about this wallet has been proven.
+ */
+export type GrantGatePolicyReader = (input: {
+ userId: string;
+ walletId: string;
+}) => Promise<GrantGatePolicyEvidence | null>;
+
+/**
+ * Design §4.1: an APPLIED policy whose applied revision and rule hash ARE the
+ * desired ones, carrying the qualified policy id, the canonical signer id and
+ * the readback verification timestamp. Any missing predicate fails the wallet.
+ */
+export function isWalletPolicyVerified(
+ evidence: GrantGatePolicyEvidence | null,
+): boolean {
+ return (
+   evidence !== null &&
+   evidence.status === "applied" &&
+   evidence.appliedRevision === evidence.desiredRevision &&
+   evidence.appliedRulesHash !== null &&
+   evidence.appliedRulesHash === evidence.desiredRulesHash &&
+   evidence.appliedPolicyId !== null &&
+   evidence.appliedSignerId !== null &&
+   evidence.verifiedAt !== null
+ );
+}
+
+/** Task 2.10's single refusal, shared by the gate and its callers. */
+export const POLICY_UNVERIFIED_DECISION: Extract<
+ GrantGateDecision,
+ { covered: false }
+> = {
+ covered: false,
+ mode: "not_covered",
+ reason: "policy_unverified",
+};
 
 export type GrantGateDependencies = {
-  grants: DelegatedGrantService;
-  walletForUser: WalletForUser;
+ grants: DelegatedGrantService;
+ walletForUser: WalletForUser;
+ /** Task 2.10/design §4.1: the wallet-level applied-revision evidence. */
+ readPolicyCoverage: GrantGatePolicyReader;
 };
 
 /** Solana devnet is the only registry network for delegated grants (Slice 2). */
@@ -120,6 +191,31 @@ export function createGrantGate(dependencies: GrantGateDependencies): {
             (t: { token: string; decimals: number }) =>
               t.token === input.pendingTransfer.token,
           )?.decimals ?? null;
+
+        // Task 2.10 (design §4.1): the wallet-level coverage gate. Taken after
+        // the wallet resolves and BEFORE the grants are listed, because the
+        // decision is a property of the wallet's applied policy and not of any
+        // single grant: an unverified wallet degrades every grant it owns,
+        // including siblings bound for other recipients. A grant that carries
+        // only `provider_policy_id` is therefore refused here, which is the
+        // whole point — the claim's `policy_not_ready` check stays required but
+        // stops being sufficient.
+        const evidence = await (async () => {
+          try {
+            return await dependencies.readPolicyCoverage({
+              userId: input.userId,
+              walletId,
+            });
+          } catch {
+            // An unreadable state row is not evidence of verification. It is
+            // reported as the same refusal instead of a bare `null` so a
+            // surface never treats an unknown wallet as a covered one.
+            return null;
+          }
+        })();
+        if (!isWalletPolicyVerified(evidence)) {
+          return POLICY_UNVERIFIED_DECISION;
+        }
 
         const candidates = await dependencies.grants.listGrants(input.userId);
         const decision = classifyGrantCoverage({
