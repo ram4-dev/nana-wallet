@@ -1,6 +1,6 @@
 import { DatabaseClient } from '../db/client.js';
 import { normalizeMemoryText, redactAddressLikeText, vectorLiteral } from './embedding.js';
-import { isValidRecipientAddress } from './address.js';
+import { isValidRecipientAddress, resolveRecipientNetwork } from './address.js';
 import type {
   Embedding,
   RecipientCandidate,
@@ -106,15 +106,18 @@ export class RecipientMemoryRepository {
   }
 
   public async insertRecipient(userId: string, input: RecipientInput, embedding: Embedding, embeddingModelRevision: string): Promise<RecipientRecord> {
-    if (!isValidRecipientAddress(input.address, input.network)) {
-      throw new Error('Recipient address must match the selected network.');
+    // RAM-009: an absent network resolves the configured chain instead of the
+    // legacy EVM regex, and the resolved chain is what gets persisted.
+    const network = resolveRecipientNetwork(input.network);
+    if (!isValidRecipientAddress(input.address, network)) {
+      throw new Error('Recipient address must be a canonical Solana address.');
     }
     return this.database.withUserTransaction(userId, async (client) => {
       const result = await client.query<RecipientRow>(`
         INSERT INTO recipients (user_id, name, normalized_name, description, address, network, embedding, embedding_model_revision, provenance, address_confirmed_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, $9::jsonb, now())
         RETURNING id, user_id, name, normalized_name, description, address, network, version, status, embedding_model_revision`, [
-        userId, redactAddressLikeText(input.name).trim(), normalizeMemoryText(input.name), redactAddressLikeText(input.description).trim(), input.address.trim(), input.network ?? null,
+        userId, redactAddressLikeText(input.name).trim(), normalizeMemoryText(input.name), redactAddressLikeText(input.description).trim(), input.address.trim(), network,
         vectorLiteral(embedding), embeddingModelRevision, JSON.stringify(input.provenance ?? {}),
       ]);
       return mapRecipient(result.rows[0]!);

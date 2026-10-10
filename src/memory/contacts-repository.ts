@@ -1,5 +1,5 @@
 import type { DatabaseClient, Queryable } from "../db/client.js";
-import { isValidRecipientAddress } from "../memory/address.js";
+import { isValidRecipientAddress, resolveRecipientNetwork } from "../memory/address.js";
 import { redactAddressLikeText, vectorLiteral } from "../memory/embedding.js";
 import type { Embedding } from "../memory/types.js";
 
@@ -107,7 +107,11 @@ export class ContactsRepository {
     client?: Queryable,
   ): Promise<ContactRecord> {
     const name = this.validatedName(input.name);
-    if (!isValidRecipientAddress(input.address, input.network)) {
+    // RAM-009: a create body that omits `network` resolves the configured chain
+    // instead of falling through to the EVM regex, and the resolved chain is
+    // what the row stores.
+    const network = resolveRecipientNetwork(input.network);
+    if (!isValidRecipientAddress(input.address, network)) {
       throw new ContactsValidationError("address must match the selected network");
     }
     const run = async (executor: Queryable): Promise<ContactRecord> => {
@@ -123,7 +127,7 @@ export class ContactsRepository {
           normalizedContactName(name),
           redactAddressLikeText(input.description).trim(),
           input.address.trim(),
-          input.network ?? null,
+          network,
           vectorLiteral(embedding),
           embeddingModelRevision,
           JSON.stringify({ origin: "user" }),
@@ -191,9 +195,13 @@ export class ContactsRepository {
           ? redactAddressLikeText(input.description).trim()
           : row.description;
       const nextAddress = input.address?.trim() ?? row.address;
-      const nextNetwork = Object.prototype.hasOwnProperty.call(input, 'network')
-        ? input.network
-        : row.network ?? undefined;
+      // The stored network is resolved the same way on read-back, so a patch that
+      // carries no `network` cannot widen the edit into EVM acceptance either.
+      const nextNetwork = resolveRecipientNetwork(
+        Object.prototype.hasOwnProperty.call(input, 'network')
+          ? input.network
+          : row.network ?? undefined,
+      );
       if (!isValidRecipientAddress(nextAddress, nextNetwork)) {
         throw new ContactsValidationError("address must match the selected network");
       }
@@ -214,7 +222,7 @@ export class ContactsRepository {
           normalizedContactName(nextName),
           nextDescription,
           nextAddress,
-          nextNetwork ?? null,
+          nextNetwork,
           // Regenerate the embedding whenever any embedded field changes so
           // agent retrieval reflects the current projection.
           contentChanged ? vectorLiteral(embedding) : vectorLiteral(embedding),

@@ -47,7 +47,7 @@ import {
   isRecipientPolicyWriterFrozen,
   RECIPIENT_POLICY_WRITER_FROZEN_REASON,
 } from "../../config/recipient-policy.js";
-import { isValidRecipientAddress } from "../../memory/address.js";
+import { isValidRecipientAddress, CONFIGURED_RECIPIENT_NETWORK } from "../../memory/address.js";
 import { SOLANA_MAX_PER_TRANSFER_LAMPORTS } from "../embedded.js";
 import { appendGrantAudit } from "../grants/consumption.js";
 import {
@@ -109,9 +109,11 @@ export type {
 
 /**
  * The single configuration's chain scope: the product runs Solana devnet only,
- * and it is not a switch a body or a query can set (AGENTS.md).
+ * and it is not a switch a body or a query can set (AGENTS.md). The literal
+ * lives in `src/memory/address.ts` so the recipient validator and this policy
+ * scope cannot drift apart.
  */
-export const SOLANA_POLICY_NETWORK = "solana-devnet";
+export const SOLANA_POLICY_NETWORK = CONFIGURED_RECIPIENT_NETWORK;
 
 /**
  * The ledger chain FAMILY the active grants are read by. It is the same value
