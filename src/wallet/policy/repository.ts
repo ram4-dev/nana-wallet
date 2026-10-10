@@ -221,6 +221,31 @@ export interface SetPolicyStatusInput {
   incrementAttempt?: boolean;
 }
 
+/** The two statuses a PROVEN divergence can record (design §4.3). */
+export type PolicyDivergenceStatus = Extract<
+  PolicyStateStatus,
+  "blocked_conflict" | "blocked_configuration"
+>;
+
+export interface InvalidateWalletBindingsInput {
+  walletId: string;
+  status: PolicyDivergenceStatus;
+  reason: string;
+  /** Bounded comparator evidence only (codes, ids, counts). */
+  detail: Record<string, unknown>;
+}
+
+/** What design §4.3's fallback transaction did, so a caller can disclose it. */
+export interface WalletBindingInvalidation {
+  /**
+   * `false` ⇔ the wallet has no state row. Nothing is fabricated: a divergence
+   * recorded against a wallet with no state would be evidence about nothing.
+   */
+  updated: boolean;
+  /** The `delegated_grants` ids whose `provider_policy_id` was cleared. */
+  grantIds: string[];
+}
+
 export interface InsertPolicyIntentInput {
   walletId: string;
   desiredRevision: number;
@@ -813,6 +838,138 @@ export class RecipientPolicyRepository {
         ],
       );
       return result.rows[0] ? mapState(result.rows[0]) : null;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  // -------------------------------------------------------------------------
+  // Design §4.3 — the atomic binding-invalidation fallback
+  // -------------------------------------------------------------------------
+
+  /**
+   * Design §4.3: ONE transaction that records a PROVEN divergence and destroys
+   * every stale binding it implies.
+   *
+   * It is a single method for one reason: the four writes are only correct
+   * together. A status that says `blocked_conflict` with a surviving
+   * `desired_rules_hash`, or with a sibling grant still bound to the provider
+   * policy nobody verified, would be exactly the state this fallback exists to
+   * make impossible.
+   *
+   * This is NOT the unknown-outcome path. An unreachable readback, a PATCH
+   * timeout, a `busy` lease or an exhausted budget never reaches this method:
+   * an unknown outcome blocks by way of the revision gate (§4.1), which is
+   * non-destructive and recoverable by a readback, while only a PROVEN mismatch
+   * may destroy a binding. Callers therefore reach this from exactly two places —
+   * the apply comparator's `blocked` arm and the reconciler's
+   * unexplained-readback branch — and never from a lease or transport failure.
+   *
+   * `status_detail` MERGES (`jsonb ||`), so the two keys this transition owns are
+   * named explicitly (`policyId`, `appliedPolicyId`): a previous transition's
+   * evidence must not survive as if it still described this outcome. The probe
+   * evidence of design §11 is deliberately left intact — a divergence does not
+   * unprove a recorded probe observation.
+   *
+   * `applied_revision` is NOT touched: invalidating a binding never rewrites what
+   * was last verified, and lowering it would let a stale writer look newer.
+   */
+  public async invalidateWalletBindings(
+    userId: string,
+    input: InvalidateWalletBindingsInput,
+    client?: Queryable,
+  ): Promise<WalletBindingInvalidation> {
+    const run = async (query: Queryable): Promise<WalletBindingInvalidation> => {
+      const updated = await query.query(
+        `UPDATE recipient_policy_state
+            SET status = $3,
+                status_reason = $4,
+                status_detail = COALESCE(status_detail, '{}'::jsonb) || $5::jsonb,
+                applied_rules_hash = NULL,
+                desired_rules_hash = NULL,
+                updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2
+          RETURNING desired_revision`,
+        [
+          input.walletId,
+          userId,
+          input.status,
+          input.reason,
+          JSON.stringify({
+            ...input.detail,
+            policyId: null,
+            appliedPolicyId: null,
+          }),
+        ],
+      );
+      if (updated.rows.length === 0) {
+        return { updated: false, grantIds: [] };
+      }
+
+      // The policy is per-wallet now, so the whole wallet's active grants lose
+      // the stale binding at once — `privy-policy-sync.ts:163-175`'s per-grant
+      // fail-closed posture, extended from one grant to the wallet.
+      const cleared = await query.query<{ id: string }>(
+        `UPDATE delegated_grants
+            SET provider_policy_id = NULL, updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2
+            AND state = 'active' AND provider_policy_id IS NOT NULL
+          RETURNING id`,
+        [input.walletId, userId],
+      );
+      const grantIds = cleared.rows.map((row) => row.id);
+      for (const grantId of grantIds) {
+        await this.appendPolicyAudit(
+          userId,
+          {
+            walletId: input.walletId,
+            event: "binding_invalidated",
+            reason: input.reason,
+            detail: { code: input.reason, grantId },
+          },
+          query,
+        );
+      }
+      await this.appendPolicyAudit(
+        userId,
+        {
+          walletId: input.walletId,
+          event: input.status,
+          reason: input.reason,
+          detail: { ...input.detail, code: input.reason, grantsInvalidated: grantIds.length },
+        },
+        query,
+      );
+      return { updated: true, grantIds };
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * Design §4.4: re-bind the wallet's active grants to the policy a verified
+   * readback just proved.
+   *
+   * This is the ONLY writer that puts a `provider_policy_id` back after §4.3
+   * clears it. There is no manual repair step and no retry path that re-binds: a
+   * binding exists only because a signed readback verified the rule set it names
+   * (`applied_revision = desired_revision` with matching hashes).
+   */
+  public async rebindActiveWalletGrants(
+    userId: string,
+    walletId: string,
+    policyId: string,
+    client?: Queryable,
+  ): Promise<string[]> {
+    const run = async (query: Queryable): Promise<string[]> => {
+      const result = await query.query<{ id: string }>(
+        `UPDATE delegated_grants
+            SET provider_policy_id = $3, updated_at = now()
+          WHERE wallet_id = $1 AND user_id = $2
+            AND state = 'active'
+            AND provider_policy_id IS DISTINCT FROM $3
+          RETURNING id`,
+        [walletId, userId, policyId],
+      );
+      return result.rows.map((row) => row.id);
     };
     return client ? run(client) : this.ownerTransaction(userId, run);
   }

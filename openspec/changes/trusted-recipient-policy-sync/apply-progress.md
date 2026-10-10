@@ -3104,3 +3104,154 @@ Isolation note: in the 22-file run, `tests/integration/recipient-policy-reposito
 2. **An unrecognised reconciler value is now `false`.** Pre-2.13 it was `true` for anything except `disabled`, so `RECIPIENT_POLICY_RECONCILER=yes` used to start the loop. The new reading fails closed; it only ever narrows authority, and no suite or deployment depends on the old meaning.
 3. **`frozen` vetoes the reconciler.** §13 lists the two switches independently, but a reconciler that cannot apply anything would only write statuses nobody asked for, so the writer switch wins. Recorded here because it is a precedence decision, not a reading of the design's wording.
 4. **`selectPolicyApplyPort` lives in `service.ts`, not in the config module:** the port types and `createUnavailablePolicyApplyPort` are already owned there, and importing them from `apply.ts` would have created a runtime cycle with `service.ts`. The config module stays pure and dependency-free.
+
+### Task 2.12 — the atomic binding-invalidation fallback for proven divergence only (design §4.3, §4.4)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/repository.ts` | `invalidateWalletBindings` (design §4.3's fallback as ONE atomic operation) and `rebindActiveWalletGrants` (design §4.4's restoration), plus their input/result types (`PolicyDivergenceStatus`, `InvalidateWalletBindingsInput`, `WalletBindingInvalidation`). |
+| `src/wallet/policy/service.ts` | `commitApplyOutcome`: the proven-divergence branch now runs the invalidation **on the caller's client** (same transaction as the status write), and the verified branch re-binds the wallet's active grants to the verified `appliedPolicyId`. |
+| `src/wallet/policy/reconciler.ts` | `settle`'s `blocked_conflict` branch now runs the same invalidation; the stale "task 2.12 is pending" comments were replaced with what the code now does. |
+| `tests/integration/recipient-policy-invalidation.test.ts` | New. 6 cases over two real tables: the proven-divergence clear, the injected-failure rollback, the timeout no-op, the frozen-writer no-op, `applied_revision` monotonicity + §4.4 re-bind, and the unknown-outcome no-re-bind. |
+
+#### What the unit delivers
+
+- **§4.3 as one transaction.** `invalidateWalletBindings` runs, on a single client: the
+  `recipient_policy_state` UPDATE (status / `status_reason` / merged `status_detail` with
+  `policyId` + `appliedPolicyId` named explicitly as `null`, `applied_rules_hash = NULL`,
+  `desired_rules_hash = NULL`), the `delegated_grants` clear (`provider_policy_id = NULL`
+  for the wallet's `state='active'` grants, `RETURNING id`), then one
+  `binding_invalidated` audit row per returned grant id plus the `blocked_conflict` /
+  `blocked_configuration` status audit row. It is a single method because the four writes
+  are only correct together.
+- **`applied_revision` is never touched.** Invalidating a binding never rewrites what was
+  last verified, and lowering it would let a stale writer look newer. Proven by seeding
+  `applied_revision = 7` and observing `7` after the clear.
+- **The proven/unknown split is by CALL SITE, not by status string.** `blocked_conflict`
+  is not a sufficient trigger: `recordStop` also records `blocked_conflict` for
+  `policy_lease_busy` / `policy_lease_unavailable` (design §4.3's "lease busy ⇒ **no**
+  binding change") and for the metadata-only-edit conflict. The invalidation therefore
+  runs from exactly two places — the apply comparator's `blocked` arm
+  (`commitApplyOutcome`) and the reconciler's unexplained-readback branch (`settle`) — and
+  never from a lease, budget, transport or `unavailable`-provider failure.
+- **§4.4 restoration.** `commitApplyOutcome`'s verified branch re-binds the wallet's
+  active grants to the verified `appliedPolicyId` in the SAME transaction as the §1.5 CAS,
+  so a binding exists only because a signed readback verified the rule set it names.
+- **A frozen writer is not a divergence at all.** `RECIPIENT_POLICY_WRITER=frozen`
+  (task 2.13) resolves the apply port to the `unavailable` arm, which has no mutation
+  method, so `applyRevision` takes `recordApplyPending` — never a `blocked_*` class and
+  never the invalidation.
+- **No transaction across provider I/O is preserved.** The invalidation runs on the
+  client the caller already holds; the provider work in `applyRevision` still happens with
+  no transaction open (the 2.8 suite's transaction counter is unchanged and still green).
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED | The suite was written first and run against the un-implemented workspace: **4 failed / 2 passed (6)**. The four failures are the positive behaviours (`expected 'pol_invalidation_integration' to be null` for the cleared binding; the injected-failure case resolved instead of rejecting; the re-bind cases saw the pre-existing binding). |
+| RED false-green guard | The two RED "passes" are the two no-op invariants (timeout, frozen). Neither is vacuous: the timeout case asserts `calls.patchPolicy` has length 1 first (the PATCH really happened, so "nothing moved" is not "nothing happened"), and every no-op case is paired with the proven-divergence case that DOES move — so the two directions are proven against each other, not against an absent module. The plain "no `binding_invalidated` audit" clause would have been a false green on its own and is only meaningful because case 1 proves that row appears when it should. |
+| GREEN | **6 passed / 6**; `npm run lint` and `npm run typecheck` clean. |
+| Mutation A (grant clearing) | `AND false` added to the grant-clearing UPDATE → **3 failed / 3**: `clears the bindings...`, `never lowers applied_revision, and re-binds...`, `does not re-bind on an unknown outcome either`. Proves the clearing is load-bearing for every binding assertion. |
+| Mutation B (the two hash nulls) | Removed `applied_rules_hash = NULL, desired_rules_hash = NULL` → **1 failed / 5**: `clears the bindings and nulls BOTH hashes atomically with the blocked status`. Proves that half of §4.3 is observed by name. |
+| Mutation C (atomicity) | Dropped the `client` argument of the service's invalidation call, so it opened its OWN transaction → **1 failed / 5**: `rolls the status, the hashes and the grant binding back together when the transaction fails`. Proves the injected-failure case measures the shared transaction rather than a coincidence of ordering. |
+| Mutation D (§4.4 re-bind) | Removed the `rebindActiveWalletGrants` call → **1 failed / 5**: `never lowers applied_revision, and re-binds the grant only through the next verified apply`. Proves the re-bind is the only thing that restores the binding. |
+| Mutation E (the unknown/proven split) | Routed the `unverified`/`retryable_failure` arm through `invalidateWalletBindings` → **1 failed / 5**: `changes no binding, no hash and no grant row on a timeout`. Proves the timeout case is what keeps a mere timeout from destroying a working grant — the exact failure mode this task exists to prevent. |
+| Restore | All five mutations reverted; the suite is **6 passed / 6** again and `grep -c "MUTATION\|AND false"` is `0` in both source files. |
+| TRIANGULATE | Added the negative direction of each guard as its own case and asserted the untouched rows byte-for-byte: the `grantRows(walletId)` snapshot is compared before/after on both no-op cases (a *different* row must not move either), a never-bound grant is asserted to stay `null` (it was not "cleared"), the status audit and the single `binding_invalidated` row are counted, and the `detail.grantId` of that row is matched against the cleared grant's id so it cannot pass on an unrelated row. |
+| REFACTOR | No production refactor was needed. One test-side defect was found and removed: the `afterAll` first tried `DELETE FROM recipient_policy_audit`, which the append-only guard trigger refuses (`recipient_policy_audit is append-only: DELETE blocked`) — the teardown was corrected instead of weakening the guard. |
+
+#### The unknown-versus-proven split, stated as evidence
+
+| Direction | What was proven | How |
+|---|---|---|
+| **Unknown does not move** | A `patchPolicy` timeout leaves the status `pending` / `patch_unverified`, both hashes at their seeded values, `provider_policy_id` bound, every grant row byte-identical, and no `binding_invalidated` audit. | `mutationError: PolicyApplyTransportError("timeout", …)` with `calls.patchPolicy` length 1 as the positive control. |
+| **Unknown does not move** | A frozen writer leaves the same rows untouched and records `pending` / `policy_writer_frozen` — not a `blocked_*` class. | `createUnavailablePolicyApplyPort(RECIPIENT_POLICY_WRITER_FROZEN_REASON)` through the same service. |
+| **Proven divergence moves atomically** | One readback mismatch (`unrecognized_rule`, no PATCH issued) clears the binding and nulls BOTH hashes in the same transaction as the `blocked_conflict` status, with exactly one `binding_invalidated` row per cleared grant, `applied_revision` unchanged. | The primary case plus mutations A/B. |
+| **Proven divergence moves atomically** | An injected failure after those writes rolls the status, both nulls and the grant clearing back together. | The Proxy `invalidateWalletBindings` that delegates then throws, on the caller's client; mutation C shows that removing the shared client breaks it. |
+| **Re-binding is apply-only** | Clearing is undone only by the next verified apply; a later unknown outcome does not re-bind. | The seeded `applied_revision = 7` case and the "does not re-bind on an unknown outcome either" case; mutation D attributes it. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/integration/recipient-policy-invalidation.test.ts` (RED) | **4 failed / 2 passed (6)** — see the RED row above |
+| `npx vitest run tests/integration/recipient-policy-invalidation.test.ts` (GREEN) | **1 file passed, 6 tests passed** (0.8 s) |
+| … (mutations A–E, restored between each) | **3 failed / 3**, **1 failed / 5**, **1 failed / 5**, **1 failed / 5**, **1 failed / 5**, each attributed by test name |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` | **23 files passed, 290 tests passed** (the required 284+ floor is met; the documented load-flaky `recipient-policy-repository.test.ts` case did not trip in this run) |
+| `npx vitest run tests/unit/lock-order-vector.test.ts tests/integration/lock-order-concurrency.test.ts tests/integration/grant-*.test.ts tests/integration/delegated-grant*.test.ts tests/integration/privy-policy-sync.test.ts tests/integration/recipient-memory-db.test.ts tests/integration/enrollment-composed.test.ts` | **12 files passed, 81 tests passed** |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`, exit 0) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`, exit 0) |
+
+#### Deviations from the design
+
+Two, both deliberate:
+
+1. **`status_detail` is MERGED, not replaced.** Design §4.3's literal SQL shows
+   `status_detail = $4::jsonb`, but §11 requires a recorded probe observation
+   (`rules_union`, `attachment_evidence`, `ownership_evidence`) to survive later status
+   writes, and `setPolicyStatus` already merges (`jsonb ||`). A replace would silently
+   un-record a probe outcome. The transition therefore merges and names the two keys it
+   owns explicitly (`policyId`, `appliedPolicyId` as `null`), which is the repository's
+   documented convention; every other key — including the probe evidence — is preserved.
+2. **§4.4's re-bind lives in the same apply transaction, not in a repair step.** The
+   design says `provider_policy_id` "is re-bound by the same apply transaction from the
+   verified readback", and no earlier unit implemented that write, so this unit adds it
+   (`rebindActiveWalletGrants`) as the positive half of the binding lifecycle. Without it
+   the task's own "re-binding happens only through the next verified apply" test would be
+   a claim about a path that did not exist.
+
+One smaller, non-behavioural choice: the per-grant `binding_invalidated` audit row carries
+`detail.grantId` (the table has no `grant_id` column and the append-only trigger forbids
+rewriting old rows), so the cleared grant is named in the row that records it.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **The reconciler's `settle` and the service's `commitApplyOutcome` now share one
+  invalidation.** A wallet whose service-recorded divergence already cleared its bindings
+  reaches `settle` only to transition the intent; `settle`'s own invalidation is reached
+  on the other path (a previous attempt was UNVERIFIED and the GET observed a third rule
+  set). Both are idempotent against the same tables, so a future reader must not add a
+  third caller without checking the transaction that holds it.
+- **`recipient_policy_audit` remains append-only and owner-only.** The new rows are written
+  inside the resolved owner's transaction, so no system-access policy was needed (the 1.1
+  carried note stands for any future system-context append).
+- **Task 2.14 must not be started.** The slice-2 gate (live capability probe + full
+  `npm test`) is a separate work unit.
+
+#### Remaining tasks in slice 2
+
+```text
+- [ ] **2.14 Run the slice-2 gate and record the slice-2 work-unit commits.**
+```
+
+Later slices (3–5) remain entirely unchecked, unchanged by this unit.
+
+#### Workload / PR boundary
+
+One commit, one work unit: the two repository primitives, the two call-site wirings and the
+integration suite that proves the split. It sits inside the parent-assigned `PR 4` slice
+(tasks 2.1–2.14, rollback boundary "capability wiring + reconciler + gate reads"). No
+`size:exception` is requested, no push beyond the assigned branch, and no slice-2 gate work
+was started.
+
+#### Structured status consumed
+
+Native SDD status is non-authoritative for this phase: the parent supplied the resolved work
+unit, the authoritative artifact paths and the delivery path directly. Readiness was resolved
+against the artifacts before any edit — `tasks.md` (task 2.12, terminal
+`<!-- sdd-owner: implementation -->`), `design.md` §1.3/§1.5, §4.3, §4.4, §5.1–§5.3 and §11,
+`spec.md` ("Applied-revision binding for automatic executions"), and the 2.8/2.9/2.13
+apply-progress entries. `actionContext`: all writes stayed inside the assigned worktree root;
+the main checkout and the untracked `compose.privy-local.ports.yaml` were not touched, and no
+`git stash`/`checkout`/`reset`/`restore`/`clean` was run.
+
+#### Commit
+
+`feat(policy): invalidate grant bindings atomically on a proven divergence` — see the report
+envelope for the SHA.

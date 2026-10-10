@@ -311,8 +311,10 @@ export class PolicyReconciler {
         after?.status === "blocked_conflict" ||
         after?.status === "blocked_configuration"
       ) {
-        // A proven divergence. The intent is terminal for the auto loop; the
-        // destructive binding invalidation fallback is task 2.12.
+        // A proven divergence the SERVICE already recorded: `applyRecordedRevision`
+        // committed the blocked status AND ran design §4.3's binding invalidation
+        // in its own step-10 transaction, so by the time this branch is reached the
+        // bindings are already cleared. Only the intent transition is left here.
         await this.settle(intent, claimed, {
           status: "failed",
           reason: after.statusReason ?? after.status,
@@ -492,22 +494,17 @@ export class PolicyReconciler {
 
     await this.database.withUserTransaction(intent.userId, async (client) => {
       if (outcome.status === "blocked_conflict") {
-        await this.repository.setPolicyStatus(
+        // A proven divergence, so this is design §4.3's fallback: one transaction
+        // that records the blocked status, nulls BOTH rule hashes, clears every
+        // active grant's stale `provider_policy_id` and audits one
+        // `binding_invalidated` row per cleared grant. The `stalled` arm above
+        // (an unreachable or unreadable readback) deliberately does not get here:
+        // an unknown outcome records `syncing` and touches no binding.
+        await this.repository.invalidateWalletBindings(
           intent.userId,
           {
             walletId: intent.walletId,
             status: "blocked_conflict",
-            reason: outcome.reason,
-            detail: { code: outcome.reason, policyId: null, appliedPolicyId: null },
-          },
-          client,
-        );
-        await this.repository.appendPolicyAudit(
-          intent.userId,
-          {
-            walletId: intent.walletId,
-            event: "blocked_conflict",
-            desiredRevision: claimed.desiredRevision,
             reason: outcome.reason,
             detail: { code: outcome.reason },
           },

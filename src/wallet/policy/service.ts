@@ -1798,6 +1798,16 @@ export class RecipientPolicyService {
           },
           client,
         );
+        // Design §4.4: the verified apply is the ONLY way a §4.3-cleared binding
+        // comes back, and it re-binds every active grant of the wallet to the
+        // policy the readback just proved — in this same transaction, so a grant
+        // can never be bound to a revision that was not committed.
+        await this.repository.rebindActiveWalletGrants(
+          userId,
+          walletId,
+          outcome.appliedPolicyId,
+          client,
+        );
         await this.repository.appendPolicyAudit(
           userId,
           {
@@ -1853,24 +1863,16 @@ export class RecipientPolicyService {
       }
 
       // Proven divergence: recorded as the stop class the comparator returned.
-      // The atomic binding invalidation fallback is task 2.12, so this transition
-      // deliberately clears no `delegated_grants.provider_policy_id`.
-      await this.repository.setPolicyStatus(
+      // Design §4.3/§4.4 run together here, in this one transaction: the status
+      // change, both hash nulls, the whole wallet's stale grant bindings and
+      // their audits commit or none of them do. An UNKNOWN outcome never reaches
+      // this branch (the `unverified`/`retryable_failure` arm above returns
+      // first), which is what keeps a timeout from destroying a working grant.
+      await this.repository.invalidateWalletBindings(
         userId,
         {
           walletId,
           status: outcome.failureClass,
-          reason: outcome.reason,
-          detail: { ...outcome.detail, policyId: null, appliedPolicyId: null },
-        },
-        client,
-      );
-      await this.repository.appendPolicyAudit(
-        userId,
-        {
-          walletId,
-          event: outcome.failureClass,
-          desiredRevision,
           reason: outcome.reason,
           detail: outcome.detail,
         },
