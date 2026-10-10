@@ -2455,3 +2455,108 @@ Status: **completed**. Persisted checkbox updated in
 
 `feat(deploy): run a loopback signing sidecar in each consumer's namespace` — see the report
 envelope for the SHA.
+
+### Task 2.7 — the capability probe and the readiness surface (design §6.4)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (2.7 → `- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/wallet/policy/probe.ts` | Additive: `verifyPolicySignerCapability()`, `policySignerProbePayload()`, the `PolicySignerCapability` / `PolicySignerCapabilityCode` types and the failure-code mapping. |
+| `src/contracts/http.ts` | Additive: `policySigner: { capable, code }` on `healthResponseSchema` and therefore on `HealthResponse`. Required, because the one producer always emits it. |
+| `src/api/health.ts` | `registerHealthRoutes` gains the optional `policySigner` probe dependency (defaulting to the real probe over the current environment) and returns the field. Nothing else on the route changed. |
+| `tests/unit/policy-signer-probe.test.ts` | New. 14 cases: every code path, the nonce-aware verification property, the secret-freedom assertion (result **and** logs), the real-environment path, and two readiness-surface cases. |
+
+#### What the unit delivers
+
+- `verifyPolicySignerCapability({ environment?, signer?, authorizationPublicKey? })` signs
+  `policySignerProbePayload()` — a fixed, non-secret, byte-stable object
+  (`{probe:"policy-signer-capability", version:1, issuedAt:"1970-01-01T00:00:00.000Z"}`) — **through
+  `signerAuthorizationContext`**, the same seam every real mutation uses (`sign_fns[0]`), and asserts
+  the result with `crypto.verify("sha256", payload, publicKeyObject, signature)` against the
+  environment's `PRIVY_AUTHORIZATION_PUBLIC_KEY`. **Never byte equality**: the suite proves that two
+  signatures over the same payload differ and both verify, so a byte comparison would be worthless.
+- Return is `{ capable, code }` and nothing else. Codes, exhaustively mapped: no signer, a partial
+  signer configuration, no configured public key, an unusable public key, an unreachable sidecar, a
+  5xx, a malformed answer, `signer_protocol_error`, `signer_not_configured` or an unexpected throw →
+  `signer_unavailable`; a definitive 4xx → `signer_rejected`; a bounded timeout → `signer_timeout`; a
+  signature that does not verify, or is not well-formed base64 DER → `signature_mismatch`. Nothing is
+  logged and nothing throws: a capability probe may not take the process (or `/health`) down.
+- `/health` now carries `policySigner: { capable, code }` and no other field. With no sidecar
+  configured — this deployment's actual state — it reports `{ capable: false, code:
+  "signer_unavailable" }`, which is the honest readiness answer rather than a fabricated `verified`.
+
+#### TDD Cycle Evidence
+
+| Step | What was run | Result |
+|---|---|---|
+| RED (module absent) | `npx vitest run tests/unit/policy-signer-probe.test.ts` before the implementation existed | Import of `verifyPolicySignerCapability` failed — the new export did not exist. Recorded here as the trivial half of RED only; the load-bearing proof is the mutation table below, because a missing export cannot distinguish "the guard works" from "nothing was observed" (hence the positive control first in every case). |
+| GREEN | same command | `Test Files 1 passed (1)`, `Tests 14 passed (14)`. |
+| Mutation A (replace `crypto.verify` with a byte-equality comparison) | same command | **Failed by name** (3): `reports verified for a signature that verifies under the configured public key`, `verifies rather than comparing bytes: two signed runs differ and both verify`, `leaves only { capable, code }…` — all `expected { capable: false, … } to deeply equal { capable: true, code: 'verified' }`. Restored → 14 passed. |
+| Mutation B (ignore the verification result, always `verified`) | same command | **Failed by name** (2): `reports signature_mismatch for a well-formed signature from a DIFFERENT key` and `reports signature_mismatch for a signature that is not well-formed DER` — `expected { capable: true, code: 'verified' } to deeply equal { capable: false, … }`. Restored → 14 passed. |
+| Nonce assertion | in-suite | Two `createKeyPayloadSigner` runs over the same payload: `expect(first).not.toBe(second)` and both capabilities `verified`. |
+| Secret-freedom | in-suite | `Object.keys(capability)` is exactly `["capable","code"]`; `JSON.stringify` of the result **and** of every `console.log/error/warn/info` capture does not match `/token\|key\|signature\|payload\|private\|secret/i` and does not contain the first 24 characters of the configured public key. The same assertion is applied to the `/health` body. |
+| Real-environment path | in-suite | `verifyPolicySignerCapability()` with no deps returns exactly `{capable, code}` and, guarded on the absence of `PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN`, `{ capable: false, code: "signer_unavailable" }`. No env value is read into any assertion or output. |
+| Unit gate | `npx vitest run tests/unit/worker-dependencies.test.ts tests/unit/policy-signer-compose-structural.test.ts tests/unit/policy-signer-probe.test.ts tests/unit/health-route.test.ts tests/unit/policy-probe-u1.test.ts … -u4.test.ts` | `Test Files 8 passed (8)`, `Tests 46 passed (46)`. |
+| Slice gate (with 2.5/2.6) | `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` | `Test Files 1 failed \| 18 passed (19)`, `Tests 1 failed \| 248 passed (249)`. The single failure is the pre-existing database-state failure described below; everything else is green. |
+| Types + lint | `npm run typecheck && npm run lint` | clean. |
+
+#### The single failing slice-suite case (pre-existing database noise, not this unit)
+
+`tests/integration/recipient-policy-repository.test.ts > recipient_policy_sync_intent > claims a due
+intent from the system context and leaves a foreign user unable to see it` fails with
+`expected undefined to be defined` at `listDueIntents({ limit: 50 })`. Evidence that this is
+accumulated dev-database state and not a behaviour regression:
+
+- the shared container `colloseumfeat-solana-operational-db-1` holds **196** rows in
+  `recipient_policy_sync_intent`, of which **103** are due (`state IN ('pending','applying')` and
+  `next_attempt_at IS NULL OR <= now()`);
+- `listDueIntents` orders `next_attempt_at ASC, desired_revision ASC LIMIT 50`, so a freshly inserted
+  intent sorts behind 103 older due rows and is cut off by the limit;
+- the diff for this unit (`git diff --stat 0078cc0..HEAD`) touches no query, no migration and not that
+  suite, and the same single case fails identically when that suite runs alone.
+
+Recorded, not chased: task 5.3 explicitly forbids chasing pre-existing database noise, and repairing
+it would mean deleting another unit's rows. No readback assertion was removed or weakened for this.
+
+#### Deviations from the design
+
+1. **The probe resolves its own signer client from the environment when none is injected.** Design §6.4
+   does not name a seam. A seam is required for the code paths to be provable at all (`signer_rejected`
+   and `signer_timeout` cannot be produced against a real sidecar on demand), and the default keeps the
+   readiness field honest in production. `src/server.ts` therefore needed **no** change: the probe
+   builds the same env-configured client the API builds, so the surface is not pinned to the API's
+   instance.
+2. **`policySigner` is a required field on `HealthResponse`, not optional.** The single producer always
+   emits it and `src/api/health.ts` is its only consumer, so an optional field would have encoded
+   uncertainty the route does not have. Existing health assertions are field-based and stayed green
+   unchanged.
+3. **"No public key configured" maps to `signer_unavailable`.** The design's code vocabulary has no
+   `public_key_unavailable` member, and an unverifiable signature is not a capability. Adding a sixth
+   code would have been a contract change the task did not ask for.
+4. **The probe signs through `signerAuthorizationContext`, not through a bare port call.** That is the
+   literal reading of "a payload of the shape produced by `signerAuthorizationContext`" and it means a
+   regression that unwires the context (rather than the port) is caught by the probe.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **The readiness surface is now the cheapest honest check for 5.2**: `GET /health` → `policySigner`.
+  It reports `{capable:false, code:"signer_unavailable"}` until the deployment actually has a reachable
+  sidecar, so a green deployment is distinguishable from a green test.
+- **The probe deliberately does NOT run the U1–U4 provider probes.** The 2.1–2.4 handover said 2.7
+  should call them from a "capability run"; the capability probe here is synchronous, bounded and
+  read-only, and the four probes **write** policies, so folding them into `/health` (which a container
+  healthcheck hits every 5 s) would have turned a readiness check into a policy writer. The U1–U4
+  probes remain callable from the live run (5.2) with their injected transport; that wiring is 2.8/2.9
+  territory, where the signed apply path exists.
+- **`signature_mismatch` is the alarm that matters.** It fires when the sidecar holds a key that is not
+  the registered quorum key, i.e. exactly the state in which every signed policy write would fail at
+  the provider.
+
+#### Commit
+
+`feat(policy): probe the signed-authorization capability and publish it on /health` — see the report
+envelope for the SHA.

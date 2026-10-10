@@ -14,6 +14,21 @@ export const healthResponseSchema = z.object({
       reason: z.string().optional(),
     })
     .optional(),
+  /**
+   * Design §6.4 layer 3, task 2.7: the readiness surface for the
+   * signed-authorization capability. `{ capable, code }` and nothing else — no
+   * token, key, payload or signature value can appear here.
+   */
+  policySigner: z.object({
+    capable: z.boolean(),
+    code: z.enum([
+      "verified",
+      "signer_unavailable",
+      "signer_rejected",
+      "signer_timeout",
+      "signature_mismatch",
+    ]),
+  }),
 });
 export type HealthResponse = z.infer<typeof healthResponseSchema>;
 

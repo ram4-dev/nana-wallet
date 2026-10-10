@@ -36,7 +36,15 @@
  * now merges, and `mergePolicyStatusDetail` exists for evidence recorded outside a
  * status transition.
  */
+import { createPublicKey, verify, type KeyObject } from "node:crypto";
 import type { DatabaseClient } from "../../db/client.js";
+/**
+ * The capability probe signs through the SAME authorization-context seam every
+ * real mutation uses, and verifies with the real P-256 public key.
+ */
+import { signerAuthorizationContext } from "../signer/authorization-context.js";
+import { createWorkerPayloadSigner } from "../signer/client.js";
+import { PayloadSignerError, type PayloadSigner } from "../signer/port.js";
 /**
  * The consented ceiling, imported rather than restated: even a synthetic probe
  * policy must not re-author the 0.01 SOL ceiling (design §3.2 guarantee 1).
@@ -875,4 +883,167 @@ export function createPolicyProbeBindingResolver(
       providerSignerId: target.providerSignerId,
     };
   };
+}
+
+// ---------------------------------------------------------------------------
+// The signed-authorization capability probe (design §6.4 layer 2, task 2.7)
+// ---------------------------------------------------------------------------
+
+/** The readiness codes the capability probe can report. Exactly these. */
+export type PolicySignerCapabilityCode =
+  | "verified"
+  | "signer_unavailable"
+  | "signer_rejected"
+  | "signer_timeout"
+  | "signature_mismatch";
+
+/**
+ * The readiness result. `capable` and `code` only: no payload, no signature, no
+ * token and no key ever leaves `verifyPolicySignerCapability`, and nothing is
+ * logged (design §6.3's last bullet).
+ */
+export type PolicySignerCapability = {
+  capable: boolean;
+  code: PolicySignerCapabilityCode;
+};
+
+/**
+ * The probe payload: fixed, non-secret, and byte-stable. `JSON.stringify` over a
+ * literal with a fixed key order is deterministic, so every run signs exactly
+ * these bytes; nothing in the object carries a token, a key, an address or a
+ * user id.
+ */
+const PROBE_PAYLOAD_OBJECT = {
+  probe: "policy-signer-capability",
+  version: 1,
+  issuedAt: "1970-01-01T00:00:00.000Z",
+} as const;
+
+export function policySignerProbePayload(): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(PROBE_PAYLOAD_OBJECT));
+}
+
+/**
+ * Proves the signed-authorization capability, not merely that an endpoint
+ * answers (design §6.4 layer 2).
+ *
+ * The payload is signed THROUGH `signerAuthorizationContext` — the exact seam
+ * every real mutation uses — and the result is asserted with
+ * `crypto.verify("sha256", payload, publicKeyObject, signature)` against the
+ * configured `PRIVY_AUTHORIZATION_PUBLIC_KEY` (already validated as P-256 SPKI
+ * DER by `readPrivyServerConfig`). It is **never** byte equality: ECDSA P-256
+ * uses a random per-signature nonce, so two signatures over the same payload are
+ * never equal, and a byte-equality check would prove nothing.
+ *
+ * Because only the holder of the private key matching the registered quorum
+ * public key can produce a verifying signature, a `verified` result proves
+ * authority; every other result is a truthful `capable: false`.
+ *
+ * Mapping, exhaustively:
+ *  - no signer configured, no public key to verify against, a signer
+ *    configuration error, an unreachable sidecar, a 5xx, a malformed answer, or
+ *    an unusable public key -> `signer_unavailable`;
+ *  - a definitive 4xx from the sidecar -> `signer_rejected`;
+ *  - the sidecar did not answer inside its bounded timeout -> `signer_timeout`;
+ *  - a signature came back but does not verify under the configured key (or is
+ *    not a well-formed base64 DER signature) -> `signature_mismatch`.
+ */
+export async function verifyPolicySignerCapability(
+  deps: {
+    /** Defaults to the current process environment. */
+    environment?: NodeJS.ProcessEnv;
+    /** Defaults to the environment-configured sidecar client, if any. */
+    signer?: PayloadSigner;
+    /** Defaults to `PRIVY_AUTHORIZATION_PUBLIC_KEY`. */
+    authorizationPublicKey?: string;
+  } = {},
+): Promise<PolicySignerCapability> {
+  const environment = deps.environment ?? process.env;
+
+  let signer = deps.signer;
+  if (!signer) {
+    try {
+      signer = createWorkerPayloadSigner(environment);
+    } catch (error) {
+      // A partial signer configuration is not a reachable capability.
+      return {
+        capable: false,
+        code: payloadSignerFailureCode(error),
+      };
+    }
+  }
+  if (!signer) {
+    return { capable: false, code: "signer_unavailable" };
+  }
+
+  const publicKeyB64 =
+    deps.authorizationPublicKey ??
+    environment.PRIVY_AUTHORIZATION_PUBLIC_KEY?.trim();
+  if (!publicKeyB64) {
+    // Without the registered public key the signature is unverifiable, so the
+    // capability cannot be asserted. Fails closed rather than assuming.
+    return { capable: false, code: "signer_unavailable" };
+  }
+
+  let publicKeyObject: KeyObject;
+  try {
+    publicKeyObject = createPublicKey({
+      key: Buffer.from(publicKeyB64, "base64"),
+      format: "der",
+      type: "spki",
+    });
+  } catch {
+    // Never echo the key material, not even a prefix.
+    return { capable: false, code: "signer_unavailable" };
+  }
+
+  const payload = policySignerProbePayload();
+  // The production seam: the SDK-shaped authorization context, whose sign
+  // function receives the payload bytes verbatim.
+  const signFns = signerAuthorizationContext(signer).sign_fns ?? [];
+  const [sign] = signFns;
+  if (!sign) {
+    // The context builder always carries one sign function; treat its absence
+    // as an unavailable capability rather than signing with nothing.
+    return { capable: false, code: "signer_unavailable" };
+  }
+
+  let signature: string;
+  try {
+    signature = await sign(payload);
+  } catch (error) {
+    return { capable: false, code: payloadSignerFailureCode(error) };
+  }
+
+  try {
+    const verified = verify(
+      "sha256",
+      payload,
+      publicKeyObject,
+      Buffer.from(signature, "base64"),
+    );
+    return verified
+      ? { capable: true, code: "verified" }
+      : { capable: false, code: "signature_mismatch" };
+  } catch {
+    // A signature that is not well-formed DER is a mismatch, not a crash.
+    return { capable: false, code: "signature_mismatch" };
+  }
+}
+
+/** Maps a worker-side signer failure onto the readiness vocabulary. */
+function payloadSignerFailureCode(error: unknown): PolicySignerCapabilityCode {
+  if (error instanceof PayloadSignerError) {
+    switch (error.code) {
+      case "signer_timeout":
+        return "signer_timeout";
+      case "signer_rejected":
+        return "signer_rejected";
+      default:
+        // signer_unavailable, signer_protocol_error and signer_not_configured
+        // are all "we could not obtain a usable signature".
+        return "signer_unavailable";
+    }
+  }
+  return "signer_unavailable";
 }

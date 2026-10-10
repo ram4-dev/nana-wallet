@@ -1,5 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { HealthResponse } from "../contracts/http.js";
+import {
+  verifyPolicySignerCapability,
+  type PolicySignerCapability,
+} from "../wallet/policy/probe.js";
 import type { WalletProvider } from "../wallet/provider.js";
 
 // Solana devnet and privy-user are the only network and wallet name the product
@@ -26,7 +30,16 @@ const MODE = (): HealthResponse["mode"] =>
 
 export async function registerHealthRoutes(
   app: FastifyInstance,
-  dependencies: { wallet: WalletProvider },
+  dependencies: {
+    wallet: WalletProvider;
+    /**
+     * Design §6.4 layer 3. Defaults to the real capability probe over the
+     * current environment, which is the honest readiness answer: on a stack
+     * with no sidecar it reports `signer_unavailable`, never a fabricated
+     * `verified`.
+     */
+    policySigner?: () => Promise<PolicySignerCapability>;
+  },
 ): Promise<void> {
   app.get("/health", async (): Promise<HealthResponse> => {
     let mcp: HealthResponse["mcp"] = "unknown";
@@ -58,6 +71,9 @@ export async function registerHealthRoutes(
       wallet,
       network: NETWORK(),
       provider: await providerHealth(dependencies.wallet),
+      policySigner: await policySignerCapability(
+        dependencies.policySigner ?? (() => verifyPolicySignerCapability()),
+      ),
     };
   });
 }
@@ -76,5 +92,19 @@ async function providerHealth(
       status: "unavailable",
       reason: "The wallet provider health check failed.",
     };
+  }
+}
+
+// Design §6.4 layer 3. The readiness field is `{ capable, code }` only: the probe
+// returns no payload, signature, token or key by construction, and a programming
+// error inside it must still yield an honest unavailable envelope rather than a
+// 500 or a guessed `verified`.
+async function policySignerCapability(
+  probe: () => Promise<PolicySignerCapability>,
+): Promise<PolicySignerCapability> {
+  try {
+    return await probe();
+  } catch {
+    return { capable: false, code: "signer_unavailable" };
   }
 }
