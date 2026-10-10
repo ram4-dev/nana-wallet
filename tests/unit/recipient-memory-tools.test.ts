@@ -5,7 +5,7 @@ import type { RecipientMemoryService } from '../../src/memory/service.js';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const RECIPIENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const ADDRESS = '0x1234567890123456789012345678901234567890';
+const ADDRESS = 'So11111111111111111111111111111111111111112';
 
 function service(overrides: Partial<RecipientMemoryService> = {}): RecipientMemoryService {
   const unsafeCandidate = {

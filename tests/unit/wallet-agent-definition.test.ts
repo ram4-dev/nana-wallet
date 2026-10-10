@@ -46,6 +46,13 @@ describe("wallet agent definition", () => {
       "send_token",
       "create_grant",
       "search_recipients",
+      // Recipient lifecycle tools (tasks 4.2): both the text agent and the
+      // realtime adapter consume this one definition, so the version-bound
+      // trusted-recipient stage/confirm tools are part of the catalog.
+      "stage_trusted_recipient",
+      "stage_trusted_recipient_edit",
+      "stage_trusted_recipient_removal",
+      "confirm_trusted_recipient_action",
     ]);
     // Model-facing schema is preview-only (unified contract): no to/dryRun.
     expect(

@@ -199,7 +199,11 @@ describe('guarded wallet tools', () => {
     resetSessionStore();
     const session = createSession();
     const recipientId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-    const address = '0x1234567890123456789012345678901234567890';
+    // RAM-009: the recipient revalidation gate is the configured chain's
+    // validator (`isValidRecipientAddress(address, 'solana-devnet')`), so a
+    // recipient record must carry a canonical base58 Solana public key. The
+    // EVM validator is no longer the acceptance gate.
+    const address = 'So11111111111111111111111111111111111111112';
     setSelectedRecipient(session.id, { recipientId, version: 3 });
     const getRecipientForVersion = vi.fn().mockResolvedValue({ id: recipientId, version: 3, address });
     const memory = { userId: '11111111-1111-4111-8111-111111111111', service: { getRecipientForVersion } } as never;
@@ -225,7 +229,7 @@ describe('guarded wallet tools', () => {
     expect(session.pendingTransfer).toBeUndefined();
   });
 
-  it('stops before preview when a legacy recipient record has an invalid EVM address', async () => {
+  it('stops before preview when a legacy recipient record has an invalid Solana address', async () => {
     resetSessionStore();
     const session = createSession();
     const recipientId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -235,16 +239,16 @@ describe('guarded wallet tools', () => {
     base.send_token.execute = sendToken;
     const memory = {
       userId: '11111111-1111-4111-8111-111111111111',
-      service: { getRecipientForVersion: vi.fn().mockResolvedValue({ id: recipientId, version: 3, address: 'not-an-evm-address' }) },
+      service: { getRecipientForVersion: vi.fn().mockResolvedValue({ id: recipientId, version: 3, address: 'not-a-solana-address' }) },
     } as never;
     const tools = buildGuardedTools(base, session, memory);
 
     await expect(tools.send_token.execute!(
-      { network: 'sepolia', token: 'USDT', to: 'not-an-evm-address', amount: '10', wallet: 'agent-demo', dryRun: true },
+      { network: 'sepolia', token: 'USDT', to: 'not-a-solana-address', amount: '10', wallet: 'agent-demo', dryRun: true },
       toolOptions,
     )).resolves.toMatchObject({ error: 'recipient_revalidation_required' });
     await expect(tools.send_token.execute!(
-      { network: 'sepolia', token: 'USDT', to: '0x1234567890123456789012345678901234567890', amount: '10', wallet: 'agent-demo', dryRun: true },
+      { network: 'sepolia', token: 'USDT', to: '4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq', amount: '10', wallet: 'agent-demo', dryRun: true },
       toolOptions,
     )).resolves.toMatchObject({ error: 'recipient_revalidation_required' });
     expect(sendToken).not.toHaveBeenCalled();
