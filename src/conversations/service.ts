@@ -929,8 +929,9 @@ export function createWalletConversationService(
       );
     }
     const claimed = claim.transfer;
+    let financialResult: ConversationTurnResult | undefined;
     const run = async (): Promise<void> => {
-      await runFinancialTransfer({
+      financialResult = await runFinancialTransfer({
         ...input,
         claimed,
         claimId: claim.claimId,
@@ -976,7 +977,7 @@ export function createWalletConversationService(
         yield* emit(stateEvent(completed));
         yield event({
           type: "turn-completed",
-          result: resultFromFinancialState(completed),
+          result: financialResult ?? resultFromFinancialState(completed),
         });
         return;
       }

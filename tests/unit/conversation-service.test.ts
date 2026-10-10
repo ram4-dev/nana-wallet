@@ -171,6 +171,83 @@ describe('WalletConversationService', () => {
     await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirm the transfer' })).resolves.toMatchObject({ status: 'error', code: 'broadcast_uncertain', message: expect.stringContaining('uncertain') });
   });
 
+  describe('financial task terminal results', () => {
+    async function resolveAfterPreview(wallet: WalletProvider) {
+      const repository = repositoryFixture();
+      const registry = new FinancialTaskRegistry();
+      const service = createWalletConversationService({
+        conversations: repository,
+        wallet,
+        financialTasks: registry,
+      });
+      const conversationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      await service.handleTurn({
+        conversationId,
+        userId,
+        text: `Send 10 USDT to ${recipient}`,
+      });
+      const previewId = (await repository.get(userId, conversationId))
+        ?.pendingTransfer?.previewId;
+      if (!previewId) throw new Error('Expected a persisted preview.');
+
+      const events: ConversationEvent[] = [];
+      for await (const event of service.resolveDecision({
+        conversationId,
+        userId,
+        previewId,
+        decision: 'confirm',
+        waitForFinancialTask: true,
+      })) {
+        events.push(event);
+      }
+      const completed = events.find(
+        (event): event is Extract<ConversationEvent, { type: 'turn-completed' }> =>
+          event.type === 'turn-completed',
+      );
+      if (!completed) throw new Error('Expected the financial task to complete.');
+      return completed.result;
+    }
+
+    it('returns the provider policy refusal after waiting for its financial task', async () => {
+      const wallet = walletFixture();
+      vi.spyOn(wallet, 'broadcastTransfer').mockResolvedValue({
+        kind: 'not_dispatched',
+        cause: 'policy_rejected',
+        reason: 'Privy denied the Solana dispatch by policy.',
+      });
+
+      await expect(resolveAfterPreview(wallet)).resolves.toMatchObject({
+        status: 'error',
+        code: 'policy_rejected',
+      });
+    });
+
+    it('returns the submitted transaction after waiting for its financial task', async () => {
+      const result = await resolveAfterPreview(walletFixture());
+
+      expect(result).toMatchObject({
+        status: 'sent',
+        transaction: {
+          transactionHash: expect.stringMatching(/^0x[0-9a-f]{64}$/u),
+        },
+      });
+    });
+
+    it('preserves an uncertain dispatch after waiting without redispatching', async () => {
+      const wallet = walletFixture();
+      const broadcast = vi.spyOn(wallet, 'broadcastTransfer').mockResolvedValue({
+        kind: 'uncertain',
+        reason: 'The provider outcome is unknown.',
+      });
+
+      await expect(resolveAfterPreview(wallet)).resolves.toMatchObject({
+        status: 'error',
+        code: 'broadcast_uncertain',
+      });
+      expect(broadcast).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('not_dispatched cause mapping', () => {
     // The provider states WHY it refused. A policy refusal is definitive and
     // can never succeed on retry, so telling the user the wallet is
