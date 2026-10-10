@@ -74,6 +74,17 @@ const TURNS: ReadonlyArray<{ file: string; text: string; intent: string }> = [
   },
 ];
 
+/**
+ * Trailing silence appended to every fixture, in ms.
+ *
+ * A real caller stops speaking and pauses; a buffer that ends on the last
+ * phoneme is not something a microphone produces. It also matters for the
+ * decision turns: the realtime model's input transcription is asynchronous and
+ * lands after the audio, so a hard cut leaves the final transcript racing the
+ * model's own tool call. See the note at the write site.
+ */
+const TRAILING_SILENCE_MS = 1_200;
+
 async function main(): Promise<number> {
   // Only the OpenAI key matters here: this script never touches the room.
   const injection = injectWorktreeCredentials();
@@ -98,10 +109,25 @@ async function main(): Promise<number> {
     // The room runs at 48 kHz and the native source resamples from the frame's
     // own rate, so the fixture is normalised once here instead of at every run.
     const pcm = resamplePcm16Mono(decoded.pcm, decoded.sampleRate, 48_000);
+    // Trailing silence, appended after the speech.
+    //
+    // WHY: a real person stops talking and then pauses; an audio buffer that ends
+    // the instant the last phoneme does is not something a microphone ever
+    // produces. The realtime model's input transcription is asynchronous and
+    // lands after the audio, so a hard cut at the end of the buffer leaves the
+    // final transcript racing the model's own tool call — the agent acts on what
+    // it heard, the gate has no final transcript yet, and a perfectly clear
+    // "sí, confirmo" is answered with "no hay una confirmación válida todavía".
+    // The pause is what a caller would actually leave.
+    const silenceSamples = Math.round((48_000 * TRAILING_SILENCE_MS) / 1_000);
+    const withSilence = Buffer.concat([
+      pcm,
+      Buffer.alloc(silenceSamples * 2),
+    ]);
     const target = resolve(FIXTURES_DIR, turn.file);
-    await writeFile(target, encodeWav(pcm, 48_000, 1));
+    await writeFile(target, encodeWav(withSilence, 48_000, 1));
     console.log(
-      `wrote            : ${turn.file}\n  text           : ${turn.text}\n  intent         : ${turn.intent}\n  audio          : ${pcmDurationMs(pcm, 48_000, 1)} ms @ 48000 Hz mono (source ${decoded.sampleRate} Hz, resampled)\n  path           : ${target}`,
+      `wrote            : ${turn.file}\n  text           : ${turn.text}\n  intent         : ${turn.intent}\n  audio          : ${pcmDurationMs(withSilence, 48_000, 1)} ms @ 48000 Hz mono (speech ${pcmDurationMs(pcm, 48_000, 1)} ms + ${TRAILING_SILENCE_MS} ms trailing silence; source ${decoded.sampleRate} Hz, resampled)\n  path           : ${target}`,
     );
   }
 
