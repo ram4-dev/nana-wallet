@@ -26,7 +26,8 @@ Estado: **diseño y outline; implementación no iniciada**. Este registro separa
 - `npm run build` en backend y frontend: pasó; Vite emitió avisos de compatibilidad de dependencias, sin fallar.
 - `npm test` en frontend: 26 archivos, 168 tests pasaron.
 - Postgres aislado `nana-onboarding-roles-db-1` en `127.0.0.1:55520`, sano; `npm run db:migrate` aplicó las 17 migraciones actuales sobre esa base.
-- `npm test` en backend con esa base: en curso al registrar esta línea; ya se observan fallos de tests de integración y dos tests antiguos de confirmación, antes de cualquier cambio de onboarding. No atribuirlos a la feature sin comparar el resultado final.
+- `npm test` en backend con esa base: interrumpido con código 130 después de más de tres minutos de esperas/fallos de integración de hasta 90 segundos, antes de cualquier cambio de onboarding. Se observaron fallos en `api-contacts`, `contacts-cross-user`, `api-contacts-policy-cross-user`, `notifications-outbox` y tests antiguos de confirmación. La corrida no produjo conteo final; no se presenta como suite pasada.
+- `npm test -- tests/unit --maxWorkers=2`: código 1, 126 archivos pasaron y 3 fallaron; 1054 tests pasaron, 3 fallaron y 1 se saltó. Los fallos anteriores al onboarding están en `realtime-agent-session.test.ts` (texto viejo de readback), `realtime-tools.test.ts` (espera `speakPreview`) y `realtime-tool-binding.test.ts` (espera broadcast sin evidencia de confirmación). No se modificaron estos tests ni el flujo de transferencias en este cambio.
 
 ## Hallazgos de capacidad (lectura, sin mutación remota)
 
