@@ -7,9 +7,6 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "demo:arc": "node scripts/arc-demo/server.mjs",
-    "demo:arc:configure": "node scripts/arc-demo/configure.mjs",
-    "test:arc-demo": "node --test scripts/arc-demo/*.test.mjs",
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",

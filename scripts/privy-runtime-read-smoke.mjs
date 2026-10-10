@@ -62,8 +62,8 @@ try {
   .sign(key.privateKey);
  for (const url of [
   "/v1/wallet/address",
-  "/v1/wallet/balance?network=arc-testnet&token=USDC",
-  "/v1/wallet/history?network=arc-testnet&token=USDC",
+  "/v1/wallet/balance?network=solana-devnet&token=SOL",
+  "/v1/wallet/history?network=solana-devnet&token=SOL",
  ]) {
   const response = await app.inject({
    method: "GET",

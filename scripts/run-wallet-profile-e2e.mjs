@@ -243,8 +243,8 @@ async function httpChecks() {
       body?.ok === true &&
       body?.data?.walletState === "ready" &&
       body?.data?.source === "fixture" &&
-      body?.data?.chainId === 5042002 &&
-      body?.data?.networkName === "Arc testnet" &&
+      body?.data?.chainId === "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1" &&
+      body?.data?.networkName === "Solana devnet" &&
       body?.data?.assets?.[0]?.balanceAtomic === DEMO_BALANCE_ATOMIC &&
       res.headers.get("cache-control") === "private, no-store";
     record(
@@ -418,7 +418,7 @@ async function browserChecks() {
         ok ? "PASS" : "FAIL",
         ok ? amount : `rendered: ${amount}`,
       );
-      await page.getByText("Arc testnet").first().waitFor({ state: "visible" });
+      await page.getByText("Solana devnet").first().waitFor({ state: "visible" });
       await page
         .getByText("Monto de demostración")
         .waitFor({ state: "visible" });
