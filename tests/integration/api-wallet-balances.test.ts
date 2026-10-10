@@ -1,10 +1,11 @@
-import { generateKeyPairSync, createHash } from "node:crypto";
+import { generateKeyPairSync, createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 // CI-load headroom: server-injection cases can exceed Vitest's 5s default under
 // full-suite parallel load (documented pattern in api-voice).
 vi.setConfig({ testTimeout: 15_000 });
 
+import { PublicKey } from "@solana/web3.js";
 import { SignJWT } from "jose";
 import { buildServer } from "../../src/server.js";
 import {
@@ -19,10 +20,15 @@ import {
 } from "../../src/wallet/privy-server-client.js";
 
 /**
- * WP-003..WP-009 + WP-013: personal balances over real HTTP with Postgres/RLS.
- * Two identities get their own fixture balance; a foreign query is a 400, an
- * invalid identity is 401, every non-ready state is served without the reader,
- * a revoked grant does not block the read, and nothing financial is written.
+ * WP-003..WP-009 + WP-013: personal SOL balances over real HTTP with
+ * Postgres/RLS. Two identities get their own fixture lamport balance; a foreign
+ * query is a 400, an invalid identity is 401, every non-ready state is served
+ * without the reader, a revoked grant does not block the read, and nothing
+ * financial is written.
+ *
+ * The balance surface reads the caller's OWN Solana binding, so the mocked
+ * provider serves Solana wallets and the fixture addresses are real base58
+ * Solana addresses (an EVM address would fail the coherence guard).
  */
 
 const databaseUrl = process.env.DATABASE_URL;
@@ -45,28 +51,37 @@ async function tokenFor(did: string): Promise<string> {
     .sign(appKeys.privateKey);
 }
 
-/** Mirrors the fixture Privy client's deterministic per-user address. */
+/** Deterministic per-user Solana devnet address (same bytes for every run). */
 function fixtureAddress(userId: string): string {
   const digest = createHash("sha256")
     .update(`privy-fixture|${userId}`)
-    .digest("hex");
-  return `0x${digest.padStart(40, "0").slice(-40)}`;
+    .digest();
+  return new PublicKey(new Uint8Array(digest)).toBase58();
 }
 
-const USER_A_DID = "did:privy:balances-user-a";
-const USER_B_DID = "did:privy:balances-user-b";
+/**
+ * Run-scoped DIDs. A previous run of this suite bound the same provider wallet
+ * ids to the legacy Arc chain family in the shared test database, and the sync
+ * guard correctly refuses to rebind a provider wallet id across chain families
+ * (409 WALLET_CONFLICTO). Fresh ids per run keep the suite independent of that
+ * residue instead of asserting against it.
+ */
+const RUN_ID = randomUUID().slice(0, 8);
+const USER_A_DID = `did:privy:balances-user-a-${RUN_ID}`;
+const USER_B_DID = `did:privy:balances-user-b-${RUN_ID}`;
+const USER_C_DID = `did:privy:balances-user-c-${RUN_ID}`;
 
 /**
  * The merged per-user Privy runtime requires a trusted server client in privy
- * mode. This mock serves each test DID an embedded wallet at the SAME
- * deterministic fixture address the client-side hash function predicts, so the
+ * mode. This mock serves each test DID an embedded Solana wallet at the SAME
+ * deterministic fixture address the local hash function predicts, so the
  * BALANCE_FIXTURE_BALANCES map still matches without any live provider.
  */
 function walletRecordFor(did: string, address: string): PrivyWalletRecord {
   return {
     id: `provider-wallet-${did.replace(/[^a-z0-9]/gi, "-")}`,
     address,
-    chain_type: "ethereum",
+    chain_type: "solana",
     policy_ids: [],
     owner_id: did,
     additional_signers: [],
@@ -150,13 +165,13 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
     );
     process.env.BALANCE_READ_SOURCE = "fixture";
     process.env.BALANCE_FIXTURE_BALANCES = JSON.stringify({
-      [addressA]: "1250000", // 1.25 USDC
+      [addressA]: "1250000000", // 1.25 SOL in lamports
       [addressB]: "0", // real zero is a valid balance
     });
 
     app = buildServer({
       privyServer: mockServerClient(
-        [USER_A_DID, USER_B_DID, "did:privy:balances-user-c"],
+        [USER_A_DID, USER_B_DID, USER_C_DID],
         [addressA, addressB, fixtureAddress("c-unused")],
       ),
     });
@@ -203,14 +218,21 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
     expect(dataA.data.address).toBe(addressA);
     expect(dataA.data.source).toBe("fixture");
     expect(dataA.data.observedAt).toEqual(expect.any(String));
+    // The chain identifier is the CAIP-2 string, and the asset is the native
+    // SOL of that chain (lamports, nine decimals, no token contract).
+    expect(dataA.data.chainId).toBe(
+      "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+    );
+    expect(dataA.data.networkName).toBe("Solana devnet");
+    expect(dataA.data.testnet).toBe(true);
     expect(dataA.data.assets).toEqual([
       {
-        tokenId: "5042002:0x3600000000000000000000000000000000000000",
-        contract: "0x3600000000000000000000000000000000000000",
-        symbol: "USDC",
-        name: "USD Coin",
-        decimals: 6,
-        balanceAtomic: "1250000",
+        tokenId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        contract: "native",
+        symbol: "SOL",
+        name: "Solana",
+        decimals: 9,
+        balanceAtomic: "1250000000",
       },
     ]);
 
@@ -254,7 +276,7 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
     const userC = await database
       .query<{ id: string }>(
         "SELECT users_ensure_for_privy_did($1, $2) AS id",
-        ["did:privy:balances-user-c", "did:privy:balances-user-c"],
+        [USER_C_DID, USER_C_DID],
       )
       .then((result) => result.rows[0]!.id);
     process.env.BALANCE_FIXTURE_BALANCES = JSON.stringify({});
@@ -265,15 +287,15 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
       method: "GET",
       url: "/v1/wallets/current/balances",
       headers: {
-        authorization: `Bearer ${await tokenFor("did:privy:balances-user-c")}`,
+        authorization: `Bearer ${await tokenFor(USER_C_DID)}`,
       },
     });
     expect(response.statusCode).toBe(200);
     const body = response.json() as { ok: true; data: Record<string, unknown> };
     expect(body.data).toMatchObject({
       walletState: "unprovisioned",
-      chainId: 5042002,
-      networkName: "Arc testnet",
+      chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+      networkName: "Solana devnet",
       testnet: true,
       observedAt: null,
       assets: [],
@@ -346,6 +368,6 @@ suite("GET /v1/wallets/current/balances (WP-003..WP-009, WP-013)", () => {
       ok: true;
       data: { assets: Array<{ balanceAtomic: string }> };
     };
-    expect(body.data.assets[0]!.balanceAtomic).toBe("1250000");
+    expect(body.data.assets[0]!.balanceAtomic).toBe("1250000000");
   });
 });

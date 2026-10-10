@@ -10,6 +10,7 @@ import {
   runExclusiveConversationAction,
   shouldLockAfterConversationResolution,
 } from "@/lib/session-action-lock";
+import { SOLANA_DEVNET_CHAIN_ID } from "@/lib/api-types";
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -121,30 +122,30 @@ describe("notifications API", () => {
 });
 
 describe("Privy wallet data", () => {
-  it("derives the visible summary from the authenticated Arc USDC balance", async () => {
+  it("derives the visible summary from the authenticated Solana SOL balance", async () => {
     setApiTokenSource({ getToken: async () => "privy-token" });
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({
-        network: "arc-testnet",
-        token: "USDC",
-        address: "0x1111111111111111111111111111111111111111",
+        network: "solana-devnet",
+        token: "SOL",
+        address: "AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX",
         balance: "7.25",
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(api.getWalletSummary()).resolves.toMatchObject({
-      total: { amount: "7.25", currency: "USDC", display: "7.25 USDC" },
+      total: { amount: "7.25", currency: "SOL", display: "7.25 SOL" },
       accounts: [
         {
-          id: "0x1111111111111111111111111111111111111111",
-          kind: "usdc",
-          balance: { amount: "7.25", currency: "USDC" },
+          id: "AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX",
+          kind: "sol",
+          balance: { amount: "7.25", currency: "SOL", display: "7.25 SOL" },
         },
       ],
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      "/v1/wallet/balance?network=solana-devnet&token=USDC",
+      "/v1/wallet/balance?network=solana-devnet&token=SOL",
     );
   });
 
@@ -499,20 +500,20 @@ describe("personal balances API (WP-003/WP-004/WP-013)", () => {
         ok: true,
         data: {
           walletState: "ready",
-          address: "0x1111111111111111111111111111111111111111",
-          chainId: 5042002,
-          networkName: "Arc testnet",
+          address: "AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX",
+          chainId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          networkName: "Solana devnet",
           testnet: true,
           source: "fixture",
           observedAt: "2026-09-09T12:00:00.000Z",
           assets: [
             {
-              tokenId: "5042002:0x3600000000000000000000000000000000000000",
-              contract: "0x3600000000000000000000000000000000000000",
-              symbol: "USDC",
-              name: "USD Coin",
-              decimals: 6,
-              balanceAtomic: "1250000",
+              tokenId: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+              contract: "native",
+              symbol: "SOL",
+              name: "Solana",
+              decimals: 9,
+              balanceAtomic: "1250000000",
             },
           ],
         },
@@ -522,7 +523,9 @@ describe("personal balances API (WP-003/WP-004/WP-013)", () => {
     const result = await api.getBalances();
     expect(result.walletState).toBe("ready");
     if (result.walletState === "ready") {
-      expect(result.assets[0]?.balanceAtomic).toBe("1250000");
+      expect(result.assets[0]?.balanceAtomic).toBe("1250000000");
+      expect(result.assets[0]?.symbol).toBe("SOL");
+      expect(result.chainId).toBe("solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1");
       expect(result.source).toBe("fixture");
     }
     const [url] = fetchMock.mock.calls[0] ?? [];
@@ -552,9 +555,13 @@ describe("personal balances API (WP-003/WP-004/WP-013)", () => {
   });
 
   it("scopes the balances cache key per user and chain (WP-013)", () => {
-    expect(queryKeys.balances("user-a", 5042002)).toEqual(["balances", "user-a", 5042002]);
-    expect(queryKeys.balances("user-b", 5042002)).not.toEqual(
-      queryKeys.balances("user-a", 5042002),
+    expect(queryKeys.balances("user-a", SOLANA_DEVNET_CHAIN_ID)).toEqual([
+      "balances",
+      "user-a",
+      SOLANA_DEVNET_CHAIN_ID,
+    ]);
+    expect(queryKeys.balances("user-b", SOLANA_DEVNET_CHAIN_ID)).not.toEqual(
+      queryKeys.balances("user-a", SOLANA_DEVNET_CHAIN_ID),
     );
   });
 });

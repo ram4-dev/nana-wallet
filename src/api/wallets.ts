@@ -347,7 +347,7 @@ export async function registerWalletsRoutes(
     },
   );
 
-  // WP-003..WP-007: personal USDC balance. Authenticated, owner-resolved
+  // WP-003..WP-007: personal SOL balance. Authenticated, owner-resolved
   // and read-only: no owner/chain/token selection from query or body, and
   // private no-store caching on every response shape.
   app.get(

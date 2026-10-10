@@ -1,18 +1,20 @@
 import { createServer, type Server } from "node:http";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { RpcBalanceReader } from "../../src/wallet/balances.js";
 
 /**
  * WP-006/WP-007: the RPC adapter is exercised against a controlled local
- * JSON-RPC server. It must only observe eth_chainId and eth_call to the fixed
- * USDC contract, validate ABI shapes and fail closed on every malformed
- * response — including a full 8s-deadline timeout, tested with a tiny
- * deadline override instead of really waiting.
+ * JSON-RPC server. It must only observe `getBalance` for the requested address,
+ * validate the lamport result as an exactly-representable non-negative integer
+ * and fail closed on every malformed response — including a full 8s-deadline
+ * timeout, tested with a tiny deadline override instead of really waiting.
  */
 
-const USDC = "0x3600000000000000000000000000000000000000";
-const ADDRESS = "0x1111111111111111111111111111111111111111";
+/** Devnet-shaped base58 address (the reader never re-validates it). */
+const ADDRESS = "AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX";
+/** Largest lamport count a JSON number represents exactly (2^53 - 1). */
+const MAX_EXACT_LAMPORTS = 9_007_199_254_740_991;
 
 type RpcHandler = (
   method: string,
@@ -20,6 +22,11 @@ type RpcHandler = (
 ) =>
   | { result?: unknown; error?: { code: number; message: string } }
   | undefined;
+
+/** Solana `getBalance` result envelope: { context, value }. */
+function balanceResult(value: unknown) {
+  return { context: { slot: 1, apiVersion: "1.18.0" }, value };
+}
 
 async function startRpc(
   handler: RpcHandler,
@@ -63,26 +70,9 @@ async function startRpc(
   return { server, url: `http://127.0.0.1:${address.port}`, calls };
 }
 
-function readyHandler(balanceAtomic: bigint): RpcHandler {
-  return (method, params) => {
-    if (method === "eth_chainId")
-      return { result: "0x" + (5042002).toString(16) };
-    if (method === "eth_call") {
-      const call = params[0] as { to: string; data: string };
-      if (call.to.toLowerCase() !== USDC) {
-        return { error: { code: -32602, message: "unexpected contract" } };
-      }
-      if (call.data.startsWith("0x313ce567"))
-        return { result: "0x" + 6n.toString(16).padStart(64, "0") };
-      if (call.data.startsWith("0x70a08231")) {
-        const arg = call.data.slice(10);
-        expect(arg).toBe(ADDRESS.slice(2).toLowerCase().padStart(64, "0"));
-        return { result: "0x" + balanceAtomic.toString(16).padStart(64, "0") };
-      }
-      return { error: { code: -32602, message: "unexpected selector" } };
-    }
-    return undefined;
-  };
+function readyHandler(lamports: unknown): RpcHandler {
+  return (method) =>
+    method === "getBalance" ? { result: balanceResult(lamports) } : undefined;
 }
 
 describe("RpcBalanceReader (WP-006/WP-007)", () => {
@@ -91,59 +81,52 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     for (const server of servers) server.close();
   });
 
-  it("reads one USDC from six-decimal balanceOf and only calls eth_chainId/eth_call", async () => {
-    const { server, url, calls } = await startRpc(readyHandler(1_000_000n));
+  it("reads lamports from one getBalance call for the requested address", async () => {
+    const { server, url, calls } = await startRpc(readyHandler(1_000_000_000));
     servers.push(server);
     const reader = new RpcBalanceReader(url);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
-    ).resolves.toBe("1000000");
-    expect(calls.map((call) => call.method)).toEqual([
-      "eth_chainId",
-      "eth_call",
-      "eth_call",
-    ]);
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
+    ).resolves.toBe("1000000000");
+    expect(calls).toEqual([{ method: "getBalance", params: [ADDRESS] }]);
+    expect(calls[0]?.params[0]).not.toContain("0x");
   });
 
-  it("serializes uint256 max and zero without Number precision loss", async () => {
-    const max = (1n << 256n) - 1n;
-    const { server, url } = await startRpc(readyHandler(max));
+  it("serializes the largest exactly-representable lamport value and a real zero", async () => {
+    const { server, url } = await startRpc(readyHandler(MAX_EXACT_LAMPORTS));
     servers.push(server);
     const reader = new RpcBalanceReader(url);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
-    ).resolves.toBe(
-      "115792089237316195423570985008687907853269984665640564039457584007913129639935",
-    );
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
+    ).resolves.toBe("9007199254740991");
 
-    const zero = await startRpc(readyHandler(0n));
+    const zero = await startRpc(readyHandler(0));
     servers.push(zero.server);
     const zeroReader = new RpcBalanceReader(zero.url);
     await expect(
-      zeroReader.readUsdcAtomic(ADDRESS, new AbortController().signal),
+      zeroReader.readSolAtomic(ADDRESS, new AbortController().signal),
     ).resolves.toBe("0");
   });
 
-  it("rejects a wrong chain", async () => {
-    const { server, url } = await startRpc((_method) => ({ result: "0x1" }));
+  it("rejects a lamport count that a JSON number cannot represent exactly", async () => {
+    // 2^53 is already lossy: truncating it would silently report a wrong balance.
+    const { server, url } = await startRpc(readyHandler(MAX_EXACT_LAMPORTS + 1));
     servers.push(server);
     const reader = new RpcBalanceReader(url);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/Arc testnet/);
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
+    ).rejects.toThrow(/formato/);
   });
 
-  it("rejects decimals other than six", async () => {
-    const { server, url } = await startRpc((method) => {
-      if (method === "eth_chainId")
-        return { result: "0x" + (5042002).toString(16) };
-      return { result: "0x" + 18n.toString(16).padStart(64, "0") };
-    });
-    servers.push(server);
-    const reader = new RpcBalanceReader(url);
-    await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/unidades/);
+  it("rejects a non-integer or negative lamport count", async () => {
+    for (const value of [1.5, -1, "1000", null]) {
+      const { server, url } = await startRpc(readyHandler(value));
+      servers.push(server);
+      const reader = new RpcBalanceReader(url);
+      await expect(
+        reader.readSolAtomic(ADDRESS, new AbortController().signal),
+      ).rejects.toThrow(/formato/);
+    }
   });
 
   it("rejects a JSON-RPC error response", async () => {
@@ -153,7 +136,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     servers.push(server);
     const reader = new RpcBalanceReader(url);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
     ).rejects.toThrow(/rechazó/);
   });
 
@@ -164,7 +147,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
         JSON.stringify({
           jsonrpc: "2.0",
           id: 999,
-          result: "0x" + (5042002).toString(16),
+          result: balanceResult(1),
         }),
       );
     });
@@ -176,27 +159,23 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const url = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
     const reader = new RpcBalanceReader(url);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
     ).rejects.toThrow(/no es válida/);
   });
 
-  it("rejects a malformed ABI word", async () => {
-    const { server, url } = await startRpc((method) =>
-      method === "eth_chainId"
-        ? { result: "0x" + (5042002).toString(16) }
-        : { result: "0xzz" },
-    );
+  it("rejects a result that is not a getBalance envelope", async () => {
+    const { server, url } = await startRpc(() => ({ result: "0xzz" }));
     servers.push(server);
     const reader = new RpcBalanceReader(url);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
     ).rejects.toThrow(/formato/);
   });
 
   it("fails on an unreachable node", async () => {
     const reader = new RpcBalanceReader("http://127.0.0.1:1", fetch, 500);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
     ).rejects.toThrow(/No pudimos consultar el saldo/);
   });
 
@@ -214,7 +193,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const url = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
     const reader = new RpcBalanceReader(url, fetch, 50);
     await expect(
-      reader.readUsdcAtomic(ADDRESS, new AbortController().signal),
+      reader.readSolAtomic(ADDRESS, new AbortController().signal),
     ).rejects.toThrow(/tardó demasiado/);
   });
 
@@ -230,7 +209,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const url = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
     const reader = new RpcBalanceReader(url, fetch, 10_000);
     const controller = new AbortController();
-    const pending = reader.readUsdcAtomic(ADDRESS, controller.signal);
+    const pending = reader.readSolAtomic(ADDRESS, controller.signal);
     controller.abort();
     await expect(pending).rejects.toThrow(/tardó demasiado/);
   });

@@ -34,7 +34,7 @@ export type ErrCode =
 
 export type Money = {
   amount: string;
-  currency: "ARS" | "USD" | "USDC";
+  currency: "ARS" | "USD" | "USDC" | "SOL";
   display: string;
 };
 
@@ -47,7 +47,7 @@ export type WalletAccount = {
   subtitle: string;
   balance: Money;
   approxInArs?: Money;
-  kind: "pesos" | "dolares" | "usdc" | "plazo_fijo";
+  kind: "pesos" | "dolares" | "usdc" | "sol" | "plazo_fijo";
   maturesOn?: ISODate;
 };
 
@@ -402,22 +402,27 @@ export type WalletRevokeInput = {
 // wallet-profile (WP-004/WP-005): duplicated manually from the backend
 // balances contract in `src/contracts/http.ts`. The catalog is fixed on the
 // server; the client never selects chain, token or owner.
-export const ARC_TESTNET_CHAIN_ID = 5042002;
+//
+// The value is the CAIP-2 chain identifier as a STRING: Solana has no EIP-155
+// numeric chain id, so the backend sends CAIP-2 under the (unchanged) field
+// name `chainId`. The client only uses it as a react-query cache-key value.
+export const SOLANA_DEVNET_CHAIN_ID = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
 export type BalanceAsset = {
-  tokenId: "5042002:0x3600000000000000000000000000000000000000";
-  contract: "0x3600000000000000000000000000000000000000";
-  symbol: "USDC";
-  name: "USD Coin";
-  decimals: 6;
+  tokenId: typeof SOLANA_DEVNET_CHAIN_ID;
+  // A native asset has no token contract: the backend sends this sentinel.
+  contract: "native";
+  symbol: "SOL";
+  name: "Solana";
+  decimals: 9;
   balanceAtomic: string;
 };
 
 export type BalancesReadyData = {
   walletState: "ready";
   address: string;
-  chainId: 5042002;
-  networkName: "Arc testnet";
+  chainId: typeof SOLANA_DEVNET_CHAIN_ID;
+  networkName: "Solana devnet";
   testnet: true;
   source: "fixture" | "rpc";
   observedAt: ISODateTime;
@@ -426,8 +431,8 @@ export type BalancesReadyData = {
 
 export type BalancesNotReadyData = {
   walletState: Exclude<WalletReadinessState, "ready">;
-  chainId: 5042002;
-  networkName: "Arc testnet";
+  chainId: typeof SOLANA_DEVNET_CHAIN_ID;
+  networkName: "Solana devnet";
   testnet: true;
   observedAt: null;
   assets: [];

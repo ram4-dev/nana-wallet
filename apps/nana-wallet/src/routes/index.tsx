@@ -8,7 +8,7 @@ import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, createConversationTurnSender, getErrorMessage, queryKeys } from "@/lib/api";
-import { ARC_TESTNET_CHAIN_ID } from "@/lib/api-types";
+import { SOLANA_DEVNET_CHAIN_ID } from "@/lib/api-types";
 import type { ConversationTurnResult } from "@/lib/api-types";
 import {
   runExclusiveConversationAction,
@@ -144,7 +144,7 @@ function AgentePage() {
     // for the CURRENT user only (user-scoped key root "balances").
     if (userId) {
       void queryClient.invalidateQueries({
-        queryKey: queryKeys.balances(userId, ARC_TESTNET_CHAIN_ID),
+        queryKey: queryKeys.balances(userId, SOLANA_DEVNET_CHAIN_ID),
       });
     }
   }
@@ -161,7 +161,7 @@ function AgentePage() {
     if (lastInvalidatedTransactionRef.current === confirmedTransactionHash) return;
     lastInvalidatedTransactionRef.current = confirmedTransactionHash;
     void queryClient.invalidateQueries({
-      queryKey: queryKeys.balances(userId, ARC_TESTNET_CHAIN_ID),
+      queryKey: queryKeys.balances(userId, SOLANA_DEVNET_CHAIN_ID),
     });
   }, [confirmedTransactionHash, userId, queryClient]);
 

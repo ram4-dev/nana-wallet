@@ -438,7 +438,9 @@ export function buildServer(options: {
       ? { keyQuorumId: privyServerConfig.keyQuorumId }
       : undefined;
     // WP-008: the balances service shares the same own-binding resolver as
-    // the wallet surface but NEVER receives sync/permission/sign methods.
+    // the wallet surface but NEVER receives sync/permission/sign methods. The
+    // reader is Solana-only, so the resolver reads the caller's OWN solana
+    // binding; the legacy Arc row can never be served as a Solana balance.
     const embeddedWallet = new EmbeddedWalletService(
       database,
       privyClient,
@@ -449,7 +451,8 @@ export function buildServer(options: {
       resolveUserId,
       wallet: embeddedWallet,
       balances: new WalletBalancesService({
-        resolveWallet: (userId) => embeddedWallet.getCurrentWallet(userId),
+        resolveWallet: (userId) =>
+          embeddedWallet.getCurrentWallet(userId, "solana"),
         reader: createBalanceReader(readBalanceReadConfig(process.env)),
       }),
     });

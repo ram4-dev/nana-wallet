@@ -15,12 +15,11 @@ import {
 import { RouteError, RoutePending } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
 import { api, getErrorMessage, queryKeys } from "@/lib/api";
-import { formatUsdcBalance } from "@/lib/usdc-format";
-import { ARC_TESTNET_CHAIN_ID } from "@/lib/api-types";
+import { SOLANA_DEVNET_CHAIN_ID } from "@/lib/api-types";
 import { useNotificationsFeed } from "@/features/notifications/useNotificationsFeed";
 
 /**
- * wallet-profile (WP-010/WP-011/WP-012): identity plus the personal USDC
+ * wallet-profile (WP-010/WP-011/WP-012): identity plus the personal SOL
  * balance. The pesos total, quotes and simulated movements are preserved (but
  * not mounted) in `features/wallet/LegacyMoneySections.tsx` (WP-015).
  *
@@ -37,12 +36,12 @@ export const Route = createFileRoute("/mi-plata")({
       { title: "Billetera | Nana Wallet" },
       {
         name: "description",
-        content: "Tu saldo USDC en Arc testnet, en letra grande y con la fecha de la consulta.",
+        content: "Tu saldo de SOL en Solana devnet, en letra grande y con la fecha de la consulta.",
       },
       { property: "og:title", content: "Billetera" },
       {
         property: "og:description",
-        content: "Mirá tu saldo USDC y actualizalo cuando quieras.",
+        content: "Mirá tu saldo de SOL y actualizalo cuando quieras.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -71,6 +70,27 @@ function formatObservedAt(observedAt: string): string {
 }
 
 /**
+ * Exact atomic-amount formatting for the personal balance.
+ *
+ * The backend sends the amount as a canonical decimal string and SOL has nine
+ * decimals, so it must never go through Number. Same es-AR convention as
+ * `formatUsdcBalance` (""."" for the integer group, "","" for the fraction,
+ * trailing fraction zeros trimmed), but driven by the asset's own `decimals`
+ * so the screen renders whatever unit the contract reports.
+ */
+function formatAtomicBalance(amountAtomic: string, decimals: number): string {
+  if (!/^(0|[1-9][0-9]*)$/.test(amountAtomic) || decimals <= 0) {
+    throw new Error("Invalid atomic balance.");
+  }
+  const divisor = 10n ** BigInt(decimals);
+  const value = BigInt(amountAtomic);
+  const whole = value / divisor;
+  const fraction = (value % divisor).toString().padStart(decimals, "0").replace(/0+$/, "");
+  const groupedWhole = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return fraction ? `${groupedWhole},${fraction}` : groupedWhole;
+}
+
+/**
  * WP-012 (superseded 2026-10-07): WalletLifecycle moved to /perfil.
  * explicit user action, in its own section. Its load/errors are independent
  * from the balance and never hide or replace the balance section. It does not
@@ -83,7 +103,7 @@ function MiPlataPage() {
   const notifications = useNotificationsFeed();
 
   const balancesQuery = useQuery({
-    queryKey: queryKeys.balances(userId, ARC_TESTNET_CHAIN_ID),
+    queryKey: queryKeys.balances(userId, SOLANA_DEVNET_CHAIN_ID),
     queryFn: api.getBalances,
     // WP-013: never query without a resolved identity.
     enabled: Boolean(userId),
@@ -179,11 +199,12 @@ function MiPlataPage() {
             className="mt-1.5 mb-1.5 break-words text-4xl font-extrabold tracking-tight"
             data-testid="usdc-balance"
           >
-            {formatUsdcBalance(balances.assets[0]!.balanceAtomic)} USDC
+            {formatAtomicBalance(balances.assets[0]!.balanceAtomic, balances.assets[0]!.decimals)}{" "}
+            {balances.assets[0]!.symbol}
           </p>
           <p className="inline-flex items-center gap-1.5 text-sm font-bold text-brand-ink">
             <Wallet className="size-4" aria-hidden="true" />
-            Arc testnet
+            {balances.networkName}
           </p>
           {balances.source === "fixture" ? (
             <p className="mt-2 inline-flex rounded-full border border-border bg-card px-3 py-1 text-sm font-bold text-foreground">
@@ -203,7 +224,7 @@ function MiPlataPage() {
           <p className="mt-2 text-lg text-muted-foreground">
             {NOT_READY_LABELS[balances.walletState] ?? "Tu billetera no está lista todavía."}
           </p>
-          <p className="mt-1 text-base text-muted-foreground">Arc testnet</p>
+          <p className="mt-1 text-base text-muted-foreground">{balances.networkName}</p>
         </section>
       )}
 
@@ -229,7 +250,7 @@ function MiPlataPage() {
           </div>
           {addressVisible ? (
             <div className="mt-3 rounded-2xl border border-border bg-card p-4">
-              <p className="text-sm font-bold">Tu dirección en Arc testnet</p>
+              <p className="text-sm font-bold">Tu dirección en {balances.networkName}</p>
               <p className="mt-1.5 break-all font-mono text-xs text-muted-foreground">
                 {balances.address}
               </p>
@@ -266,13 +287,16 @@ function MiPlataPage() {
                 <Wallet className="size-5" />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-bold">USD Coin</span>
-                <span className="block text-xs text-muted-foreground">USDC · Arc testnet</span>
+                <span className="block text-sm font-bold">Solana</span>
+                <span className="block text-xs text-muted-foreground">SOL · Solana devnet</span>
               </span>
               <span className="text-right">
                 <strong className="block text-sm font-bold" data-testid="usdc-balance">
                   {balances.walletState === "ready"
-                    ? `${formatUsdcBalance(balances.assets[0]!.balanceAtomic)} USDC`
+                    ? `${formatAtomicBalance(
+                        balances.assets[0]!.balanceAtomic,
+                        balances.assets[0]!.decimals,
+                      )} ${balances.assets[0]!.symbol}`
                     : "—"}
                 </strong>
               </span>
@@ -285,7 +309,7 @@ function MiPlataPage() {
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-bold">
-                    {asset.token === "USDC" ? "USD Coin" : "Solana"}
+                    {asset.token === "SOL" ? "Solana" : asset.token}
                   </span>
                   <span className="block text-xs text-muted-foreground">
                     {asset.token} · {asset.network}
@@ -331,7 +355,7 @@ function MiPlataPage() {
 
       <section className="mt-8 rounded-2xl border border-border bg-card p-4">
         <p className="text-sm text-muted-foreground">
-          Acá ves tu saldo en USDC sobre Arc testnet. No mostramos pesos, cotizaciones ni
+          Acá ves tu saldo en SOL sobre Solana devnet. No mostramos pesos, cotizaciones ni
           movimientos simulados.
         </p>
       </section>

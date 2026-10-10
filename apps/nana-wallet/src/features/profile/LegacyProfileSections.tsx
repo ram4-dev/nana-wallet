@@ -17,6 +17,7 @@ import { EmptyState } from "@/components/RouteStates";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, createConversationTurnSender, getErrorMessage, queryKeys } from "@/lib/api";
+import { SOLANA_DEVNET_CHAIN_ID } from "@/lib/api-types";
 import type { Bill, ConfirmableIntent, Contact, ConversationTurnResult } from "@/lib/api-types";
 import {
   runExclusiveConversationAction,
@@ -308,7 +309,9 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
     void queryClient.invalidateQueries({ queryKey: queryKeys.bills(userId) });
     // WP-014: money refreshes also invalidate the personal balances cache.
     if (userId) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.balances(userId, 5042002) });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.balances(userId, SOLANA_DEVNET_CHAIN_ID),
+      });
     }
   }
 

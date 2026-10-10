@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { SOLANA_DEVNET_CAIP2 } from "../wallet/solana-devnet-provider.js";
+
 export const healthResponseSchema = z.object({
   status: z.literal("ok"),
   mode: z.enum(["fixture", "live"]),
@@ -429,31 +431,41 @@ export type EnrollmentCompleteResponse = z.infer<
   typeof enrollmentCompleteResponseSchema
 >;
 
-// WP-004..WP-007: personal USDC balance surface. The catalog is closed on
-// the server (Arc testnet, USDC ERC-20 with six decimals); the client can
-// never select chain, token or owner.
-export const ARC_TESTNET_CHAIN_ID = 5042002;
-export const ARC_TESTNET_NETWORK_NAME = "Arc testnet";
-export const USDC_ARC_TESTNET_CONTRACT =
-  "0x3600000000000000000000000000000000000000";
-
+// WP-004..WP-007: personal SOL balance surface. The catalog is closed on the
+// server (Solana devnet, native SOL with nine decimals); the client can never
+// select chain, token or owner.
+//
+// `chainId` is a STRING carrying the CAIP-2 chain identifier (the same constant
+// the Solana devnet provider uses), not an EIP-155 numeric chain id: Solana has
+// no EIP-155 chain id and CAIP-2 is the honest, standard identifier for it. The
+// field NAME stays `chainId` to limit churn, and the client uses the value only
+// as a cache-key value, never as display data.
 export const balanceAssetSchema = z.object({
-  tokenId: z.literal("5042002:0x3600000000000000000000000000000000000000"),
-  contract: z.literal("0x3600000000000000000000000000000000000000"),
-  symbol: z.literal("USDC"),
-  name: z.literal("USD Coin"),
-  decimals: z.literal(6),
+  // Solana's native asset has no token contract, so there is no contract
+  // address to publish: the CAIP-2 identifier of the single chain this closed
+  // surface serves identifies the asset, and `contract` says `native` instead
+  // of pretending an address exists.
+  tokenId: z.literal(SOLANA_DEVNET_CAIP2),
+  contract: z.literal("native"),
+  symbol: z.literal("SOL"),
+  name: z.literal("Solana"),
+  decimals: z.literal(9),
   balanceAtomic: z
     .string()
-    .regex(/^(0|[1-9][0-9]*)$/, "canonical decimal uint256 string"),
+    .regex(/^(0|[1-9][0-9]*)$/, "canonical decimal lamport string"),
 });
 export type BalanceAsset = z.infer<typeof balanceAssetSchema>;
 
+// Base58 shape of a Solana address (same alphabet/length the provider's
+// recipient guard uses); the service validates it with isValidSolanaAddress
+// before any ready payload is produced.
+const base58AddressSchema = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+
 export const balancesReadyDataSchema = z.object({
   walletState: z.literal("ready"),
-  address: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
-  chainId: z.literal(5042002),
-  networkName: z.literal("Arc testnet"),
+  address: base58AddressSchema,
+  chainId: z.literal(SOLANA_DEVNET_CAIP2),
+  networkName: z.literal("Solana devnet"),
   testnet: z.literal(true),
   source: z.enum(["fixture", "rpc"]),
   observedAt: z.string(),
@@ -465,8 +477,8 @@ export type BalancesReadyData = z.infer<typeof balancesReadyDataSchema>;
 // (WP-005): assets is empty and observedAt is null.
 export const balancesNotReadyDataSchema = z.object({
   walletState: walletReadinessStateSchema.exclude(["ready"]),
-  chainId: z.literal(5042002),
-  networkName: z.literal("Arc testnet"),
+  chainId: z.literal(SOLANA_DEVNET_CAIP2),
+  networkName: z.literal("Solana devnet"),
   testnet: z.literal(true),
   observedAt: z.literal(null),
   assets: z.tuple([]),

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   FixtureBalanceReader,
+  SOLANA_DEVNET_CATALOG,
   WalletBalancesError,
   WalletBalancesService,
   createBalanceReader,
@@ -15,15 +16,23 @@ import type { CurrentWallet } from "../../src/wallet/embedded.js";
  * serves every non-ready state WITHOUT calling the reader, fails closed on an
  * inconsistent ready binding, and never touches signing (there is simply no
  * signing dependency to reach).
+ *
+ * The surface reads the native Solana devnet asset, so the expected payload
+ * pins the CAIP-2 chain identifier as a STRING (Solana has no EIP-155 chain id)
+ * and lamports as the atomic unit.
  */
+
+/** Devnet-shaped base58 address (validated by isValidSolanaAddress). */
+const SOLANA_ADDRESS = "AfHaCDtRK27tYuDjUXE9Ch5QHHfiZBa3QEdDpQp8ZYGX";
+const CAIP2 = "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 
 function wallet(overrides: Partial<CurrentWallet> = {}): CurrentWallet {
   return {
     userId: "11111111-1111-4111-8111-111111111111",
     id: "22222222-2222-4222-8222-222222222222",
     state: "ready",
-    address: "0x1111111111111111111111111111111111111111",
-    chainFamily: "arc",
+    address: SOLANA_ADDRESS,
+    chainFamily: "solana",
     provider: "privy",
     verifiedAt: null,
     ...overrides,
@@ -35,14 +44,32 @@ const READY = wallet();
 function readerStub(source: BalanceReader["source"] = "fixture") {
   return {
     source,
-    readUsdcAtomic: vi.fn(async () => "1250000"),
-  } satisfies BalanceReader & { readUsdcAtomic: ReturnType<typeof vi.fn> };
+    readSolAtomic: vi.fn(async () => "1250000000"),
+  } satisfies BalanceReader & { readSolAtomic: ReturnType<typeof vi.fn> };
 }
 
 const OWN_ADDRESS = READY.address;
 
+describe("SOLANA_DEVNET_CATALOG (WP-004)", () => {
+  it("is the closed native-SOL devnet catalog", () => {
+    expect(SOLANA_DEVNET_CATALOG).toEqual({
+      network: "solana-devnet",
+      caip2: CAIP2,
+      networkName: "Solana devnet",
+      testnet: true,
+      symbol: "SOL",
+      name: "Solana",
+      decimals: 9,
+      // A native asset has no token contract: the CAIP-2 chain identifier is
+      // what identifies it, and `contract` says so explicitly.
+      tokenId: CAIP2,
+      contract: "native",
+    });
+  });
+});
+
 describe("WalletBalancesService", () => {
-  it("returns the ready shape with one USDC asset and observedAt from the clock", async () => {
+  it("returns the ready shape with one SOL asset and observedAt from the clock", async () => {
     const reader = readerStub();
     const service = new WalletBalancesService({
       resolveWallet: async () => READY,
@@ -52,22 +79,26 @@ describe("WalletBalancesService", () => {
     await expect(service.getBalances(READY.userId)).resolves.toEqual({
       walletState: "ready",
       address: OWN_ADDRESS,
-      chainId: 5042002,
-      networkName: "Arc testnet",
+      chainId: CAIP2,
+      networkName: "Solana devnet",
       testnet: true,
       source: "fixture",
       observedAt: "2026-09-09T12:00:00.000Z",
       assets: [
         {
-          tokenId: "5042002:0x3600000000000000000000000000000000000000",
-          contract: "0x3600000000000000000000000000000000000000",
-          symbol: "USDC",
-          name: "USD Coin",
-          decimals: 6,
-          balanceAtomic: "1250000",
+          tokenId: CAIP2,
+          contract: "native",
+          symbol: "SOL",
+          name: "Solana",
+          decimals: 9,
+          balanceAtomic: "1250000000",
         },
       ],
     });
+    expect(reader.readSolAtomic).toHaveBeenCalledWith(
+      OWN_ADDRESS,
+      expect.anything(),
+    );
   });
 
   it("serves every non-ready state without calling the reader (WP-005)", async () => {
@@ -85,14 +116,14 @@ describe("WalletBalancesService", () => {
       });
       await expect(scoped.getBalances("u")).resolves.toEqual({
         walletState: state,
-        chainId: 5042002,
-        networkName: "Arc testnet",
+        chainId: CAIP2,
+        networkName: "Solana devnet",
         testnet: true,
         observedAt: null,
         assets: [],
       });
     }
-    expect(reader.readUsdcAtomic).not.toHaveBeenCalled();
+    expect(reader.readSolAtomic).not.toHaveBeenCalled();
   });
 
   it("rejects an inconsistent ready binding with 409 and no reader call (WP-007)", async () => {
@@ -105,15 +136,25 @@ describe("WalletBalancesService", () => {
       status: 409,
       code: "WALLET_DATOS_INVALIDOS",
     });
+    // An EVM-shaped address is NOT a Solana address: it must fail closed.
+    const evmAddress = new WalletBalancesService({
+      resolveWallet: async () =>
+        wallet({ address: "0x1111111111111111111111111111111111111111" }),
+      reader,
+    });
+    await expect(evmAddress.getBalances("u")).rejects.toMatchObject({
+      status: 409,
+      code: "WALLET_DATOS_INVALIDOS",
+    });
     const badChain = new WalletBalancesService({
-      resolveWallet: async () => wallet({ chainFamily: "ethereum" }),
+      resolveWallet: async () => wallet({ chainFamily: "arc" }),
       reader,
     });
     await expect(badChain.getBalances("u")).rejects.toMatchObject({
       status: 409,
       code: "WALLET_DATOS_INVALIDOS",
     });
-    expect(reader.readUsdcAtomic).not.toHaveBeenCalled();
+    expect(reader.readSolAtomic).not.toHaveBeenCalled();
   });
 
   it("maps reader failures to a sanitized 503 (WP-007)", async () => {
@@ -121,7 +162,7 @@ describe("WalletBalancesService", () => {
       resolveWallet: async () => READY,
       reader: {
         source: "fixture",
-        readUsdcAtomic: async () => {
+        readSolAtomic: async () => {
           throw new Error("http://secret-node?token=abc raw failure");
         },
       },
@@ -140,14 +181,11 @@ describe("FixtureBalanceReader (WP-009)", () => {
       [OWN_ADDRESS]: "42",
     });
     await expect(
-      reader.readUsdcAtomic(
-        OWN_ADDRESS.toUpperCase(),
-        new AbortController().signal,
-      ),
+      reader.readSolAtomic(OWN_ADDRESS, new AbortController().signal),
     ).resolves.toBe("42");
     await expect(
-      reader.readUsdcAtomic(
-        "0x2222222222222222222222222222222222222222",
+      reader.readSolAtomic(
+        "AiU9AY9ibuJnCUaSESUmGqTGJyrGJ57fYDmT3eQWEafk",
         new AbortController().signal,
       ),
     ).rejects.toMatchObject({ status: 503, code: "BALANCE_NO_DISPONIBLE" });

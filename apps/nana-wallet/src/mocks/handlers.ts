@@ -26,6 +26,7 @@ import type {
   WalletSyncResponse,
 } from "@/lib/api-types";
 import { shouldUseLiveAgentBackend } from "@/lib/live-agent";
+import { SOLANA_DEVNET_CHAIN_ID } from "@/lib/api-types";
 import { classifySessionSubmission } from "@/lib/session-resolution";
 
 const apiPath = (path: string) => `*/v1${path}`;
@@ -46,11 +47,12 @@ function err(code: ErrCode, message: string, status: number, field?: string) {
 
 /**
  * Dev MSW fixture for the personal balances contract (WP-009). Deterministic
- * demo address and amount; the UI surfaces `source: "fixture"` as a demo.
+ * demo devnet address and lamport amount; the UI surfaces `source: "fixture"`
+ * as a demo.
  */
 const mockBalancesFixture = {
-  address: "0x1111111111111111111111111111111111111111",
-  readyAtomic: "1250000", // 1.25 USDC
+  address: "BeaJCkEXcTvrpPLx4JUakjmruPpkQvy7Lf97UhrtbjrC",
+  readyAtomic: "1250000000", // 1.25 SOL in lamports
 } as const;
 
 let walletSummary: WalletSummary = {
@@ -446,18 +448,18 @@ export const handlers = [
       return err("INVALID_QUERY", "Esta consulta no acepta parámetros.", 400);
     }
     const asset: BalanceAsset = {
-      tokenId: "5042002:0x3600000000000000000000000000000000000000",
-      contract: "0x3600000000000000000000000000000000000000",
-      symbol: "USDC",
-      name: "USD Coin",
-      decimals: 6,
+      tokenId: SOLANA_DEVNET_CHAIN_ID,
+      contract: "native",
+      symbol: "SOL",
+      name: "Solana",
+      decimals: 9,
       balanceAtomic: mockBalancesFixture.readyAtomic,
     };
     const data: BalancesData = {
       walletState: "ready",
       address: mockBalancesFixture.address,
-      chainId: 5042002,
-      networkName: "Arc testnet",
+      chainId: SOLANA_DEVNET_CHAIN_ID,
+      networkName: "Solana devnet",
       testnet: true,
       source: "fixture",
       observedAt: new Date().toISOString(),

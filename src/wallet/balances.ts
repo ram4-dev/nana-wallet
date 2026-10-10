@@ -1,9 +1,12 @@
-import {
-  ARC_TESTNET_CHAIN_ID,
-  USDC_ARC_TESTNET_CONTRACT,
-  type BalancesData,
-  type WalletReadinessState,
+import { isValidSolanaAddress } from "../memory/address.js";
+import type {
+  BalancesData,
+  WalletReadinessState,
 } from "../contracts/http.js";
+import {
+  SOLANA_DEVNET_CAIP2,
+  SOLANA_DEVNET_NETWORK,
+} from "./solana-devnet-provider.js";
 import type { CurrentWallet } from "./embedded.js";
 
 /**
@@ -11,7 +14,7 @@ import type { CurrentWallet } from "./embedded.js";
  *
  * This module is deliberately SEPARATE from signing: the service never receives
  * sync/permission/sign/broadcast methods, the reader interface is minimal
- * (`readUsdcAtomic`), and a ready-but-inconsistent binding fails closed with a
+ * (`readSolAtomic`), and a ready-but-inconsistent binding fails closed with a
  * stable business error instead of falling back to a global wallet.
  */
 
@@ -41,30 +44,39 @@ function balanceUnavailable(message: string): WalletBalancesError {
   return new WalletBalancesError(503, BALANCE_UNAVAILABLE_CODE, message);
 }
 
-/** The closed Arc testnet USDC catalog. Not configurable from HTTP. */
-export const USDC_ARC_TESTNET_CATALOG = {
-  chainId: ARC_TESTNET_CHAIN_ID,
-  networkName: "Arc testnet",
+/**
+ * The closed Solana devnet native-SOL catalog. Not configurable from HTTP.
+ *
+ * A native asset has no token contract, so `contract` is the explicit `native`
+ * sentinel (never an address) and `tokenId` is the CAIP-2 identifier of the
+ * single chain this closed surface serves. The balance unit is the lamport
+ * (nine decimals), not a six-decimal token amount.
+ */
+export const SOLANA_DEVNET_CATALOG = {
+  network: SOLANA_DEVNET_NETWORK,
+  caip2: SOLANA_DEVNET_CAIP2,
+  networkName: "Solana devnet",
+  symbol: "SOL",
+  name: "Solana",
+  decimals: 9,
   testnet: true,
-  contract: USDC_ARC_TESTNET_CONTRACT,
-  symbol: "USDC",
-  name: "USD Coin",
-  decimals: 6,
-  tokenId: `${ARC_TESTNET_CHAIN_ID}:${USDC_ARC_TESTNET_CONTRACT}`,
+  tokenId: SOLANA_DEVNET_CAIP2,
+  contract: "native",
 } as const;
 
-const EVM_ADDRESS_PATTERN = /^0x[0-9a-fA-F]{40}$/;
-
-/** Minimal injected reader: one method, atomic string result, no signing. */
+/**
+ * Minimal injected reader: one method, a lamport decimal string result, and no
+ * signing.
+ */
 export interface BalanceReader {
   readonly source: "fixture" | "rpc";
-  readUsdcAtomic(address: string, signal: AbortSignal): Promise<string>;
+  readSolAtomic(address: string, signal: AbortSignal): Promise<string>;
 }
 
 /**
- * Deterministic per-address fixture balances (WP-009). A missing entry is an
- * explicit error, never a silent zero. The map is provided only when building
- * the dependency graph; there is no HTTP surface to configure it.
+ * Deterministic per-address fixture balances in lamports (WP-009). A missing
+ * entry is an explicit error, never a silent zero. The map is provided only
+ * when building the dependency graph; there is no HTTP surface to configure it.
  */
 export class FixtureBalanceReader implements BalanceReader {
   readonly source = "fixture" as const;
@@ -79,7 +91,7 @@ export class FixtureBalanceReader implements BalanceReader {
     );
   }
 
-  async readUsdcAtomic(address: string, _signal: AbortSignal): Promise<string> {
+  async readSolAtomic(address: string, _signal: AbortSignal): Promise<string> {
     const value = this.balances.get(address.toLowerCase());
     if (value === undefined) {
       throw balanceUnavailable(
@@ -91,9 +103,6 @@ export class FixtureBalanceReader implements BalanceReader {
 }
 
 const RPC_DEADLINE_MS = 8_000;
-const ETH_DECIMALS_SELECTOR = "0x313ce567";
-const ETH_BALANCE_OF_SELECTOR = "0x70a08231";
-const ABI_WORD_PATTERN = /^0x[0-9a-fA-F]{64}$/;
 
 type JsonRpcResponse = {
   jsonrpc?: unknown;
@@ -102,17 +111,15 @@ type JsonRpcResponse = {
   error?: { code?: unknown; message?: unknown } | null;
 };
 
-function isHexQuantity(value: unknown): value is string {
-  return typeof value === "string" && /^0x[0-9a-fA-F]+$/.test(value);
-}
-
 /**
- * Read-only ERC-20 USDC balance adapter (WP-006/WP-007). It speaks JSON-RPC
- * against the fixed Arc testnet catalog, validates chain id / decimals /
- * ABI word shapes, shares one 8-second deadline across the whole call
- * sequence, and never retries. It never calls eth_getBalance: Arc exposes
- * an 18-decimal native representation that MUST NOT be read as six-decimal
- * USDC.
+ * Read-only native-SOL balance adapter (WP-006/WP-007). It speaks Solana
+ * JSON-RPC against the fixed devnet catalog — one `getBalance` call for the
+ * validated own address, never a token or a selector — shares one 8-second
+ * deadline across the call, and never retries.
+ *
+ * `getBalance` returns lamports as a JSON number. Only an exactly representable
+ * non-negative integer is accepted: an unsafe integer (above 2^53 - 1) would be
+ * silently truncated into a wrong balance, so it fails closed instead.
  */
 export class RpcBalanceReader implements BalanceReader {
   readonly source = "rpc" as const;
@@ -167,22 +174,7 @@ export class RpcBalanceReader implements BalanceReader {
     return (payload as JsonRpcResponse).result;
   }
 
-  private async callWord(
-    method: string,
-    params: unknown[],
-    id: number,
-    controller: AbortController,
-  ): Promise<bigint> {
-    const result = await this.call(method, params, id, controller);
-    if (!isHexQuantity(result) && !ABI_WORD_PATTERN.test(String(result))) {
-      throw balanceUnavailable(
-        "La respuesta del nodo no tiene el formato esperado.",
-      );
-    }
-    return BigInt(String(result));
-  }
-
-  async readUsdcAtomic(
+  async readSolAtomic(
     address: string,
     externalSignal: AbortSignal,
   ): Promise<string> {
@@ -191,40 +183,23 @@ export class RpcBalanceReader implements BalanceReader {
     const forwardExternal = () => controller.abort();
     externalSignal.addEventListener("abort", forwardExternal, { once: true });
     try {
-      const chainId = await this.callWord("eth_chainId", [], 1, controller);
-      if (chainId !== BigInt(USDC_ARC_TESTNET_CATALOG.chainId)) {
-        throw balanceUnavailable("El nodo no sirve la red Arc testnet.");
-      }
-
-      const decimals = await this.callWord(
-        "eth_call",
-        [
-          {
-            to: USDC_ARC_TESTNET_CATALOG.contract,
-            data: ETH_DECIMALS_SELECTOR,
-          },
-          "latest",
-        ],
-        2,
-        controller,
-      );
-      if (decimals !== BigInt(USDC_ARC_TESTNET_CATALOG.decimals)) {
-        throw balanceUnavailable("El token no tiene las unidades esperadas.");
-      }
-
-      const callData = `${ETH_BALANCE_OF_SELECTOR}${address.slice(2).toLowerCase().padStart(64, "0")}`;
-      const balance = await this.callWord(
-        "eth_call",
-        [{ to: USDC_ARC_TESTNET_CATALOG.contract, data: callData }, "latest"],
-        3,
-        controller,
-      );
-      if (balance < 0n || balance > (1n << 256n) - 1n) {
+      const result = await this.call("getBalance", [address], 1, controller);
+      // Solana answers getBalance with { context, value }; only the lamport
+      // count is read, and only when it is an exact non-negative integer.
+      const value =
+        typeof result === "object" && result !== null
+          ? (result as { value?: unknown }).value
+          : undefined;
+      if (
+        typeof value !== "number" ||
+        !Number.isSafeInteger(value) ||
+        value < 0
+      ) {
         throw balanceUnavailable(
           "La respuesta del nodo no tiene el formato esperado.",
         );
       }
-      return balance.toString(10);
+      return BigInt(value).toString(10);
     } finally {
       clearTimeout(deadline);
       externalSignal.removeEventListener("abort", forwardExternal);
@@ -254,9 +229,11 @@ export type BalanceReadConfig = {
 
 /**
  * Server-side configuration (WP-009). BALANCE_READ_SOURCE defaults to
- * `fixture`; `rpc` demands BALANCE_RPC_URL. Values are never printed, and
- * nothing here can be chosen from a public HTTP surface: both the source and
- * the RPC URL are read from the process environment only.
+ * `fixture`; `rpc` demands BALANCE_RPC_URL (it has no safe default: silently
+ * pointing the balance read at an unconfigured node would hide a
+ * misconfiguration). Values are never printed, and nothing here can be chosen
+ * from a public HTTP surface: both the source and the RPC URL are read from the
+ * process environment only.
  */
 export function readBalanceReadConfig(
   environment: NodeJS.ProcessEnv = process.env,
@@ -282,12 +259,12 @@ export function readBalanceReadConfig(
       parsed = JSON.parse(raw);
     } catch {
       throw new Error(
-        "BALANCE_FIXTURE_BALANCES must be a JSON object of address -> atomic balance.",
+        "BALANCE_FIXTURE_BALANCES must be a JSON object of address -> lamport balance.",
       );
     }
     if (typeof parsed !== "object" || parsed === null) {
       throw new Error(
-        "BALANCE_FIXTURE_BALANCES must be a JSON object of address -> atomic balance.",
+        "BALANCE_FIXTURE_BALANCES must be a JSON object of address -> lamport balance.",
       );
     }
     fixtureBalances = Object.fromEntries(
@@ -317,10 +294,10 @@ export type WalletBalancesServiceDependencies = {
 
 /**
  * Read-only personal balances service (WP-003..WP-009). It resolves the
- * caller's OWN wallet binding, serves exact non-ready states without touching
- * the reader, and hands the validated own address to an injected reader.
- * There is intentionally no way to select address, chain or token from input,
- * and no dependency on signing credentials or permission state.
+ * caller's OWN Solana wallet binding, serves exact non-ready states without
+ * touching the reader, and hands the validated own address to an injected
+ * reader. There is intentionally no way to select address, chain or token from
+ * input, and no dependency on signing credentials or permission state.
  */
 export class WalletBalancesService {
   constructor(
@@ -337,18 +314,20 @@ export class WalletBalancesService {
       // WP-005: exact state, no RPC call, no amount, no wallet creation.
       return {
         walletState: wallet.state,
-        chainId: USDC_ARC_TESTNET_CATALOG.chainId,
-        networkName: USDC_ARC_TESTNET_CATALOG.networkName,
-        testnet: USDC_ARC_TESTNET_CATALOG.testnet,
+        chainId: SOLANA_DEVNET_CATALOG.caip2,
+        networkName: SOLANA_DEVNET_CATALOG.networkName,
+        testnet: SOLANA_DEVNET_CATALOG.testnet,
         observedAt: null,
         assets: [],
       };
     }
 
     // WP-007: a ready binding must be coherent before any read is attempted.
+    // The reader is Solana-only, so anything that is not a Solana address on
+    // the solana chain family (an EVM/Arc binding, for instance) fails closed.
     if (
-      wallet.chainFamily !== "arc" ||
-      !EVM_ADDRESS_PATTERN.test(wallet.address)
+      wallet.chainFamily !== "solana" ||
+      !isValidSolanaAddress(wallet.address)
     ) {
       throw dataInvalid(
         "Los datos de tu billetera no son válidos para consultar el saldo.",
@@ -357,7 +336,7 @@ export class WalletBalancesService {
 
     let balanceAtomic: string;
     try {
-      balanceAtomic = await this.dependencies.reader.readUsdcAtomic(
+      balanceAtomic = await this.dependencies.reader.readSolAtomic(
         wallet.address,
         signal,
       );
@@ -376,18 +355,18 @@ export class WalletBalancesService {
     return {
       walletState: "ready",
       address: wallet.address,
-      chainId: USDC_ARC_TESTNET_CATALOG.chainId,
-      networkName: USDC_ARC_TESTNET_CATALOG.networkName,
-      testnet: USDC_ARC_TESTNET_CATALOG.testnet,
+      chainId: SOLANA_DEVNET_CATALOG.caip2,
+      networkName: SOLANA_DEVNET_CATALOG.networkName,
+      testnet: SOLANA_DEVNET_CATALOG.testnet,
       source: this.dependencies.reader.source,
       observedAt,
       assets: [
         {
-          tokenId: USDC_ARC_TESTNET_CATALOG.tokenId,
-          contract: USDC_ARC_TESTNET_CATALOG.contract,
-          symbol: USDC_ARC_TESTNET_CATALOG.symbol,
-          name: USDC_ARC_TESTNET_CATALOG.name,
-          decimals: USDC_ARC_TESTNET_CATALOG.decimals,
+          tokenId: SOLANA_DEVNET_CATALOG.tokenId,
+          contract: SOLANA_DEVNET_CATALOG.contract,
+          symbol: SOLANA_DEVNET_CATALOG.symbol,
+          name: SOLANA_DEVNET_CATALOG.name,
+          decimals: SOLANA_DEVNET_CATALOG.decimals,
           balanceAtomic,
         },
       ],

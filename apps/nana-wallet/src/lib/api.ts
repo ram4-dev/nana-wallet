@@ -324,24 +324,27 @@ function withChain(path: string, chain?: WalletChainFamily): string {
 
 export const api = {
   getWalletSummary: async (): Promise<WalletSummary> => {
+    // The per-user wallet API serves the native Solana devnet asset: the
+    // provider echoes the requested token, so requesting USDC here would return
+    // a SOL balance wearing a USDC label.
     const balance = await rawConversationRequest<WalletBalanceResponse>(
-      "/v1/wallet/balance?network=solana-devnet&token=USDC",
+      "/v1/wallet/balance?network=solana-devnet&token=SOL",
       {},
     );
     const money = {
       amount: balance.balance,
-      currency: "USDC" as const,
-      display: `${balance.balance} USDC`,
+      currency: "SOL" as const,
+      display: `${balance.balance} SOL`,
     };
     return {
       total: money,
       accounts: [
         {
           id: balance.address,
-          name: "USDC en Arc Testnet",
+          name: "SOL en Solana devnet",
           subtitle: balance.address,
           balance: money,
-          kind: "usdc",
+          kind: "sol",
         },
       ],
       updatedAt: new Date().toISOString(),
@@ -350,7 +353,7 @@ export const api = {
 
   getMovements: async (params: { cursor?: string; limit?: number } = {}) => {
     const history = await rawConversationRequest<WalletHistoryResponse>(
-      "/v1/wallet/history?network=solana-devnet&token=USDC",
+      "/v1/wallet/history?network=solana-devnet&token=SOL",
       {},
     );
     const offset = Number(params.cursor ?? "0");
@@ -361,11 +364,11 @@ export const api = {
       items: selected.map((transaction) => ({
         id: transaction.hash,
         kind: transaction.direction === "in" ? ("entrada" as const) : ("salida" as const),
-        title: transaction.direction === "in" ? "Recibiste USDC" : "Enviaste USDC",
+        title: transaction.direction === "in" ? "Recibiste SOL" : "Enviaste SOL",
         subtitle: transaction.counterparty,
         amount: {
           amount: transaction.amount,
-          currency: "USDC" as const,
+          currency: "SOL" as const,
           display: `${transaction.amount} ${transaction.token}`,
         },
         at: transaction.timestamp,
@@ -390,36 +393,30 @@ export const api = {
     );
   },
 
-  // WP-003/WP-004: personal USDC balance. No parameters are accepted by the
+  // WP-003/WP-004: personal SOL balance. No parameters are accepted by the
   // contract; the server resolves owner, chain and token itself.
   getBalances: () => request<BalancesData>("/v1/wallets/current/balances"),
 
   // LuckGnome structure (owner decision 2026-10-07): "Tus activos" covers
-  // every chain the user holds; each network is read through the per-user
-  // conversation wallet API.
+  // every chain the user holds. Every chain the per-user wallet API can serve
+  // today is Solana devnet, so there is exactly one row: the native SOL
+  // balance. The old Arc row was a mislabelled duplicate of this same read
+  // (the provider echoes the requested token), never a second real balance.
   getNetworkBalances: async (): Promise<
     Array<{ network: string; token: string; address: string; balance: string }>
   > => {
-    const arc = await rawConversationRequest<WalletBalanceResponse>(
-      "/v1/wallet/balance?network=solana-devnet&token=USDC",
-      {},
-    );
     const solana = await rawConversationRequest<WalletBalanceResponse>(
       "/v1/wallet/balance?network=solana-devnet&token=SOL",
       {},
-    ).catch(() => null);
-    const rows = [
-      { network: "Arc testnet", token: "USDC", address: arc.address, balance: arc.balance },
-    ];
-    if (solana) {
-      rows.push({
+    );
+    return [
+      {
         network: "Solana devnet",
         token: "SOL",
         address: solana.address,
         balance: solana.balance,
-      });
-    }
-    return rows;
+      },
+    ];
   },
 
   // DGC-5: delegated grants lifecycle (authenticated HTTP only; never
@@ -653,8 +650,9 @@ export function confirmMoneyIntent(
 export const queryKeys = {
   me: ["me"] as const,
   // WP-013: personal balances cache is user-scoped with its own "balances"
-  // root, distinct from the legacy wallet summary keys.
-  balances: (userId: string | undefined, chainId: number) => ["balances", userId, chainId] as const,
+  // root, distinct from the legacy wallet summary keys. `chainId` is the
+  // CAIP-2 identifier (a string), used only as a cache-key value.
+  balances: (userId: string | undefined, chainId: string) => ["balances", userId, chainId] as const,
   networkBalances: (userId: string | undefined) => ["balances", "networks", userId] as const,
   wallet: (userId: string | undefined) => ["wallet", "summary", userId] as const,
   movements: (userId: string | undefined) => ["wallet", "movements", userId] as const,
