@@ -248,8 +248,16 @@ export async function publishUserTurn(input: {
     const dueAt = startedAt + index * frameMs;
     const waitMs = dueAt - Date.now();
     if (waitMs > 0) await sleep(waitMs);
+    // `AudioFrame.protoInfo()` hands the FFI `new Uint8Array(frame.data.buffer)`:
+    // the WHOLE underlying ArrayBuffer, ignoring byteOffset and byteLength. A
+    // subarray therefore transmits the buffer's opening bytes on every frame
+    // instead of the slice, so every published frame carried the fixture's first
+    // 20 ms — the receiver measured a flat ~268 RMS while this loop was verifiably
+    // sending 6263. Copy into an owned buffer so `frame.data.buffer` IS the frame.
+    const chunk = new Int16Array(slice.length);
+    chunk.set(slice);
     await source.captureFrame(
-      new AudioFrame(slice, sampleRate, channels, slice.length / channels),
+      new AudioFrame(chunk, sampleRate, channels, chunk.length / channels),
     );
     framesSent += 1;
   }
