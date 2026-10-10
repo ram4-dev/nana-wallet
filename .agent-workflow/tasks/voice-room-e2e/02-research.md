@@ -180,7 +180,48 @@ binding"* a *"No wallet provider was injected"*. Se revirtió.
 La opción 1 es la coherente con la decisión de "conversación sembrada por
 fixture" y no toca producción.
 
-## 11. Antecedente que no hay que duplicar
+## 11. RQ8: el barge-in, y una carrera real en el gate de decisión
+
+### Cómo se dispara el barge-in
+
+En Nana es una **acción deliberada**, no detección acústica: el reducer del front
+(`apps/nana-wallet/src/features/agent/voice/live-voice-reducer.ts:157`) emite
+`interrupt_agent` **solo** ante `AVATAR_PRESSED` con la fase en `speaking`. El
+recorrido completo es `interruptAgentSpeech()` →
+`performRpc({ method: "interrupt_agent" })` → `registerRpcMethod` en el worker
+(`src/livekit/worker.ts:264`) → `session.interrupt({ force: true })`.
+
+El modelo realtime además tiene VAD del servidor y el saludo se genera con
+`allowInterruptions: true`, así que hablar encima *puede* interrumpir — pero eso es
+emergente del proveedor, no una garantía del producto. El harness afirma sobre el
+RPC y mide lo acústico como evidencia.
+
+### La carrera que apareció al correr todo junto
+
+Las transferencias empezaron a fallar de forma intermitente al sumar el barge-in:
+una corrida falló la cancelada, otra falló la confirmada. **El verde de Slice 4 era
+en parte suerte.**
+
+`decideTransfer` (`src/agent/definition.ts:852`) exige
+`voiceDecisionGate.consume(previewId, decision)`, y el gate solo acepta si ya
+registró evidencia: una transcripción **final**, de speaker autenticado, posterior
+al preview. El proveedor realtime transcribe **asincrónicamente** — el modelo
+entiende el audio antes de que llegue el evento final. Si el modelo llama a
+`confirm_transfer`/`cancel_transfer` en esa ventana, `consume` no encuentra
+evidencia y el tool devuelve `confirmation_required`.
+
+Evidencia: el agente dijo textualmente *"no hay una confirmación válida en el
+sistema. No pasó el sí final"* (confirmada) y *"Aunque dijiste 'no', para cancelar
+necesito una respuesta corta"* (cancelada) — el mensaje `notYet` del gate, pese a
+que la transcripción correcta **sí** existía en el stream.
+
+Se **quitó una irrealidad del harness**, no una guarda: las fixtures terminaban en
+el último fonema, y ningún micrófono produce eso. Con **1200 ms de silencio final**
+(sin tocar el audio de voz) la carrera dejó de manifestarse en 3/3 corridas. El
+gate **no se tocó**: relajar una guarda de confirmación de pagos necesita decisión
+explícita. La causa raíz sigue en el producto.
+
+## 12. Antecedente que no hay que duplicar
 
 `evals/voice/realtime/` ya resuelve el e2e **contra la API directa de OpenAI**
 (cliente WebSocket propio, tools bindeados a fixture en memoria, asertos de

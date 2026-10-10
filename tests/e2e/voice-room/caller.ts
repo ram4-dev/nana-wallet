@@ -358,3 +358,99 @@ export async function bindConversation(input: {
     }
   }
 }
+
+/**
+ * The caller's barge-in: the app's own way to stop Nani mid-sentence.
+ *
+ * WHY THIS RPC AND NOT AUDIO OVER THE TOP
+ * ---------------------------------------
+ * In Nana, barge-in is a DELIBERATE user action, not acoustic detection: the
+ * reducer emits `interrupt_agent` only on `AVATAR_PRESSED` while the agent is
+ * speaking (apps/nana-wallet/src/features/agent/voice/live-voice-reducer.ts:157),
+ * and `interruptAgentSpeech()` reaches the worker through exactly this RPC
+ * (livekit-web-client.ts:256).
+ *
+ * A simulated caller cannot tap an avatar, but calling the same method with the
+ * same payload expresses the same intent through the same channel the app uses.
+ * That makes it a faithful stand-in rather than an approximation.
+ *
+ * Publishing audio while the agent speaks is a DIFFERENT mechanism — the
+ * realtime model's server-side VAD, which the product never depends on — and the
+ * harness measures it as evidence instead of asserting on it.
+ */
+export async function interruptAgent(input: {
+  room: Room;
+  agentIdentity: string;
+  deadlineMs?: number;
+  timeoutMs?: number;
+}): Promise<{ ok: boolean; raw: string }> {
+  // TRAP 2: `performRpc` lives on the LOCAL participant at runtime.
+  const local = input.room.localParticipant;
+  if (!local) throw new Error('room.localParticipant is unavailable');
+  const deadline = Date.now() + (input.deadlineMs ?? BIND_DEADLINE_MS);
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    try {
+      const raw = await local.performRpc({
+        destinationIdentity: input.agentIdentity,
+        method: 'interrupt_agent',
+        payload: '',
+        responseTimeout: input.timeoutMs ?? 15_000,
+      });
+      // The worker answers `{"ok":true}` after awaiting session.interrupt().
+      let ok = false;
+      try {
+        ok = (JSON.parse(raw) as { ok?: unknown }).ok === true;
+      } catch {
+        ok = false;
+      }
+      return { ok, raw };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // The method is registered right after the session starts, so a short
+      // window of "unknown method" is expected if the interrupt races the bind.
+      const retryable = /unsupported|not supported|not found|1400|1401/i.test(message);
+      if (!retryable || Date.now() > deadline) {
+        throw new Error(`${message} (attempt ${attempt})`);
+      }
+      await sleep(250);
+    }
+  }
+}
+
+/**
+ * Waits until the agent's audio has been silent for `silenceMs` after `fromMs`.
+ *
+ * Used to observe that an interrupt actually stopped the speech, rather than
+ * trusting the RPC's `ok`. Returns the wall-clock instant the last speech frame
+ * arrived, so the caller can report how quickly the agent yielded — and whether
+ * it yielded at all.
+ */
+export function waitForAgentSilence(input: {
+  frames: () => readonly CapturedFrame[];
+  speechRmsThreshold: number;
+  silenceMs: number;
+  timeoutMs: number;
+  pollMs?: number;
+}): Promise<{ silenced: boolean; lastSpeechAtMs: number | null; waitedMs: number }> {
+  const startedAt = Date.now();
+  const pollMs = input.pollMs ?? TURN_POLL_MS;
+  return (async () => {
+    for (;;) {
+      const frames = input.frames();
+      let lastSpeechAtMs: number | null = null;
+      for (const frame of frames) {
+        if (frame.energy.rms >= input.speechRmsThreshold) lastSpeechAtMs = frame.atMs;
+      }
+      const waitedMs = Date.now() - startedAt;
+      if (lastSpeechAtMs !== null && Date.now() - lastSpeechAtMs >= input.silenceMs) {
+        return { silenced: true, lastSpeechAtMs, waitedMs };
+      }
+      if (waitedMs >= input.timeoutMs) {
+        return { silenced: false, lastSpeechAtMs, waitedMs };
+      }
+      await sleep(pollMs);
+    }
+  })();
+}

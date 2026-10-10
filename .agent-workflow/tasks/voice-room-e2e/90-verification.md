@@ -152,6 +152,96 @@ timer.
 que también valida el camino de arranque limpio. Suite default **sin cambios**: 16
 fallos preexistentes, 860 pasan, 174 skipped. `typecheck` y `lint` limpios.
 
+## Slice 6 — barge-in: RESUELTO
+
+`npm run test:e2e:voice-room` → **4/4 verde** (round trip, confirmada, cancelada,
+barge-in), en 3 corridas consecutivas.
+
+### RQ8: cómo se dispara realmente
+
+Hay dos mecanismos y **el producto usa uno solo**.
+
+**El contrato: RPC `interrupt_agent`.** En Nana el barge-in es una acción
+**deliberada** del usuario. El reducer del front
+(`live-voice-reducer.ts:157`) emite `interrupt_agent` **solo** ante
+`AVATAR_PRESSED` con la fase en `speaking`. El recorrido es
+`interruptAgentSpeech()` → `performRpc({method:"interrupt_agent"})` →
+`registerRpcMethod` en el worker → `session.interrupt({force:true})`.
+
+**Lo acústico: del SDK, no del producto.** El modelo realtime tiene VAD del
+servidor y el saludo se genera con `allowInterruptions:true`, así que hablar
+encima *puede* interrumpir. Pero eso es emergente del proveedor y depende de
+umbrales que no controlamos.
+
+Por eso el escenario **afirma** sobre el RPC (contrato determinístico del que
+depende la UI) y **mide** lo acústico como evidencia. Un caller simulado no puede
+tocar un avatar, pero invocar el mismo RPC expresa la misma intención por el mismo
+canal que la app: es fiel, no una aproximación.
+
+### Evidencia
+
+```
+speech antes    : 940 / 880 / 840 ms   (interrumpe a mitad de frase)
+interrupt ok    : true en las 3
+yield latency   : 367 / 15 / 118 ms    (silencio tras el RPC)
+respuesta luego : 3070 / 3230 / 2830 ms (la sesión sobrevive)
+```
+
+La precondición `minSpeechBeforeInterruptMs` (800 ms) existe para que el test no
+sea vacuo: interrumpir en el primer frame no probaria nada. Y el segundo aserto —
+que la conversación siga respondiendo después — importa más que el primero: un
+interrupt que corta el audio pero mata la sesión se ve como que funcionó.
+
+## HALLAZGO: carrera real entre la transcripción y el gate de decisión
+
+Al correr el suite completo, las transferencias empezaron a fallar de forma
+**intermitente**, y no por el barge-in: la corrida 1 falló la cancelada, la
+corrida 2 falló la **confirmada**. O sea que el verde de Slice 4 fue, en parte,
+suerte.
+
+### Mecanismo
+
+`decideTransfer` (`src/agent/definition.ts:852`) exige
+`voiceDecisionGate.consume(previewId, decision)`, y el gate
+(`src/livekit/voice-decision-gate.ts:82`) solo acepta si **ya registró evidencia**
+—una transcripción **final**, de un speaker autenticado, posterior al preview.
+
+El proveedor realtime transcribe de forma **asincrónica**: el modelo entiende el
+audio antes de que llegue el evento de transcripción final. Si el modelo llama a
+`confirm_transfer`/`cancel_transfer` en esa ventana, `consume` no encuentra
+evidencia y el tool devuelve `confirmation_required`.
+
+Evidencia: en las corridas fallidas el agente dijo, textual,
+
+- confirmada: *"Opa, parece que todavía no hay una confirmación válida en el
+  sistema. No pasó el sí final."*
+- cancelada: *"Aunque dijiste 'no', para cancelar necesito una respuesta corta
+  siguiendo el flujo"*
+
+es decir, el mensaje `notYet` del gate — pese a que la transcripción correcta
+(`"No, cancela, déjalo."`, que clasifica como cancelación) **sí** existía en el
+stream.
+
+**Impacto de producto:** una persona dice "sí, confirmo" y Nani responde que no
+hay confirmación válida. Para adultos mayores es un callejón: repiten y puede
+volver a pasar.
+
+### Qué hice y qué NO
+
+**No toqué el gate.** Relajar una guarda de confirmación de pagos es exactamente
+la clase de atajo que AGENTS.md prohíbe tomar sin decisión explícita.
+
+Lo que hice fue quitar una irrealidad del harness: **las fixtures terminaban en el
+último fonema**, sin pausa. Ningún micrófono produce eso. Agregué **1200 ms de
+silencio final** (sin tocar el audio de voz) y la carrera dejó de manifestarse:
+3/3 corridas con las dos transferencias verdes.
+
+**Residual, dicho con honestidad:** 3 corridas no prueban que la carrera esté
+eliminada. El silencio le da tiempo a la transcripción, pero un usuario real que
+corta y se calla rápido puede volver a caer en la ventana. La causa raíz —el gate
+depende de un evento asincrónico que puede llegar después del tool call— sigue en
+el producto y **necesita decisión de Rama**.
+
 ## No-regresión
 
 Suite completa: **860 pasan, 174 skipped, 16 fallan**. Los mismos 16 fallos en

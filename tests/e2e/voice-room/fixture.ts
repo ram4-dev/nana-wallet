@@ -46,6 +46,15 @@ export const FIXTURE_CONVERSATION_ID = 'e2e00000-0000-4000-8000-000000000002';
  */
 export const FIXTURE_TRANSFER_CONVERSATION_ID = 'e2e00000-0000-4000-8000-000000000003';
 export const FIXTURE_CANCEL_CONVERSATION_ID = 'e2e00000-0000-4000-8000-000000000004';
+/**
+ * The barge-in scenario's conversation (Slice 6).
+ *
+ * Separate for the same reason as the transfer pair: the scenario interrupts the
+ * agent mid-greeting and then publishes a turn on the same session, so it must
+ * not share state — a lease, a pending preview, a revision — with a conversation
+ * another scenario asserts on.
+ */
+export const FIXTURE_BARGE_IN_CONVERSATION_ID = 'e2e00000-0000-4000-8000-000000000005';
 export const FIXTURE_PRIVY_DID = 'did:e2e:voice-room-spike';
 
 /** Every conversation the harness may seed, so the fixture stays one list. */
@@ -53,6 +62,7 @@ export const FIXTURE_CONVERSATION_IDS = [
   FIXTURE_CONVERSATION_ID,
   FIXTURE_TRANSFER_CONVERSATION_ID,
   FIXTURE_CANCEL_CONVERSATION_ID,
+  FIXTURE_BARGE_IN_CONVERSATION_ID,
 ] as const;
 
 export type SeededConversation = {
