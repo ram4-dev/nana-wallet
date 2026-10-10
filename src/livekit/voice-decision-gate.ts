@@ -37,8 +37,26 @@ export function createVoiceDecisionGate(classifiers: {
   let activePreviewId: string | undefined;
   let previewCreatedAt: number | undefined;
   let evidence: VoiceDecisionResult | undefined;
+  let consumedPreviewId: string | undefined;
+  const waiters = new Set<() => void>();
+
+  function wakeWaiters(): void {
+    for (const wake of waiters) wake();
+  }
+
+  function canWaitFor(previewId: string): boolean {
+    return (
+      previewId === activePreviewId &&
+      evidence === undefined &&
+      consumedPreviewId !== previewId
+    );
+  }
 
   return {
+    currentPreviewId(): string | undefined {
+      return activePreviewId;
+    },
+
     /**
      * Opens the decision window for a preview that now exists. Any evidence
      * recorded for a previous preview is dropped: a decision never carries
@@ -49,12 +67,15 @@ export function createVoiceDecisionGate(classifiers: {
         activePreviewId = undefined;
         previewCreatedAt = undefined;
         evidence = undefined;
+        wakeWaiters();
         return;
       }
+      if (previewId !== consumedPreviewId) consumedPreviewId = undefined;
       activePreviewId = previewId;
       previewCreatedAt = Number.isFinite(createdAt) ? createdAt : Date.now();
       evidence = undefined;
       classifiers.onObservation?.({ event: "prepare", previewCreatedAt, observedAt: Date.now() });
+      wakeWaiters();
     },
 
     recordTranscript(input: {
@@ -64,8 +85,11 @@ export function createVoiceDecisionGate(classifiers: {
       authenticatedSpeaker: boolean;
       createdAt: number;
     }): void {
+      const matchesPreview = input.previewId === activePreviewId;
       const eligible = !(
         previewCreatedAt === undefined ||
+        !matchesPreview ||
+        consumedPreviewId === activePreviewId ||
         !input.isFinal ||
         input.authenticatedSpeaker !== true ||
         !Number.isFinite(input.createdAt) ||
@@ -84,17 +108,24 @@ export function createVoiceDecisionGate(classifiers: {
         observedAt: Date.now(),
         createdAt: input.createdAt,
         previewCreatedAt: previewCreatedAt ?? null,
+        matchesPreview,
         isFinal: input.isFinal,
         authenticatedSpeaker: input.authenticatedSpeaker,
         afterPreview: previewCreatedAt !== undefined && input.createdAt > previewCreatedAt,
         decision: decision ?? null,
       });
-      if (decision) evidence = decision;
+      if (decision) {
+        evidence = decision;
+        wakeWaiters();
+      }
     },
 
     consume(previewId: string, decision: VoiceDecision): VoiceDecisionResult | undefined {
       const expected = decision === "confirm" ? "confirmed" : "cancelled";
-      const accepted = previewId === activePreviewId && evidence === expected;
+      const accepted =
+        previewId === activePreviewId &&
+        consumedPreviewId !== previewId &&
+        evidence === expected;
       classifiers.onObservation?.({
         event: "consume", observedAt: Date.now(),
         matchesPreview: previewId === activePreviewId,
@@ -102,7 +133,38 @@ export function createVoiceDecisionGate(classifiers: {
       });
       if (!accepted) return undefined;
       evidence = undefined;
+      consumedPreviewId = previewId;
+      wakeWaiters();
       return expected;
+    },
+
+    async waitAndConsume(
+      previewId: string,
+      decision: VoiceDecision,
+      timeoutMs: number = 2_000,
+    ): Promise<VoiceDecisionResult | undefined> {
+      const immediate = this.consume(previewId, decision);
+      if (immediate) return immediate;
+      // A different final decision has already arrived, or this preview has
+      // been replaced, cleared, or consumed. Waiting cannot make any of those
+      // states authorize this request.
+      if (!canWaitFor(previewId)) return undefined;
+
+      const changed = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const finish = (value: boolean) => {
+          if (settled) return;
+          settled = true;
+          waiters.delete(wake);
+          clearTimeout(timer);
+          resolve(value);
+        };
+        const wake = () => finish(true);
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        waiters.add(wake);
+      });
+      if (!changed) return undefined;
+      return this.consume(previewId, decision);
     },
 
     clear(previewId: string): void {
@@ -110,6 +172,7 @@ export function createVoiceDecisionGate(classifiers: {
       activePreviewId = undefined;
       previewCreatedAt = undefined;
       evidence = undefined;
+      wakeWaiters();
     },
   };
 }

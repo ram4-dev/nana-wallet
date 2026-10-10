@@ -17,8 +17,14 @@ export function attachVoiceDecisionTranscripts(
     speakerId: string | null;
     createdAt: number;
   }) => {
+    // Bind this incoming event to the exact preview active at listener time.
+    // The transcript payload has no persisted-preview identity of its own, so
+    // a sentinel would either reject all real speech or let an old event cross
+    // a preview boundary.
+    const previewId = gate.currentPreviewId();
+    if (!previewId) return;
     gate.recordTranscript({
-      previewId: "active-preview",
+      previewId,
       text: event.transcript,
       isFinal: event.isFinal,
       authenticatedSpeaker: isAuthenticatedSpeaker(event.speakerId),

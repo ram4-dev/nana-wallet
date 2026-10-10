@@ -849,7 +849,7 @@ async function voicePreviewTransfer(
     if (!previewId) {
       return { status: 'error', code: 'stale_preview', message: decisionCopy(language).noPreview };
     }
-    if (!context.voiceDecisionGate?.consume(previewId, decision)) {
+    if (!await context.voiceDecisionGate?.waitAndConsume(previewId, decision)) {
       // The refusal is almost always one of two things: the user has not
       // answered the preview yet, or they said something affirmative
       // BEFORE it existed (for example "sí, mandale 5" to the instruction
@@ -890,14 +890,14 @@ function createVoiceDecisionOperations(context: WalletAgentContext): AgentToolDe
     {
       name: 'confirm_transfer',
       description:
-        'Confirms the current transfer only after a fresh final exact spoken confirmation following the server read-back. It acts ONLY on a preview that send_token created in THIS SAME conversation: without that preview it fails, and the recovery is to call send_token, never to insist. A "yes" answering any other question is not a transfer confirmation. A model tool call is not authorization. Takes no parameters.',
+        'Confirms the current transfer only after a fresh final spoken confirmation following the preview. It acts ONLY on a preview that send_token created in THIS SAME conversation: without that preview it fails, and the recovery is to call send_token, never to insist. A "yes" answering any other question is not a transfer confirmation. A model tool call is not authorization. Takes no parameters.',
       inputSchema: emptyInputSchema,
       execute: () => decideTransfer('confirm', context),
     },
     {
       name: 'cancel_transfer',
       description:
-        'Cancels the current transfer only after a fresh final exact spoken cancellation following the server read-back. Takes no parameters.',
+        'Cancels the current transfer only after a fresh final spoken cancellation following the preview. Takes no parameters.',
       inputSchema: emptyInputSchema,
       execute: () => decideTransfer('cancel', context),
     },

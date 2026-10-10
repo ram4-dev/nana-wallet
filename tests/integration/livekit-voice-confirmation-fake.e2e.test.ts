@@ -163,6 +163,18 @@ describe("fake LiveKit voice authorization E2E", () => {
     expect(worker.dispatches()).toBe(1);
   });
 
+  it("waits for a final agreement already in flight when the tool call wins the race", async () => {
+    const worker = harness();
+    await worker.send();
+
+    const confirmation = worker.confirm();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    worker.speakDecision("dale");
+
+    await expect(confirmation).resolves.toMatchObject({ status: "sent" });
+    expect(worker.dispatches()).toBe(1);
+  });
+
   it("cancels only the active preview and never dispatches a transfer", async () => {
     const worker = harness();
     await worker.send();

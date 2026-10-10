@@ -19,3 +19,14 @@
 - [ ] 2.1 Add metadata-only gate diagnostics and observe a live call before any timing change.
 - [ ] 2.2 Run lint, typecheck, build and applicable evals; restart worker and verify deployed strings.
 - [ ] 2.3 Observe live ordinary-agreement transfer and balance change; later tasks remain deferred.
+
+## Work Unit Evidence — 2.1a delayed final transcription
+
+- [x] 2.1a Test then fix the observed final-transcription race using a bounded wait, preserving authentication, ordering, preview identity and one-use.
+
+| Evidence | Result |
+| --- | --- |
+| Focused test command and exact result | `npx vitest run tests/unit/livekit/voice-decision-transcripts.test.ts tests/unit/livekit/voice-decision-gate-wait.test.ts tests/unit/livekit/voice-decision-gate.test.ts tests/integration/livekit-voice-confirmation-fake.e2e.test.ts` — 4 files passed, 39 tests passed, 0 failed. |
+| Runtime harness command/scenario and exact result | The command above includes `livekit-voice-confirmation-fake.e2e.test.ts`: a `confirm_transfer` call starts before a final `dale`, then completes once the final authenticated evidence arrives. Result: 9 tests passed in that file. |
+| Static checks | `npm run lint && npm run typecheck` — both passed with exit 0. |
+| Rollback boundary | Revert `waitAndConsume`, the current-preview listener binding, voice tool descriptions, and their focused tests. This leaves the existing synchronous `consume` path and financial dispatch architecture intact. |

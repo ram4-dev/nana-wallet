@@ -38,6 +38,17 @@ describe("voice decision transcript binding", () => {
     expect(gate.consume("preview-1", "confirm")).toBe("confirmed");
   });
 
+  it("binds an incoming transcript to the persisted preview and wakes its waiter", async () => {
+    const { gate, session } = setup();
+    gate.prepare("persisted-preview-id", 1_000);
+    const waiting = gate.waitAndConsume("persisted-preview-id", "confirm");
+
+    transcript(session, { createdAt: 1_001 });
+
+    await expect(waiting).resolves.toBe("confirmed");
+    expect(gate.consume("preview-1", "confirm")).toBeUndefined();
+  });
+
   it("detaches cleanly and does not route transcripts through a generic conversation API", () => {
     const { gate, session, detach } = setup();
     detach();
