@@ -3913,3 +3913,168 @@ as retryable. Recorded as an observation for the backend owner, not silently "fi
 the contact surface is `AddTrustedRecipient`, which `WalletLifecycle` renders, and that component
 reports wallet readiness — a different concern (PEW-005) — with no contact permission wording to
 correct.
+
+---
+
+## Task 3.4 — the browser E2E harness for the screen vertical
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]` — see "Checkbox decision" below
+for why `[x]` and not `[ ]`).
+
+This task was resumed after a previous run was killed by a timeout **after** writing the harness and
+**before** verifying or committing it. The two new files were therefore treated as untrusted: they
+were verified by execution, not adopted. Two defects found by that verification were fixed in this
+same unit (below); everything else was confirmed by the real run.
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `scripts/run-trusted-recipient-browser-e2e.mjs` | New. Plain-node orchestrator (shape of `scripts/run-browser-e2e.mjs` / `run-notifications-browser-e2e.mjs`): spawns the driver, merges its scenario lines, runs the MSW-fixture suite, runs the Playwright layer, prints the full scenario list, kills its children, exits 1 on any FAIL. |
+| `scripts/trusted-recipient-browser-e2e-driver.ts` | New. Boots the REAL backend on port 3129 through the repository's documented seam (`buildTestServer`, `tests/fixtures/test-server.ts`) against the REAL database, then drives the create / edit / remove / reload / retry / alias / readiness scenarios over real HTTP and real Postgres, plus two `psql` read-only assertions. |
+| `package.json` | `"test:e2e:trusted-recipient-browser": "node scripts/run-trusted-recipient-browser-e2e.mjs"` — the exact script name task 3.4 requires, beside the two sibling E2E scripts. |
+
+#### What the unit delivers, and over which transport
+
+The policy adapter is driven over a **fake transport**: this deployment wires no signed apply
+capability into the HTTP API, so the adapter holds the `unavailable` port, issues **no PATCH** and the
+readiness honestly stays `pending` / `retryable_failure` (observed: `retry` → `202`,
+`reason=provider_unavailable: this deployment has no signed apply capability wired into the HTTP
+API`). No live provider is ever contacted. The API + database + adapter are real: every scenario is an
+HTTP round trip against a listening Fastify server in front of this worktree's Postgres, and two
+scenarios assert the durable effect directly in the database.
+
+#### Executed versus merely implemented (the honesty table)
+
+`npm run test:e2e:trusted-recipient-browser` → **SCENARIOS: 25  PASS: 19  FAIL: 1  BLOCKED: 5**,
+exit 1.
+
+| # | Scenario | Status | Operated here? |
+|---|---|---|---|
+| 1 | driver: real backend listening over the real database with the fixture identity seam | PASS | executed |
+| 2 | positive control: `GET /v1/me` resolves the fixture identity | PASS | executed |
+| 3 | create: `POST /v1/contacts` persists the recipient with an honest permission snapshot | PASS | executed |
+| 4 | create: the served payload carries no key material | PASS | executed |
+| 5 | reload: `GET /v1/contacts` observes the same `permission.state` | PASS | executed |
+| 6 | retry: `POST /v1/recipient-policy/retry` answers honestly, never a fabricated `applied` | PASS | executed |
+| 7 | retry from `retryable_failure`: stays retryable instead of claiming success | PASS | executed |
+| 8 | duplicate alias: a second recipient with the same address is accepted as a distinct alias | PASS | executed |
+| 9 | duplicate alias: the address-change pre-flight read reports `lastAlias=false` | PASS | executed |
+| 10 | edit: `PATCH /v1/contacts/:id` replaces the address and returns an honest permission | PASS | executed |
+| 11 | edit: an address replacement carrying the contract-approved pre-flight disclosure is accepted | **FAIL** | executed — the vertical is red (see the finding below) |
+| 12 | edit disclosure: the address-change pre-flight read carries the affected grants | PASS | executed |
+| 13 | remove: `DELETE` returns `{contact, revocation}` and never announces an unverified revocation as `applied` | PASS | executed |
+| 14 | remove: a second `DELETE` is a 404, not a second revocation | PASS | executed |
+| 15 | no chain picker: an explicit chain is refused as an unknown key (`DATOS_INVALIDOS`) | PASS | executed |
+| 16 | no ready permission: the recipient stays saved-and-not-enabled with no applied policy id | PASS | executed |
+| 17 | durable intent: the fake transport recorded the composed revision instead of writing a policy | PASS | executed |
+| 18 | MSW fixtures: every readiness state and every new error code is served by the fixture layer | PASS | executed |
+| 19 | browser: playwright chromium launch | PASS | executed |
+| 20 | browser: frontend dev server ready (dev MSW worker opted out) | PASS | executed |
+| 21 | browser layer: an authenticated session is required | BLOCKED | **implemented, NOT executed** |
+| 22 | browser: the recipient row renders the readback-backed state and never "habilitado" | BLOCKED | **implemented, NOT executed** |
+| 23 | browser: the address edit shows the revocation disclosure before submitting anything | BLOCKED | **implemented, NOT executed** |
+| 24 | browser: the recipient form exposes no chain picker | BLOCKED | **implemented, NOT executed** |
+| 25 | browser: removing the recipient shows the disclosure dialog before deleting | BLOCKED | **implemented, NOT executed** |
+
+The four browser scenarios are written, reachable and were launched — chromium started and the real
+frontend dev server came up — but they never operated a working flow. Exact blocker, as the harness
+prints it: *no authenticated browser session: the frontend attaches only
+`usePrivy().getAccessToken()` (`apps/nana-wallet/src/routes/__root.tsx`, `ApiTokenBridge`) and this
+environment has no Privy credentials, so the real API answers 401 and the recipient surface never
+renders*. There is no demo-token seam left in the frontend to substitute (the harness passes
+`VITE_IDENTITY_PROVIDER=demo`, which the frontend does not read). **No browser pass is claimed.**
+
+#### The one real FAIL — a defect this harness found, owned outside this task
+
+`PATCH /v1/contacts/:id` with `expectedRevokedGrantIds` → `422 DATOS_INVALIDOS`
+(`The request did not match the strict recipient policy contract: expectedRevokedGrantIds
+(unrecognized_keys)`). The mirrored contract declares the field optional on the address-change patch
+(`src/contracts/http.ts:348`), the mirrored frontend sends it
+(`apps/nana-wallet/src/features/wallet/AddTrustedRecipient.tsx:160`), and the service's own strict
+input schema does not accept it (`recipientEditInputSchema`, `src/wallet/policy/service.ts:169-186`).
+So the screen's disclosure-carrying address replacement is rejected end to end today, and the screen's
+own pre-flight read (scenario 12) answers `200`.
+
+The harness **keeps the strict assertion** (`200`-or-`409`) and reports the `422` by its exact code
+rather than widening itself to "whatever the API answers": that would be the vacuous assertion this
+task inherits a warning about. Fixing it belongs to the PATCH owner (task 3.2's route, which does not
+forward the field, plus acceptance in the service schema, which must then really run the
+abort-and-retry disclosure guard rather than ignore the field). Recorded here, not patched here: it is
+outside this task's boundary and outside this unit's review budget.
+
+#### RED → GREEN and the mutation record
+
+The harness body was inherited from the killed run, so no RED was authored for it; the RED evidence is
+the verification run against the untrusted files, and the two defects it exposed were fixed with the
+mutation record below (each mutation observed by name, then restored).
+
+| Phase | Evidence |
+|---|---|
+| RED (untrusted harness, run 1) | The harness ran and reported **2 FAIL / 3 BLOCKED**: (a) the `expectedRevokedGrantIds` rejection above; (b) the browser layer classified an absent Privy session as *"the recipient surface never rendered"* — a screen FAIL for an environment blocker. Also observed: the cleanup violated `recipient_versions_recipient_id_fkey` (`Key (id)=(0c7a0f2d-…) is still referenced from table "recipient_versions"`), so every run leaked its recipients. |
+| Mutation (cleanup guard) | Removing the ordered delete of `recipient_versions` reproduces the FK error on stderr and leaves residue rows; restoring the ordered delete (intents → versions → recipients, one `psql` call) gives `SELECT count(*) … name LIKE 'E2E-TR %'` = **0** after a full run. |
+| Mutation (browser classification guard) | With the `noSession` branch removed, the run records `[FAIL] browser: the recipient row renders…` plus 3 BLOCKED (run 1, observed). With it restored, the same run records the 4 scenarios as BLOCKED carrying the exact blocker, and chromium/dev-server readiness as PASS (run 2, observed). The guard is therefore load-bearing in both directions: it converts an environment blocker into a BLOCKED line **and** keeps any other rendering failure a FAIL. |
+| GREEN | Run 2: **25 scenarios, 19 PASS, 1 FAIL (the reported vertical defect), 5 BLOCKED (the implemented browser layer), exit 1** — no FAIL outside the named defect, no vacuous pass. |
+| Refactor | None beyond the two fixes; no restructuring of the inherited harness. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npm run test:e2e:trusted-recipient-browser` (run 1, untrusted files) | 24 scenarios: 19 PASS / 2 FAIL / 3 BLOCKED, exit 1; FK-violating cleanup |
+| `npm run test:e2e:trusted-recipient-browser` (run 2, after the two fixes) | **25 scenarios: 19 PASS / 1 FAIL / 5 BLOCKED, exit 1** — the scenario list is printed in full, with the FAIL name and the BLOCKED blocker |
+| `docker exec colloseumfeat-solana-operational-db-1 psql … -tA -c "SELECT count(*) FROM recipients WHERE user_id='…0001' AND name LIKE 'E2E-TR %'"` | **0** — the cleanup is now FK-safe and leaves no residue |
+| `(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)` | lint clean, typecheck clean, **21 files passed, 128 tests passed**, exit 0 |
+| `npm run lint && npm run typecheck` (repo root) | clean, clean |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts tests/unit/recipient-policy-config.test.ts` | **24 files passed, 299 tests passed** |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` | **23 files passed, 290 tests passed** (the same suites under the narrower glob) |
+
+`npm run db:migrate` was deliberately not run: it fails locally on the pre-existing
+`relation "conversations" already exists` and the database already reflects the Supabase chain. The
+driver's `DATABASE_URL` default points at the worktree's container
+(`colloseumfeat-solana-operational-db-1`, host port 55470).
+
+#### Deviations and decisions
+
+1. **The driver boots the real server in-process rather than spawning `src/server.ts`.** Production
+   identity is always Privy (`PRIVY_APP_ID` + `PRIVY_VERIFICATION_KEY`), so an out-of-process harness
+   cannot authenticate without credentials this change never touches. `buildTestServer` is the
+   repository's documented seam (`tests/fixtures/test-server.ts`) and the same one every server-based
+   integration suite uses, so the harness still drives real HTTP + real Postgres + the real adapter —
+   and it can no longer claim anything the browser layer did not actually do.
+2. **BLOCKED never counts as a pass, and a FAIL is never softened.** The harness prints the whole
+   scenario list and separates `FAILING SCENARIOS` from `BLOCKED SCENARIOS (implemented, NOT
+   executed — exact blocker)`; it exits 1 on any FAIL and exits 0 with BLOCKED only when nothing
+   failed, which is the sibling convention (`scripts/run-browser-e2e.mjs`: *"A chromium blocker is not
+   a FAIL (-> exit 0, documented BLOCKED)"*).
+3. **`scripts/**` is outside both `tsc -p tsconfig.test.json` and `tsconfig.json`**, exactly like the
+   sibling `scripts/seed-notifications-browser-e2e.ts`. The driver's type safety is therefore not
+   covered by `npm run typecheck`; it is covered by execution (20 of the 25 scenarios run through it).
+
+#### Checkbox decision — `[x]`, and why
+
+The task's own substance is the deliverable, and it is present and run: the harness, its driver, the
+exactly-named `package.json` script, and every scenario it enumerates (create, edit, remove, reload
+with the same `permission.state`, retry from `retryable_failure`, honest unverified revocation,
+duplicate alias, saved-not-enabled with no ready permission, no chain picker, MSW fixtures for every
+state and error code) — with the scenario list recorded in the harness output. The unexecuted state is
+recorded precisely, by name, with its exact blocker. The single FAIL is the harness correctly
+reporting a real defect **outside this task's boundary** (task 3.2's PATCH acceptance) and is recorded
+as a finding with its exact code and the two files that disagree — it is not a missing deliverable, an
+unrun scenario, or a vacuous pass. Had the harness itself been wrong or unrun, the box would stay
+`[ ]`; it is not.
+
+#### Workload / PR boundary
+
+One commit, one work unit: the harness, its driver, and the `package.json` script (733 lines added
+across three files), inside the parent-assigned `PR 5` slice (tasks 3.1–3.4, rollback boundary
+"contract files, `src/api/contacts.ts`, frontend surface"). No `size:exception` is requested, no
+production file is touched, no review/receipt/delivery gate is started by this phase. Task 5.4 owns
+the re-run against the deployed stack, where the browser scenarios need a Privy session to become
+executable.
+
+#### Commit
+
+`test(e2e): drive the trusted-recipient screen vertical through a real browser harness` — see the
+report envelope for the SHA.

@@ -25,6 +25,7 @@
     "test:wdk-manual": "vitest run tests/integration/wdk-transfer.manual.test.ts",
     "test:e2e:browser": "node scripts/run-browser-e2e.mjs",
     "test:e2e:notifications": "node scripts/run-notifications-browser-e2e.mjs",
+    "test:e2e:trusted-recipient-browser": "node scripts/run-trusted-recipient-browser-e2e.mjs",
     "test:e2e:wdk-mcp": "WDK_E2E=1 vitest run tests/e2e/wdk-mcp-connection.e2e.test.ts",
     "test:e2e:recipient-memory-llm": "RECIPIENT_MEMORY_LLM_E2E=1 vitest run tests/e2e/recipient-memory-llm.e2e.test.ts",
     "db:migrate": "tsx src/db/migrate.ts",
