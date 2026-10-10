@@ -3039,3 +3039,68 @@ Status: **completed**. Persisted checkbox updated in
 4. **The 2.11 fixture cannot delete a state row.** `recipient_app` holds no `DELETE` on
    `recipient_policy_state` (`015` grants SELECT, INSERT, UPDATE), so "the binding is gone" is expressed
    as the row becoming unverified — which is also what 2.12 will do. Worth knowing for 2.12's tests.
+
+---
+
+### Task 2.13 — the two non-destructive feature switches (design §13)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (`- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `src/config/recipient-policy.ts` | **New.** `readRecipientPolicyWriter` / `isRecipientPolicyWriterFrozen`, `isRecipientPolicyFixtureMode`, `RECIPIENT_POLICY_WRITER_FROZEN_REASON`, and the reconciler switch, which moves here from the reconciler so the whole startup matrix is one function. Parsing rules are stated in the header: absent ⇒ documented default; unrecognised non-empty ⇒ fail closed; `frozen` vetoes the reconciler; an explicit value beats the fixture default. |
+| `src/wallet/policy/reconciler.ts` | The local `isRecipientPolicyReconcilerEnabled` definition is replaced by a re-export of the config module's, so the loop's importers and the existing reconciler suite keep reading it from the loop while the matrix has a single implementation. |
+| `src/wallet/policy/service.ts` | `selectPolicyApplyPort`: resolves the `RECIPIENT_POLICY_WRITER` switch to the `unavailable` arm — the one `PolicyApplyPort` with no `apply` method — so "issues no PATCH, leaves the attached policy intact" is structural. Frozen can only remove capability. |
+| `src/server.ts`, `src/runtime/dependencies.ts` | Both processes that own a signer now resolve their port through `selectPolicyApplyPort`, and both reconciler guards read the fixture-aware switch. The duplicated `&& !process.env.VITEST` / `if (…VITEST) return null` fixture checks are deleted: that mode is now part of the switch's matrix instead of being re-implemented at each call site. |
+| `.env.example` | Both variables documented next to their neighbours, with the defaults, the non-destructiveness statement, and the fail-closed rule. |
+| `tests/unit/recipient-policy-config.test.ts` | **New.** 9 cases: the writer matrix (default/enabled/frozen/case-whitespace tolerance/fail-closed sweep), the reconciler matrix (live default, explicit values, fixture mode, unknown value, frozen-writer veto), and the non-destructiveness group (the frozen port's key set, the absent mutation surface, the "never selects the writer for ANY value" sweep, and the full 8-cell matrix). |
+
+#### What the unit delivers
+
+- **The switch has teeth where the writes are.** `frozen` is resolved at the two places a signed capability is built
+  (the API process and the worker), so no PATCH can be issued by either process; the reconciler is not started at
+  all, because a loop that cannot apply anything would only write statuses nobody asked for.
+- **`frozen` is a capability removal, not a behaviour flag.** The selected port has exactly two keys (`kind`,
+  `reason`) and no `apply`, so the "no PATCH" property cannot be lost by a later edit inside the apply path.
+- **Neither switch can widen authority.** Every unrecognised value fails closed for both switches, and `frozen`
+  vetoes the reconciler even when it is explicitly enabled — both are narrowings. Nothing in either switch deletes
+  a policy, clears a binding, rotates a key, or re-enables a revoked grant.
+- **One startup matrix.** The fixture-mode default (`VITEST` or `WDK_TOOLS_SOURCE=fixture`) and the frozen-writer
+  veto are expressed once in the config module and unit-proven, instead of being re-implemented as `&& !VITEST`
+  guards at each call site.
+
+#### TDD Cycle Evidence
+
+| Phase | Evidence |
+|---|---|
+| RED | `tests/unit/recipient-policy-config.test.ts` was written before the config module existed: `Cannot find module '../../src/config/recipient-policy.js'` — a collection-level RED, which is honest but weak on its own, so the parser's rules are additionally proven load-bearing by the two mutations below. |
+| GREEN | After the config module, the resolver and the wiring: **9 passed / 9**. |
+| Mutation A | `isRecipientPolicyReconcilerEnabled` restored to the pre-2.13 one-liner (`?.trim() !== "disabled"`): **4 failed / 5 passed (9)**, failing by name exactly the four matrix cases — "defaults to disabled in fixture mode, and fixture mode is explicit", "is off whenever the writer is frozen, even when explicitly enabled", "fails closed on an unrecognised value", "keeps the reconciler switch non-destructive in every matrix cell". File restored from a byte copy. |
+| Mutation B | `selectPolicyApplyPort` reduced to `return input.signed;`: **2 failed / 7 passed (9)**, failing by name "resolves the frozen writer to a port with no mutation surface at all" and "never selects the signed port for ANY writer value". File restored from a byte copy. |
+| TRIANGULATE | Added after GREEN: the case/whitespace tolerance row, the `Frozen`/`off`/`0`/`yes` fail-closed sweep, the 8-cell matrix, the `Object.keys(frozen)` set assertion (not only `"apply" in frozen`), the positive control that the *enabled* writer really selects the signed port, and `signed.applyCalls === 0` so a resolved-but-unused port is still detected. |
+| REFACTOR | The reconciler's local predicate became a re-export, and the two call sites lost their duplicated fixture-mode conjunction. |
+
+#### Commands run and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/recipient-policy-config.test.ts` (RED) | collection error — module absent (see above) |
+| `npx vitest run tests/unit/recipient-policy-config.test.ts` | **9 passed / 9** |
+| `npx vitest run tests/unit/recipient-policy-config.test.ts` (after mutation A / B) | **4 failed / 5** and **2 failed / 7**, attributed by name above |
+| `npx vitest run tests/integration/recipient-policy-reconciler.test.ts tests/unit/recipient-policy-config.test.ts` | **2 files passed, 22 tests passed** (the pre-existing 2.9 switch contract is preserved verbatim) |
+| `npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` | **21 files passed / 283 tests passed, 1 failed** — see the isolation note below |
+| `npx vitest run tests/integration/grant-consumption-revision.test.ts tests/integration/delegated-grants-*.test.ts tests/integration/grant-claim-release.test.ts tests/integration/lock-order-concurrency.test.ts tests/unit/lock-order-vector.test.ts tests/unit/recipient-policy-config.test.ts` | **8 files passed, 67 tests passed** |
+| `npm run lint` | clean (`eslint src tests --max-warnings=0`) |
+| `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`) |
+
+Isolation note: in the 22-file run, `tests/integration/recipient-policy-repository.test.ts > recipient_policy_sync_intent > claims a due intent from the system context and leaves a foreign user unable to see it` failed; re-run alone it is **20 passed / 20** (file passed). That is the documented parallel-load/one-Postgres contention class, not a behavioural regression from this unit — nothing in this diff touches the repository, the intent claim, or the system context.
+
+#### Deviations from the design
+
+1. **Fixture mode is read from two explicit markers** (`VITEST`, `WDK_TOOLS_SOURCE=fixture`), because the repository had no single fixture-mode variable: the VITEST opt-out existed as four separate call-site guards. The switch now owns that default; the call-site guards that duplicated it were deleted rather than kept as a second opinion. A deployment that explicitly sets `RECIPIENT_POLICY_RECONCILER=enabled` still wins over the fixture default (documented in the module header).
+2. **An unrecognised reconciler value is now `false`.** Pre-2.13 it was `true` for anything except `disabled`, so `RECIPIENT_POLICY_RECONCILER=yes` used to start the loop. The new reading fails closed; it only ever narrows authority, and no suite or deployment depends on the old meaning.
+3. **`frozen` vetoes the reconciler.** §13 lists the two switches independently, but a reconciler that cannot apply anything would only write statuses nobody asked for, so the writer switch wins. Recorded here because it is a precedence decision, not a reading of the design's wording.
+4. **`selectPolicyApplyPort` lives in `service.ts`, not in the config module:** the port types and `createUnavailablePolicyApplyPort` are already owned there, and importing them from `apply.ts` would have created a runtime cycle with `service.ts`. The config module stays pure and dependency-free.

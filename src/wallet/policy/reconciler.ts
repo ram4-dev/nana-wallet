@@ -98,16 +98,13 @@ export function reconcilerBackoffMs(
 }
 
 /**
- * The `RECIPIENT_POLICY_RECONCILER` switch (design §13). Enabled by default;
- * only an explicit `disabled` turns the loop off. Task 2.13 owns the full
- * startup matrix (including fixture mode) — this reads the one value the loop
- * needs and never widens or narrows authority by itself.
+ * The `RECIPIENT_POLICY_RECONCILER` switch now lives with its sibling
+ * `RECIPIENT_POLICY_WRITER` in the config module (design §13, task 2.13), where
+ * the startup matrix — fixture mode, an unrecognised value, and a frozen writer
+ * that must be able to stop all writes — is expressed once and unit-proven.
+ * Re-exported so the loop's own importers keep reading it from the loop.
  */
-export function isRecipientPolicyReconcilerEnabled(
-  environment: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return environment.RECIPIENT_POLICY_RECONCILER?.trim() !== "disabled";
-}
+export { isRecipientPolicyReconcilerEnabled } from "../../config/recipient-policy.js";
 
 // ---------------------------------------------------------------------------
 // Seams

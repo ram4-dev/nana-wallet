@@ -12,6 +12,7 @@ import {
 import { RecipientPolicyRepository } from "../wallet/policy/repository.js";
 import {
   createRecipientPolicyService,
+  selectPolicyApplyPort,
   type ActiveGrantLister,
 } from "../wallet/policy/service.js";
 import {
@@ -20,10 +21,10 @@ import {
 } from "../wallet/policy/apply.js";
 import { refusingContactPort } from "../wallet/grants/privy-policy-runtime.js";
 import {
-  isRecipientPolicyReconcilerEnabled,
   startRecipientPolicyReconciler,
   type PolicyReconcilerLoop,
 } from "../wallet/policy/reconciler.js";
+import { isRecipientPolicyReconcilerEnabled } from "../config/recipient-policy.js";
 import { PostgresConversationRepository } from "../conversations/postgres-repository.js";
 import {
   createWalletConversationService,
@@ -306,8 +307,9 @@ export function startWorkerPolicyReconciler(input: {
   authorizationSigner?: PayloadSigner;
   environment: NodeJS.ProcessEnv;
 }): PolicyReconcilerLoop | null {
+  // Task 2.13: the switch owns the fixture-mode default and the frozen-writer
+  // veto (it used to be `!== "disabled"` plus a separate VITEST check here).
   if (!isRecipientPolicyReconcilerEnabled(input.environment)) return null;
-  if (input.environment.VITEST) return null;
   if (!input.privyServer || !input.authorizationSigner) return null;
   const repository = new RecipientPolicyRepository(input.database);
   const transport = createPrivyServerApplyTransport({
@@ -325,9 +327,14 @@ export function startWorkerPolicyReconciler(input: {
       input.database.withUserTransaction(userId, (transaction) =>
         repository.listActiveLedgerGrants(userId, walletId, chain, transaction),
       )) as ActiveGrantLister,
-    provider: createSignedPolicyApplyPort({
-      transport,
-      signAuthorization: (payload) => input.authorizationSigner!(payload),
+    // Task 2.13: same resolution as the API process — the worker is the other
+    // process that owns a signer, so the frozen writer must stop it here too.
+    provider: selectPolicyApplyPort({
+      environment: input.environment,
+      signed: createSignedPolicyApplyPort({
+        transport,
+        signAuthorization: (payload) => input.authorizationSigner!(payload),
+      }),
     }),
   });
   return startRecipientPolicyReconciler({

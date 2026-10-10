@@ -43,6 +43,10 @@
  */
 import { z } from "zod";
 import type { DatabaseClient, Queryable } from "../../db/client.js";
+import {
+  isRecipientPolicyWriterFrozen,
+  RECIPIENT_POLICY_WRITER_FROZEN_REASON,
+} from "../../config/recipient-policy.js";
 import { isValidRecipientAddress } from "../../memory/address.js";
 import { SOLANA_MAX_PER_TRANSFER_LAMPORTS } from "../embedded.js";
 import { appendGrantAudit } from "../grants/consumption.js";
@@ -406,6 +410,31 @@ export function createUnavailablePolicyApplyPort(
   reason: string,
 ): PolicyApplyUnavailablePort {
   return { kind: "unavailable", reason };
+}
+
+/**
+ * Task 2.13 / design §13: resolve the apply port from `RECIPIENT_POLICY_WRITER`.
+ *
+ * `frozen` returns the `unavailable` port — the one arm of `PolicyApplyPort` with
+ * NO mutation method at all — so "issues no PATCH, leaves the attached policy
+ * intact" is structural rather than a condition buried inside the apply path. A
+ * frozen writer also resolves the reconciler switch off (see
+ * `src/config/recipient-policy.ts`), because a loop that cannot apply anything
+ * would only write statuses nobody asked for.
+ *
+ * Non-destructive in both directions: freezing cannot delete a policy, clear a
+ * binding, or widen authority — it can only remove the capability to write.
+ */
+export function selectPolicyApplyPort<TPort extends PolicyApplySignedPort>(input: {
+  environment: NodeJS.ProcessEnv;
+  signed: TPort;
+}): PolicyApplyUnavailablePort | TPort {
+  if (isRecipientPolicyWriterFrozen(input.environment)) {
+    return createUnavailablePolicyApplyPort(
+      RECIPIENT_POLICY_WRITER_FROZEN_REASON,
+    );
+  }
+  return input.signed;
 }
 
 export type RecipientPolicyServiceDependencies = {

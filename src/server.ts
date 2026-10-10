@@ -42,6 +42,7 @@ import { createRecipientContactMutationPort } from "./memory/contact-policy-adap
 import {
   createRecipientPolicyService,
   createUnavailablePolicyApplyPort,
+  selectPolicyApplyPort,
   type ActiveGrantLister,
 } from "./wallet/policy/service.js";
 import { RecipientPolicyRepository } from "./wallet/policy/repository.js";
@@ -50,10 +51,10 @@ import {
   createPrivyServerApplyTransport,
 } from "./wallet/policy/apply.js";
 import {
-  isRecipientPolicyReconcilerEnabled,
   startRecipientPolicyReconciler,
   type PolicyReconcilerLoop,
 } from "./wallet/policy/reconciler.js";
+import { isRecipientPolicyReconcilerEnabled } from "./config/recipient-policy.js";
 import { EmbeddingService } from "./memory/embedding.js";
 import { FinancialTaskRegistry } from "./conversations/financial-task-registry.js";
 import { readApiProcessConfig } from "./config/process.js";
@@ -416,8 +417,10 @@ export function buildServer(options: {
     // path never needs the signer and the two processes cannot both own a wallet
     // (the lease arbitrates). Started inside onReady — never at build time — and
     // stopped, awaiting the in-flight pass, in onClose.
-    const policyReconcilerEnabled =
-      isRecipientPolicyReconcilerEnabled(process.env) && !process.env.VITEST;
+    // Task 2.13: the switch itself now owns the fixture-mode default (this was
+    // `&& !process.env.VITEST` here and in the worker) and refuses to run while
+    // `RECIPIENT_POLICY_WRITER=frozen`, so there is one startup matrix, not two.
+    const policyReconcilerEnabled = isRecipientPolicyReconcilerEnabled(process.env);
     let policyReconciler: PolicyReconcilerLoop | null = null;
     app.addHook("onReady", async () => {
       if (!policyReconcilerEnabled || !privyServer || !authorizationSigner) return;
@@ -430,9 +433,15 @@ export function buildServer(options: {
         repository: policyRepository,
         contacts: policyContactsPort,
         listActiveGrants: listActivePolicyGrants,
-        provider: createSignedPolicyApplyPort({
-          transport,
-          signAuthorization: (payload) => authorizationSigner(payload),
+        // Task 2.13: the writer switch is resolved HERE, at the only place a
+        // signed capability is built, so `frozen` yields the port with no
+        // mutation surface and no PATCH can be issued from this process.
+        provider: selectPolicyApplyPort({
+          environment: process.env,
+          signed: createSignedPolicyApplyPort({
+            transport,
+            signAuthorization: (payload) => authorizationSigner(payload),
+          }),
         }),
       });
       policyReconciler = startRecipientPolicyReconciler({
