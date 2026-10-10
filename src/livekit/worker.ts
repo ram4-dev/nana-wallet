@@ -30,9 +30,12 @@ import {
   RoomConversation,
 } from "./room-conversation.js";
 import {
+  createLegacyToolSourceWalletReads,
   createWorkerDependencies,
   type WorkerDependencies,
 } from "../runtime/dependencies.js";
+import { FixtureWalletProvider } from "../wallet/fixture-provider.js";
+import type { WalletProvider } from "../wallet/provider.js";
 import { walletChainFamilyForNetwork } from "../wallet/chain-family.js";
 import {
   bindWalletForUser,
@@ -301,10 +304,56 @@ async function runJob(
   await sessionClosed;
 }
 
+/**
+ * The wallet pair the voice e2e harness needs, or nothing at all.
+ *
+ * WHY THIS EXISTS
+ * ---------------
+ * The worker has no fixture wallet path. `createWorkerDependencies` reaches
+ * `createCoreDependencies` with no injection, which yields the fail-closed
+ * `createUnavailableWalletProvider`; the only configured alternative is the
+ * per-user Privy Solana resolver, which makes a real Privy API call and requires
+ * a wallet that actually exists there. So without this seam a voice run can
+ * never read a balance, and no wallet scenario is testable over voice.
+ *
+ * It mirrors the HTTP test helper's default pair exactly
+ * (tests/fixtures/test-server.ts): `FixtureWalletProvider` on the write side and
+ * `createLegacyToolSourceWalletReads()` on the read side. The two are not
+ * interchangeable — the read routes serve the WDK tool source — so both are
+ * injected, matching that helper.
+ *
+ * FAIL-CLOSED RULES
+ * -----------------
+ * The seam is OFF unless `VOICE_E2E_FIXTURE_WALLET=1` is set explicitly, so the
+ * default behaviour of this entrypoint is byte-identical to before. Setting the
+ * flag while `WDK_TOOLS_SOURCE=live` throws instead of quietly serving fixture
+ * balances to a live deployment: a loud failure is the only acceptable outcome
+ * for that combination.
+ */
+function workerWalletInjection(environment: NodeJS.ProcessEnv): {
+  fixtureWallet?: { wallet: WalletProvider; walletReads: WalletProvider };
+} {
+  if (environment.VOICE_E2E_FIXTURE_WALLET !== "1") return {};
+  if ((environment.WDK_TOOLS_SOURCE ?? "fixture") === "live")
+    throw new Error(
+      "VOICE_E2E_FIXTURE_WALLET=1 cannot be combined with WDK_TOOLS_SOURCE=live: the voice fixture wallet must never serve a live deployment.",
+    );
+  return {
+    fixtureWallet: {
+      wallet: new FixtureWalletProvider(),
+      walletReads: createLegacyToolSourceWalletReads(),
+    },
+  };
+}
+
 const agent = defineAgent({
   entry: async (ctx) => {
     const config = readWorkerProcessConfig();
-    const dependencies = createWorkerDependencies();
+    const dependencies = createWorkerDependencies(
+      process.env,
+      undefined,
+      workerWalletInjection(process.env),
+    );
     const runtime = createLiveKitWorkerRuntime({
       dependencies,
       shutdownTimeoutMs: config.shutdownTimeoutMs,

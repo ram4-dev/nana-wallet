@@ -52,6 +52,11 @@ services:
     # row in `user_wallets` for (user_id, chain_family='solana'). That is a seed,
     # not a credential problem — no Privy API call happens for a balance read.
     #
-    # So the e2e fixture must seed a ready user_wallets row for the voice user.
+    # So the e2e fixture must opt into the worker's fixture wallet seam.
     # Tracked in .agent-workflow/tasks/voice-room-e2e/02-research.md.
+    environment:
+      # Explicit opt-in, default off. Without it the worker keeps the fail-closed
+      # wallet it has always had. Never combine with WDK_TOOLS_SOURCE=live; the
+      # entrypoint throws on that pair rather than serving fixture balances.
+      VOICE_E2E_FIXTURE_WALLET: "1"
 

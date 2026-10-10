@@ -199,10 +199,25 @@ export function createCoreDependencies(
 export function createWorkerDependencies(
   environment: NodeJS.ProcessEnv = process.env,
   financialTasks = new FinancialTaskRegistry(),
+  // Test seam, mirroring the HTTP helper's default pair
+  // (tests/fixtures/test-server.ts). It exists because the worker has no fixture
+  // wallet path of its own: createCoreDependencies defaults to the fail-closed
+  // createUnavailableWalletProvider, and the per-user resolver needs real Privy
+  // credentials plus a wallet that exists there.
+  //
+  // It deliberately does two things, not one. Injecting the providers is not
+  // enough, because the voice path prefers `walletForUser` when it is defined
+  // (see runJob): the resolver has to be suppressed as well or the injected
+  // fixture never serves anything.
+  //
+  // A caller that passes nothing keeps exactly the production behaviour.
+  options: {
+    fixtureWallet?: { wallet: WalletProvider; walletReads: WalletProvider };
+  } = {},
 ): WorkerDependencies {
   const database = createConfiguredDatabaseClient(environment);
   const conversations = new PostgresConversationRepository(database);
-  const core = createCoreDependencies(environment);
+  const core = createCoreDependencies(environment, options.fixtureWallet ?? {});
   const privyServerConfig = readPrivyServerConfig(environment);
   // S2a: the worker no longer reads the authorization private key from the
   // environment. It signs Privy authorizations through the local signing
@@ -218,12 +233,16 @@ export function createWorkerDependencies(
         baseUrl: privyServerConfig.baseUrl,
       })
     : undefined;
-  const walletForUser = createConfiguredWalletForUser(
-    database,
-    environment,
-    privyServer,
-    authorizationSigner,
-  );
+  // Suppressed under the fixture seam: leaving it defined would keep the voice
+  // run on the Privy path and the injected fixture wallet would never serve.
+  const walletForUser = options.fixtureWallet
+    ? undefined
+    : createConfiguredWalletForUser(
+        database,
+        environment,
+        privyServer,
+        authorizationSigner,
+      );
   const grantCreator = createGrantCreator(
     database,
     privyServer,
