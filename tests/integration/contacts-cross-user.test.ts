@@ -64,7 +64,7 @@ suite("contacts cross-user isolation (PMU-013/019)", () => {
         payload: {
           name: "Contacto de A",
           description: "de A",
-          address: "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          address: "So11111111111111111111111111111111111111112",
         },
       });
       const createdB = await app.inject({
@@ -74,7 +74,7 @@ suite("contacts cross-user isolation (PMU-013/019)", () => {
         payload: {
           name: "Contacto de B",
           description: "de B",
-          address: "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          address: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
         },
       });
       expect(createdA.statusCode).toBe(201);

@@ -34,7 +34,7 @@ suite("/v1/contacts CRUD (fixture identity, PMU-008..012)", () => {
         payload: {
           name: "Lucas Nieto",
           description: "mi nieto",
-          address: "0x9999999999999999999999999999999999999999",
+          address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
         },
       });
       expect(created.statusCode).toBe(201);
@@ -62,14 +62,14 @@ suite("/v1/contacts CRUD (fixture identity, PMU-008..012)", () => {
         method: "PATCH",
         url: `/v1/contacts/${contact.id}`,
         payload: {
-          address: "0x8888888888888888888888888888888888888888",
+          address: "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq",
           expectedVersion: 1,
         },
       });
       expect(patched.statusCode).toBe(200);
       expect(patched.json().data).toMatchObject({
         version: 2,
-        address: "0x8888888888888888888888888888888888888888",
+        address: "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq",
       });
       const versions = await database.query<{ version: number }>(
         "SELECT version FROM recipient_versions WHERE recipient_id = $1 ORDER BY version",
@@ -92,7 +92,7 @@ suite("/v1/contacts CRUD (fixture identity, PMU-008..012)", () => {
       });
       expect(revealed.statusCode).toBe(200);
       expect(revealed.json().data.address).toBe(
-        "0x8888888888888888888888888888888888888888",
+        "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq",
       );
 
       // DELETE soft-deletes (excluded from list, row remains).

@@ -59,7 +59,7 @@ function errorReply(reply: ContactReply, error: unknown): ContactApiError {
         : error.code === "CONTACTO_NO_ENCONTRADO"
           ? 404
           : 409;
-    reply.code(422);
+    reply.code(status);
     return {
       ok: false,
       error: { code: error.code, message: error.message },
@@ -118,7 +118,10 @@ export async function registerContactsRoutes(
         return {
           ok: true,
           data: contacts.map((contact) =>
-            contactSchema.parse({ contact, permission }),
+            contactSchema.parse({
+              ...contact,
+              permission: contactPermissionSchema.parse(permission),
+            }),
           ),
         };
       } catch (error) {
