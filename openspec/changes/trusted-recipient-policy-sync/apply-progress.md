@@ -3670,3 +3670,59 @@ adapter tests of tasks 2.2/2.8 stay labelled as adapter tests, never as live evi
 
 Agreement with the change owner's standing instruction: probes requiring credentials or a real
 deployment are documented as pending, and the work continues.
+
+### Unit 1 — task 3.1, the `/v1` recipient contract mirror (backend + frontend + MSW, one work unit)
+
+`[x]` in `tasks.md`. Both sides of the contract moved in the same commit, as `AGENTS.md` requires.
+
+**What was actually missing** (the gap map was accurate): `policyReadinessSchema` was inlined inside
+`contactPermissionSchema`, the mutation bodies were **not** `.strict()`, and no endpoint/response
+schema, no frontend contact-action method and no MSW contact-action fixture existed. The six new error
+codes and `contactPermissionSchema`/`contactSchema.permission` already existed and were preserved.
+
+Backend `src/contracts/http.ts`: `policyReadinessSchema` (design §9.1's seven states) is now the named
+export `contactPermissionSchema.shape.state` reuses; `RECIPIENT_POLICY_ERROR_CODES` +
+`recipientPolicyErrorCodeSchema`; `createContactInputSchema` and `updateContactInputSchema` are
+`.strict()`; new endpoint schemas `contactsResponseSchema`, `createContactResponseSchema`,
+`updateContactResponseSchema`, `recipientPolicyResponseSchema`, `recipientPolicyRetryResponseSchema`,
+`contactActionProposalSchema`, `replaceContactActionAddressInputSchema` (strict) and
+`contactActionAddressResponseSchema`. No envelope changed and no wrapper object was added.
+
+Frontend mirror: `ContactActionAddressResponse` type and the `api.getContactAction` /
+`api.replaceContactActionAddress` methods (the existing `ApiError` code passthrough already covers the
+new codes). MSW: `POLICY_READINESS_FIXTURES` (one row per readiness state),
+`CONTACT_ACTION_PROPOSAL_FIXTURE`, and the `GET /v1/contact-actions/:proposalId` +
+`POST …/address` handlers, plus `setRecipientPolicyFixture`, `setStalePolicyRevisionConflict` and
+`setEmptyCompositionConflict` so the empty-composition and stale-revision conflicts are reachable as
+fixtures. Default served behaviour is byte-identical to before, so the frontend stays at 114 tests.
+
+**RED → GREEN.** RED: `npx vitest run tests/unit/contracts-recipient-policy.test.ts` →
+`11 failed | 1 passed (12)` — every failure an attributable `TypeError`/`AssertionError` on the absent
+exports and the non-strict bodies. GREEN after the implementation: `12 passed (12)`.
+
+**Mutation evidence (two guards, one false green found and closed).**
+
+| Mutation | Expected | Observed |
+|---|---|---|
+| Drop `.strict()` from `createContactInputSchema` | the strict-body test fails | `× rejects every server-owned key on a strict create body` — `AssertionError: {"policyId":"pol_1"}: expected true to be false`. Restored; green. |
+| Declare `syncToken: z.string().optional()` on `contactPermissionSchema` | the no-key-material test fails | **no failure at first — a false green.** The guard inspected the *parsed* payload, and zod strips undeclared-to-the-output keys, so a declared secret-ish field was invisible. The test was repaired to read the schema's declared key set (`declaredKeys`) and now fails with `AssertionError: expected [ 'syncToken' ] to deeply equal []`. Restored; green. |
+
+The repaired guard is the load-bearing one: it asserts the declared surface carries no key matching
+`secret|key|signature|token|appSecret`, and that every emitted key is declared.
+
+**Verify.**
+`npx vitest run tests/unit/contracts-recipient-policy.test.ts` → `12 passed (12)`;
+`npm run typecheck` + `npm run lint` → clean;
+`npx vitest run tests/integration/recipient-policy-*.test.ts tests/unit/policy-*.test.ts` →
+`23 files passed, 290 tests passed`;
+`npx vitest run tests/integration/api-contacts.test.ts tests/integration/contacts-cross-user.test.ts` →
+`2 files passed, 4 tests passed`;
+`cd apps/nana-wallet && npm run typecheck && npm run lint && npx vitest run` →
+`21 files passed, 114 tests passed`.
+
+**Deviation from design §9.2 (reported, not silent).** `recipientPolicyResponseSchema` is
+`contactPermissionSchema` verbatim: design §9.2 lists an optional `appliedPolicyId` on
+`GET /v1/recipient-policy`, and it is deliberately **not** exposed here because it is a provider
+policy identifier that no current read path resolves and design §9.1's closed field set governs the
+readiness read. Adding a declared-but-never-populated field would have been the same false affordance
+the repaired guard above exists to catch.

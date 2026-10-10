@@ -12,6 +12,9 @@ import type {
   CreateContactInput,
   DeleteContactInput,
   DeleteContactResponse,
+  ContactActionAddressResponse,
+  ContactActionProposal,
+  ReplaceContactActionAddressInput,
   CreateConversationResponse,
   CurrentWalletResponse,
   BalancesData,
@@ -512,6 +515,21 @@ export const api = {
     request<ContactPermission>(
       "/v1/recipient-policy/retry",
       jsonRequest("POST", {}),
+      idempotencyKey,
+    ),
+
+  /** Design §8.4: the card reloads the canonical server-owned proposal by id. */
+  getContactAction: (proposalId: string) =>
+    request<ContactActionProposal>(`/v1/contact-actions/${encodeURIComponent(proposalId)}`),
+
+  replaceContactActionAddress: (
+    proposalId: string,
+    input: ReplaceContactActionAddressInput,
+    idempotencyKey: string = createIdempotencyKey(),
+  ) =>
+    request<ContactActionAddressResponse>(
+      `/v1/contact-actions/${encodeURIComponent(proposalId)}/address`,
+      jsonRequest("POST", input),
       idempotencyKey,
     ),
 

@@ -215,6 +215,13 @@ export type ReplaceContactActionAddressInput = {
   expectedProposalVersion: number;
 };
 
+/** `POST /v1/contact-actions/:proposalId/address` — the newly created version. */
+export type ContactActionAddressResponse = {
+  proposalId: string;
+  proposalVersion: number;
+  address: string;
+};
+
 export type RevealedCbu = { id: string; address: string };
 
 export type AgendaEvent = {

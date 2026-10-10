@@ -261,16 +261,45 @@ export const meResponseSchema = z.object({
 });
 export type MeResponse = z.infer<typeof meResponseSchema>;
 
+/**
+ * Design §9.1: the readiness state of a trusted recipient's remote policy.
+ * Shared verbatim with the mirrored frontend contract
+ * (`apps/nana-wallet/src/lib/api-types.ts`, `PolicyReadiness`) — both sides move
+ * together, `AGENTS.md`.
+ */
+export const policyReadinessSchema = z.enum([
+  "saved_not_configured",
+  "pending",
+  "syncing",
+  "applied",
+  "retryable_failure",
+  "blocked_conflict",
+  "blocked_configuration",
+]);
+export type PolicyReadiness = z.infer<typeof policyReadinessSchema>;
+
+/**
+ * Design §9.2: the six new business codes for the recipient-policy surface.
+ * `DATOS_INVALIDOS`, `VERSION_OBSOLETA`, `CONTACTO_NO_ENCONTRADO` and
+ * `ERROR_INTERNO` stay valid verbatim, so no current client breaks.
+ */
+export const RECIPIENT_POLICY_ERROR_CODES = [
+  "CONFLICTO_POLITICA",
+  "REVISION_POLITICA_OBSOLETA",
+  "COBERTURA_DESCONOCIDA",
+  "PERMISO_CONFIGURACION_BLOQUEADA",
+  "COMPOSICION_VACIA_NO_SOPORTADA",
+  "PROPUESTA_OBSOLETA",
+] as const;
+export const recipientPolicyErrorCodeSchema = z.enum(
+  RECIPIENT_POLICY_ERROR_CODES,
+);
+export type RecipientPolicyErrorCode = z.infer<
+  typeof recipientPolicyErrorCodeSchema
+>;
+
 export const contactPermissionSchema = z.object({
-  state: z.enum([
-    "saved_not_configured",
-    "pending",
-    "syncing",
-    "applied",
-    "retryable_failure",
-    "blocked_conflict",
-    "blocked_configuration",
-  ]),
+  state: policyReadinessSchema,
   desiredRevision: z.number().int().nonnegative(),
   appliedRevision: z.number().int().nonnegative(),
   retryable: z.boolean(),
@@ -292,22 +321,33 @@ export const contactSchema = z.object({
 });
 export type Contact = z.infer<typeof contactSchema>;
 
-export const createContactInputSchema = z.object({
-  name: z.string().trim().min(1),
-  description: z.string().trim().default(""),
-  address: z.string().trim().min(1),
-  network: z.literal("solana-devnet").optional(),
-});
+export const createContactInputSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    description: z.string().trim().default(""),
+    address: z.string().trim().min(1),
+    network: z.literal("solana-devnet").optional(),
+  })
+  .strict();
 export type CreateContactInput = z.infer<typeof createContactInputSchema>;
 
-export const updateContactInputSchema = z.object({
-  name: z.string().trim().min(1).optional(),
-  description: z.string().trim().optional(),
-  address: z.string().trim().min(1).optional(),
-  network: z.literal("solana-devnet").nullable().optional(),
-  expectedVersion: z.number().int().positive(),
-  expectedPolicyRevision: z.number().int().nonnegative().optional(),
-});
+export const updateContactInputSchema = z
+  .object({
+    name: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
+    address: z.string().trim().min(1).optional(),
+    network: z.literal("solana-devnet").nullable().optional(),
+    expectedVersion: z.number().int().positive(),
+    expectedPolicyRevision: z.number().int().nonnegative().optional(),
+    /**
+     * Accepted for the address-change path only, exactly as before this
+     * contract mirror: the removal/pre-flight channel already carries it, and
+     * making the PATCH body strict must not newly reject a body the mirrored
+     * frontend already sends (`AddTrustedRecipient.tsx`).
+     */
+    expectedRevokedGrantIds: z.array(z.string().uuid()).optional(),
+  })
+  .strict();
 export type UpdateContactInput = z.infer<typeof updateContactInputSchema>;
 
 export const contactRemovalPreviewQuerySchema = z.object({
@@ -349,6 +389,71 @@ export const revealedCbuSchema = z.object({
   address: z.string().min(1),
 });
 export type RevealedCbu = z.infer<typeof revealedCbuSchema>;
+
+/**
+ * Design §9.2 endpoint schemas. Every one of them keeps the existing
+ * `{ ok: true, data }` envelope and adds no wrapper object; the payload shapes
+ * below are exactly what each route emits today.
+ */
+export const contactsResponseSchema = z.array(contactSchema);
+
+export const createContactResponseSchema = contactSchema;
+
+export const updateContactResponseSchema = contactSchema;
+
+/**
+ * `GET /v1/recipient-policy`. It carries the readiness snapshot verbatim: the
+ * closed field set of design §9.1 is what a client may rely on, and design
+ * §9.2's optional `appliedPolicyId` is deliberately NOT exposed here because it
+ * is a provider policy identifier that no current read path resolves — see the
+ * apply-progress deviation note for task 3.1.
+ */
+export const recipientPolicyResponseSchema = contactPermissionSchema;
+export type RecipientPolicyResponse = z.infer<
+  typeof recipientPolicyResponseSchema
+>;
+
+/** `POST /v1/recipient-policy/retry` (202): the post-retry readiness snapshot. */
+export const recipientPolicyRetryResponseSchema = contactPermissionSchema;
+export type RecipientPolicyRetryResponse = z.infer<
+  typeof recipientPolicyRetryResponseSchema
+>;
+
+/** `GET /v1/contact-actions/:proposalId` — the review card's canonical row. */
+export const contactActionProposalSchema = z.object({
+  proposalId: z.string().uuid(),
+  proposalVersion: z.number().int().positive(),
+  action: z.enum(["create", "edit", "remove"]),
+  contactId: z.string().uuid().nullable().optional(),
+  contactVersion: z.number().int().positive().nullable().optional(),
+  address: z.string().min(1),
+  previousAddress: z.string().nullable().optional(),
+  revokedGrantIds: z.array(z.string().uuid()),
+  revocationDisclosure: z.string().nullable().optional(),
+  expiresAt: z.string(),
+  status: z.enum(["open", "consumed", "superseded", "expired"]),
+});
+export type ContactActionProposal = z.infer<typeof contactActionProposalSchema>;
+
+/** `POST /v1/contact-actions/:proposalId/address` — the strict replacement body. */
+export const replaceContactActionAddressInputSchema = z
+  .object({
+    address: z.string().trim().min(1),
+    expectedProposalVersion: z.number().int().positive(),
+  })
+  .strict();
+export type ReplaceContactActionAddressInput = z.infer<
+  typeof replaceContactActionAddressInputSchema
+>;
+
+export const contactActionAddressResponseSchema = z.object({
+  proposalId: z.string().uuid(),
+  proposalVersion: z.number().int().positive(),
+  address: z.string().min(1),
+});
+export type ContactActionAddressResponse = z.infer<
+  typeof contactActionAddressResponseSchema
+>;
 
 /** PEW-005: identity != wallet readiness. These are the possible per-wallet states. */
 export const walletReadinessStateSchema = z.enum([

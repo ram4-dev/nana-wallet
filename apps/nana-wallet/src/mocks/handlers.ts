@@ -7,6 +7,9 @@ import type {
   BalancesData,
   Bill,
   Contact,
+  ContactActionAddressResponse,
+  ContactActionProposal,
+  ContactPermission,
   CreateDelegatedGrantRequest,
   CreateAgendaEventInput,
   CreateContactInput,
@@ -17,7 +20,9 @@ import type {
   MovementsPage,
   PaymentIntent,
   PaymentResult,
+  PolicyReadiness,
   ConversationTurnResult,
+  ReplaceContactActionAddressInput,
   TransferIntentInput,
   UpdateContactInput,
   WalletPermissionResponse,
@@ -151,6 +156,78 @@ let contacts: Contact[] = [
 ];
 
 const revealCounts = new Map<string, number>();
+
+/**
+ * Task 3.1 fixtures: one row per readiness state of design §9.1, so the screen
+ * and the agent surfaces can render every state without a live backend. The
+ * default served state is unchanged (the applied snapshot above).
+ */
+export const POLICY_READINESS_FIXTURES: Record<PolicyReadiness, ContactPermission> = {
+  saved_not_configured: {
+    state: "saved_not_configured",
+    desiredRevision: 1,
+    appliedRevision: 0,
+    retryable: false,
+  },
+  pending: { state: "pending", desiredRevision: 1, appliedRevision: 0, retryable: true },
+  syncing: { state: "syncing", desiredRevision: 2, appliedRevision: 1, retryable: true },
+  applied: { state: "applied", desiredRevision: 1, appliedRevision: 1, retryable: false },
+  retryable_failure: {
+    state: "retryable_failure",
+    desiredRevision: 2,
+    appliedRevision: 1,
+    retryable: true,
+    reason: "provider_unavailable",
+  },
+  blocked_conflict: {
+    state: "blocked_conflict",
+    desiredRevision: 2,
+    appliedRevision: 1,
+    retryable: false,
+    reason: "readback_mismatch",
+  },
+  blocked_configuration: {
+    state: "blocked_configuration",
+    desiredRevision: 2,
+    appliedRevision: 1,
+    retryable: false,
+    reason: "ownership_drift",
+  },
+};
+
+/** Slice 4's review card, shape-only here: the frontend never authors its fields. */
+export const CONTACT_ACTION_PROPOSAL_FIXTURE: ContactActionProposal = {
+  proposalId: "0b2f0d68-9f43-4a4b-8f2b-1f39a4d3a001",
+  proposalVersion: 1,
+  action: "remove",
+  contactId: "contact-sofia",
+  contactVersion: 1,
+  address: "0000003100010000000001",
+  revokedGrantIds: [],
+  expiresAt: "2026-10-10T00:05:00.000Z",
+  status: "open",
+};
+
+let recipientPolicyFixture: PolicyReadiness | null = null;
+
+/** Forces `GET /v1/recipient-policy` to serve one readiness fixture; `null` restores the default. */
+export function setRecipientPolicyFixture(state: PolicyReadiness | null): void {
+  recipientPolicyFixture = state;
+}
+
+let stalePolicyRevisionConflict = false;
+
+/** Makes `PATCH /v1/contacts/:id` answer with the stale-revision conflict fixture. */
+export function setStalePolicyRevisionConflict(active: boolean): void {
+  stalePolicyRevisionConflict = active;
+}
+
+let emptyCompositionConflict = false;
+
+/** Makes `DELETE /v1/contacts/:id` answer with the empty-composition conflict fixture. */
+export function setEmptyCompositionConflict(active: boolean): void {
+  emptyCompositionConflict = active;
+}
 
 let agendaEvents: AgendaEvent[] = [
   {
@@ -526,6 +603,13 @@ export const handlers = [
         409,
       );
     }
+    if (stalePolicyRevisionConflict) {
+      return err(
+        "REVISION_POLITICA_OBSOLETA",
+        "La política remota cambió. Recargá para ver el estado y probá de nuevo.",
+        409,
+      );
+    }
     const { network: currentNetwork, ...currentWithoutNetwork } = current;
     const networkWasProvided = Object.prototype.hasOwnProperty.call(input, "network");
     const updated: Contact = {
@@ -553,6 +637,13 @@ export const handlers = [
     const contactId = String(params["id"]);
     const current = contacts.find((item) => item.id === contactId);
     if (!current) return err("NO_ENCONTRADO", "No encontramos a esa persona.", 404);
+    if (emptyCompositionConflict) {
+      return err(
+        "COMPOSICION_VACIA_NO_SOPORTADA",
+        "Esta es la última persona: la política no puede quedar sin destinatarios.",
+        409,
+      );
+    }
     const archived: Contact = {
       ...current,
       status: "inactive",
@@ -566,12 +657,53 @@ export const handlers = [
   }),
 
   http.get(apiPath("/recipient-policy"), () =>
-    ok({ state: "applied" as const, desiredRevision: 1, appliedRevision: 1, retryable: false }),
+    ok(
+      recipientPolicyFixture
+        ? POLICY_READINESS_FIXTURES[recipientPolicyFixture]
+        : {
+            state: "applied" as const,
+            desiredRevision: 1,
+            appliedRevision: 1,
+            retryable: false,
+          },
+    ),
   ),
 
   http.post(apiPath("/recipient-policy/retry"), () =>
     ok({ state: "syncing" as const, desiredRevision: 1, appliedRevision: 0, retryable: true }, 202),
   ),
+
+  // Design §9.2 / §8.4: the review card's canonical row and the versioned
+  // address replacement. A stale expected version is the PROPUESTA_OBSOLETA
+  // fixture; the handler authors no field the client sent.
+  http.get(apiPath("/contact-actions/:proposalId"), ({ params }) => {
+    const proposalId = String(params["proposalId"]);
+    if (proposalId !== CONTACT_ACTION_PROPOSAL_FIXTURE.proposalId) {
+      return err("NO_ENCONTRADO", "No encontramos esta propuesta.", 404);
+    }
+    return ok(CONTACT_ACTION_PROPOSAL_FIXTURE);
+  }),
+
+  http.post(apiPath("/contact-actions/:proposalId/address"), async ({ params, request }) => {
+    const proposalId = String(params["proposalId"]);
+    if (proposalId !== CONTACT_ACTION_PROPOSAL_FIXTURE.proposalId) {
+      return err("NO_ENCONTRADO", "No encontramos esta propuesta.", 404);
+    }
+    const input = (await request.json()) as ReplaceContactActionAddressInput;
+    if (input.expectedProposalVersion !== CONTACT_ACTION_PROPOSAL_FIXTURE.proposalVersion) {
+      return err(
+        "PROPUESTA_OBSOLETA",
+        "Esta propuesta cambió. Recargá la tarjeta y probá de nuevo.",
+        409,
+      );
+    }
+    const response: ContactActionAddressResponse = {
+      proposalId,
+      proposalVersion: CONTACT_ACTION_PROPOSAL_FIXTURE.proposalVersion + 1,
+      address: input.address,
+    };
+    return ok(response);
+  }),
 
   http.post(apiPath("/contacts/:id/reveal-cbu"), ({ params }) => {
     const contactId = String(params["id"]);
