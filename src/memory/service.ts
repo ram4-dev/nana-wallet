@@ -1,6 +1,6 @@
 import { EMBEDDING_MODEL_ID, type Embedding, type RecipientCandidate, type RecipientInput, type RecipientRecord, type UserMemoryFact, type UserMemoryInput } from './types.js';
 import { factEmbeddingText, normalizeMemoryText, recipientEmbeddingText } from './embedding.js';
-import { isValidEvmAddress, isValidRecipientAddress } from './address.js';
+import { isValidRecipientAddress } from './address.js';
 import { factSupportsRelationshipReference, isRelationshipReference, relationshipFactIdentity } from './relationship.js';
 
 export type RecipientMemoryRepositoryPort = {
@@ -187,7 +187,7 @@ export class RecipientMemoryService {
 
   public async writeConfirmed(userId: string, draft: RecipientMemoryWriteDraft): Promise<RecipientMemoryWriteResult> {
     if (draft.kind === 'recipient') {
-      if (!isValidEvmAddress(draft.address)) {
+      if (!isValidRecipientAddress(draft.address, 'solana-devnet')) {
         throw new Error('Recipient address must be a valid EVM address.');
       }
       const embedding = await this.embeddings.embed(recipientEmbeddingText(draft.name, draft.description));

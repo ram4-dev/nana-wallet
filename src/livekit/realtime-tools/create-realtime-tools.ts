@@ -8,6 +8,7 @@ import type { WalletProvider } from '../../wallet/provider.js';
 import type { ConversationRepository } from '../../conversations/repository.js';
 import type { WalletConversationService } from '../../conversations/service.js';
 import type { VoiceDecisionGate } from '../voice-decision-gate.js';
+import type { ConfirmationArbiter } from '../../conversations/confirmation-arbiter.js';
 
 export type {
   RealtimeContactCandidate,
@@ -46,6 +47,7 @@ export type RealtimeToolsDependencies = {
   service?: WalletConversationService;
   conversations?: ConversationRepository;
   voiceDecisionGate?: VoiceDecisionGate;
+  confirmationArbiter?: ConfirmationArbiter;
   /** Retained for seam stability; the service publishes revisions via financialTasks. */
   publishRevision?: (revision: number) => void;
 };
@@ -90,6 +92,7 @@ export function createRealtimeTools(dependencies: RealtimeToolsDependencies) {
     ...(dependencies.service ? { voiceService: dependencies.service } : {}),
     ...(dependencies.conversations ? { voiceConversations: dependencies.conversations } : {}),
     ...(dependencies.voiceDecisionGate ? { voiceDecisionGate: dependencies.voiceDecisionGate } : {}),
+    ...(dependencies.confirmationArbiter ? { confirmationArbiter: dependencies.confirmationArbiter } : {}),
   };
   return toLivekitRealtimeTools(createWalletAgentDefinition(), context, {
     refreshContext: async (ctx) => {

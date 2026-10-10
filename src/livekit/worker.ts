@@ -22,6 +22,7 @@ import { getConfiguredRecipientMemoryService } from "../memory/runtime.js";
 import { createAgentSession } from "./create-agent-session.js";
 import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
+import { createConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
 import { attachVoiceDecisionTranscripts } from "./voice-decision-transcripts.js";
 import {
@@ -146,13 +147,6 @@ async function runJob(
     throw new Error("LiveKit worker requires LIVE_VOICE_BINDING_PUBLIC_KEY.");
   await ctx.connect(undefined, AutoSubscribe.AUDIO_ONLY);
   const participant = await ctx.waitForParticipant();
-  const voiceDecisionGate = createVoiceDecisionGate({
-    isConfirmation,
-    isCancellation,
-    onObservation: (observation) => console.info(JSON.stringify({
-      type: "voice_confirmation_gate", pid: process.pid, ...observation,
-    })),
-  });
   const roomConversation = new RoomConversation({
     publicKey: config.publicKey,
     conversations: dependencies.conversations,
@@ -168,6 +162,23 @@ async function runJob(
   const gate = createRoomConversationGate({
     conversation: roomConversation,
     startSession: async (binding) => {
+      const confirmationArbiter = createConfirmationArbiter({
+        isConfirmation,
+        isCancellation,
+        onObservation: (observation) => console.info(JSON.stringify({
+          type: "voice_confirmation_gate", pid: process.pid, ...observation,
+        })),
+      });
+      const voiceDecisionGate = createVoiceDecisionGate({
+        isConfirmation,
+        isCancellation,
+        arbiter: confirmationArbiter,
+        userId: binding.userId,
+        conversationId: binding.conversationId,
+        onObservation: (observation) => console.info(JSON.stringify({
+          type: "voice_confirmation_gate", pid: process.pid, ...observation,
+        })),
+      });
       const memoryService = getConfiguredRecipientMemoryService();
       const wallet = dependencies.walletForUser
         ? bindLiveKitWalletForUser(
@@ -201,6 +212,7 @@ async function runJob(
         conversations: dependencies.conversations,
         ...(memoryService ? { recipientMemory: memoryService } : {}),
         voiceDecisionGate,
+        confirmationArbiter,
       });
       const created = createAgentSession({ tools });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {

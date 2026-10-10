@@ -5,7 +5,7 @@ import type { ConversationLanguage } from '../conversations/language.js';
 import { invalidateSelectedRecipient, type ConversationSession } from '../conversations/session-state.js';
 import type { RecipientMemoryRuntime } from '../memory/runtime.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
-import { isValidEvmAddress, isValidRecipientAddress } from '../memory/address.js';
+import { isValidRecipientAddress } from '../memory/address.js';
 import type { RecipientCandidate } from '../memory/types.js';
 import type { RecipientSearchResult } from '../memory/service.js';
 import type { WalletProvider, TransferRequest } from '../wallet/provider.js';
@@ -19,6 +19,7 @@ import {
 } from '../conversations/errors.js';
 import type { ConversationRepository } from '../conversations/repository.js';
 import type { VoiceDecisionGate } from '../livekit/voice-decision-gate.js';
+import type { ConfirmationArbiter } from '../conversations/confirmation-arbiter.js';
 import {
   transactionResultSchema,
   transferPreviewSchema,
@@ -47,6 +48,10 @@ export type WalletAgentContext = {
   voiceConversations?: ConversationRepository;
   /** Voice-only: spoken-decision evidence gate (fail closed when absent). */
   voiceDecisionGate?: VoiceDecisionGate;
+  /** Shared typed window for contact and transfer authorizations in live voice. */
+  confirmationArbiter?: ConfirmationArbiter;
+  /** Server-owned proposal lifecycle. Model input is deliberately narrower. */
+  contactActions?: ContactActionPort;
   /** Voice-only: plays the preview read-back aloud before the spoken decision. */
   /**
    * Delegated-grant creation seam (DGC-6). Present for the text agent when the
@@ -75,6 +80,34 @@ export type WalletAgentDefinition = {
  * The parity test asserts every other tool name is shared.
  */
 export const VOICE_ONLY_TOOLS = ['confirm_transfer', 'cancel_transfer'] as const;
+
+export type ContactActionPort = {
+  stage(input: {
+    userId: string;
+    conversationId: string;
+    origin: 'text' | 'voice';
+    action: 'create' | 'edit' | 'remove';
+    contactId?: string;
+    expectedVersion?: number;
+    /** Display metadata only; it cannot identify a wallet address. */
+    name?: string;
+    description?: string;
+  }): Promise<{ status: 'staged' | 'confirmation_required' | 'conflict_active_window' | 'address_review_required'; proposalId?: string; proposalVersion?: number; message: string }>;
+  confirm?(input: { userId: string; conversationId: string; proposalId: string; proposalVersion: number; source: 'text' | 'voice' }): Promise<{ status: string; message: string }>;
+};
+
+const contactCreateInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).optional(),
+}).strict();
+const contactChangeInputSchema = z.object({
+  contactId: z.string().uuid(),
+  expectedVersion: z.number().int().positive(),
+}).strict();
+const contactConfirmInputSchema = z.object({
+  proposalId: z.string().uuid(),
+  proposalVersion: z.number().int().positive(),
+}).strict();
 
 /**
  * Model-facing transfer schema, shared by the text and voice agents. Preview-only:
@@ -221,7 +254,7 @@ export const memoryDraftSchema = z.object({
   kind: z.enum(['recipient', 'fact']),
   name: z.string().trim().min(1).optional(),
   description: z.string().trim().min(1).optional(),
-  address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.').optional(),
+  address: z.string().trim().refine((value) => isValidRecipientAddress(value, 'solana-devnet'), 'Expected a canonical Solana address.').optional(),
   fact: z.string().trim().min(1).optional(),
   factKind: z.string().trim().min(1).optional(),
 }).superRefine((value, issue) => {
@@ -473,9 +506,68 @@ export function createWalletAgentDefinition(): WalletAgentDefinition {
     tools: (context) => [
       ...createWalletOperations(context),
       ...createRecipientMemoryOperations(context),
+      ...createContactActionOperations(context),
       ...createVoiceDecisionOperations(context),
     ],
   };
+}
+
+/**
+ * Trusted-recipient actions are proposal-only at the model boundary. An address
+ * is accepted solely through the authenticated review channel, never from a
+ * model tool argument or inferred from the supplied label.
+ */
+function createContactActionOperations(context: WalletAgentContext): AgentToolDefinition<unknown, unknown>[] {
+  const unavailable = { status: 'address_review_required' as const, message: 'Necesito que revises y pegues la dirección en la tarjeta segura antes de guardar este destinatario.' };
+  const stage = async (
+    action: 'create' | 'edit' | 'remove',
+    value: { contactId?: string; expectedVersion?: number; name?: string; description?: string },
+  ) => {
+    if (!context.contactActions) return unavailable;
+    return context.contactActions.stage({
+      userId: context.userId,
+      conversationId: context.conversationId,
+      origin: context.voiceService ? 'voice' : 'text',
+      action,
+      ...value,
+    });
+  };
+  return [
+    {
+      name: 'stage_trusted_recipient',
+      description: 'Stage a new trusted recipient for the secure review card. Supply only their display name and optional description. Never supply an address, network, policy, signer, cap, confirmation, timestamp, or turn count.',
+      inputSchema: contactCreateInputSchema,
+      execute: (input) => stage('create', input as z.infer<typeof contactCreateInputSchema>),
+    },
+    {
+      name: 'stage_trusted_recipient_edit',
+      description: 'Stage an edit to an already selected trusted recipient by its exact id and version. Never supply an address or policy fields.',
+      inputSchema: contactChangeInputSchema,
+      execute: (input) => stage('edit', input as z.infer<typeof contactChangeInputSchema>),
+    },
+    {
+      name: 'stage_trusted_recipient_removal',
+      description: 'Stage removal of an already selected trusted recipient by its exact id and version. The secure review explains any affected automatic payments.',
+      inputSchema: contactChangeInputSchema,
+      execute: (input) => stage('remove', input as z.infer<typeof contactChangeInputSchema>),
+    },
+    {
+      name: 'confirm_trusted_recipient_action',
+      description: 'Consumes only the exact secure proposal after authenticated user evidence. It takes proposal id and version, never an address, confirmation phrase, timestamp, or turn count.',
+      inputSchema: contactConfirmInputSchema,
+      execute: async (input) => {
+        if (!context.contactActions?.confirm) return unavailable;
+        const value = input as z.infer<typeof contactConfirmInputSchema>;
+        return context.contactActions.confirm({
+          userId: context.userId,
+          conversationId: context.conversationId,
+          proposalId: value.proposalId,
+          proposalVersion: value.proposalVersion,
+          source: context.voiceService ? 'voice' : 'text',
+        });
+      },
+    },
+  ];
 }
 
 function createWalletOperations(context: WalletAgentContext): AgentToolDefinition<unknown, unknown>[] {
@@ -799,7 +891,13 @@ async function voicePreviewTransfer(
   const fee = result.preview.estimatedFee;
   // Opens the decision window. The window is anchored to the moment the
   // preview EXISTS, not to a read-back: see voice-decision-gate.ts.
-  context.voiceDecisionGate.prepare(previewId);
+  if (!context.voiceDecisionGate.prepare(previewId)) {
+    return {
+      status: 'error',
+      code: 'confirmation_required',
+      message: 'There is another action awaiting an explicit decision. Please cancel it before preparing a transfer.',
+    };
+  }
   return {
     ...output,
     // This string is a tool RESULT, so it reaches the model and reads as an

@@ -1,5 +1,6 @@
 export type VoiceDecision = "confirm" | "cancel";
 export type VoiceDecisionResult = "confirmed" | "cancelled";
+import type { ConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
 
 export type VoiceDecisionGate = ReturnType<typeof createVoiceDecisionGate>;
 
@@ -33,6 +34,9 @@ export function createVoiceDecisionGate(classifiers: {
   isConfirmation(text: string): boolean;
   isCancellation(text: string): boolean;
   onObservation?(event: Record<string, string | number | boolean | null>): void;
+  arbiter?: ConfirmationArbiter;
+  userId?: string;
+  conversationId?: string;
 }) {
   let activePreviewId: string | undefined;
   let previewCreatedAt: number | undefined;
@@ -62,20 +66,28 @@ export function createVoiceDecisionGate(classifiers: {
      * recorded for a previous preview is dropped: a decision never carries
      * across transfers.
      */
-    prepare(previewId: string, createdAt: number = Date.now()): void {
+    prepare(previewId: string, createdAt: number = Date.now()): boolean {
       if (!previewId) {
         activePreviewId = undefined;
         previewCreatedAt = undefined;
         evidence = undefined;
         wakeWaiters();
-        return;
+        return true;
       }
+      const opened = classifiers.arbiter?.open({
+        kind: "transfer", actionId: previewId,
+        userId: classifiers.userId ?? "voice-unbound",
+        conversationId: classifiers.conversationId ?? "voice-unbound",
+        version: 0, createdAt,
+      });
+      if (opened?.status === "conflict") return false;
       if (previewId !== consumedPreviewId) consumedPreviewId = undefined;
       activePreviewId = previewId;
       previewCreatedAt = Number.isFinite(createdAt) ? createdAt : Date.now();
       evidence = undefined;
       classifiers.onObservation?.({ event: "prepare", previewCreatedAt, observedAt: Date.now() });
       wakeWaiters();
+      return true;
     },
 
     recordTranscript(input: {
@@ -115,6 +127,12 @@ export function createVoiceDecisionGate(classifiers: {
         decision: decision ?? null,
       });
       if (decision) {
+        classifiers.arbiter?.recordEvidence({
+          text: input.text, isFinal: input.isFinal,
+          authenticatedSpeaker: input.authenticatedSpeaker, createdAt: input.createdAt,
+          userId: classifiers.userId ?? "voice-unbound",
+          conversationId: classifiers.conversationId ?? "voice-unbound",
+        });
         evidence = decision;
         wakeWaiters();
       }
@@ -126,13 +144,19 @@ export function createVoiceDecisionGate(classifiers: {
         previewId === activePreviewId &&
         consumedPreviewId !== previewId &&
         evidence === expected;
+      const arbiterAccepted = !classifiers.arbiter || classifiers.arbiter.consume({
+        kind: "transfer", actionId: previewId,
+        userId: classifiers.userId ?? "voice-unbound", version: 0,
+        tool: decision === "confirm" ? "confirm_transfer" : "cancel_transfer", decision,
+      }).status === "consumed";
       classifiers.onObservation?.({
         event: "consume", observedAt: Date.now(),
         matchesPreview: previewId === activePreviewId,
-        evidence: evidence ?? null, accepted,
+        evidence: evidence ?? null, accepted: accepted && arbiterAccepted,
       });
-      if (!accepted) return undefined;
+      if (!accepted || !arbiterAccepted) return undefined;
       evidence = undefined;
+      classifiers.arbiter?.clear(previewId);
       consumedPreviewId = previewId;
       wakeWaiters();
       return expected;

@@ -47,7 +47,7 @@ import {
   type ConversationSession,
 } from '../conversations/session-state.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
-import { isValidEvmAddress } from '../memory/address.js';
+import { isValidRecipientAddress } from '../memory/address.js';
 import { type RecipientMemoryRuntime } from '../memory/runtime.js';
 import { resolveTransferRecipient, type RecipientMemoryToolPort } from './recipient-resolution.js';
 import { hasExplicitTransferAddress } from './recipient-intent.js';
@@ -243,7 +243,7 @@ export function buildGuardedTools(
           !current ||
           current.id !== mustRevalidate.recipientId ||
           current.version !== mustRevalidate.version ||
-          !isValidEvmAddress(current.address) ||
+          !isValidRecipientAddress(current.address, 'solana-devnet') ||
           current.address !== normalizedInput.to
         ) {
           invalidateSelectedRecipient(session);

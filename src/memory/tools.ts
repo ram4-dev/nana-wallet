@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { redactAddressLikeText } from './embedding.js';
-import { isValidEvmAddress } from './address.js';
+import { isValidRecipientAddress } from './address.js';
 import type { RecipientMemoryWriteDraft, RecipientMemoryService } from './service.js';
 import type { ConversationSession } from '../conversations/session-state.js';
 import { clearSelectedRecipient, consumeMemoryWrite, currentUserTurnCount, invalidateSelectedRecipient, setRecipientClarification, setSelectedRecipient, stageMemoryWrite } from '../conversations/session-state.js';
@@ -11,7 +11,7 @@ const selectedAddressSchema = z.object({ recipientId: z.string().uuid(), expecte
 const selectedAddressLookupSchema = z.object({}).strict();
 const writeSchema = z.object({ confirmationId: z.string().uuid() });
 const draftSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('recipient'), name: z.string().trim().min(1), description: z.string().trim().min(1), address: z.string().trim().refine(isValidEvmAddress, 'Expected a valid EVM address.') }),
+  z.object({ kind: z.literal('recipient'), name: z.string().trim().min(1), description: z.string().trim().min(1), address: z.string().trim().refine((value) => isValidRecipientAddress(value, 'solana-devnet'), 'Expected a canonical Solana address.') }),
   z.object({ kind: z.literal('fact'), fact: z.string().trim().min(1), factKind: z.string().trim().min(1).optional() }),
 ]);
 
@@ -53,7 +53,7 @@ export function createRecipientMemoryTools(options: RecipientMemoryToolsOptions)
       !recipient ||
       recipient.id !== selected.recipientId ||
       recipient.version !== selected.version ||
-      !isValidEvmAddress(recipient.address)
+      !isValidRecipientAddress(recipient.address, 'solana-devnet')
     ) {
       invalidateSelectedRecipient(options.session);
       return { status: 'stale_selection' as const };
