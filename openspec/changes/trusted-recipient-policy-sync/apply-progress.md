@@ -3584,6 +3584,15 @@ sidecar is up (`canSignAuthorizations()` `true`) with a devnet budget, and read 
 plus U1–U4 outcomes from `status_detail`. **No fake-transport output is presented here as live provider
 evidence.**
 
+> **UPDATED IN PLACE (2026-10-10, task 5.2 — the only earlier entry this run rewrote, and only to
+> replace its pending state with a real observed result).** The capability half of this pending note is
+> now **closed**: task 5.2 executed the §6.4 probe against the live deployment and recorded
+> `{"capable":false,"code":"signer_unavailable"}` for **both** the `backend` and the `voice-worker`
+> sidecar, each with its exact per-process reason (full evidence in the task-5.1/5.2 section at the end
+> of this file). The **U1–U4 half stays unproven and uncollectable**, so its collection step is
+> unchanged. Note also that the reason recorded for both processes is *configuration absence in the
+> deployed containers*, which the in-process absence result below could not distinguish.
+
 #### Files changed by this run
 
 | Commit | Unit | Files |
@@ -3663,6 +3672,11 @@ run against a deployment whose `backend-signer`/`voice-worker-signer` services a
 U1–U4 outcomes back from `recipient_policy_state.status_detail`. Per the change owner's standing
 instruction, a probe that needs credentials or a real deployment is documented as pending and the work
 continues; nothing here refuses to proceed on that account.
+
+> **UPDATED IN PLACE (2026-10-10, task 5.2).** The §6.4 half of the pending state above is closed with
+> a real observed result: `{"capable":false,"code":"signer_unavailable"}` for the `backend` and for
+> the `voice-worker` sidecar, each with its exact reason, collected against the live deployment (see the
+> task-5.1/5.2 section at the end of this file). U1–U4 remain unproven and uncollectable.
 
 **No fake-transport output is presented as live provider proof.** The `{capable:false,
 code:"signer_unavailable"}` record above is an in-process absence result, and the fake-transport
@@ -5145,3 +5159,166 @@ This unit is therefore **executed**, not merely implemented.
 One commit, one work unit: the new eval file, its `docs/evals.md` documentation, the `tasks.md`
 checkbox and this progress entry. It sits inside the parent-assigned slice-4 boundary
 (tasks 4.1–4.9, PR 6). No push, no PR, no `size:exception`.
+
+---
+
+## Continuation run (2026-10-10) — task 5.1 (rebuild/restart: BLOCKED, nothing rebuilt) and task 5.2 (capability probe: COLLECTED)
+
+Working root `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`, branch
+`feat/solana-operational`, HEAD `7f53919` at the start. No push, no PR, no `size:exception`; the main
+checkout was never entered, the untracked `compose.privy-local.ports.yaml` was never touched, no
+`git stash`/`checkout`/`reset`/`restore`/`clean` was run, `.cache/` was never staged.
+
+### Reconciliation: what is running vs. what the compose files declare
+
+`compose.privy-local.yaml` (with the untracked `compose.privy-local.ports.yaml` override, which pins
+`backend` → `127.0.0.1:32800:3000` and `frontend` → `127.0.0.1:32802:80`) declares seven services.
+Project labels confirm the running stack belongs to **this** worktree
+(`com.docker.compose.project.working_dir` = this worktree, `project` = `nana-privy-impl`).
+
+| Service | Declared by the files | Running container | Verdict |
+|---|---|---|---|
+| `db` | yes, `127.0.0.1:5432` | `nana-privy-impl-db-1` (started 2026-10-09T13:52Z) | name matches; **schema predates `015`** |
+| `livekit` | yes | `nana-privy-impl-livekit-1` | matches |
+| `backend` | yes | `nana-privy-impl-backend-1` (started 2026-10-10T04:53Z) | name matches, **stale config + stale build** |
+| `voice-worker` | yes | `nana-privy-impl-voice-worker-1` (started 2026-10-10T04:52Z) | name matches, **stale config + stale build** |
+| `backend-signer` | yes (`network_mode: service:backend`, loopback 8788, `PRIVY_SIGNER_KEY_FILE`) | **absent** | **declared but NOT deployed** |
+| `voice-worker-signer` | yes (`network_mode: service:voice-worker`, loopback 8789) | **absent** | **declared but NOT deployed** |
+| `frontend` | yes | `nana-privy-impl-frontend-1` (started 2026-10-10T03:12Z) | name matches, **stale build** |
+| `authorization-signer` | **not declared** — `git log -S'authorization-signer' -- compose.privy-local.yaml` is empty | `nana-privy-impl-authorization-signer-1` (started 2026-10-10T04:52:51Z, `network_mode: container:<voice-worker>`) | **running but undeclared** |
+
+**The deployed service names do not match the files, and this mismatch is the finding.** The running
+signer service is `authorization-signer`, which no revision of the worktree compose file declares; it
+was created from the out-of-tree, still-present `/private/tmp/nana-voice-signer.override.yaml`
+(`project.config_files` = the two worktree files **plus** that `/private/tmp` path; the override injects
+the private key as `PRIVY_AUTHORIZATION_PRIVATE_KEY` and puts the single signer on the worker's port
+8788). `f4aa2ae` (2026-10-10 09:14Z, "run a loopback signing sidecar in each consumer's namespace")
+introduced the two declared sidecars ~4.4 h **after** the stack started, and `a101f72` (11:55Z) added
+the worker quorum; the `015` migration landed 06:26Z. Nothing that landed during this change has ever
+been deployed.
+
+### Task 5.1 — rebuild and restart: BLOCKED, and deliberately stopped before recreating anything
+
+**Rebuilt: nothing. Restarted: nothing. Still stale: `backend`, `voice-worker`, `frontend`, the ad-hoc
+`authorization-signer`, and the stack DB.** The attempt was bounded exactly as the brief requires — it
+stopped at the first hard blocker instead of half-recreating the stack — and cost minutes, not the
+20-minute cap.
+
+| # | Evidence (exact command → exact observation) |
+|---|---|
+| 1 | `docker compose -f compose.privy-local.yaml -f compose.privy-local.ports.yaml config --services` → **four** interpolation errors: `required variable PRIVY_SIGNER_TOKEN is missing a value` for `backend`, `backend-signer`, `voice-worker`, `voice-worker-signer`. `docker compose … ps` fails identically. `PRIVY_SIGNER_TOKEN` is declared in neither `.env` (names present: no `*SIGNER*` entry) nor the invoking shell. The file cannot even be rendered, so no compose lifecycle operation was available to run. |
+| 2 | The declared sidecars mount `${PRIVY_SIGNER_KEY_DIR:-./.secrets}/privy-authorization-private-key` and set `PRIVY_SIGNER_KEY_FILE=/run/secrets/privy-authorization-private-key`. `ls .secrets` → `No such file or directory` in this worktree **and** in the main checkout; `find ~/Desktop/projects -maxdepth 3 -name '*private-key*'` → no result. Even with a token, the declared sidecars cannot obtain a key. The key exists only inside the ad-hoc container's environment, which this task must not read. |
+| 3 | A code-only partial restart would be **worse** than the stale stack: `docker exec nana-privy-impl-db-1 psql -U postgres -d wdk_agent -tAc "SELECT to_regclass('public.recipient_policy_state')::text, …contact_action_proposals…, …recipient_policy_leases…"` → `\|\|` (all three NULL; 22 tables in `public`). The stack DB has **none** of the `015` schema, and the repo's own migrator cannot repair it (`npm run db:migrate` fails locally on the pre-existing `relation "conversations" already exists`). Slice-1..4 code on a pre-`015` schema would break the recipient/policy routes that currently work. |
+| 4 | The only working signer is namespace-coupled: `authorization-signer` runs `network_mode: container:<voice-worker id>`. Restarting or recreating `voice-worker` would take that namespace away, and the declared replacement cannot start (blockers 1–2), so the local signer would be destroyed with no way to recreate it from this worktree. |
+
+**Marker check per container (the exact check the brief asks for), run before any attempt — every
+marker of this change is ABSENT:**
+
+| Container | `dist/wallet/policy/probe.js` | `dist/wallet/policy/composer.js` | `dist/conversations/confirmation-arbiter.js` | `PROPUESTA_OBSOLETA` in `dist/contracts/http.js` | `contact_action_proposal` in `dist/livekit/worker.js` | `policySigner` in `dist/api/health.js` |
+|---|---|---|---|---|---|---|
+| `nana-privy-impl-backend-1` | ABSENT | ABSENT | ABSENT | 0 | 0 | 0 |
+| `nana-privy-impl-voice-worker-1` | ABSENT | ABSENT | ABSENT | 0 | 0 | 0 |
+| `nana-privy-impl-frontend-1` (bundle) | — | — | — | 0 assets match `propuesta cambió` | — | 0 assets match `No pudimos verificar el permiso` |
+
+`dist/server.js` in both containers is dated to the container start (04:52–04:53Z), i.e. the deployed
+build predates the whole `src/wallet/policy/**` subsystem.
+
+**The blocker is not the build.** The exact build each container's own entrypoint runs succeeds inside
+both deployed images: `docker exec -w /app <container> npx tsc -p tsconfig.json --outDir .probe-check-dist`
+→ `tsc_exit=0` (backend and worker). So `backend`/`voice-worker` are rebuildable in principle; what is
+missing is the deployment's configuration and key material, not compilable code.
+
+**Unblocking requirement for 5.1:** provide `PRIVY_SIGNER_TOKEN` and a real key file at
+`PRIVY_SIGNER_KEY_DIR` (superseding the `/private/tmp` override's `authorization-signer`), apply the
+`015` migration to the stack DB, then re-run this task. Until then a rebuild is a half-recreated stack,
+which the brief forbids.
+
+### Task 5.2 — the signer capability probe against the deployed stack
+
+The probe, the environment and the namespace were the deployment's. **Probe-code note:** the deployed
+`dist` predates `src/wallet/policy/probe.ts` (it has no `policy.js` under `dist/wallet/policy/`), so the
+probe was run from the current source compiled **inside each deployed container** into a scratch
+directory — the same compilation the container performs at start — and then executed with that
+container's own environment (`node -e "import('./.probe-check-dist/wallet/policy/probe.js')…"`). For the
+worker this also means the sidecar's shared network namespace. Both scratch directories were removed
+afterwards; the containers were never restarted.
+
+| Process | Exact command | Result | Exact reason (booleans and codes only) |
+|---|---|---|---|
+| `backend` | `docker exec -w /app nana-privy-impl-backend-1 node -e "import('./.probe-check-dist/wallet/policy/probe.js').then(m=>m.verifyPolicySignerCapability()).then(r=>console.log('PROBE_RESULT='+JSON.stringify(r)))"` | **`{"capable":false,"code":"signer_unavailable"}`** | The deployed `backend` declares no `PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` (`readPayloadSignerConfig` → `undefined`; diagnostic: `SIGNER_URL_DECLARED=no`, `SIGNER_CLIENT=absent`), so §6.4 fails closed before signing. |
+| `backend` readiness surface | `curl -s http://127.0.0.1:32800/health` | HTTP **200**, top-level keys `status,mode,mcp,wallet,network,provider`; `policySigner` = **absent** | The deployed `dist/api/health.js` predates task 2.7, so the readiness field does not exist there yet. `status=ok, mode=live, network=solana-devnet`. |
+| `voice-worker` sidecar | same probe, inside `nana-privy-impl-voice-worker-1` | **`{"capable":false,"code":"signer_unavailable"}`** | The deployed `voice-worker` declares `PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` and its sidecar **is reachable** (`fetch('http://127.0.0.1:8788/health')` → `404` from inside that namespace, i.e. TCP up and answering), but it declares **no `PRIVY_AUTHORIZATION_PUBLIC_KEY`** (`PUBLIC_KEY_DECLARED=no`), so the probe fails closed before signing. |
+| U1–U4 (2.1–2.4) | not run | **unproven, unchanged** | Both processes report `capable:false`, and U1–U4 need live devnet policy writes; their collection step is unchanged from the notes above. |
+
+This is a **real change of state**: the probe is no longer PENDING/uncollected for the capability half —
+it was executed against the live deployment and returned a negative result with a per-process reason.
+The two PENDING paragraphs earlier in this file were updated **in place** to say exactly this (stated
+here because it is the only earlier content this run touched). `capable: false` is the completed
+outcome the task's own `Verify:` anticipates: it blocks 5.3–5.7 and is reported as the exact blocker
+above. Live U1–U4 evidence and the U1/(U4 step iii) signed-transfer step stay documented as pending,
+untouched, as the brief requires.
+
+### Secret safety
+
+- No `.env` value was read or printed. Container/task environment inspection was reduced to **names and
+  boolean presence flags** (`cut -d= -f1 | grep -E '^[A-Z_][A-Z0-9_]*$'` for `.env`;
+  `[ -n "${!v:-}" ]` and `process.env.X ? 'yes' : 'no'` for containers).
+- The probe and the diagnostic print booleans, codes, a loopback URL and HTTP statuses only; the
+  diagnostic additionally redacts any long token-shaped substring from an error message. No token, key,
+  payload or signature value appears in `tasks.md`, this file, any command argument, or the commit.
+- **Disclosed deviation (over-redaction failure, transcript only):** the first container environment
+  listing piped `docker inspect --format '{{range .Config.Env}}…'` through `sed 's/=.*/=<redacted>/'`,
+  which cannot redact a **multi-line** env value. Continuation lines of the multi-line PEM/base64
+  values of `PRIVY_AUTHORIZATION_PUBLIC_KEY`, `PRIVY_VERIFICATION_KEY`, `LIVE_VOICE_BINDING_PUBLIC_KEY`
+  and `LIVE_VOICE_BINDING_PRIVATE_KEY` were therefore emitted into the session transcript (PEM
+  header/footer markers and base64 body lines, one of which appears to be a complete Ed25519 PKCS8 key
+  body). They were not printed again, and none of it reached any file, note, commit or command
+  argument; the inspection method was changed immediately to the name-only/boolean form described
+  above. **Recommendation:** treat the local `LIVE_VOICE_BINDING_PRIVATE_KEY` as exposed to that
+  transcript and rotate it (with its registered public key) before this environment is used for
+  anything beyond local development. The authorization **public** key and verification key are public
+  by design.
+
+### Checkbox decisions and reasons
+
+| Task | Checkbox | Reason |
+|---|---|---|
+| 5.1 | stays `[ ]` | Nothing was rebuilt or restarted, so its marker requirement is unmet; the deployment's render/config/key gaps are recorded as the exact blockers rather than as a pass. |
+| 5.2 | stays `[ ]` | The task's own text requires the `{capable, code}` record **plus** the U1–U4 outcomes. The capability half is genuinely collected (real `{capable:false, code}` per process, with reasons); the U1–U4 half cannot run against a `capable:false` deployment, so the unit as written is not complete. The collected half is recorded above, not withheld. |
+| 5.3–5.9, "Freeze the candidate", both parent-owned rows | untouched | Not assigned to this run; the parent-owned rows were preserved byte-for-byte (diff is insertions only, zero deletions). |
+
+### Deviations from the brief
+
+1. **The brief expected a rebuild to be attempted; the attempt proved the declared stack is not
+   deployable from this worktree at all** (missing `PRIVY_SIGNER_TOKEN` and missing key file). Per the
+   brief's own instruction — stop rather than leave the stack half-recreated — nothing was recreated.
+2. **The probe ran from a scratch compilation of the current source inside the deployed containers**,
+   because the deployed `dist` predates the probe module. Timing, environment and namespace are the
+   deployment's; the compiled bytes are the reviewed bytes. Stated rather than implied.
+3. **The diagnostic's `signer.sign is not a function` line is a defect of the throwaway diagnostic, not
+   a probe result**: it called a method name the `PayloadSigner` port does not expose. The authoritative
+   reading is `verifyPolicySignerCapability()` through the real `signerAuthorizationContext` seam, which
+   reported `signer_unavailable` for the missing public key before any signing was attempted. Recorded
+   so the line cannot be misread as evidence.
+4. Scratch artifacts created inside two containers (`.probe-check-dist`, `.probe-diag.mjs`,
+   `/tmp/probe-build.log`) were removed afterwards; `docker ps` at the end matches the start (all
+   containers up, no restart, uptimes unbroken). The only compose invocations were the read-only
+   `config --services`/`ps`, both of which refused at interpolation.
+
+### Workload / PR boundary
+
+One documentation work unit: `tasks.md` (two insertion-only closure notes, +11 lines) and this
+`apply-progress.md` section, inside the parent-assigned slice-5 boundary (PR 7, tasks 5.1–5.9). No
+source file was changed, so no normalizer or review boundary moves. No `size:exception`.
+
+### Structured status consumed
+
+Artifact store `openspec` (files under `openspec/changes/trusted-recipient-policy-sync/`), so the
+native dispatcher is not authoritative here and the parent's prompt supplied the resolved work units
+(5.1, 5.2), the hard workspace root and the no-push rule. Readiness was resolved against the artifacts
+directly before any edit: `tasks.md` (5.1/5.2 carry terminal `<!-- sdd-owner: implementation -->`; the
+two parent-owned rows are terminal `<!-- sdd-owner: parent -->` and were left untouched), `spec.md`,
+`design.md` §6.4/§11/§12.3, and the existing `apply-progress.md` for the shape of the pending probe
+record. `actionContext`: one allowed edit root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed inside it; no
+warning was raised by the parent and none was produced by this run.
