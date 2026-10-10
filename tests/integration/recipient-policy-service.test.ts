@@ -62,6 +62,17 @@ const APPLY_REASON = "no signed apply capability in slice 1";
 const ADDRESS_A = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const ADDRESS_B = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ADDRESS_C = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1";
+/**
+ * The wallet's own Solana address. The retained baseline is the wallet's own
+ * consented address and nothing else: design r1 "Base rule recipients = active,
+ * explicitly confirmed Solana trusted addresses plus any explicitly consented
+ * retained baseline address (current self address must not disappear
+ * accidentally)", outline slice 1 "retained self comes only from the active
+ * signer_grants enrollment consent snapshot", and the spec scenario "the
+ * enrollment consent snapshot contains only the wallet's own retained address".
+ * A fixture therefore has to enroll ITS OWN address, not a contact address.
+ */
+const WALLET_ADDRESS = "So11111111111111111111111111111111111111112";
 
 /** `recipients.embedding` is `vector(384)`; fixtures never read it back. */
 const ZERO_EMBEDDING = `[${Array.from({ length: 384 }, () => "0").join(",")}]`;
@@ -135,7 +146,12 @@ suite("recipient policy service (task 1.6)", () => {
     const wallet = await database.query<{ id: string }>(
       `INSERT INTO user_wallets (user_id, provider, provider_wallet_id, chain_family, address, state)
        VALUES ($1, 'fixture', $2, $3, $4, 'ready') RETURNING id`,
-      [userId, `fixture-${randomUUID()}`, chainFamily, `${randomUUID()}.sol`],
+      [
+        userId,
+        `fixture-${randomUUID()}`,
+        chainFamily,
+        chainFamily === "solana" ? WALLET_ADDRESS : `${randomUUID()}.sol`,
+      ],
     );
     provisionedUserIds.push(userId);
     return { userId, walletId: wallet.rows[0]!.id };
@@ -422,8 +438,11 @@ suite("recipient policy service (task 1.6)", () => {
   describe("create", () => {
     it("persists the contact, records the first revision and composes from consent", async () => {
       const { userId, walletId } = await provision();
+      // The enrollment carries the wallet's own address AND a contact address:
+      // only the self address is retained consent, so the contact address must
+      // NOT survive in the baseline (the regression this suite pins).
       await provisionSignerGrant(userId, walletId, {
-        allowlisted: [ADDRESS_B],
+        allowlisted: [WALLET_ADDRESS, ADDRESS_B],
         snapshot: { recipientIds: ["retained"] },
       });
       const { service } = harness();
@@ -453,8 +472,9 @@ suite("recipient policy service (task 1.6)", () => {
       expect(state.desiredRevision).toBe(1);
       expect(state.appliedRevision).toBe(0);
       expect(state.status).toBe("pending");
-      // Consent provenance is the enrollment snapshot, not a remote GET.
-      expect(state.consentBaseline).toEqual([ADDRESS_B]);
+      // Consent provenance is the enrollment snapshot, not a remote GET, and
+      // only the wallet's own enrolled address is retained from it.
+      expect(state.consentBaseline).toEqual([WALLET_ADDRESS]);
       expect(state.consentProvenance).toEqual({ recipientIds: ["retained"] });
 
       const intents = await readIntents(userId);
@@ -467,7 +487,7 @@ suite("recipient policy service (task 1.6)", () => {
       // The composed rule is the ordinary allowlist: baseline ∪ the new contact,
       // capped at exactly the single lamport constant.
       expect(allowlistOf(intents[0]!.composed_rules).sort()).toEqual(
-        [ADDRESS_A, ADDRESS_B].sort(),
+        [ADDRESS_A, WALLET_ADDRESS].sort(),
       );
       expect(capOf(intents[0]!.composed_rules)).toBe("10000000");
 
@@ -548,7 +568,9 @@ suite("recipient policy service (task 1.6)", () => {
 
     it("captures the consent baseline once and never re-derives it", async () => {
       const { userId, walletId } = await provision();
-      await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
+      await provisionSignerGrant(userId, walletId, {
+        allowlisted: [WALLET_ADDRESS],
+      });
       const { service } = harness();
 
       await service.create(userId, {
@@ -557,7 +579,7 @@ suite("recipient policy service (task 1.6)", () => {
         address: ADDRESS_A,
       });
       expect((await readState(userId, walletId))!.consentBaseline).toEqual([
-        ADDRESS_B,
+        WALLET_ADDRESS,
       ]);
 
       // The enrollment moves on. A baseline derived from "whatever the current
@@ -574,12 +596,14 @@ suite("recipient policy service (task 1.6)", () => {
 
       const second = (await readState(userId, walletId))!;
       expect(second.desiredRevision).toBe(2);
-      expect(second.consentBaseline).toEqual([ADDRESS_B]);
+      expect(second.consentBaseline).toEqual([WALLET_ADDRESS]);
     });
 
     it("does not re-capture the baseline after a stop that recorded no revision", async () => {
       const { userId, walletId } = await provision();
-      await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
+      await provisionSignerGrant(userId, walletId, {
+        allowlisted: [WALLET_ADDRESS],
+      });
       // An active grant plus a contact is the unproven two-family composition, so
       // the first create stops with revision 0 — the state row is no longer
       // pristine even though no revision exists.
@@ -596,7 +620,7 @@ suite("recipient policy service (task 1.6)", () => {
 
       const stopped = (await readState(userId, walletId))!;
       expect(stopped.desiredRevision).toBe(0);
-      expect(stopped.consentBaseline).toEqual([ADDRESS_B]);
+      expect(stopped.consentBaseline).toEqual([WALLET_ADDRESS]);
 
       await provisionSignerGrant(userId, walletId, {
         allowlisted: [ADDRESS_C],
@@ -614,7 +638,7 @@ suite("recipient policy service (task 1.6)", () => {
       expect(after.desiredRevision).toBe(0);
       // The recorded baseline is still the first observation, not the newer
       // enrollment: "captured once" survives a stop that never composed.
-      expect(after.consentBaseline).toEqual([ADDRESS_B]);
+      expect(after.consentBaseline).toEqual([WALLET_ADDRESS]);
     });
 
     it("stops as blocked configuration, keeping the contact saved and not enabled", async () => {
@@ -686,7 +710,7 @@ suite("recipient policy service (task 1.6)", () => {
       await database.query(
         `UPDATE signer_grants SET allowlisted_recipients = $2::jsonb
           WHERE wallet_id = $1`,
-        [walletId, JSON.stringify([ADDRESS_B])],
+        [walletId, JSON.stringify([WALLET_ADDRESS])],
       );
       const accepted = await service.create(userId, {
         name: "Uno",
@@ -695,7 +719,7 @@ suite("recipient policy service (task 1.6)", () => {
       });
       expect(accepted.policyRevision).toBe(1);
       expect((await readState(userId, walletId))!.consentBaseline).toEqual([
-        ADDRESS_B,
+        WALLET_ADDRESS,
       ]);
 
       // Triangulation: once the baseline is durable, a later BROKEN enrollment
@@ -713,13 +737,15 @@ suite("recipient policy service (task 1.6)", () => {
       });
       expect(stillWorks.policyRevision).toBe(2);
       expect((await readState(userId, walletId))!.consentBaseline).toEqual([
-        ADDRESS_B,
+        WALLET_ADDRESS,
       ]);
     });
 
     it("supersedes the in-flight intent so a second mutation records its own revision", async () => {
       const { userId, walletId } = await provision();
-      await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
+      await provisionSignerGrant(userId, walletId, {
+        allowlisted: [WALLET_ADDRESS],
+      });
       const { service } = harness();
 
       await service.create(userId, {
@@ -738,7 +764,7 @@ suite("recipient policy service (task 1.6)", () => {
       expect(intents.map((row) => row.state)).toEqual(["superseded", "pending"]);
       expect(intents[1]!.composed_hash).not.toBe(intents[0]!.composed_hash);
       expect(allowlistOf(intents[1]!.composed_rules).sort()).toEqual(
-        [ADDRESS_A, ADDRESS_B, ADDRESS_C].sort(),
+        [ADDRESS_A, ADDRESS_C, WALLET_ADDRESS].sort(),
       );
     });
   });
@@ -771,7 +797,9 @@ suite("recipient policy service (task 1.6)", () => {
 
     it("serializes two concurrent mutations for the same wallet", async () => {
       const { userId, walletId } = await provision();
-      await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
+      await provisionSignerGrant(userId, walletId, {
+        allowlisted: [WALLET_ADDRESS],
+      });
       const { service } = harness();
 
       const [first, second] = await Promise.all([
@@ -785,7 +813,7 @@ suite("recipient policy service (task 1.6)", () => {
       const intents = await readIntents(userId);
       expect(intents.map((row) => row.state)).toEqual(["superseded", "pending"]);
       expect(allowlistOf(intents[1]!.composed_rules).sort()).toEqual(
-        [ADDRESS_A, ADDRESS_B, ADDRESS_C].sort(),
+        [ADDRESS_A, ADDRESS_C, WALLET_ADDRESS].sort(),
       );
     });
 
@@ -838,7 +866,9 @@ suite("recipient policy service (task 1.6)", () => {
   describe("edit", () => {
     it("renames a contact without changing the composed rule set", async () => {
       const { userId, walletId } = await provision();
-      await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
+      await provisionSignerGrant(userId, walletId, {
+        allowlisted: [WALLET_ADDRESS],
+      });
       const { service } = harness();
       const created = await service.create(userId, {
         name: "Uno",
@@ -863,7 +893,7 @@ suite("recipient policy service (task 1.6)", () => {
       expect(intents[1]!.action).toBe("rename");
       expect(intents[1]!.composed_hash).toBe(intents[0]!.composed_hash);
       expect(allowlistOf(intents[1]!.composed_rules).sort()).toEqual(
-        [ADDRESS_A, ADDRESS_B].sort(),
+        [ADDRESS_A, WALLET_ADDRESS].sort(),
       );
       expect((await readState(userId, walletId))!.status).toBe("pending");
     });
@@ -1011,7 +1041,9 @@ suite("recipient policy service (task 1.6)", () => {
 
     it("recomposes the address change and drops the replaced address", async () => {
       const { userId, walletId } = await provision();
-      await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
+      await provisionSignerGrant(userId, walletId, {
+        allowlisted: [WALLET_ADDRESS],
+      });
       const { service } = harness();
       const created = await service.create(userId, {
         name: "Uno",
@@ -1029,7 +1061,7 @@ suite("recipient policy service (task 1.6)", () => {
       expect(intents[1]!.action).toBe("address_change");
       expect(intents[1]!.composed_hash).not.toBe(intents[0]!.composed_hash);
       expect(allowlistOf(intents[1]!.composed_rules).sort()).toEqual(
-        [ADDRESS_B, ADDRESS_C].sort(),
+        [ADDRESS_C, WALLET_ADDRESS].sort(),
       );
     });
 
@@ -1100,12 +1132,14 @@ suite("recipient policy service (task 1.6)", () => {
   describe("the consent capture predicate", () => {
     it("refuses to capture the baseline again once a revision is recorded", async () => {
       const { userId, walletId } = await provision();
-      await provisionSignerGrant(userId, walletId, { allowlisted: [ADDRESS_B] });
+      await provisionSignerGrant(userId, walletId, {
+        allowlisted: [WALLET_ADDRESS],
+      });
       const consent = (await repository.readActiveEnrollmentConsent(
         userId,
         walletId,
       ))!;
-      expect(consent.baseline).toEqual([ADDRESS_B]);
+      expect(consent.baseline).toEqual([WALLET_ADDRESS]);
 
       await database.withUserTransaction(userId, (client) =>
         repository.lockPolicyState(userId, walletId, client),
@@ -1117,7 +1151,7 @@ suite("recipient policy service (task 1.6)", () => {
         await repository.captureConsentBaselineOnce(userId, walletId, consent),
       ).toBe(true);
       expect((await readState(userId, walletId))!.consentBaseline).toEqual([
-        ADDRESS_B,
+        WALLET_ADDRESS,
       ]);
 
       // Once a revision exists, a second capture with a DIFFERENT candidate must
@@ -1134,7 +1168,7 @@ suite("recipient policy service (task 1.6)", () => {
         }),
       ).toBe(false);
       const state = (await readState(userId, walletId))!;
-      expect(state.consentBaseline).toEqual([ADDRESS_B]);
+      expect(state.consentBaseline).toEqual([WALLET_ADDRESS]);
       expect(state.consentProvenance).toEqual({});
     });
   });

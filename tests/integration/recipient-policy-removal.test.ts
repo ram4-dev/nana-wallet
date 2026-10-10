@@ -63,6 +63,14 @@ const APPLY_REASON = "no signed apply capability in slice 1";
 const ADDRESS_A = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const ADDRESS_B = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const ADDRESS_C = "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1";
+/**
+ * The wallet's own Solana address — the only address the enrollment consent can
+ * retain (design r1 "...plus any explicitly consented retained baseline address
+ * (current self address must not disappear accidentally)"). The fixture has to
+ * enroll this address, not a contact address, or the baseline is empty and the
+ * last-recipient removal stops as an unproven empty composition.
+ */
+const WALLET_ADDRESS = "So11111111111111111111111111111111111111112";
 
 /** `recipients.embedding` is `vector(384)`; fixtures never read it back. */
 const ZERO_EMBEDDING = `[${Array.from({ length: 384 }, () => "0").join(",")}]`;
@@ -168,7 +176,7 @@ suite("recipient policy removal (task 1.7)", () => {
     const wallet = await database.query<{ id: string }>(
       `INSERT INTO user_wallets (user_id, provider, provider_wallet_id, chain_family, address, state)
        VALUES ($1, 'fixture', $2, 'solana', $3, 'ready') RETURNING id`,
-      [userId, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
+      [userId, `fixture-${randomUUID()}`, WALLET_ADDRESS],
     );
     provisionedUserIds.push(userId);
     return { userId, walletId: wallet.rows[0]!.id };
@@ -378,7 +386,7 @@ suite("recipient policy removal (task 1.7)", () => {
     grantIds: string[];
   }> {
     const { userId, walletId } = await provision();
-    await provisionSignerGrant(userId, walletId, options.baseline ?? [ADDRESS_C]);
+    await provisionSignerGrant(userId, walletId, options.baseline ?? [WALLET_ADDRESS]);
     const { service: svc } = service();
     const created = await svc.create(userId, {
       name: "Trusted One",
