@@ -43,13 +43,16 @@ describe("contacts repository chain scope", () => {
     });
   });
 
-  it("keeps legacy EVM contacts on the default network", async () => {
+  it("resolves the configured chain for a create body that omits the network", async () => {
+    // RAM-009: a body without `network` no longer falls through to the legacy EVM
+    // regex. The create path resolves the configured chain, so the resolved
+    // network is what the row stores.
     const row = {
       id: "contact-2",
       name: "Lucas",
       description: "friend",
-      address: "0x1234567890123456789012345678901234567890",
-      network: null,
+      address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+      network: "solana-devnet",
       version: 1,
       status: "active",
       created_at: new Date("2026-01-01T00:00:00.000Z"),
@@ -65,8 +68,20 @@ describe("contacts repository chain scope", () => {
       address: row.address,
     }, Array(384).fill(0.1), "embed-v1");
 
-    expect(client.query.mock.calls[0]?.[1]).toContain(null);
-    expect(result).not.toHaveProperty("network");
+    expect(client.query.mock.calls[0]?.[1]).toContain("solana-devnet");
+    expect(result.network).toBe("solana-devnet");
+  });
+
+  it("refuses an EVM-shaped address in a create body that omits the network", async () => {
+    const database = { withUserTransaction: vi.fn() };
+    const repository = new ContactsRepository(database as never);
+
+    await expect(repository.create("user-1", {
+      name: "Lucas",
+      description: "friend",
+      address: "0x1234567890123456789012345678901234567890",
+    }, Array(384).fill(0.1), "embed-v1")).rejects.toThrow(/address must match the selected network/);
+    expect(database.withUserTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects malformed Solana addresses before opening a database transaction", async () => {
