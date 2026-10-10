@@ -48,6 +48,30 @@ const TURNS: ReadonlyArray<{ file: string; text: string; intent: string }> = [
     text: '¿Y en dólares cuánto tengo?',
     intent: 'ask for a balance on another network (multi-network read)',
   },
+  // --- Slice 4: the transfer scenario's turn sequence -------------------------
+  //
+  // The request names "mi nieto Lucas": that is the contact the fixture actually
+  // seeds (tests/e2e/voice-room/recipient-fixture.ts), because a transfer whose
+  // recipient is not in memory can never be previewed. `send-money-to-sister.wav`
+  // above says "mi hermana Ana", which no seed provides, so it stays an
+  // instruction fixture and is NOT used by the state scenarios.
+  {
+    file: 'transfer-to-lucas.wav',
+    text: 'Che Nani, mandale medio SOL a mi nieto Lucas, por favor.',
+    intent: 'request a transfer to the seeded contact, with an explicit amount (turn 1 of the transfer scenario)',
+  },
+  {
+    file: 'confirm-transfer.wav',
+    text: 'Sí, confirmo, dale.',
+    intent:
+      'confirm the preview: every token is polarity or filler, so the spoken-decision gate accepts it (turn 2, confirmed scenario)',
+  },
+  {
+    file: 'cancel-transfer.wav',
+    text: 'No, cancelá, dejalo.',
+    intent:
+      'reject the preview: every token is refusal polarity or filler, so the gate accepts it as a cancellation (turn 2, cancelled scenario)',
+  },
 ];
 
 async function main(): Promise<number> {
