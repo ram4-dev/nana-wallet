@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { asSchema, jsonSchema } from 'ai';
 import { buildWalletAgentInstructions, type WalletAgentConfig } from './instructions.js';
 import { formatBalanceForAgent } from './balance-format.js';
 import type { ConversationLanguage } from '../conversations/language.js';
@@ -196,6 +197,28 @@ export const DEFAULT_READ_NETWORK = 'solana-devnet';
  * guards (pending preview match, policy, revalidation) stay authoritative.
  */
 export const guardedSendTokenSchema = z.union([sendTokenInputSchema, internalSendTokenInputSchema]);
+
+const guardedSendTokenUnion = asSchema(guardedSendTokenSchema);
+
+/**
+ * Parameters schema the provider is handed for the guarded `send_token` tool.
+ *
+ * A top-level `z.union` serializes to a bare `anyOf`, and the gateway validates
+ * every function's schema before it routes a completion. Without a top-level
+ * `type: "object"` it rejects the WHOLE turn:
+ *
+ *   Invalid schema for function 'send_token': schema must be a JSON Schema of
+ *   'type: "object"', got 'type: null'.
+ *
+ * Every branch of the union is already an object, so the object type is implied
+ * by the union itself: declaring it adds no constraint and removes none. The
+ * validator stays the union — this changes only what the provider is told, and
+ * the acceptance set above is exactly the one the wrapper had before.
+ */
+export const guardedSendTokenToolSchema = jsonSchema<z.output<typeof guardedSendTokenSchema>>(
+  () => ({ ...guardedSendTokenUnion.jsonSchema, type: 'object' }),
+  { validate: (value) => guardedSendTokenUnion.validate!(value) },
+);
 
 export const balanceInputSchema = z.object({
   network: z.string().trim().min(1).optional(),

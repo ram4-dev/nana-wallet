@@ -20,7 +20,7 @@ import {
   internalSendTokenInputSchema,
   resolvePreviewRecipient,
   augmentPreviewOutput,
-  guardedSendTokenSchema,
+  guardedSendTokenToolSchema,
   type GrantCreationPort,
   type SendTokenInput,
 } from './definition.js';
@@ -190,7 +190,9 @@ export function buildGuardedTools(
 
   const guardedSendToken = tool({
     description: baseSendToken.description,
-    inputSchema: guardedSendTokenSchema,
+    // The provider-facing schema carries a top-level `type: "object"`; the
+    // wrapper's dual-parse below stays the authoritative gate.
+    inputSchema: guardedSendTokenToolSchema,
     execute: async (rawInput: unknown, options) => {
       // Model-facing preview-only path: resolve the versioned recipient
       // server-side (the model never sees or supplies an address).

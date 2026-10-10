@@ -6472,3 +6472,239 @@ in any output or in this file. The only environment inspection used
 `docker inspect … | jq -r '.[0].Config.Env[] | select(startswith("…="))'` on non-secret mode keys
 (`AGENT_RUNTIME`, `WDK_NETWORK`, `RECIPIENT_MEMORY_ENABLED`) — no full environment dump, no
 line-oriented projection. The harness printed no request headers and no credentials.
+
+---
+
+## Work unit — the guarded `send_token` tool schema fix in `src/agent/definition.ts` (source change)
+
+Status: **completed**. One conventional work-unit commit for this defect (source + tests + this
+documentation append, the pattern of `6ba98f9`).
+
+This closes the **second defect** the `x-opencode-session` work unit found and reported without
+fixing. That report is not rewritten; this entry supersedes it in place the way the earlier
+in-place notes do.
+
+### Defect
+
+The outbound completion request now routes (first defect fixed) and is then rejected **before the
+model runs at all**, for every turn, on tool schema:
+
+> `Invalid schema for function 'send_token': schema must be a JSON Schema of 'type: "object"', got 'type: null'.`
+
+`guardedSendTokenSchema` (`src/agent/definition.ts:198`) is a **top-level `z.union`**
+(`z.union([sendTokenInputSchema, internalSendTokenInputSchema])`). zod serializes a top-level union
+to a bare `anyOf`: both branches are `"type": "object"`, but the schema itself has no top-level
+`type`. The gateway validates every function's parameters schema before routing, so the whole
+completion — every turn, whatever the user asked — died as `422 internal_error`.
+
+The defect was **masked** by the header defect: before `6ba98f9` the request died at
+`MissingSessionID` and never reached schema validation.
+
+### Approach chosen, and the alternatives rejected
+
+**Chosen:** keep the union as the validator and hand the provider the union's own JSON Schema with
+the top-level `type: "object"` the union already implies.
+
+```ts
+const guardedSendTokenUnion = asSchema(guardedSendTokenSchema);
+
+export const guardedSendTokenToolSchema = jsonSchema<z.output<typeof guardedSendTokenSchema>>(
+  () => ({ ...guardedSendTokenUnion.jsonSchema, type: 'object' }),
+  { validate: (value) => guardedSendTokenUnion.validate!(value) },
+);
+```
+
+`wallet-agent.ts` hands that schema to the guarded tool (`inputSchema`); the wrapper's dual-parse
+(`sendTokenInputSchema.safeParse` → `internalSendTokenInputSchema.safeParse`) and every runtime
+guard behind it are untouched.
+
+Why this one preserves the acceptance set **exactly**: every branch of the union is an object, so
+"the instance is an object" is already entailed by the `anyOf`. Adding the top-level type adds no
+constraint and removes none, and the validator stays the union itself — not a re-implementation of
+it. The strongest available evidence for "nothing narrowed" is therefore available and asserted:
+the emitted schema equals the union's own serialization **plus** `type: "object"`
+(`declares exactly the previous schema plus the implied object type`), branch by branch, keeping
+each branch's `required` list, key set, `additionalProperties: false` and both member validators.
+
+Alternatives considered and rejected:
+
+1. **Flatten the union into one `.superRefine`d object with all keys optional.** Emits
+   `type: "object"` but the declared schema loses its `required` lists and its branch structure:
+   the model would be steered by a much weaker signature, and the declared set would silently
+   widen (the runtime gate could only narrow it back). Rejected: it changes what the model is told
+   and trades an exact equivalence for an approximate one.
+2. **A single zod object that reproduces `M ∪ I` by hand.** Possible but duplicates eleven field
+   definitions away from their members; any later edit to either member would be a silent drift
+   between the declared schema and the gate. Rejected: two sources of truth for one contract.
+3. **`allOf` / `.pipe()` / `z.intersection` wrappers.** Either still emit no top-level `type`
+   (`allOf`), or emit a schema that rejects keys the internal branch accepts (narrowing), or emit
+   a bare `{"type":"object"}` with `additionalProperties: true` and no `properties` at all —
+   losing the parameter list the model needs. Rejected: not equivalent.
+4. **Dropping the internal member.** Rejected outright: the doc comment above the union makes the
+   dual-parse load-bearing (internal/deterministic callers and the legacy WDK path exercise the
+   wrapper directly), and mutation B below shows exactly which assertions catch it.
+
+### Test and mutation evidence
+
+New suite `tests/unit/agent-tool-schema-object.test.ts` (9 cases), following the
+`agent-model-session-header.test.ts` idiom: a real HTTP gateway double on `127.0.0.1`, the real
+`handleMessage` turn, **no mocked `fetch`**, assertions taken from the captured outbound body — the
+schema as actually handed to the provider, not a hand-written copy. Its observable contract is
+`asSchema(guardedSendTokenSchema)`, so the suite cannot pass against a private copy either.
+
+| Phase | Evidence |
+|---|---|
+| RED (pre-fix, same suite) | `Tests 7 failed (7)`. Three failures are the wire defect itself, and the first one names it precisely: `expected [ 'send_token' ] to deeply equal []` — `send_token` was the **only** tool of the request without a top-level `type: "object"`; `expected undefined to be 'object'`. Four more failed on the not-yet-exported tool schema (`guardedSendTokenToolSchema`), i.e. the cases had nothing to assert against. |
+| GREEN | `npx vitest run tests/unit/agent-tool-schema-object.test.ts` → `Tests 9 passed (9)`. |
+| TRIANGULATE | Added after GREEN: (a) the whole-request sweep (every tool, not just `send_token`); (b) a **real model tool call** carrying the internal broadcast shape, answered `200` twice, whose tool result carries `"preview":true` — the tool actually executed through the schema the provider was handed; (c) the mirror case, a tool call with an input neither shape accepts, whose tool result is the SDK's `Invalid input for tool send_token … Unrecognized key: "to"` and never a preview; (d) case-by-case agreement between the declared validator and the union over nine accepted/rejected inputs. |
+| REFACTOR | None needed; the emitted schema is derived, not re-declared. `npm run lint` and `npm run typecheck` clean. |
+
+**Mutations (each applied to the fixing tree, observed, then restored; the suite is green at 9/9
+before and after every one):**
+
+| # | Mutation | Attributed failures (by name) |
+|---|---|---|
+| A | Injection narrowed to `{ ...union.jsonSchema }` (top-level type dropped) | `emits a top-level object schema for every tool the model is offered`, `keeps both guarded branches in the emitted send_token schema`, `declares exactly the previous schema plus the implied object type` → `3 failed \| 6 passed (9)` |
+| B | Union narrowed to one member: `z.union([sendTokenInputSchema])` | `keeps both guarded branches in the emitted send_token schema`, `accepts the internal broadcast shape`, `executes a real model tool call carrying the internal broadcast shape` → `3 failed \| 6 passed (9)` |
+| C | `dryRun` dropped from `internalSendTokenInputSchema` | `keeps both guarded branches in the emitted send_token schema`, `executes a real model tool call carrying the internal broadcast shape` → `2 failed \| 7 passed (9)` |
+
+So both halves of the guard are load-bearing: losing the top-level type fails on the wire cases
+(A), and losing either accepted shape fails on acceptance (B, C). Mutation C also shows the honest
+limit of one case — the non-strict internal member strips unknown keys, so removing a property
+line does not by itself make the direct parse fail; it is the pinned `required`/key-set assertions
+that catch it.
+
+### Live proof — the real agent path, and which artifact carried the fix
+
+**No image rebuild.** The deployed `nana-privy-impl-backend-1` (up 2 h) runs
+`npm run build && exec node dist/server.js`, with the host worktree's `src/` bind-mounted **read-only**
+at `/app/src` (`docker inspect … .Mounts`: `…/colloseum.feat-solana-operational/src -> /app/src (ro)`).
+Its `/app/dist` had been compiled at container start, i.e. **without** this fix, so the fix was
+compiled in place from the fixed bind-mounted source:
+
+```
+$ docker exec nana-privy-impl-backend-1 sh -c "grep -c guardedSendTokenToolSchema /app/dist/agent/definition.js; md5sum /app/dist/agent/definition.js"
+0
+f1645346bf831954d8bc859f961edd2b  /app/dist/agent/definition.js
+$ docker exec -w /app nana-privy-impl-backend-1 npm run build        # tsc -p tsconfig.json, exit 0
+$ docker exec nana-privy-impl-backend-1 sh -c "grep -c guardedSendTokenToolSchema /app/dist/agent/definition.js; md5sum /app/dist/agent/definition.js"
+1
+4140a28dcb4c78ec4ffb6844ce483291  /app/dist/agent/definition.js
+```
+
+**The artifact that carried the fix during the live proof is the container's compiled
+`/app/dist/agent/definition.js` (md5 `4140a28dcb4c78ec4ffb6844ce483291`), compiled from the
+bind-mounted fixed host `src/`** — not the stale host `dist/`, and not a rebuilt image. The
+long-running server process still holds its old module in memory; the harness is a **new** node
+process that imports `/app/dist/**`, so it loaded the fixed module — and the harness prints the
+same file's md5 and marker inside that very process, so the claim is checkable from its own output.
+This is a source change: the image itself was not rebuilt.
+
+Switches used, as required: `RECIPIENT_POLICY_RECONCILER=disabled` and
+`NOTIFICATIONS_OUTBOX_ENABLED=false` (both names confirmed in `src/config/recipient-policy.ts` and
+`src/server.ts`). `AGENT_RUNTIME=llm` was already the container's own value, so the LLM path was
+the one exercised.
+
+```
+$ docker exec -i -e RECIPIENT_POLICY_RECONCILER=disabled -e NOTIFICATIONS_OUTBOX_ENABLED=false \
+    nana-privy-impl-backend-1 node --input-type=module - < /tmp/turn-check-schema-fix.mjs
+[artifact] dist/agent/definition.js md5 4140a28dcb4c78ec4ffb6844ce483291
+[artifact] carries guardedSendTokenToolSchema: true
+[turn] conversation 200 e58e9195-2cb7-49a9-869e-8e62bf2fd20c
+[trace] -> POST https://opencode.ai/zen/go/v1/chat/completions header names: ["authorization","content-type","user-agent","x-opencode-session"]
+[trace]    send_token parameters: {"type":"object","anyOfBranches":2,"anyOfTypes":["object","object"]}
+[trace] <- 200
+[turn] status 200
+[turn] body {"status":"answer","message":"¡Hola! ¿Qué necesitás? Puedo consultar tu saldo, ver movimientos o preparar una transferencia."}
+```
+
+**The headline: an agent turn now succeeds end-to-end.** `POST /v1/conversations` → `200`;
+`POST /v1/conversations/{id}/turns` with `{"message":"hola"}` → **HTTP 200** with a real model
+answer. Before this fix the same call returned `422` `internal_error` with an empty turn. On the
+wire, the parameters the gateway validates now carry a top-level `type: "object"` with both
+`anyOf` branches intact, and the gateway answers `200` where it answered `400` on schema.
+
+A second live turn proves the previously-broken **tool itself** now works, not just the routing:
+
+```
+$ docker exec -i -e RECIPIENT_POLICY_RECONCILER=disabled -e NOTIFICATIONS_OUTBOX_ENABLED=false \
+    nana-privy-impl-backend-1 node --input-type=module - < /tmp/turn-check-send-token-call.mjs
+[trace] <- POST 200        # preview call
+[trace] <- POST 200        # tool result replayed
+[trace] <- POST 200        # final answer
+[turn] status 200
+[turn] body {"status":"confirmation_required","message":"Red: solana-devnet · Token: SOL\nDestinatario: Test1\nMonto: 0.01 SOL · Comisión: ~0.000005 SOL\n¿Confirmás el envío?","preview":{"network":"solana-devnet","token":"SOL","recipient":"DFYT4RDcvr6vL46c7iVDmfBbEYQxAZhUxkgvwzuVHMEk","amount":"0.01","estimatedFee":"0.000005 SOL"}}
+```
+
+The model called `send_token`, the guarded wrapper executed it, and the turn stopped at the
+preview. **Nothing was confirmed and no funds moved**: no `/decisions` call of any kind was made,
+the harness closed the server immediately, the preview was left as it is, and no transfer of any
+size was broadcast. `Test1` (contact `b6792a7c-b793-49c2-b468-624903ffcc1d`) was not modified and
+its recorded devnet transfer is untouched.
+
+### Verification commands and results
+
+| Command | Result |
+|---|---|
+| `npx vitest run tests/unit/agent-tool-schema-object.test.ts` (pre-fix) | `7 failed (7)` — honest RED, first failure naming `send_token` as the only tool without a top-level object type |
+| `npx vitest run tests/unit/agent-tool-schema-object.test.ts` | **9 passed (9)** |
+| `npm run typecheck` (`tsc -p tsconfig.test.json --noEmit`) | exit 0 |
+| `npm run lint` (`eslint src tests --max-warnings=0`) | exit 0 |
+| `npx vitest run tests/unit` | `3 failed \| 1051 passed \| 1 skipped (1055)` |
+| the same 3 files against the **pristine** `src/agent/{definition,wallet-agent}.ts` (HEAD copies run in place, then restored) | **identical**: `realtime-agent-session` (`:311`), `realtime-tool-binding` (`:191`), `realtime-tools` (`:360`) — same names, same line numbers, same messages |
+| `DB_HOST_PORT=55470 npx vitest run` (whole suite) | noisy: integration files failing under parallel contention |
+| isolation re-runs of three of them (alone) | `recipient-policy-migration` 19/19 · `recipient-policy-service` 22/22 · `api-contacts` 3/3 — all green |
+
+The 3 unit failures are exactly the known pre-existing LiveKit-realtime ones, and they are
+**attributed, not assumed**: reverting `src/agent/{definition,wallet-agent}.ts` to their HEAD bytes
+in place (no `git stash`/`checkout`/`reset`/`restore`/`clean` was used anywhere in this work unit)
+reproduces all three with byte-identical names, messages and line numbers, and the changed module
+is not imported by those suites. No new failure appeared anywhere; **0 regressions**.
+
+### Disclosed state mutations (no secrets, no money, no config)
+
+- `/app/dist` **inside** the running `nana-privy-impl-backend-1` container was recompiled from the
+  bind-mounted fixed source. That is the artifact the live proof needed; the host worktree was not
+  touched by it, the image was not rebuilt, and no container was restarted.
+- Two conversations (two turns) were created in the **stack** database `nana-privy-impl-db-1`
+  (`wdk_agent`) by the live harness, as in the earlier runs under this change. Additive rows only:
+  no wallet, policy, grant or contact row was modified, and no money moved.
+- The host worktree's working tree carries exactly the three intended files plus the pre-existing
+  untracked, user-owned `compose.privy-local.ports.yaml`, which was preserved and not committed.
+
+### Candidate status — the frozen `ca4fdb2` is further superseded
+
+This is a **source change**, so the frozen candidate `ca4fdb2` is now **further superseded** (the
+`x-opencode-session` fix already superseded it once). A **re-freeze of the new work-unit commit and
+a new bounded-review candidate are owed**. Neither is attempted here: this work unit does not run
+normalizers for a freeze, does not start or reopen a review, and does not create a receipt. The
+parent owns that step.
+
+### Task checkboxes and parent-owned rows
+
+No row in `tasks.md` covers this defect, so **no checkbox changed**. `tasks.md` is byte-for-byte
+untouched by this work unit (`git status --porcelain` lists no modification to it), and its two
+parent-owned rows — the bounded native review, and the post-apply `sdd-verify` + archive — remain
+exactly as written. Like the previous repair, this is a deviation repair under the deviation
+already recorded above, not a task row.
+
+### Structured status consumed
+
+The parent prompt supplied the work unit, the defect with its live trace, the hard constraint, the
+proof requirements and the resolved delivery path, so no native status dispatch was needed or
+performed. All writes stayed inside the assigned worktree root
+`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`; the main checkout
+`/Users/ramiro/Desktop/projects/colloseum` was never touched. Workload / PR boundary: **one work
+unit, one commit** 379 insertions across
+`src/agent/definition.ts`, `src/agent/wallet-agent.ts` and its test — inside the chained-PR
+discipline already recorded for this change; no `size:exception` is claimed or needed.
+
+### Secrets
+
+Nothing secret was read, printed, echoed or logged. No `.env`, `.secrets/`, token, key, payload or
+signature value appears in any command, output, harness or in this file. The only environment
+inspection was the sanctioned projection
+`docker inspect <c> | jq -r '.[0].Config.Env[] | split("=")[0]'` (names only) — no `env`,
+`printenv`, `--format '{{println .}}'` and no line-oriented projection anywhere. The harness
+printed HTTP **header names** only, never values, and never the request or response body's
+credentials; the traced body excerpts are tool-schema shapes and user-visible copy.
