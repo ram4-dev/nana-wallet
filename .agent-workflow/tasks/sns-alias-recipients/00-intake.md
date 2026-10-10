@@ -62,16 +62,32 @@ Two hard consequences:
 1. **The `.sol` cutoff has ALREADY PASSED.** The documented pause slot is `452,825,395` and mainnet is at `455,410,529` — 2,585,134 slots past it (≈ 12 days). `.sol` is not deprecated-in-progress, it is **already rejected in code**. `.sns` is the only suffix that resolves.
 2. **`resolve` uses the MAINNET constants.** It derives the name account under `SNS_ROOT_DOMAIN_ACCOUNT` from `constants.mjs` (mainnet: `58Pwtj…`), so a devnet-registered name is invisible to it. Devnet has its OWN root (`5eoDkP…`) and exposes `devnet.utils.getSnsDomainKeySync` but **no devnet `resolve`** — a devnet resolver would have to derive the PDA via `devnet.utils` and read the account itself.
 
-### Registration on devnet: NOT POSSIBLE with this SDK
+### Registration on devnet: POSSIBLE — earlier conclusion was WRONG
 
-This closes the question "puedo registrar un `.sns` en devnet?" — the answer is no, for two independent reasons:
+**CORRECTION.** An earlier revision of this intake recorded "no se puede registrar en devnet". That was wrong, and the error was mine: I had only tested `@bonfida/spl-name-service@4` (the SRS-era SDK), whose `PYTH_PULL_FEEDS` is empty on devnet. The **legacy** path works, and it is what the registrar program uses.
 
-1. **Creating a TLD directly under the devnet root needs the SNS authority's signature.** The root account's `owner` field is `5eadff2929d1977d537b3999a7e5d8d47d4fc789aed777309a96fdf09d0e4afa` — the program's own authority PDA, which we cannot sign for. `createNameRegistry` accepts a `parentName`, but it then requires that parent's owner to sign; it also makes its own `NameRegistryState.retrieve` call, which is where a blocked attempt failed.
-2. **The official registrar cannot run on devnet.** `devnet.constants.PYTH_PULL_FEEDS` is **undefined/empty**, and `registerDomain` throws `PythFeedNotFoundError` before building anything when no feed exists for the payment mint. So the paid path (`registerDomain`, which needs USDC + a Pyth price feed) is unavailable on devnet.
+Verified end to end on `solana-devnet`: **`nanatest.sns` is registered and live.**
 
-**Therefore: the alias feature cannot get a real resolvable devnet name.** Local acceptance evidence must come from either (a) a mainnet registration (needs mainnet USDC, and mainnet writes are out of scope for a test), or (b) a **resolver abstraction with a fixture implementation** for devnet, with the real resolution path proven only against mainnet reads.
+| | |
+| --- | --- |
+| Transaction | `4gZ9rJcY2Lj64rVqzEM9wXYrwznkJ1DXbhQo1GNKvHtnhswCpgBxoa7zrP2NrZYSo7TDuCMHKpizH2T3oz2oiBGH` |
+| Name account (PDA) | `6Kcihb6KARkTtrnps8TbPp7H3b69jFxEe5i4hUrxkBps` |
+| Decoded `parentName` | `5eoDkP6vCQBXqDV9YN2NdUs3nmML3dMRNmEYpiyVNBm2` = the **devnet SNS root** (a real TLD child, not a stray account) |
+| Decoded `owner` | `BsNFJHm85Yk2hcugJG16KFm4bfdB5DwnTqfoSW4BuLFv` (our local payer) |
 
-### The app wallet cannot sign a registration (policy), even if registration worked
+**How it works, which is what the implementation must copy:**
+
+1. **Program.** The registrar program `snshBoEQ9jx4QoHBpZDQPYdNCtw7RMxJvYrKFEhwaPJ` is deployed and **executable** on devnet (owner `BPFLoaderUpgradeab1e…`, so it is upgradeable and live). It is the authority of the devnet root — which is why a direct `createNameRegistry` under the root cannot work, but the registrar's own instruction can.
+2. **SDK.** Use `@bonfida/spl-name-service@3.0.23` — **not v4**. v3's `devnet` export carries the payment configuration that v4 dropped: `devnet.constants.PYTH_FEEDS` maps the mint to a legacy Pyth product/price pair, and `PYTH_MAPPING_ACC` is present. **All of these accounts exist on devnet** (owner `gSbePebfvPy7tRqimPoVecS2…`, the legacy Pyth program): mapping `BmA9Z6FjioHJPpjT39QazZyhDRUdZy2ezwx4GiDdE2u2`, and for wrapped SOL product `3Mnn2fX6rQyUsyELYms1sBJyChWofzSNRoqYzvgMVz5E` / price `J83w4HKfqxwcq3BEMMkPFSppX3gqekLyLJBexebFVkix` (USDC and the other listed mints have feeds too).
+3. **Payment.** Pay in **wrapped SOL** (`So11111111111111111111111111111111111111112`) by passing that mint to `devnet.bindings.registerDomainName(connection, label, space, payer, buyerTokenAccount, mint, referrer)`. The vault ATA `CK4GgmwCq1Bcz8dgGSLz5bueJbPdBwNfHPRfWQezgXTU` already exists, so the vault-side transfer is satisfiable. A **referrer is required** — passing none leaves the 17th account `undefined` and the instruction fails to compile; the devnet referrer is `3ogYncmMM5CmytsGCqKHydmXmKUZ6sGWvizkzqwT7zb1`.
+4. **Devnet is 1000× cheaper.** The registrar's `get_special_discount_and_fee` returns `multiplier * 1_000` under the `devnet` feature instead of `multiplier * 1_000_000`. Wrapping 0.05 SOL was more than enough.
+5. **Resolution must be devnet-aware.** The SDK's `resolve()` derives under the **mainnet** root from `constants.mjs`, so it cannot find a devnet name. A devnet resolver is `devnet.utils.getDomainKeySync(label)` → PDA → `NameRegistryState.retrieve(...)` → `registry.owner` (v3 calls it `getDomainKeySync`; v4 renamed it `getSnsDomainKeySync` and does not export a devnet resolver).
+
+**The app wallet still cannot sign it** — `Privy denied the Solana dispatch by policy`, because the single ALLOW rule only covers a SystemProgram **Transfer**. So registration must be signed by a **separate local keypair** (`.secrets/sns-devnet-payer.json`, gitignored). That is fine: the name owner is arbitrary, so the payer and the address a name points at are independent.
+
+**What this changes for the plan:** a real, resolvable devnet alias now exists, so the feature CAN be exercised end to end locally. The resolver still needs the abstraction (network-aware root selection) but no longer needs a fake fixture to be honest.
+
+### The app wallet cannot sign a registration (policy) — independent of the above
 
 Attempting to register with the app wallet returned, live:
 
@@ -92,8 +108,8 @@ This is architectural, not incidental: **reads are unrestricted, writes are not.
 
 ## Uncertainty to resolve before design (cheapest first)
 
-1. ~~Does `.sns` resolution work on `solana-devnet`?~~ **ANSWERED — NO, and registration there is impossible.** Resolution works on mainnet (proven); devnet cannot host a resolvable name via this SDK (no Pyth feed for the registrar, and a direct TLD under the devnet root needs the SNS authority's signature). Design must therefore choose between a resolver abstraction with a fixture for devnet, or proving the real path only against mainnet reads.
-2. **Which RPC will serve the resolution calls in each environment?** The public devnet endpoint throttles per method and is unusable for a test loop; a dedicated endpoint is needed. Also confirm the mainnet RPC choice if resolution is ever exercised outside devnet.
+1. ~~Does `.sns` resolution work on `solana-devnet`?~~ **ANSWERED — YES.** A real devnet name exists (`nanatest.sns`, see above), registered through the legacy registrar with SDK **v3**. The resolver must select the root by network and read the account itself, because the SDK's `resolve()` is mainnet-bound.
+2. **Which RPC will serve the resolution calls in each environment?** The public devnet endpoint throttles **per method** (`429 Too many requests for a specific RPC call`) and is unusable for a test loop; a dedicated endpoint is needed. Note the throttle is path-dependent: `curl` from the host succeeded while the same call inside the backend container was refused.
 2. **Does the devnet RPC we already use serve the resolution calls**, or does SNS need its own program accounts read from a different endpoint?
 3. **Bundle and dependency cost** of `@bonfida/spl-name-service@4` in the backend image, and whether it drags a conflicting `@solana/web3.js`.
 4. **Reverse lookup availability on devnet** (mitigation 2) and its failure mode when the address has no primary domain.
