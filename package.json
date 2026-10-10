@@ -23,6 +23,8 @@
     "test:wdk": "vitest run tests/integration/wdk-mcp.test.ts",
     "test:e2e:livekit-fake": "vitest run tests/integration/livekit-worker-fake.e2e.test.ts",
     "test:e2e:voice-room-spike": "tsx scripts/voice-room-spike.ts",
+    "e2e:voice-room:fixtures": "tsx scripts/generate-voice-room-fixtures.ts",
+    "test:e2e:voice-room-roundtrip": "tsx scripts/voice-room-roundtrip.ts",
     "test:wdk-manual": "vitest run tests/integration/wdk-transfer.manual.test.ts",
     "test:e2e:browser": "node scripts/run-browser-e2e.mjs",
     "test:e2e:notifications": "node scripts/run-notifications-browser-e2e.mjs",
