@@ -124,3 +124,31 @@ verify("sha256", payload, { key: publicKeyObject, dsaEncoding: "der" }, signatur
   (`src/wallet/solana-devnet-provider.ts`) still builds its own authorization
   signature from the environment key; migrating it to this sidecar is a
   follow-up.
+
+## Deployment wiring (compose)
+
+`compose.privy-local.yaml` runs **one sidecar per consumer namespace**, because the
+sidecar refuses any non-loopback bind and can therefore only serve a process that
+shares its network namespace:
+
+| Service | Namespace | Loopback endpoint | Key material |
+|---|---|---|---|
+| `backend-signer` | `service:backend` | `127.0.0.1:8788` | mounts `PRIVY_SIGNER_KEY_DIR` read-only as `/run/secrets`; reads `PRIVY_SIGNER_KEY_FILE` |
+| `voice-worker-signer` | `service:voice-worker` | `127.0.0.1:8789` | same, distinct port (belt-and-braces; the namespaces are already distinct) |
+
+Neither service declares `ports:`. The absence of a published port is the first
+line of defence; the loopback bind is the second.
+
+The two consumers (`backend`, `voice-worker`) get the capability, never the key:
+
+| Variable | Meaning |
+|---|---|
+| `PRIVY_SIGNER_URL` | Absolute sidecar url on the consumer's own loopback, e.g. `http://127.0.0.1:8788/sign`. |
+| `PRIVY_SIGNER_TOKEN` | Shared bearer token required on every sign request. A capability, not a key. |
+| `PRIVY_SIGNER_TIMEOUT_MS` | Bounded attempt in milliseconds; a hung sidecar must fail the request, never block it. |
+| `PRIVY_SIGNER_KEY_DIR` | Host directory the compose signer services mount read-only at `/run/secrets`. Never referenced by `backend`, `voice-worker` or `frontend`. |
+
+`frontend` keeps `VITE_PRIVY_APP_ID` only. `PRIVY_AUTHORIZATION_PRIVATE_KEY` and
+`PRIVY_SIGNER_KEY_FILE` must appear in no consumer environment, and no consumer
+mounts `privy-authorization-private-key`; `tests/unit/policy-signer-compose-structural.test.ts`
+asserts all of that structurally, without reading or printing any value.

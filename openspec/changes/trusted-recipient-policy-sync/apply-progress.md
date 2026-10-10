@@ -2380,3 +2380,78 @@ npx tsc --noEmit -p tsconfig.json                          # clean
 
 `fix(runtime): hand the worker's authorization signer to its Privy client` — see the report envelope
 for the SHA.
+
+### Task 2.6 — wire the backend and worker signed-authorization capability (design §6.2/§6.3)
+
+Status: **completed**. Persisted checkbox updated in
+`openspec/changes/trusted-recipient-policy-sync/tasks.md` (2.6 → `- [x]`).
+
+#### Files changed
+
+| File | Role |
+|---|---|
+| `compose.privy-local.yaml` | Additive: two signer services (`backend-signer`, `voice-worker-signer`) sharing their consumer's network namespace, and `PRIVY_SIGNER_URL` / `PRIVY_SIGNER_TOKEN` / `PRIVY_SIGNER_TIMEOUT_MS` on `backend` and `voice-worker`. `frontend` unchanged. |
+| `tests/unit/policy-signer-compose-structural.test.ts` | New. Four cases: the loopback sidecars per namespace, the consumer-side capability (url/token/timeout, no key), the no-key/no-token/no-key-mount property on `frontend`/`backend`/`voice-worker` in **every** compose file, and the environment-template documentation. |
+| `src/wallet/signer/README.md` | Additive `## Deployment wiring (compose)` table documenting each variable by name. See deviation 2 below. |
+
+#### What the unit delivers
+
+- `backend-signer`: `network_mode: "service:backend"`, `entrypoint: ["/bin/sh", "-c"]`,
+  `command: ["npm run build && exec node dist/wallet/signer/server.js"]`, `PRIVY_SIGNER_HOST: 127.0.0.1`,
+  `PRIVY_SIGNER_PORT: "8788"`, `PRIVY_SIGNER_KEY_FILE: /run/secrets/privy-authorization-private-key`,
+  the key directory mounted read-only at `/run/secrets`, and **no `ports:` declaration**.
+- `voice-worker-signer`: identical, `network_mode: "service:voice-worker"`, port `8789`.
+- `backend` env: `PRIVY_SIGNER_URL: "http://127.0.0.1:8788/sign"`, `PRIVY_SIGNER_TOKEN`,
+  `PRIVY_SIGNER_TIMEOUT_MS: "5000"`. `voice-worker` env: the same with `8789`.
+- Nothing else changed: no port is published for either signer, no key variable or key mount reaches
+  `backend`, `voice-worker` or `frontend`, no signing route was added to the API, and `frontend`
+  still receives only `VITE_PRIVY_APP_ID`.
+
+#### TDD Cycle Evidence
+
+| Step | What was run | Result |
+|---|---|---|
+| RED (pre-change compose) | `npx vitest run tests/unit/policy-signer-compose-structural.test.ts` with `compose.privy-local.yaml` restored from `HEAD` | **Failed by name** (2 of 4): `runs one loopback signing sidecar per consumer namespace` — `AssertionError: backend-signer must exist: expected undefined to be defined`; `reaches the sidecar over the consumer's own loopback and accepts no key` — `expected '…image: nana-privy-backend-dev:loc…' to contain 'PRIVY_SIGNER_URL: "http://127.0.0.1:8…'`. |
+| GREEN (wiring in place) | same command | `Test Files 1 passed (1)`, `Tests 4 passed (4)`. |
+| Mutation A (plant `PRIVY_AUTHORIZATION_PRIVATE_KEY` in `backend` env) | same command | **Failed by name** at `declares no key variable, token or key mount on frontend, backend or voice-worker in any compose file` — `compose.privy-local.yaml:backend must not declare PRIVY_AUTHORIZATION_PRIVATE_KEY`, plus the consumer-side case. Restored → 4 passed. |
+| Mutation B (add `ports: ["127.0.0.1::8788"]` to `backend-signer`) | same command | **Failed by name** at `runs one loopback signing sidecar per consumer namespace` — `expected '…image: nana-privy-backend-dev:loc…' not to match /^\s*ports:/mu`. Restored → 4 passed. |
+| Compose validity (structural, no container started) | `env <dummy values> docker compose --env-file /dev/null -f compose.privy-local.yaml config --services` | `db, livekit, backend, backend-signer, frontend, voice-worker, voice-worker-signer` — the file interpolates and the two new services are recognised. Dummy values were supplied on the command line only; nothing was written or printed. |
+| Interpolation is fail-closed | same command **without** `PRIVY_SIGNER_TOKEN` | `error while interpolating services.backend.environment.PRIVY_SIGNER_TOKEN: required variable PRIVY_SIGNER_TOKEN is missing a value` (same for `backend-signer`, `voice-worker`, `voice-worker-signer`) — the stack refuses to start unconfigured instead of running without a capability. |
+
+#### Deviations from the design
+
+1. **The signer services also mount `./src` and `./tsconfig.json`, which design §6.2's snippet shows
+   only on `backend`/`voice-worker`.** The snippet's own `command` runs `npm run build`, and the image
+   (`docker/Dockerfile.privy-dev`) has no baked `dist/` for the signer entrypoint: without the same
+   read-only source mounts the entrypoint cannot compile, so the snippet as written would have been a
+   service that never starts. The mounts are read-only and add no key material.
+2. **The variable documentation landed in `src/wallet/signer/README.md`, not `.env.example`.** The
+   harness safety policy blocks all writes to `.env.example` ("blocked access to sensitive path"),
+   including a comment-only edit; that was NOT circumvented, because routing the write around the
+   guard is exactly what the policy exists to prevent. The three variables the task names were
+   **already documented there** as commented placeholders (`.env.example:35-39`, from S2a), so the
+   requirement holds for them; only the new `PRIVY_SIGNER_KEY_DIR` mount variable had nowhere to go,
+   and it is now documented in the signer README's `## Deployment wiring (compose)` table together
+   with the compose-mount contract. **Handed to the parent as an item needing a user decision.**
+3. **`compose.yaml` (the `dev`/`worker` profiles) was left unchanged.** Its `backend`/`voice-worker`
+   read `env_file: .env`, so a `PRIVY_SIGNER_URL`/`PRIVY_SIGNER_TOKEN` provided there already reaches
+   them; those profiles declare no signer service, and adding an env var pointing at a loopback
+   sidecar that the profile never starts would be a configuration that cannot work. The structural
+   suite still guards `compose.yaml`'s consumer blocks against a key variable or key mount.
+
+#### Observations handed to later tasks (not defects in this unit)
+
+- **`src/wallet/signer/README.md` carries a stale "Not in this slice (S2a scope)" bullet** claiming
+  `src/server.ts` still constructs its Privy client with the process-held key. S2c and 2.5 both
+  contradict it (both processes now pass the sidecar signer). It was left byte-for-byte unchanged
+  because it is outside this unit's scope; flagged rather than silently rewritten.
+- **2.7 can now report a real `signer_unavailable`, not a structural one.** With the wiring in place,
+  a deployed stack that starts has a reachable loopback sidecar; a stack that has none still fails
+  closed at compose interpolation.
+- **The signer is still a signing oracle for anything holding the token inside that namespace**
+  (`src/wallet/signer/README.md`), which this change neither weakens nor fixes.
+
+#### Commit
+
+`feat(deploy): run a loopback signing sidecar in each consumer's namespace` — see the report
+envelope for the SHA.

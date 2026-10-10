@@ -57,6 +57,14 @@ services:
       PORT: "3000"
       PRIVY_AUTHORIZATION_KEY_QUORUM_ID: ${PRIVY_AUTHORIZATION_KEY_QUORUM_ID:?}
       PRIVY_AUTHORIZATION_PUBLIC_KEY: ${PRIVY_AUTHORIZATION_PUBLIC_KEY:?}
+      # Design §6.2/§6.3. The backend reaches the signing sidecar over the
+      # loopback of ITS OWN network namespace: `backend-signer` shares that
+      # namespace below. This is a capability (url + shared token), never key
+      # material — the backend mounts no private key and there is no signing
+      # route inside the API.
+      PRIVY_SIGNER_URL: "http://127.0.0.1:8788/sign"
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_TIMEOUT_MS: "5000"
       LIVE_VOICE_ENABLED: "true"
       LIVE_VOICE_BINDING_PRIVATE_KEY: ${LIVE_VOICE_BINDING_PRIVATE_KEY:?}
       LIVEKIT_BROWSER_URL: wss://nana-privy.localhost/livekit
@@ -99,6 +107,12 @@ services:
       LIVEKIT_AGENT_RUNTIME: native-livekit
       AGENT_RUNTIME: llm
       OPENCODE_GO_API_KEY: ${OPENCODE_GO_API_KEY:?}
+      # Same capability, the worker's own namespace: `voice-worker-signer`
+      # shares it below, on a distinct loopback port (the namespaces are
+      # already distinct; the port difference is belt-and-braces).
+      PRIVY_SIGNER_URL: "http://127.0.0.1:8789/sign"
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_TIMEOUT_MS: "5000"
     volumes:
       - ${PRIVY_SOURCE_DIR:-.}/src:/app/src:ro
       - ${PRIVY_SOURCE_DIR:-.}/tsconfig.json:/app/tsconfig.json:ro
@@ -106,6 +120,45 @@ services:
       - model_cache:/app/.cache/recipient-memory-model
     depends_on:
       backend: { condition: service_healthy }
+  # Design §6.2/§6.3. The signing sidecar refuses any non-loopback bind
+  # (`src/wallet/signer/server.ts`), so it cannot be a normal service reached
+  # over the compose network: it shares its consumer's network namespace and
+  # binds loopback inside it. Two sidecars, one per consumer, because one
+  # sidecar can only share one namespace and the backend must not depend on the
+  # worker being up. There is deliberately NO `ports:` declaration — the absence
+  # of a published port is the first line of defence and the loopback bind is
+  # the second. The key is mounted HERE only, never into backend, voice-worker
+  # or frontend.
+  backend-signer:
+    image: nana-privy-backend-dev:local
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["npm run build && exec node dist/wallet/signer/server.js"]
+    network_mode: "service:backend"
+    environment:
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_KEY_FILE: /run/secrets/privy-authorization-private-key
+      PRIVY_SIGNER_HOST: 127.0.0.1
+      PRIVY_SIGNER_PORT: "8788"
+    volumes:
+      - ${PRIVY_SIGNER_KEY_DIR:-./.secrets}:/run/secrets:ro
+      - ${PRIVY_SOURCE_DIR:-.}/src:/app/src:ro
+      - ${PRIVY_SOURCE_DIR:-.}/tsconfig.json:/app/tsconfig.json:ro
+  voice-worker-signer:
+    image: nana-privy-backend-dev:local
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["npm run build && exec node dist/wallet/signer/server.js"]
+    network_mode: "service:voice-worker"
+    environment:
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_KEY_FILE: /run/secrets/privy-authorization-private-key
+      PRIVY_SIGNER_HOST: 127.0.0.1
+      PRIVY_SIGNER_PORT: "8789"
+    volumes:
+      - ${PRIVY_SIGNER_KEY_DIR:-./.secrets}:/run/secrets:ro
+      - ${PRIVY_SOURCE_DIR:-.}/src:/app/src:ro
+      - ${PRIVY_SOURCE_DIR:-.}/tsconfig.json:/app/tsconfig.json:ro
   frontend:
     build:
       context: apps/nana-wallet
