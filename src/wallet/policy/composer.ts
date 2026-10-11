@@ -19,7 +19,10 @@
  *     confirmed contacts`; grant recipients appear exclusively in their own
  *     conditioned rules. A grant recipient is never folded into the 0.01 SOL
  *     allowlist, and the ceiling itself can only come from the single lamport
- *     constant (design §3.2 guarantees 1–2).
+ *     constant (design §3.2 guarantees 1–2). The provenance map is a separate,
+ *     WIDER set (the same contact rows regardless of `status`) and it is never a
+ *     rule: it only lets the comparator explain an address the wallet itself
+ *     owns. See `ComposeInput`.
  *  3. **It fails closed on unproven provider semantics.** An empty composition
  *     needs a recorded `proven_deny`, ordinary+grant coexistence needs a recorded
  *     `union` probe result, and every refusal is typed with the status class and
@@ -81,8 +84,31 @@ export type ComposerContact = {
 export type RuleCompositionEvidence = "union" | "unproven";
 
 /**
- * Design §3.1. The frozen consent baseline, the active contacts and the active
- * delegated grants, all already resolved by the caller in owner scope.
+ * Design §3.1. The frozen consent baseline, the active contacts, the active
+ * delegated grants and the provenance universe, all already resolved by the
+ * caller in owner scope.
+ *
+ * CONSENT vs ATTRIBUTION (read this before touching `contacts` or
+ * `contactProvenanceAddresses`)
+ * -------------------------------------------------------------------------
+ * The two contact-shaped inputs answer different questions and must never be
+ * collapsed back into one:
+ *
+ *   * `contacts` is CONSENT. It is active-only and it is the sole source of the
+ *     composed rules: only an address here may enter `ordinaryRecipients`.
+ *   * `contactProvenanceAddresses` is ATTRIBUTION. It is the same rows as seen
+ *     by OWNERSHIP rather than by status, and it feeds ONLY the provenance map,
+ *     which is the comparator's check (d) input and never a rule.
+ *
+ * Collapsing them was a production defect, not a simplification: a removal
+ * archives the contact (`status='inactive'`, PMU-011), so the address left the
+ * active read and with it the provenance map — while the remote policy still
+ * held the address until the PATCH landed. Check (d) then refused that very
+ * PATCH as `recipient_address_without_provenance` on every retry, so removing a
+ * contact could never converge while ADDING one was unaffected. An address that
+ * belongs to a contact row THIS wallet owns — active or retired — is an address
+ * whose removal we can name the origin of; an address that belongs to nobody we
+ * know is exactly what must keep blocking.
  *
  * `walletId`/`userId` are identity context, not composition inputs: they are
  * never emitted into a rule and are deliberately excluded from the hash, so the
@@ -97,8 +123,21 @@ export type ComposeInput = {
   userId: string;
   /** Frozen consent baseline, from `recipient_policy_state.consent_baseline`. */
   baseline: { addresses: string[]; provenance: BaselineProvenance };
-  /** Active confirmed Solana contacts (`recipients.status='active'`). */
+  /**
+   * The CONSENT set: active confirmed Solana contacts
+   * (`recipients.status='active'`). The only source of the composed rules.
+   */
   contacts: ComposerContact[];
+  /**
+   * The ATTRIBUTION set: every contact address this wallet's OWN `recipients`
+   * rows hold on the composer's network, regardless of `status`.
+   *
+   * It is deliberately a SUPERSET of `contacts`, and it must never be shortened
+   * to the active rows: the retired addresses are precisely the ones a removal
+   * has to be able to explain and therefore delete. Required rather than
+   * optional — an omitted universe would silently restore the defect above.
+   */
+  contactProvenanceAddresses: string[];
   /** Active delegated grants, ledger-shaped. */
   grants: GrantPolicyInput[];
   /** Always `SOLANA_MAX_PER_TRANSFER_LAMPORTS`; validated, never trusted. */
@@ -108,7 +147,14 @@ export type ComposeInput = {
   ruleComposition?: RuleCompositionEvidence;
 };
 
-/** Where an address's consent comes from (design §3.1, §5.1(d)). */
+/**
+ * Where an address's consent comes from (design §3.1, §5.1(d)).
+ *
+ * `contact` covers a contact row this wallet owns whether it is still active or
+ * was retired: the tag records ORIGIN, which is what check (d) needs, and a
+ * retired contact is still an originally consented address. Only key membership
+ * is ever consulted, never the tag.
+ */
 export type ComposedProvenance = Record<
   string,
   "baseline" | "contact" | "grant"
@@ -249,18 +295,30 @@ export function composePolicy(input: ComposeInput): ComposedPolicy {
   const grantAddresses = new Set(
     orderedGrants.flatMap((grant) => grant.recipients),
   );
+  /**
+   * Every address this composition can NAME A CONSENT ORIGIN FOR, as a superset
+   * of what it consents to. The active contacts are folded in as well, so the
+   * map is monotonic by construction: whatever the rules above consented to is
+   * explainable, and adding attribution can never remove an explanation.
+   */
+  const contactOriginAddresses = new Set([
+    ...contactAddresses,
+    ...input.contactProvenanceAddresses,
+  ]);
   const provenance: ComposedProvenance = {};
   for (const address of sortedUnique([
     ...input.baseline.addresses,
-    ...contactAddresses,
+    ...contactOriginAddresses,
     ...grantAddresses,
   ])) {
     // A grant address is tagged `grant` because it is the narrower, conditioned
     // rule that carries it; §5.1(d) only needs key membership, which is the same
-    // union either way.
+    // union either way. A retired contact is still tagged `contact`: it is an
+    // original, owned contact row, not the baseline that was consented at
+    // enrollment.
     provenance[address] = grantAddresses.has(address)
       ? "grant"
-      : contactAddresses.has(address)
+      : contactOriginAddresses.has(address)
         ? "contact"
         : "baseline";
   }

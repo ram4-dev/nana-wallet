@@ -2090,6 +2090,12 @@ export class RecipientPolicyService {
    * been composed with captures it once, and this method is not allowed to bypass
    * that record (design §2.1).
    *
+   * TWO CONTACT READS, ON PURPOSE: the active contacts are the CONSENT set that
+   * builds the rules, and the same rows regardless of `status` are the
+   * ATTRIBUTION set that builds the provenance map (design §5.1(d)). The second
+   * read is what lets a removal delete the address its own just-archived contact
+   * left behind; see `ComposeInput` for why collapsing them is a defect.
+   *
    * KNOWN BOUNDARY: `listActiveGrants` opens its own user transaction (it is the
    * existing ledger read and validates the owner scope itself), so the grants are
    * read outside an enclosing mutation transaction's snapshot. Nothing in this
@@ -2107,10 +2113,21 @@ export class RecipientPolicyService {
 
     const read = async (client: Queryable) => {
       const contacts = await this.repository.listComposerContacts(userId, client);
+      // The ATTRIBUTION set (design §5.1(d)): the SAME rows regardless of
+      // `status`, read on the same client so it is the post-mutation projection
+      // of the transaction that is composing. Without it a removal could never
+      // explain — and therefore never delete — the address its own just-archived
+      // contact left in the remote policy. It feeds the provenance map only, and
+      // the rules keep coming from the active `contacts` read above.
+      const contactProvenanceAddresses =
+        await this.repository.listComposerContactProvenanceAddresses(
+          userId,
+          client,
+        );
       const state = await this.repository.readPolicyState(userId, walletId, client);
-      return { contacts, state };
+      return { contacts, contactProvenanceAddresses, state };
     };
-    const { contacts, state } = options.client
+    const { contacts, contactProvenanceAddresses, state } = options.client
       ? await read(options.client)
       : await this.database.withUserTransaction(userId, read);
 
@@ -2122,6 +2139,7 @@ export class RecipientPolicyService {
         provenance: state?.consentProvenance ?? {},
       },
       contacts,
+      contactProvenanceAddresses,
       grants,
       // The single lamport ceiling; the composer refuses anything else, so a
       // caller here cannot re-author the consented 0.01 SOL cap.

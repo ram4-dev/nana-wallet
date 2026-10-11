@@ -36,6 +36,7 @@ const composed = composePolicy({
   contacts: [
     { id: "3f7f2c9a-1d2b-4c3d-9e4f-5a6b7c8d9e0f", version: 1, address: TEST1 },
   ],
+  contactProvenanceAddresses: [TEST1],
   grants: [],
   ordinaryCapLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
   emptyComposition: "unproven",
@@ -52,6 +53,7 @@ function ordinaryRule(input: { allowlist: string[]; maxLamports?: string }) {
       version: 1,
       address,
     })),
+    contactProvenanceAddresses: input.allowlist,
     grants: [],
     ordinaryCapLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
     emptyComposition: "unproven",

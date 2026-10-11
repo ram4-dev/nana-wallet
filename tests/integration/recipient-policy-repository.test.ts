@@ -890,6 +890,52 @@ suite("recipient policy repository (task 1.3)", () => {
         { id: wanted, version: 3, address: "IncludedSo1anaAddress" },
       ]);
     });
+
+    it("returns the provenance universe as this user's own Solana addresses, any status", async () => {
+      const { userId } = await provision();
+      const foreign = await provision();
+
+      await provisionContact(userId, { address: "IncludedSo1anaAddress", version: 3 });
+      await provisionContact(userId, {
+        address: "RetiredSo1anaAddress",
+        status: "inactive",
+      });
+      await provisionContact(foreign.userId, { address: "ForeignSo1anaAddress" });
+
+      // The widened universe: the ACTIVE contact is still there (it is a subset),
+      // and the RETIRED one is the reason the read exists — a removal archives the
+      // contact and must still be able to explain, and therefore delete, its
+      // address from the remote policy. Order-insensitive on purpose: the
+      // statement's `ORDER BY` follows the database collation, which is not a
+      // contract this read promises (the composer sorts for itself).
+      const provenance = await repository.listComposerContactProvenanceAddresses(userId);
+      expect([...provenance].sort()).toEqual([
+        "IncludedSo1anaAddress",
+        "RetiredSo1anaAddress",
+      ]);
+
+      // THE SECURITY CONTROL, and the two scopes it rests on. An address this
+      // user does NOT own must never be attributable, or this wallet's PATCH
+      // could erase another wallet's allowlist entry. Mutation check (performed
+      // and reverted): dropping `user_id = $1` from the statement above makes
+      // this case red by returning `ForeignSo1anaAddress`.
+      expect(provenance).not.toContain("ForeignSo1anaAddress");
+    });
+
+    it("scopes the provenance universe to the composer's network, so a legacy EVM row is never surfaced", async () => {
+      const { userId } = await provision();
+
+      await provisionContact(userId, { address: "IncludedSo1anaAddress" });
+      await provisionContact(userId, { address: "0xLegacyEvmAddress", network: null });
+      // The wider read is wider on STATUS only: dropping the network predicate
+      // would surface this EVM row as a Solana provenance entry and explain an
+      // address with no Solana policy semantics.
+      await provisionContact(userId, { address: "0xRetiredLegacyEvmAddress", network: null, status: "inactive" });
+
+      expect(await repository.listComposerContactProvenanceAddresses(userId)).toEqual(
+        ["IncludedSo1anaAddress"],
+      );
+    });
   });
 
   describe("recipient_policy_audit", () => {

@@ -42,6 +42,7 @@ function composeInput(input: {
     userId: USER_ID,
     baseline: { addresses: [], provenance: {} },
     contacts: input.contacts,
+    contactProvenanceAddresses: [],
     grants: [
       {
         grantId: "grant-1",

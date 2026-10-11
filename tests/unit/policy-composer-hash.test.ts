@@ -176,6 +176,7 @@ describe("applied_rules_hash is not the consent-envelope policy hash (design §0
       userId: "4f1c0a52-3b8e-4a6f-9a7d-0f5a9c1e2b3d",
       baseline: { addresses: ["AAA", "BBB"], provenance: {} },
       contacts: [],
+      contactProvenanceAddresses: [],
       grants: [],
       ordinaryCapLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
       emptyComposition: "unproven",

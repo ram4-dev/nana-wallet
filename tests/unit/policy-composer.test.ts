@@ -46,6 +46,10 @@ function composeInput(overrides: Partial<ComposeInput> = {}): ComposeInput {
     userId: USER_ID,
     baseline: { addresses: [BASELINE_ADDRESS], provenance: {} },
     contacts: [],
+    // The attribution set (design §5.1(d)): the wallet's own contact rows
+    // regardless of `status`. Empty here because this suite's fixtures hold no
+    // retired contact; the removal-convergence suite owns that behaviour.
+    contactProvenanceAddresses: [],
     grants: [],
     ordinaryCapLamports: SOLANA_MAX_PER_TRANSFER_LAMPORTS,
     emptyComposition: "unproven",

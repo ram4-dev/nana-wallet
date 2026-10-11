@@ -1274,6 +1274,10 @@ export class RecipientPolicyRepository {
    * policy rule is the chain scope (`network = 'solana-devnet'`) plus active
    * status. Legacy rows with a NULL network are EVM contacts (migration 012) and
    * have no Solana policy semantics, so they are never composed.
+   *
+   * This is the CONSENT read only. The composer's provenance universe is the
+   * separate, wider {@link listComposerContactProvenanceAddresses} (same rows,
+   * any `status`), and the two are deliberately not one method.
    */
   public async listComposerContacts(
     userId: string,
@@ -1296,6 +1300,58 @@ export class RecipientPolicyRepository {
         version: Number(row.version),
         address: row.address,
       }));
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
+  }
+
+  /**
+   * The provenance universe, i.e. the ATTRIBUTION set (design §5.1(d)): every
+   * contact address THIS user's own `recipients` rows hold on the composer's
+   * network, regardless of `status`.
+   *
+   * WHY IT IS NOT `listComposerContacts` WITH THE STATUS PREDICATE DROPPED AND
+   * REUSED EVERYWHERE
+   * ------------------------------------------------------------------------
+   * The composer needs two different views of the same rows and they must not be
+   * merged (see `ComposeInput`): consent (active-only, feeds the composed rules)
+   * and attribution (any status, feeds ONLY the comparator's provenance map).
+   * Reusing this wider read for the rules would keep the removed address in the
+   * allowlist, so the removal would converge to the same policy it started from
+   * and remove nothing.
+   *
+   * The result is a SUPERSET of {@link listComposerContacts}: a removal archives
+   * the contact (`status='inactive'`, PMU-011), which drops it out of the active
+   * read while the remote policy still carries its address until the PATCH
+   * lands, so the retired addresses are exactly the ones this read exists for.
+   *
+   * TWO SCOPES ARE LOAD-BEARING, AND BOTH MATCH `listComposerContacts`:
+   *
+   *  * `user_id = $1` — the whole fail-closed property rests on it. Membership
+   *    here is what makes an unexplained remote address explainable, so an
+   *    unscoped read would let another user's contact address be deleted from
+   *    this wallet's policy. It is asserted by test.
+   *  * `network = 'solana-devnet'` — the composer is Solana-only, and legacy rows
+   *    with a NULL network are EVM contacts (migration 012) whose addresses have
+   *    no Solana policy semantics. Surfacing one as a Solana provenance entry
+   *    would explain a foreign string, which is why
+   *    {@link findActiveContactByAddress} documents the same scope (see below).
+   *
+   * `DISTINCT` collapses a duplicate address held by two of the user's own rows:
+   * the provenance map is keyed by address, and the caller is composing a set.
+   */
+  public async listComposerContactProvenanceAddresses(
+    userId: string,
+    client?: Queryable,
+  ): Promise<string[]> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<{ address: string }>(
+        `SELECT DISTINCT address
+           FROM recipients
+          WHERE user_id = $1 AND network = 'solana-devnet'
+          ORDER BY address ASC`,
+        [userId],
+      );
+      return result.rows.map((row) => row.address);
     };
     return client ? run(client) : this.ownerTransaction(userId, run);
   }

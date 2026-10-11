@@ -55,6 +55,7 @@ import {
   type RecipientContactRecord,
 } from "../../src/wallet/policy/service.js";
 import { createPrivyPolicyAdminClient } from "../../src/wallet/grants/privy-policy-runtime.js";
+import { compareComposedRules } from "../../src/wallet/policy/readback.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
@@ -1012,6 +1013,154 @@ suite("recipient policy removal (task 1.7)", () => {
     expect(await grantRevokeAudits(grantId)).toHaveLength(0);
   });
 
+  // -------------------------------------------------------------------------
+  // Removal convergence: the provenance universe (production defect)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The rule set a recorded revision composed, read as the REMOTE policy would
+   * hold it. Each case keeps a positive control on the read so a comparison below
+   * can never be measuring an empty rule set.
+   */
+  async function recordedRules(walletId: string, revision: number): Promise<unknown[]> {
+    const result = await database.query<{ composed_rules: unknown }>(
+      `SELECT composed_rules FROM recipient_policy_sync_intent
+        WHERE wallet_id = $1 AND desired_revision = $2`,
+      [walletId, revision],
+    );
+    const rules = result.rows[0]?.composed_rules;
+    expect(Array.isArray(rules)).toBe(true);
+    return rules as unknown[];
+  }
+
+  /** Every `Transfer.to` allowlist entry the recorded rules declare. */
+  function allowlistOf(rules: unknown[]): string[] {
+    return (rules as Array<Record<string, unknown>>).flatMap((rule) =>
+      ((rule.conditions as Array<Record<string, unknown>> | undefined) ?? [])
+        .filter((condition) => condition.field === "Transfer.to")
+        .flatMap((condition) =>
+          Array.isArray(condition.value) ? (condition.value as string[]) : [],
+        ),
+    );
+  }
+
+  /**
+   * The defect, end to end and on real rows: a removal archives the contact
+   * (`status='inactive'`), the remote policy keeps the address until the PATCH
+   * lands, and the comparator must be able to explain — and therefore DELETE — an
+   * address one of THIS wallet's own contact rows holds.
+   */
+  describe("removal converges on the deactivated contact's own address", () => {
+    const POLICY_ID = "pol_removal_convergence";
+
+    it("converges instead of blocking with recipient_address_without_provenance", async () => {
+      const { userId, walletId, contactId, version } = await scenario();
+      // The remote policy as the PRE-removal composition recorded it:
+      // WALLET_ADDRESS ∪ ADDRESS_A.
+      const remoteBefore = await recordedRules(walletId, 1);
+      expect(allowlistOf(remoteBefore)).toEqual([ADDRESS_A, WALLET_ADDRESS]);
+
+      const { service: svc } = service();
+      const result = await svc.remove(userId, contactId, version, "idem-removal-converges");
+
+      expect(await contactState(contactId)).toBe("inactive");
+      expect(result.policyRevision).toBe(2);
+
+      // (1) The composed RULES drop the archived address, so the PATCH really
+      //     removes something: keeping it in the rules would make the convergence
+      //     below purely cosmetic.
+      const remoteAfter = await recordedRules(walletId, 2);
+      expect(allowlistOf(remoteAfter)).not.toContain(ADDRESS_A);
+      expect(allowlistOf(remoteAfter)).toContain(WALLET_ADDRESS);
+
+      // (2) The two repository reads now differ, which is the whole fix: the
+      //     CONSENT read no longer names the address, the ATTRIBUTION read still
+      //     does because the row is still ours.
+      expect(
+        (await repository.listComposerContacts(userId)).map((contact) => contact.address),
+      ).not.toContain(ADDRESS_A);
+      expect(await repository.listComposerContactProvenanceAddresses(userId)).toContain(
+        ADDRESS_A,
+      );
+
+      // (3) ...so the comparator explains it and the PATCH is authorized, instead
+      //     of the permanent `blocked_conflict` that made removal impossible.
+      const composed = await svc.composeRevision(userId, walletId);
+      expect(composed.provenance[ADDRESS_A]).toBe("contact");
+      expect(
+        compareComposedRules({
+          phase: "pristine",
+          expectedPolicyId: POLICY_ID,
+          composedRules: composed.rules,
+          provenance: composed.provenance,
+          readback: { id: POLICY_ID, rules: remoteBefore },
+        }),
+      ).toEqual({ outcome: "converge" });
+
+      // POSITIVE CONTROL for the defect itself, not just for the fix: with the
+      // PRE-fix provenance (active contacts only, so `{WALLET_ADDRESS: baseline}`
+      // once the contact is archived) the SAME readback blocks forever with the
+      // exact reason observed in production.
+      const preFixProvenance = { [WALLET_ADDRESS]: "baseline" as const };
+      expect(
+        compareComposedRules({
+          phase: "pristine",
+          expectedPolicyId: POLICY_ID,
+          composedRules: composed.rules,
+          provenance: preFixProvenance,
+          readback: { id: POLICY_ID, rules: remoteBefore },
+        }),
+      ).toEqual({
+        outcome: "blocked_conflict",
+        reason: "recipient_address_without_provenance",
+        detail: {
+          ruleName: "Solana transfer allowlist",
+          observedAddress: ADDRESS_A,
+        },
+      });
+    });
+
+    it("still blocks an address no contact row of this user holds", async () => {
+      const { userId, walletId, contactId, version } = await scenario();
+      const remoteBefore = await recordedRules(walletId, 1);
+
+      const { service: svc } = service();
+      await svc.remove(userId, contactId, version, "idem-removal-foreign");
+      const composed = await svc.composeRevision(userId, walletId);
+
+      // The same remote rule with ONE address no row of ours holds. The explained
+      // addresses must not carry it through: this is the fail-closed property the
+      // fix is not allowed to weaken.
+      const withForeign = (remoteBefore as Array<Record<string, unknown>>).map(
+        (rule) => ({
+          ...rule,
+          conditions: (rule.conditions as Array<Record<string, unknown>>).map(
+            (condition) =>
+              condition.field === "Transfer.to"
+                ? { ...condition, value: [...(condition.value as string[]), ADDRESS_C] }
+                : condition,
+          ),
+        }),
+      );
+
+      expect(
+        compareComposedRules({
+          phase: "pristine",
+          expectedPolicyId: POLICY_ID,
+          composedRules: composed.rules,
+          provenance: composed.provenance,
+          readback: { id: POLICY_ID, rules: withForeign },
+        }),
+      ).toEqual({
+        outcome: "blocked_conflict",
+        reason: "recipient_address_without_provenance",
+        detail: {
+          ruleName: "Solana transfer allowlist",
+          observedAddress: ADDRESS_C,
+        },
+      });
+    });
+  });
 });
 
 /**
