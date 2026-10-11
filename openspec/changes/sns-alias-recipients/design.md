@@ -1195,8 +1195,16 @@ Gentle-owned PR policy to invoke. The consequence to respect is that each unit
 still lands as its **own** commit so a reviewer can read the change in slices, and
 no diff is shrunk by dropping tests or comments to reach a number.
 
-### D-C. The resequencing that follows from D-A
+### D-C. Where the `request_hash` column lands — **landed in `017`, with the provenance unit**
 
-`request_hash` is additive to a table this change does not otherwise own, so its
-migration lands with the idempotency unit, not with the provenance unit, keeping
-the schema delta and the behaviour it enables in the same commit.
+This section originally placed `request_hash` with the idempotency unit (slice U3) so the schema
+delta and the behaviour it enables would ship together. **Task 2.1 assigns it to `017` instead**,
+and that is what shipped. The consequence is recorded rather than hidden: the column is **inert
+until 3.1** gives it a consumer, so between those two units the schema carries a nullable column
+that nothing reads.
+
+That is acceptable because the column is additive and nullable — no writer, no reader, no
+constraint — and it keeps this change's schema delta in **one** migration instead of two. The
+original reasoning still holds (a schema change and its behaviour are easier to review together);
+it is simply outweighed here by not splitting a single-feature migration across units. **No action
+needed at 3.1 beyond wiring the writer and the typed conflict.**
