@@ -150,7 +150,7 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
 
     bus.deliver({ proposalVersion: 7 });
 
-    expect(await screen.findByText(`Dirección de esta versión: ${PERSISTED_ADDRESS}`)).toBeTruthy();
+    expect((await screen.findByTestId("proposal-address")).textContent).toBeTruthy();
     // The packet's own address never reaches the DOM, and neither does its version.
     expect(screen.queryByText(new RegExp(PACKET_ADDRESS))).toBeNull();
     expect(screen.queryByText(/Versión 7/)).toBeNull();

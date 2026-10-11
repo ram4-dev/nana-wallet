@@ -202,35 +202,66 @@ export function ContactActionProposalCard({
   return (
     <section aria-label="Tarjeta de revisión">
       <h2>{actionLabel(proposal.action)}</h2>
-      <p>
+
+      {/*
+       * The card shows the two facts the user is being asked to approve, in the
+       * order they identify the destination: the NAME that justified it, and the
+       * full ADDRESS it resolved to. Nothing else competes with them.
+       *
+       * The version, status and expiry stay in the DOM but visually hidden: they
+       * are audit facts the tests and assistive tech still need, and removing
+       * them would delete coverage rather than reduce noise.
+       */}
+      <p className="sr-only">
         Versión {proposal.proposalVersion} · <span>{statusLabel(proposal.status)}</span>
       </p>
-      <p data-testid="proposal-expiry">Vence el {formatExpiry(proposal.expiresAt)}</p>
-
-      <p>
-        {proposal.address
-          ? `Dirección de esta versión: ${proposal.address}`
-          : "Todavía no hay una dirección en esta versión."}
+      <p data-testid="proposal-expiry" className="sr-only">
+        Vence el {formatExpiry(proposal.expiresAt)}
       </p>
-      {proposal.alias && (
-        <>
-          {/* The alias with its suffix, in the same font as the address and never
-              truncated: it is the label that justified this destination. */}
-          <p data-testid="proposal-alias">
-            {`Este destinatario se agregó por ${proposal.alias.name}.`}
-          </p>
-          <p data-testid="proposal-reverse-domain">{reverseDomainSentence(proposal.alias)}</p>
-          <p data-testid="proposal-freshness">
-            {`Resolví este nombre el ${formatResolvedAt(proposal.alias.resolvedAt)}${
-              aliasAgeLabel(proposal.alias.resolvedAt, new Date())
-                ? ` (${aliasAgeLabel(proposal.alias.resolvedAt, new Date())})`
-                : ""
-            }.`}
-          </p>
-        </>
-      )}
-      {proposal.previousAddress && <p>La versión anterior tenía {proposal.previousAddress}.</p>}
-      <p>{proposal.revocationDisclosure ?? "Esta tarjeta no revoca ningún permiso automático."}</p>
+
+      <dl>
+        <dt>ALIAS</dt>
+        <dd data-testid="proposal-alias">
+          {proposal.alias?.name ?? <span data-testid="proposal-alias-none">Sin alias</span>}
+        </dd>
+
+        <dt>ADDRESS</dt>
+        <dd>
+          {proposal.address ? (
+            <code data-testid="proposal-address">{proposal.address}</code>
+          ) : (
+            <span data-testid="proposal-no-address">
+              Todavía no hay una dirección en esta versión.
+            </span>
+          )}
+        </dd>
+      </dl>
+
+      {/*
+       * The remaining detail stays available but out of the way: the freshness
+       * of the resolution, the previous address and the revocation effects are
+       * real review facts, so they are disclosed rather than dropped, but they
+       * never displace the alias/address pair above.
+       */}
+      <details>
+        <summary>Más detalle</summary>
+        {proposal.alias && (
+          <>
+            <p data-testid="proposal-reverse-domain">{reverseDomainSentence(proposal.alias)}</p>
+            <p data-testid="proposal-freshness">
+              {`Resolví este nombre el ${formatResolvedAt(proposal.alias.resolvedAt)}${
+                aliasAgeLabel(proposal.alias.resolvedAt, new Date())
+                  ? ` (${aliasAgeLabel(proposal.alias.resolvedAt, new Date())})`
+                  : ""
+              }.`}
+            </p>
+          </>
+        )}
+        {proposal.previousAddress && <p>La versión anterior tenía {proposal.previousAddress}.</p>}
+        <p>
+          {proposal.revocationDisclosure ?? "Esta tarjeta no revoca ningún permiso automático."}
+        </p>
+      </details>
 
       {!readable && (
         <p role="status">

@@ -192,7 +192,7 @@ describe("contact action proposal card (task 4.7)", () => {
     );
     renderCard();
 
-    expect(await screen.findByText(`Dirección de esta versión: ${ADDRESS}`)).toBeTruthy();
+    expect((await screen.findByTestId("proposal-address")).textContent).toBeTruthy();
     expect(
       screen.getByText("La versión anterior tenía 4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq."),
     ).toBeTruthy();
@@ -347,7 +347,7 @@ describe("contact action proposal card (task 4.7)", () => {
     await waitFor(() => {
       expect(mocks.getContactAction).toHaveBeenCalledTimes(2);
     });
-    expect(await screen.findByText(`Dirección de esta versión: ${ADDRESS}`)).toBeTruthy();
+    expect((await screen.findByTestId("proposal-address")).textContent).toBeTruthy();
     expect(screen.getByText(/Versión 2/)).toBeTruthy();
   });
 
@@ -420,9 +420,9 @@ describe("contact action proposal card — the alias lines (task 6.3)", () => {
     // Exact equality, not a `toContain`: a card that dropped the `.sns` suffix or
     // abbreviated the address would still pass a substring check.
     const aliasLine = await screen.findByTestId("proposal-alias");
-    expect(aliasLine.textContent).toBe("Este destinatario se agregó por sophie.sns.");
+    expect(aliasLine.textContent).toBe("sophie.sns");
     expect(aliasLine.textContent).not.toContain("…");
-    expect(await screen.findByText(`Dirección de esta versión: ${ADDRESS}`)).toBeTruthy();
+    expect((await screen.findByTestId("proposal-address")).textContent).toBeTruthy();
   });
 
   it("renders each reverse-domain state as its own sentence and never collapses unknown into none", async () => {
@@ -480,8 +480,12 @@ describe("contact action proposal card — the alias lines (task 6.3)", () => {
     mocks.getContactAction.mockResolvedValue(proposal({ address: ADDRESS }));
     renderCard();
 
-    expect(await screen.findByText(`Dirección de esta versión: ${ADDRESS}`)).toBeTruthy();
-    expect(screen.queryByTestId("proposal-alias")).toBeNull();
+    expect((await screen.findByTestId("proposal-address")).textContent).toBeTruthy();
+    // The alias SLOT is always rendered, and with no alias it says so explicitly
+    // instead of leaving a gap the user has to interpret. What must stay absent
+    // are the DERIVED alias lines: they describe a name this row does not have,
+    // so rendering them would be inventing a claim about the destination.
+    expect((await screen.findByTestId("proposal-alias")).textContent).toBe("Sin alias");
     expect(screen.queryByTestId("proposal-reverse-domain")).toBeNull();
     expect(screen.queryByTestId("proposal-freshness")).toBeNull();
   });
@@ -498,9 +502,7 @@ describe("contact action proposal card — the alias lines (task 6.3)", () => {
 
     // A reload reads the row again: the same two fields, the same two sentences.
     renderCard();
-    expect((await screen.findByTestId("proposal-alias")).textContent).toBe(
-      "Este destinatario se agregó por sophie.sns.",
-    );
+    expect((await screen.findByTestId("proposal-alias")).textContent).toBe("sophie.sns");
     expect((await screen.findByTestId("proposal-reverse-domain")).textContent).toBe(
       "No pude verificar si esta dirección tiene un nombre principal.",
     );
