@@ -7018,3 +7018,50 @@ stage in that conversation would have thrown `ContactActionProposalConflictError
 **not** exist in the port's status union (`src/agent/definition.ts:103`), so it propagates as a crash
 instead of being reported to the model. That row was superseded to unblock; the code fix is tracked
 separately as this change's fourth unwired-seam-class defect.
+
+---
+
+## Task 5.2 — signer capability probe and the U1–U4 outcomes
+
+Ran 2026-10-11 against the deployed stack. **Both halves recorded; two outcomes are `unproven` by
+provider limitation, not by harness failure.**
+
+**Capability probe (2.7), both processes:** `{ capable: true, code: "verified" }` in
+`nana-privy-impl-backend-1` **and** in `nana-privy-impl-voice-worker-1`. A `capable: false`
+deployment would have blocked the live steps below; it does not.
+
+**U2 / U3** were already collected (reads, no policy write) and their evidence
+(`attachment_evidence`, `ownership_evidence`) is intact.
+
+**U1 / U4 — collected, both `unproven`, with complete (i)/(ii) evidence:**
+- **U1** `rules_union: "unproven"`, reason `signed_transfer_unavailable`. Evidence: 2 ALLOW rules sent,
+  2 read back. Probe policy `tf2n50v4firev16hkugyjdgz` (`"Solana policy composition probe"`).
+- **U4** `empty_composition: "unproven"`, reason `signed_denial_unobserved`. Evidence:
+  `rulesAfterCreate: 0`, `rulesAfterPatch: 0`, `signedDenialObserved: null`. Probe policy
+  `ztydonss3icmvbq3p6gkll2g` (`"Solana empty policy probe"`).
+
+**WHY step (iii) could not run — a provider limitation, verified against the installed SDK, not an
+assumption.** `@privy-io/node@0.34.0` offers **no policy selection on the wallet send path**:
+`AuthorizationContext` declares only `authorization_private_keys`, `user_jwts`, `signatures` and
+`sign_fns` (no policy field), and `SolanaSignAndSendTransactionRpcInput` accepts caip2, method,
+params, address, chain_type, optimistic_broadcast, reference_id, sponsor, sponsor_options and
+wallet_id — no policy. A bare `policy_id` appears in the SDK only on the policy-management endpoints.
+Privy enforces **one policy per wallet**, so a send from this process can be evaluated under exactly
+two things: the wallet's **attached** policy — the explicit prohibition, and a wrong observation — or
+a probe policy **attached to the wallet**, which would displace the real policy on a stack in active
+use. **Neither is admissible, so the probes record `unproven` rather than an inferred outcome.** The
+user authorized the step (iii) transfer; that authorization could not be exercised because the
+provider exposes no seam for it. Closing U1/U4 needs a policy-selection surface the provider does not
+currently offer.
+
+**The (i)/(ii) evidence is partial and MUST NOT be upgraded.** That the provider accepted and read
+back both ALLOW rules is **not** proof of union semantics. The composer keeps refusing while these
+stay `unproven`, which is the designed fail-closed behaviour.
+
+**Wallet state:** unchanged. The wallet's attached policy is still `jb227q0o7d3hmf0ksbi3hj6e`; no
+attach, detach or delete was performed, and no compose lifecycle command was run. `status_detail`
+after the run holds all keys together: `attachment_evidence`, `empty_composition_evidence`,
+`ownership_evidence`, `rules_union`, `rules_union_evidence`.
+
+**Known residue:** the two standalone probe policies above remain in the Privy account.
+`PolicyProbeTransport` has no delete member **by design**, so removal is manual from the dashboard.
