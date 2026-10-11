@@ -43,6 +43,7 @@ import {
   createRecipientPolicyService,
   createUnavailablePolicyApplyPort,
   selectPolicyApplyPort,
+  SOLANA_POLICY_NETWORK,
   type ActiveGrantLister,
 } from "./wallet/policy/service.js";
 import { RecipientPolicyRepository } from "./wallet/policy/repository.js";
@@ -75,6 +76,14 @@ import {
   type PrivyWalletApiClient,
 } from "./wallet/privy-client.js";
 import { registerWalletsRoutes } from "./api/wallets.js";
+import {
+  createSnsResolver,
+  type SnsResolver,
+} from "./wallet/sns/resolver.js";
+import {
+  createSnsTransport,
+  readSnsTransportConfig,
+} from "./wallet/sns/transport.js";
 import { registerProviderWebhookRoutes } from "./api/provider-webhooks.js";
 import { registerNotificationsFeedRoutes } from "./api/notifications.js";
 import { randomUUID } from "node:crypto";
@@ -162,6 +171,12 @@ export function buildServer(options: {
   walletReads?: WalletProvider;
   /** Overrides the LiveKit-backed card re-publication seam (task 4.7). */
   actionCardPublisher?: ContactCardPublisher;
+  /**
+   * Overrides the SNS alias resolver (task 5.1). `null` states "this deployment
+   * wired none", which stays a typed refusal instead of an emulated resolver;
+   * omitting the option builds the configured one.
+   */
+  recipientAliases?: SnsResolver | null;
 } = {}) {
   const app = Fastify({
     logger: !process.env.VITEST,
@@ -466,11 +481,20 @@ export function buildServer(options: {
     app.addHook("onClose", async () => {
       await policyReconciler?.stop();
     });
+    // Task 5.1 (design §1/§7): the alias resolver. Built ONCE here and injected,
+    // so the route never constructs a connection per request. A transport that
+    // cannot be built (an empty endpoint) yields `null`, which the route reports
+    // as an unavailable resolver rather than emulating one.
+    const recipientAliases =
+      options.recipientAliases !== undefined
+        ? options.recipientAliases
+        : createConfiguredSnsResolver();
     app.register(registerContactsRoutes, {
       resolveUserId,
       contacts: contactsRepository,
       embedder: createContactsEmbedder(),
       recipientPolicy,
+      aliases: recipientAliases,
     });
 
     // Task 4.7 (design §8.3/§8.4/§9.2): the review channel. The card is built
@@ -632,6 +656,27 @@ export function buildServer(options: {
   return app;
 }
 
+/**
+ * Task 5.1 (design §1.4/§1.5): the deployment's alias resolver, built once.
+ *
+ * `SNS_RPC_URL` is read through the transport's own reader so the endpoint's
+ * precedence has exactly one definition, and a transport that cannot be built
+ * (an empty endpoint) yields `null` — the route reports that as an unavailable
+ * resolver instead of emulating resolution.
+ */
+function createConfiguredSnsResolver(
+  environment: NodeJS.ProcessEnv = process.env,
+): SnsResolver | null {
+  try {
+    return createSnsResolver({
+      transport: createSnsTransport(readSnsTransportConfig(environment)),
+      network: SOLANA_POLICY_NETWORK,
+    });
+  } catch {
+    return null;
+  }
+}
+
 function unavailablePrivyWalletClient(): PrivyWalletApiClient {
   const unavailable = (): never => {
     throw new WalletUnavailableError(
@@ -671,9 +716,7 @@ export function serverHost(
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
   return environment.HOST ?? "127.0.0.1";
-}
-
-async function main() {
+}async function main() {
   const config = readApiProcessConfig();
   const app = buildServer();
   await app.listen({ port: config.port, host: config.host });

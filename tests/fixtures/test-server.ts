@@ -8,6 +8,7 @@ import { FixtureWalletProvider } from "../../src/wallet/fixture-provider.js";
 import type { WalletProvider } from "../../src/wallet/provider.js";
 import type { PrivyServerClient } from "../../src/wallet/privy-server-client.js";
 import type { ContactCardPublisher } from "../../src/livekit/contact-card-republication.js";
+import type { SnsResolver } from "../../src/wallet/sns/resolver.js";
 
 /**
  * The fixed identity every fixture-based suite resolves to by default.
@@ -72,6 +73,8 @@ export function buildTestServer(
     walletReads?: WalletProvider;
     /** Overrides the LiveKit-backed card re-publication seam (task 4.7). */
     actionCardPublisher?: ContactCardPublisher;
+    /** Overrides the SNS alias resolver (task 5.1). `null` = deliberately unwired. */
+    recipientAliases?: SnsResolver | null;
   } = {},
 ) {
   const { userId, ...serverOptions } = options;

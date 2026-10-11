@@ -7,6 +7,8 @@ import {
   createContactInputSchema,
   deleteContactBodySchema,
   deleteContactResponseSchema,
+  recipientAliasResolveInputSchema,
+  recipientAliasResolveResponseSchema,
   revealedCbuSchema,
   updateContactInputSchema,
   type Contact,
@@ -28,6 +30,7 @@ import {
   RecipientPolicySeamError,
   type RecipientPolicyService,
 } from "../wallet/policy/service.js";
+import type { SnsResolver, SnsResolveFailure } from "../wallet/sns/resolver.js";
 
 export type ContactEmbedder = {
   embed(text: string): Promise<number[]>;
@@ -38,6 +41,63 @@ export type ContactsRouteDependencies = {
   contacts: ContactsRepository;
   embedder: ContactEmbedder;
   recipientPolicy: RecipientPolicyService;
+  /**
+   * The alias resolver (task 5.1, design §1/§7). REQUIRED to be stated, and
+   * `null` means "this deployment wired none": an absent resolver is a refusal
+   * (`503 RESOLVEDOR_NO_DISPONIBLE`), never an emulated one. A deployment that
+   * cannot reach a registry must not answer with an address it did not read.
+   *
+   * It is injected and never constructed per request, so one connection is not
+   * re-created for every keystroke of the screen's "Buscar".
+   */
+  aliases?: SnsResolver | null;
+};
+
+/**
+ * The resolver taxonomy mapped onto HTTP (design §1.3/§7). Every member of the
+ * union has an entry, so a new failure kind cannot silently become a 500.
+ *
+ * `not_found` and `unreachable` are deliberately different answers: "el nombre
+ * no existe" and "no pudimos consultar" are different facts to the person
+ * reading the screen, and the spec forbids reporting the second as the first.
+ */
+const SNS_FAILURE_HTTP: Record<
+  SnsResolveFailure["kind"],
+  { status: number; code: string; message: string }
+> = {
+  malformed_name: {
+    status: 422,
+    code: "DATOS_INVALIDOS",
+    message: "That is not a resolvable `.sns` name.",
+  },
+  unsupported_tld: {
+    status: 422,
+    code: "NOMBRE_NO_SOPORTADO",
+    message: "Only `.sns` names are supported by this deployment.",
+  },
+  not_found: {
+    status: 404,
+    code: "NOMBRE_NO_ENCONTRADO",
+    message: "That name is not registered.",
+  },
+  ambiguous: {
+    status: 409,
+    code: "NOMBRE_AMBIGUO",
+    message:
+      "That name account does not carry the owner we require, so it cannot be used as a destination.",
+  },
+  unreachable: {
+    status: 503,
+    code: "RESOLVEDOR_NO_DISPONIBLE",
+    message:
+      "We could not reach the name registry, so this name was not verified. It was not found to be missing either.",
+  },
+  resolver_misconfigured: {
+    status: 503,
+    code: "RESOLVEDOR_NO_DISPONIBLE",
+    message:
+      "This deployment has no working name resolver for the configured network.",
+  },
 };
 
 export type ContactApiError = {
@@ -163,6 +223,71 @@ export async function registerContactsRoutes(
             result.contact.id,
             result.permission,
           ),
+        };
+      } catch (error) {
+        return errorReply(reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/v1/recipient-aliases/resolve",
+    async (
+      request: FastifyRequest<{ Body: unknown }>,
+      reply,
+    ): Promise<
+      | { ok: true; data: unknown }
+      | { ok: false; error: { code: string; message: string } }
+    > => {
+      const parsed = recipientAliasResolveInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        reply.code(422);
+        return {
+          ok: false,
+          error: { code: "DATOS_INVALIDOS", message: parsed.error.message },
+        };
+      }
+      try {
+        // Authenticated, like every other surface here: resolution is performed
+        // on the user's behalf even though it writes nothing.
+        await dependencies.resolveUserId(request);
+        const resolver = dependencies.aliases ?? null;
+        if (!resolver) {
+          // Fail closed on an unwired deployment. Emulating a resolver here would
+          // mean inventing a destination, and answering "not found" would report
+          // a fact nobody checked.
+          reply.code(503);
+          return {
+            ok: false,
+            error: {
+              code: "RESOLVEDOR_NO_DISPONIBLE",
+              message:
+                "This deployment has no SNS resolver wired, so no name can be verified. Nothing was written.",
+            },
+          };
+        }
+        const outcome = await resolver.resolve(parsed.data.name);
+        if (!outcome.ok) {
+          const mapping = SNS_FAILURE_HTTP[outcome.failure.kind];
+          reply.code(mapping.status);
+          return {
+            ok: false,
+            error: { code: mapping.code, message: mapping.message },
+          };
+        }
+        // Exactly the six names the client needs; `observedOwner`, `nameAccount`,
+        // `observedParent` and `slot` stay server-side (design §7).
+        reply.code(200);
+        return {
+          ok: true,
+          data: recipientAliasResolveResponseSchema.parse({
+            name: outcome.value.name,
+            address: outcome.value.address,
+            resolvedAt: outcome.value.resolvedAt,
+            resolver: outcome.value.resolver,
+            reverseDomain: outcome.value.reverseDomain,
+            reverseDomainState: outcome.value.reverseDomainState,
+          }),
         };
       } catch (error) {
         return errorReply(reply, error);

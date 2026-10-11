@@ -878,3 +878,65 @@ parent-owned rows at the end of `tasks.md` are byte-for-byte unchanged.
 - `npm run eval` was NOT run: this unit changes no agent surface, so `AGENTS.md` rule 2 does not apply
   to it. The full backend `npm test` is task 8.1's job with its by-name baseline; only the suites named
   above were run.
+
+---
+
+# Apply progress: work unit U5 (the screen alias vertical) — in progress
+
+Working root `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational` (branch
+`feat/solana-operational`), no push, no PR. Strict TDD active. Commits are per task.
+
+## 5.1 — the side-effect-free resolve endpoint
+
+| Item | Where |
+|---|---|
+| `POST /v1/recipient-aliases/resolve` | `src/api/contacts.ts` |
+| Resolver injected, never per request | `ContactsRouteDependencies.aliases` (`SnsResolver \| null`) |
+| Deployment resolver built once | `createConfiguredSnsResolver()` in `src/server.ts` |
+| Test seam | `buildServer({recipientAliases})` → `buildTestServer({recipientAliases})` |
+| Suite | `tests/integration/api-recipient-aliases-resolve.test.ts` (7 cases) |
+
+**The mapping is data, not a chain of `if`s** (`SNS_FAILURE_HTTP`): `malformed_name` → `422
+DATOS_INVALIDOS`; `unsupported_tld` → `422 NOMBRE_NO_SOPORTADO`; `not_found` → `404
+NOMBRE_NO_ENCONTRADO`; `ambiguous` → `409 NOMBRE_AMBIGUO`; `unreachable` and `resolver_misconfigured` →
+`503 RESOLVEDOR_NO_DISPONIBLE`. A `Record<SnsResolveFailure["kind"], …>` makes a new taxonomy member a
+type error rather than a silent `500`.
+
+`dependencies.aliases === null` is "this deployment wired none" and is answered `503
+RESOLVEDOR_NO_DISPONIBLE` — never an emulated resolution and never `404`: an unresolved name is not a
+missing one.
+
+### The honest RED (captured before the implementation)
+
+`npx vitest run tests/integration/api-recipient-aliases-resolve.test.ts` → **7 failed / 7**, every one
+on the real route's absence (`expected 404 to be 200`, `expected 404 to be 503`, `expected 404 to be
+422`). RED by absence of the route under test, not by a broken import of a module the suite invented.
+The suite's first case is the positive control (`sophie.sns` → 200 with the recorded
+`3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2`), and the negative taxonomy rows run after it.
+
+### Mutation evidence
+
+| Mutation | Failure observed, by name | Restored |
+|---|---|---|
+| `SNS_FAILURE_HTTP.not_found` re-labelled `503 RESOLVEDOR_NO_DISPONIBLE` | 3 tests: *writes nothing with or without an idempotency key*, *maps every taxonomy row to its own status and code*, and **never reports an unreachable resolver as a non-existent name** (`expected 'RESOLVEDOR_NO_DISPONIBLE' not to be 'RESOLVEDOR_NO_DISPONIBLE'`) | yes |
+| `if (!resolver)` → `if (!resolver && false)` | *fails closed when the deployment wired no resolver at all* — `expected 500 to be 503` | yes |
+
+The third line of the first mutation is the finding worth recording: the clause that caught the
+collapse is the **comparison between the two arms**, not either status code on its own. A test that
+only asserted `503` for unreachable would have stayed green while unreachable and non-existent
+collapsed into one answer.
+
+### Commands run
+
+```text
+npx vitest run tests/integration/api-recipient-aliases-resolve.test.ts   # 7 passed
+npm run lint                                                            # clean, --max-warnings=0
+npx tsc --noEmit -p tsconfig.json                                       # clean
+```
+
+### Unproven by 5.1, stated
+
+- No live RPC call is made anywhere: the injected resolver is the real one over a stub transport built
+  from the recorded bytes. That a real keyless endpoint answers at all is task 1.6/8.2's evidence.
+- `resolve` is proven non-writing by table counts around each call in the real database, not by
+  inspecting the handler.
