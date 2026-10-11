@@ -7065,3 +7065,62 @@ after the run holds all keys together: `attachment_evidence`, `empty_composition
 
 **Known residue:** the two standalone probe policies above remain in the Privy account.
 `PolicyProbeTransport` has no delete member **by design**, so removal is manual from the dashboard.
+
+---
+
+## Task 5.7 — live devnet screen/agent verification: BLOCKED by a pre-existing foreign-network rule
+
+Ran 2026-10-11 against the deployed stack with the user's authorized recipient `sophie.sns`. **The
+screen operation executed and did NOT converge. The blocker is a real production finding, not a
+harness failure.**
+
+**What ran (live vs injected, exactly).** Live: the real HTTP API (`buildServer` with the real
+contacts routes), the real `RecipientPolicyService`, the real Postgres database, the real SNS resolver
+(a real devnet read — `sophie.sns` → `3aHrqufW…`, `resolver: sns/solana-devnet/v3`), and the real
+policy-write path into `recipient_policy_sync_intent`. The deployment's OWN reconciler applies the
+revision to the real Privy policy; the harness only records the intent and observes. **Injected:
+exactly one thing — the identity seam** (`DemoIdentityProvider(USER_ID)`), because an out-of-process
+caller cannot authenticate. `wallet`, `walletReads` and `privyServer` were deliberately NOT injected,
+so the real capability is live. Harnesses: `scripts/privy-recipient-live-screen.mjs` and
+`scripts/privy-recipient-live-readback.mjs` (reads only).
+
+**The observed state.** The contact `Sophie` (`sophie.sns`, `solana-devnet`, full SNS provenance) was
+created and stayed **`inactive`**; `desired_revision = 2` against `applied_revision = 1`, i.e. the
+policy **never converged**; the sync intent ended `failed`, and the audit recorded **`blocked_conflict`
+with reason `recipient_address_without_provenance`**.
+
+**WHY — this is the finding.** `src/wallet/policy/readback.ts:305-310` enumerates every `Transfer.to`
+address across the remote policy's rules and requires each to be explained by the composed provenance
+map:
+
+```ts
+const explained = (address) => Object.prototype.hasOwnProperty.call(input.provenance, address);
+const unexplained = scan.addresses.find((address) => !explained(address));
+if (unexplained !== undefined) return { outcome: "blocked_conflict", reason: "recipient_address_without_provenance", ... };
+```
+
+`scanTransferTo` (`:194`) does **not filter by network**. The remote policy carries the **EVM** address
+`0x1531F7AA08D5dF…` belonging to the pre-existing contact `"Sophie granddaughter"` (provenance only
+`{"origin":"user"}`, `network` empty). **The composer composes Solana devnet only**, so it can never
+explain an EVM rule, and the comparator therefore blocks **permanently**.
+
+The fail-closed instinct is right and must stay — *"never delete an unknown remote rule to force
+convergence"* is a property worth keeping. But a rule belonging to a network **outside the composer's
+scope** is not an unknown rule of ours: it is not ours to explain, and treating it as unexplained makes
+convergence unreachable while any foreign-network rule exists.
+
+**Consequence for this change:** the trusted-recipient flow cannot converge for this user at all, for
+any contact, while that EVM rule is present. Every new intent fails the same way.
+
+**Not executed, with blockers.**
+- The **agent** operation: the text agent cannot stage a contact at all — its `contactActions` port is
+  never supplied (`src/agent/definition.ts:576,609` return the fail-closed constant) — so the only
+  reachable agent surface is voice, which needs a live call. Unexecuted.
+- The **removal** half and the **preservation** comparison (ordinary cap, delegated limits, signer
+  attachment, unrelated signers): unexecuted, because inclusion never happened. Proving preservation
+  across a change that never applied would prove nothing.
+- **`Test1` was not touched**, no invented recipient was created, and no money moved.
+
+**State left behind, stated plainly.** The contact `Sophie` exists as `inactive`; `desired_revision` is
+ahead of `applied_revision`; the remote policy was **not** changed by this attempt. The open decision is
+whether the fix is the comparator's network scoping or the removal of the foreign-network rule.
