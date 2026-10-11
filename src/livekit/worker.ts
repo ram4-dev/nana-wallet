@@ -24,7 +24,7 @@ import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
 import { createConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
 import { ContactActionService } from "../wallet/policy/contact-actions.js";
-import { createAliasReverifier, createVoiceContactActions } from "./contact-proposal-publication.js";
+import { createAliasResolver, createAliasReverifier, createVoiceContactActions } from "./contact-proposal-publication.js";
 import { createSnsResolver, type SnsResolver } from "../wallet/sns/resolver.js";
 import { createSnsTransport, readSnsTransportConfig } from "../wallet/sns/transport.js";
 import { SOLANA_POLICY_NETWORK } from "../wallet/policy/service.js";
@@ -210,14 +210,22 @@ async function runJob(
       const snsResolver = createWorkerSnsResolver();
       const contactActions = createVoiceContactActions({
         actions: contactActionService,
-        // The confirm-time re-verification: it re-resolves the name the displayed
-        // version was frozen from, immediately before the persisted consume, and
-        // supersedes when the address moved. Wired here so the alias arm stops
-        // being fail-closed in production: without this dependency a confirmation
-        // of an alias proposal records `reverify:'unavailable'` instead of
-        // checking the name (never a silent "verified").
+        // BOTH alias arms come from the ONE resolver above, and both are present
+        // exactly when it could be built.
+        //
+        // The stage arm resolves the name the user SPOKE before any proposal row
+        // exists: it is the only source of the address on the alias path, so
+        // without it every spoken `.sns` name fails closed with a typed refusal
+        // and the alias flow can never reach a card at all.
+        //
+        // The confirm arm re-resolves the name the displayed version was frozen
+        // from, immediately before the persisted consume, and supersedes when the
+        // address moved. Without it a confirmation of an alias proposal records
+        // `reverify:'unavailable'` instead of checking the name (never a silent
+        // "verified").
         ...(snsResolver
           ? {
+              resolveAlias: createAliasResolver({ resolver: snsResolver }),
               reverifyAlias: createAliasReverifier({
                 actions: contactActionService,
                 resolver: snsResolver,

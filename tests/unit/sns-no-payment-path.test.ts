@@ -176,13 +176,21 @@ describe("no payment path can resolve a name or read drift (task 7.3)", () => {
       "src/wallet/policy/service.ts",
     ]);
 
-    // ...and each of the four calls is pinned where it is, so moving one elsewhere
-    // (or adding a fifth to the same file) is visible rather than absorbed.
+    // ...and each call is pinned where it is, so moving one elsewhere (or adding
+    // another to the same file) is visible rather than absorbed. The caller
+    // allowlist asserted just above is the property that actually protects the
+    // payment surface — no NEW file may resolve a name — and it is deliberately
+    // untouched by this pin's update.
     const callsIn = (path: string) =>
       (repoFile(path).match(new RegExp(RESOLVER_CALL, "g")) ?? []).length;
     expect(callsIn("src/api/contacts.ts")).toBe(1);
     expect(callsIn("src/wallet/policy/service.ts")).toBe(2);
-    expect(callsIn("src/livekit/contact-proposal-publication.ts")).toBe(1);
+    // Two sites, both inside the same already-sanctioned file: the confirm-time
+    // re-verification (`createAliasReverifier`) and the stage-time resolution the
+    // voice agent's contact tool needs (`createAliasResolver`). The second was
+    // genuinely missing in production, so this is a count update for a reviewed
+    // new seam — not a widened allowlist.
+    expect(callsIn("src/livekit/contact-proposal-publication.ts")).toBe(2);
   });
 
   it("the composition path targets stored addresses, never a name", () => {

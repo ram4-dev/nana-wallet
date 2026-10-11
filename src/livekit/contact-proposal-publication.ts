@@ -1,5 +1,5 @@
 import type { ContactActionPort } from "../agent/definition.js";
-import type { SnsResolver } from "../wallet/sns/resolver.js";
+import type { SnsResolveFailure, SnsResolver } from "../wallet/sns/resolver.js";
 import type {
   ContactActionProposal,
   ContactActionService,
@@ -181,7 +181,7 @@ export function createAliasReverifier(
       // be made. Every OTHER failure is an answer, and an answer that the name no
       // longer leads to the displayed destination fails closed.
       if (outcome.failure.kind === "unreachable") return { status: "unavailable" };
-      return { status: "unresolvable", code: reverifyRefusalCode(outcome.failure.kind) };
+      return { status: "unresolvable", code: aliasResolutionRefusalCode(outcome.failure.kind) };
     }
     if (outcome.value.address === proposal.address) return { status: "unchanged" };
 
@@ -212,18 +212,80 @@ export function createAliasReverifier(
   };
 }
 
-/** The typed refusal code for a resolution failure that is an ANSWER, not a gap. */
-function reverifyRefusalCode(kind: string): string {
-  switch (kind) {
-    case "not_found":
-      return "NOMBRE_NO_ENCONTRADO";
-    case "ambiguous":
-      return "NOMBRE_AMBIGUO";
-    case "resolver_misconfigured":
-      return "RESOLVEDOR_NO_DISPONIBLE";
-    default:
-      return "NOMBRE_NO_SOPORTADO";
-  }
+/**
+ * The typed refusal code for a resolution failure (spec: *Unresolvable,
+ * unsupported or unreachable alias creates no permission*).
+ *
+ * It is TOTAL over the taxonomy and data-driven, so adding a failure kind is a
+ * type error here instead of a silent fall-through into the wrong sentence. The
+ * one thing that must never happen is an unreachable resolver being narrated as
+ * a non-existent name: `unreachable` is OUR availability, not the user's name.
+ *
+ * BOTH alias arms share it. The stage-time adapter asks it about every failure;
+ * the confirm-time re-verification asks it only about answers, because it handles
+ * `unreachable` itself — there, an unreachable registry must not fail the
+ * confirmation, so that case never reaches this map.
+ */
+const ALIAS_REFUSAL_CODE: Record<SnsResolveFailure["kind"], string> = {
+  unreachable: "RESOLVEDOR_NO_DISPONIBLE",
+  resolver_misconfigured: "RESOLVEDOR_NO_DISPONIBLE",
+  not_found: "NOMBRE_NO_ENCONTRADO",
+  ambiguous: "NOMBRE_AMBIGUO",
+  unsupported_tld: "NOMBRE_NO_SOPORTADO",
+  malformed_name: "NOMBRE_NO_SOPORTADO",
+};
+
+function aliasResolutionRefusalCode(kind: SnsResolveFailure["kind"]): string {
+  return ALIAS_REFUSAL_CODE[kind];
+}
+
+export type AliasResolutionDependencies = {
+  /** The same seam the re-verification uses. Never cached across calls. */
+  resolver: SnsResolver;
+};
+
+/**
+ * The stage-time ADAPTER (design §2.3): resolve the explicit `.sns` name the user
+ * spoke into the address the proposal row will store, or refuse with the code
+ * that refusal has earned.
+ *
+ * It is the ONLY source of the address on the alias path — the model supplies a
+ * LABEL and never a destination — and it runs BEFORE any proposal row exists, so
+ * a caller that cannot resolve refuses with `alias_unresolved` and leaves the
+ * database untouched. That is why the mapping must be complete: "that name does
+ * not exist" and "I could not reach the registry" are different facts, and only
+ * one of them is about the user's name.
+ *
+ * Deliberately not memoized: a resolution is an observation of the registry at
+ * the moment it is asked, and a cache would answer the card with an address
+ * obtained for a different moment.
+ */
+export function createAliasResolver(
+  dependencies: AliasResolutionDependencies,
+): (input: { userId: string; snsName: string }) => Promise<AliasResolution> {
+  return async ({ snsName }) => {
+    const outcome = await dependencies.resolver.resolve(snsName);
+    if (!outcome.ok) {
+      return {
+        status: "refused",
+        code: aliasResolutionRefusalCode(outcome.failure.kind),
+        // Diagnostic only: the SENTENCE comes from the code, and the reason keeps
+        // the resolver's own classification for the logs.
+        reason: outcome.failure.kind,
+      };
+    }
+    return {
+      status: "resolved",
+      // The resolver's canonical name, never the spoken one: what the row and the
+      // card display is what the registry was asked about.
+      snsName: outcome.value.name,
+      address: outcome.value.address,
+      resolvedAt: outcome.value.resolvedAt,
+      resolver: outcome.value.resolver,
+      reverseDomain: outcome.value.reverseDomain,
+      reverseDomainState: outcome.value.reverseDomainState,
+    };
+  };
 }
 
 export type VoiceContactActionDependencies = {
