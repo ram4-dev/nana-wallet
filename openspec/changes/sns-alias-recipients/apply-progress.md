@@ -2318,3 +2318,35 @@ the repository can depend on it. `Review Workload Forecast: size-exception` (sta
 `tasks.md`): this worktree's no-PR rule stands and this slice opens no PR. U8 is complete except 8.2,
 which is blocked on a keyed endpoint and left visibly `[ ]`. Both parent-owned rows in `tasks.md` are
 byte-for-byte unchanged.
+
+---
+
+# Pointer: independent post-apply verification (`sdd-verify`) — report written
+
+Independent verification of this change against its own approved spec revision was run and its report
+persisted at `openspec/changes/sns-alias-recipients/verify-report.md` (HEAD `6d56e9d`, same worktree).
+The earlier entries above are byte-for-byte untouched.
+
+Outcome in one line: **PASS WITH FINDINGS — not archive-ready. 0 defect-level CRITICAL findings; 4 PASS /
+1 PARTIAL at requirement granularity; M1–M8 all implemented in code.**
+
+- **Archive blocker:** task 8.2 is still `- [ ]` with its recorded, honest blocker (no dedicated/keyed
+  `SNS_RPC_URL`). No live path was implied anywhere; the recorded observation covers the resolution half
+  only.
+- **WARNINGS:** (W1) `tests/unit/sns-no-payment-path.test.ts` proves the property over an enumerated file
+  set and syntactic shape list — it omits `src/wallet/solana-devnet-provider.ts` and other modules, and
+  its import/caller detectors are textual and receiver-name-based; (W2) the self-address refusal is
+  vacuous without a `state='ready'` Solana wallet while the spec's refusal is unconditional (R2 is
+  PARTIAL for this reason); (W3) a comment in `src/api/contact-actions.ts` claims an unpublished version
+  is "therefore unconsumable" while the consume predicate has no `published_at` clause (the spec's clause
+  still holds via `readOpen()`); (W4) four units obtained RED by reversion and two have no RED phase —
+  each disclosed in place; (W5) `keep` is ephemeral user-visible state the spec never settles in words.
+- **Verified by running, not by reading checkboxes:** the four required separated invocations (7 files/62
+  tests; 2/19; 2/10; the sibling feature 9/119) plus three labelled extras (9/45, 4/43, frontend 4/76).
+  Every one green, 0 failures.
+- **Also verified:** the S10 ordering in code (`waitAndConsume` → `reverifyAlias` → `consume`), the
+  approve-then-slice workload boundary (one commit per work unit, no scope creep), the sequencing
+  dependency on `trusted-recipient-policy-sync`, and the host-capability correction.
+
+No production code, test, assertion, migration or contract was changed by this phase; only this pointer
+and the report were written. Nothing was pushed, archived or fixed.
