@@ -7,6 +7,12 @@ import { Input } from "@/components/ui/input";
 import { api, getErrorMessage, queryKeys } from "@/lib/api";
 import { subscribeToContactActionProposals } from "@/lib/contact-action-topic";
 import type { ContactActionProposal, ContactActionProposalNotification } from "@/lib/api-types";
+import {
+  aliasAgeLabel,
+  formatInstant,
+  formatResolvedAt,
+  reverseDomainSentence,
+} from "./contact-action-proposal-alias";
 
 import {
   canScanAddress,
@@ -76,15 +82,7 @@ function statusLabel(status: ContactActionProposal["status"]): string {
 }
 
 function formatExpiry(expiresAt: string): string {
-  const date = new Date(expiresAt);
-  if (Number.isNaN(date.getTime())) return expiresAt;
-  return date.toLocaleString("es-AR", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "UTC",
-  });
+  return formatInstant(expiresAt);
 }
 
 export function ContactActionProposalCard({
@@ -214,6 +212,23 @@ export function ContactActionProposalCard({
           ? `Dirección de esta versión: ${proposal.address}`
           : "Todavía no hay una dirección en esta versión."}
       </p>
+      {proposal.alias && (
+        <>
+          {/* The alias with its suffix, in the same font as the address and never
+              truncated: it is the label that justified this destination. */}
+          <p data-testid="proposal-alias">
+            {`Este destinatario se agregó por ${proposal.alias.name}.`}
+          </p>
+          <p data-testid="proposal-reverse-domain">{reverseDomainSentence(proposal.alias)}</p>
+          <p data-testid="proposal-freshness">
+            {`Resolví este nombre el ${formatResolvedAt(proposal.alias.resolvedAt)}${
+              aliasAgeLabel(proposal.alias.resolvedAt, new Date())
+                ? ` (${aliasAgeLabel(proposal.alias.resolvedAt, new Date())})`
+                : ""
+            }.`}
+          </p>
+        </>
+      )}
       {proposal.previousAddress && <p>La versión anterior tenía {proposal.previousAddress}.</p>}
       <p>{proposal.revocationDisclosure ?? "Esta tarjeta no revoca ningún permiso automático."}</p>
 

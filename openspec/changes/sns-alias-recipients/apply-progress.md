@@ -1417,3 +1417,119 @@ One work-unit commit for task 6.2: the supersede path, its schema-visible behavi
 suite. `Review Workload Forecast: size-exception` (the standing note at the top of `tasks.md`) — the
 change does not push and does not open a PR. The source diff is 39 insertions / 2 deletions plus the new
 suite; the earlier entries above are byte-for-byte untouched.
+
+## Task 6.3 — the alias lines on the review card (appended; the earlier entries are untouched)
+
+### Completed tasks
+
+| Task | What landed | Persisted checkbox |
+|---|---|---|
+| 6.3 | Three additive lines on the review card — the alias with its suffix, the reverse-domain sentence in its three states, the freshness label derived from `resolvedAt` — all read from the persisted row, plus the additive read-response field that carries them across the front/back boundary in the same work unit | `- [x]` |
+
+### Files changed
+
+Modified: `src/contracts/http.ts` (one additive optional `alias` object on
+`contactActionProposalSchema`), `src/api/contact-actions.ts` (`contactActionAliasView()` + the
+projection), `apps/nana-wallet/src/lib/api-types.ts` (the mirrored
+`ContactActionProposalAlias`), `apps/nana-wallet/src/features/wallet/ContactActionProposalCard.tsx`
+(the three lines + the import of the pure formatters). New:
+`apps/nana-wallet/src/features/wallet/contact-action-proposal-alias.ts` (the pure sentences, kept
+out of the component module so the card file exports components only),
+`apps/nana-wallet/src/features/wallet/ContactActionProposalCard.test.tsx` additions (6 rendering
+cases + 2 pure cases), `tests/unit/contact-action-proposal-alias-view.test.ts` (6 cases). Plus the
+checkbox flip in `tasks.md` and this entry.
+
+### Why a contract widening was unavoidable
+
+The card's stated invariant is that **everything it renders comes from the persisted row**, and the
+row it renders is `GET /v1/contact-actions/:proposalId` — whose response schema carried no alias
+evidence at all. The three lines could only be honest as a projection of the persisted `payload`, so
+the field is additive on both sides in this one unit (the `AGENTS.md` front/back rule) and optional:
+an existing row parses unchanged, and an alias-less row renders none of the three lines.
+
+### The honest RED (how it was obtained)
+
+Both suites were written and run **against unmodified sources**, before any production edit; no
+reversion was used and no test was written after the implementation.
+
+```text
+npx vitest run tests/unit/contact-action-proposal-alias-view.test.ts
+ FAIL  carries the persisted alias facts and the three-state reverse signal
+   AssertionError: expected undefined to deeply equal { name: 'sophie.sns', …(4) }
+ FAIL  never degrades an unverified reverse lookup to `none`
+   AssertionError: expected undefined to be 'unknown' // Object.is equality
+ Tests  2 failed | 3 passed (5)     # the 3 that passed are regression pins (the address line and the additive parse)
+
+(cd apps/nana-wallet && npx vitest run src/features/wallet/ContactActionProposalCard.test.tsx)
+ FAIL  renders the alias with its suffix and the resolved address untruncated
+   TestingLibraryElementError: Unable to find an element by: [data-testid="proposal-alias"]
+ FAIL  renders each reverse-domain state as its own sentence and never collapses unknown into none
+   TestingLibraryElementError: Unable to find an element by: [data-testid="proposal-reverse-domain"]
+ FAIL  derives the freshness line from the persisted resolvedAt
+   TestingLibraryElementError: Unable to find an element by: [data-testid="proposal-freshness"]
+ FAIL  re-renders exactly the persisted row after a reload
+   TestingLibraryElementError: Unable to find an element by: [data-testid="proposal-reverse-domain"]
+ Tests  4 failed | 20 passed (24)
+```
+
+**One assertion was tightened during GREEN, stated rather than hidden:** the freshness case first
+asserted only `toContain("Resolví este nombre el")` and `toContain("hace")`. That wording check cannot
+tell `resolvedAt` from the row's `expiresAt`, so it was replaced with an instant check against
+`formatResolvedAt("2026-10-10T00:00:00.000Z")` plus `not.toContain` the expiry instant (five minutes
+later). The RED run above was taken with the weaker assertion and failed for the missing element, not
+for the wording; the tightened assertion is the one that carries M-B below.
+
+### Mutation evidence (each guard removed, failure observed **by name**, restored immediately)
+
+| Mutation | Failure observed, by name | Reading |
+|---|---|---|
+| M-A — `unknown` returns the `none` sentence | *renders each reverse-domain state … never collapses unknown into none* — `AssertionError: expected 'Esta dirección no tiene un nombre pri…' to be 'No pude verificar si esta dirección t…'` (and the reload case for the same reason) | collapsing the third state is caught by name; `unknown ≠ none` is a rendered fact, not a comment |
+| M-B — the freshness line built from `proposal.expiresAt` instead of `resolvedAt` | *derives the freshness line from the persisted resolvedAt* — `AssertionError: expected 'Resolví este nombre el 10/10, 12:05 a…' to contain 'Resolví este nombre el 10/10, 12:00 a…'` | the label is derived from the field the task names; the swap is caught even though both instants render plausibly |
+| M-C — the alias line drops the `.sns` suffix (`.split(".")[0]`) | *renders the alias with its suffix and the resolved address untruncated* — `AssertionError: expected 'Este destinatario se agregó por sophi…' to be 'Este destinatario se agregó por sophi…'` (exact equality, so the shortened label fails) | the "never truncated / always suffixed" rule is asserted by equality, not by substring |
+| M-D — the projection's `snsName` requirement removed | *refuses a half-written alias claim instead of rendering half a sentence* — the half claim started rendering | a half claim (`addressSource:'sns'` with no name) is refused rather than rendered as an empty name |
+| M-E — the projection's `addressSource !== 'sns'` guard removed | *refuses alias evidence on a row whose address did not come from a name* — `AssertionError: expected { name: 'sophie.sns', …(4) } to be undefined` | the read path is the backstop for 6.2's paste-clear: leftover alias keys on a `pasted` payload render no alias line |
+| M-F — a `null` reverse domain replaced by a name | *carries the persisted alias facts and the three-state reverse signal* — deep-equality failure on the projected object | the projection never invents a reverse-domain name the server did not observe |
+
+All six were restored; `git diff` on the sources shows only the intended change.
+
+### Commands run (exact)
+
+```text
+npx vitest run tests/unit/contact-action-proposal-alias-view.test.ts tests/integration/contact-action-proposals.test.ts
+    # 2 files, 12 passed
+npx vitest run tests/unit/contracts-recipient-alias.test.ts tests/unit/contact-action-proposal-alias-view.test.ts
+    # 2 files, 21 passed
+npm run lint && npm run typecheck                                    # root: clean (the lint in this repo is non-mutating)
+(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)
+    # lint clean, typecheck clean, 28 files, 208 passed (baseline was 201: it grew, it did not drop)
+```
+
+### Deviations
+
+1. **An additive contract field was needed** (`alias` on the proposal read), which the task text did
+   not name. Without it the card would have had to render the alias from something other than the
+   persisted row, which is its stated invariant. Both sides moved in this one unit.
+2. **The pure formatters live in `contact-action-proposal-alias.ts`**, not in the card module: the
+   front's eslint config warns when a module that exports a component exports anything else, and
+   `npm run lint` must stay clean. `formatInstant` is shared with the existing expiry line, so the
+   card has one timestamp format rather than two.
+3. **The es-AR locale renders a 12-hour clock** (`10/10, 12:00 a. m.`), which is what the existing
+   expiry line already showed. The new assertions pin instants through the same formatter instead of
+   hardcoding a literal, so they cannot drift from the app's own rendering.
+
+### Unproven, stated
+
+- **No live name was resolved to produce these rows.** The fixtures carry the values the resolver
+  records; the card's rendering is proved, the on-chain value is not (8.2 owns that).
+- **No screenshot/visual truncation proof.** "Never truncated" is asserted as exact text equality with
+  the suffix present; a CSS `text-overflow` regression in a future stylesheet change is outside what
+  jsdom can see.
+- 6.4 (the confirm-time re-verification) and 6.5 (the evals) are untouched, and no re-verification,
+  supersede or worker behaviour is claimed here.
+
+### Workload / boundary
+
+One work-unit commit for task 6.3: the additive read field (both sides) plus the three card lines and
+their tests. `Review Workload Forecast: size-exception` (the standing note at the top of `tasks.md`) —
+this worktree does not push and does not open a PR. The earlier entries above are byte-for-byte
+untouched.

@@ -632,6 +632,24 @@ export type RecipientPolicyRetryResponse = z.infer<
 >;
 
 /** `GET /v1/contact-actions/:proposalId` — the review card's canonical row. */
+/**
+ * Task 6.3 (design §2.4): the alias evidence a card read carries, reduced to the
+ * facts the card renders. Built server-side from the persisted `payload` — the
+ * card renders the row and never re-resolves anything, so this is the only way
+ * the three lines can be honest. `reverseDomainState` keeps its three values:
+ * `unknown` (an unrecognized error shape) MUST NOT be read as `none`.
+ */
+export const contactActionProposalAliasSchema = z.object({
+  name: z.string().min(1),
+  resolvedAt: z.string(),
+  resolver: z.string().min(1),
+  reverseDomain: z.string().nullable(),
+  reverseDomainState: z.enum(["present", "none", "unknown"]),
+});
+export type ContactActionProposalAlias = z.infer<
+  typeof contactActionProposalAliasSchema
+>;
+
 export const contactActionProposalSchema = z.object({
   proposalId: z.string().uuid(),
   proposalVersion: z.number().int().positive(),
@@ -649,6 +667,13 @@ export const contactActionProposalSchema = z.object({
   revocationDisclosure: z.string().nullable().optional(),
   expiresAt: z.string(),
   status: z.enum(["open", "consumed", "superseded", "expired", "cancelled"]),
+  /**
+   * OPTIONAL and additive: a proposal staged before this change carries no alias
+   * evidence, and its absence is the honest "this one did not come from a name".
+   * It is never replaced by `null` and never derived from anything but the
+   * persisted payload.
+   */
+  alias: contactActionProposalAliasSchema.optional(),
 });
 export type ContactActionProposal = z.infer<typeof contactActionProposalSchema>;
 

@@ -84,6 +84,32 @@ export function contactActionRevocationDisclosure(
 }
 
 /**
+ * The alias evidence the card renders, derived from the persisted `payload` and
+ * nothing else (task 6.3, design §2.4).
+ *
+ * A half-written claim emits NOTHING: `addressSource:'sns'` without a name or
+ * without a resolution timestamp is not a sentence the card can honestly show, so
+ * the alias lines stay absent rather than rendering an empty name. The reverse
+ * state is carried through untouched — including `unknown`, which is a fact about
+ * what could not be checked and is never collapsed into `none`.
+ */
+function contactActionAliasView(
+  proposal: Pick<ContactActionProposal, "payload">,
+): ContactActionProposalResponse["alias"] {
+  const { addressSource, snsName, resolvedAt, resolver, reverseDomain, reverseDomainState } =
+    proposal.payload;
+  if (addressSource !== "sns") return undefined;
+  if (!snsName || !resolvedAt || !resolver || !reverseDomainState) return undefined;
+  return {
+    name: snsName,
+    resolvedAt,
+    resolver,
+    reverseDomain: reverseDomain ?? null,
+    reverseDomainState,
+  };
+}
+
+/**
  * The persisted row as the card must render it. Pure, so the derivation (status
  * and disclosure) is assertable without a route.
  */
@@ -94,6 +120,7 @@ export function contactActionProposalResponse(
   const expired =
     proposal.status === "open" &&
     new Date(proposal.expiresAt).getTime() <= now.getTime();
+  const alias = contactActionAliasView(proposal);
   return contactActionProposalSchema.parse({
     proposalId: proposal.proposalId,
     proposalVersion: proposal.proposalVersion,
@@ -106,6 +133,7 @@ export function contactActionProposalResponse(
     revocationDisclosure: contactActionRevocationDisclosure(proposal),
     expiresAt: proposal.expiresAt,
     status: expired ? "expired" : proposal.status,
+    ...(alias ? { alias } : {}),
   });
 }
 

@@ -37,6 +37,11 @@ vi.mock("@/lib/api", () => ({
 import type { ContactActionProposal, ContactActionProposalNotification } from "@/lib/api-types";
 
 import { ContactActionProposalCard } from "./ContactActionProposalCard";
+import {
+  aliasAgeLabel,
+  formatResolvedAt,
+  reverseDomainSentence,
+} from "./contact-action-proposal-alias";
 
 const PROPOSAL_ID = "0b2f0d68-9f43-4a4b-8f2b-1f39a4d3a001";
 const ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -376,5 +381,164 @@ describe("contact action proposal card (task 4.7)", () => {
     expect(
       screen.queryByText("Esta propuesta cambió. Recargá la tarjeta y probá de nuevo."),
     ).toBeNull();
+  });
+});
+
+/**
+ * Task 6.3 — the alias lines (design §2.4).
+ *
+ * The card renders the PERSISTED row, so every assertion below feeds the row the
+ * server returned and reads back what the user sees. A card that rendered the
+ * alias from anything else (the spoken turn, the LiveKit wakeup, a local
+ * resolution) would pass none of these.
+ */
+describe("contact action proposal card — the alias lines (task 6.3)", () => {
+  const RESOLVED_AT = "2026-10-10T00:00:00.000Z";
+
+  function aliasRow(overrides: Partial<ContactActionProposal["alias"]> = {}) {
+    return {
+      name: "sophie.sns",
+      resolvedAt: RESOLVED_AT,
+      resolver: "sns/solana-devnet/v3",
+      reverseDomain: null,
+      reverseDomainState: "none" as const,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    mocks.getContactAction.mockReset();
+    mocks.replaceContactActionAddress.mockReset();
+    mocks.canScanAddress.mockReset().mockReturnValue(true);
+    mocks.scanAddressWithCapacitor.mockReset();
+  });
+
+  it("renders the alias with its suffix and the resolved address untruncated", async () => {
+    mocks.getContactAction.mockResolvedValue(proposal({ address: ADDRESS, alias: aliasRow() }));
+    renderCard();
+
+    // Exact equality, not a `toContain`: a card that dropped the `.sns` suffix or
+    // abbreviated the address would still pass a substring check.
+    const aliasLine = await screen.findByTestId("proposal-alias");
+    expect(aliasLine.textContent).toBe("Este destinatario se agregó por sophie.sns.");
+    expect(aliasLine.textContent).not.toContain("…");
+    expect(await screen.findByText(`Dirección de esta versión: ${ADDRESS}`)).toBeTruthy();
+  });
+
+  it("renders each reverse-domain state as its own sentence and never collapses unknown into none", async () => {
+    mocks.getContactAction.mockResolvedValue(
+      proposal({
+        address: ADDRESS,
+        alias: aliasRow({ reverseDomain: "sophie.sns", reverseDomainState: "present" }),
+      }),
+    );
+    renderCard();
+    expect((await screen.findByTestId("proposal-reverse-domain")).textContent).toBe(
+      "El nombre principal de esta dirección es sophie.sns.",
+    );
+
+    cleanup();
+
+    mocks.getContactAction.mockResolvedValue(
+      proposal({ address: ADDRESS, alias: aliasRow({ reverseDomainState: "none" }) }),
+    );
+    renderCard();
+    expect((await screen.findByTestId("proposal-reverse-domain")).textContent).toBe(
+      "Esta dirección no tiene un nombre principal registrado.",
+    );
+
+    cleanup();
+
+    // The unrecognized-error shape: a fact about what could NOT be checked. If the
+    // card degraded it to `none` this assertion fails on the exact sentence.
+    mocks.getContactAction.mockResolvedValue(
+      proposal({ address: ADDRESS, alias: aliasRow({ reverseDomainState: "unknown" }) }),
+    );
+    renderCard();
+    const unknownLine = (await screen.findByTestId("proposal-reverse-domain")).textContent;
+    expect(unknownLine).toBe("No pude verificar si esta dirección tiene un nombre principal.");
+    expect(unknownLine).not.toBe("Esta dirección no tiene un nombre principal registrado.");
+  });
+
+  it("derives the freshness line from the persisted resolvedAt", async () => {
+    mocks.getContactAction.mockResolvedValue(proposal({ address: ADDRESS, alias: aliasRow() }));
+    renderCard();
+
+    const freshness = (await screen.findByTestId("proposal-freshness")).textContent ?? "";
+    // The value comes from the row, and it is labelled as an age — a transparency
+    // affordance, never a guard (§2.4/O3).
+    // The INSTANT is pinned, not just the wording: the row's `expiresAt` is five
+    // minutes later than its `resolvedAt`, so a card that printed the expiry (or
+    // any other timestamp on the row) fails this line while still saying "hace".
+    expect(freshness).toContain(`Resolví este nombre el ${formatResolvedAt(RESOLVED_AT)}`);
+    expect(freshness).not.toContain(formatResolvedAt("2026-10-10T00:05:00.000Z"));
+    expect(freshness).toContain("hace");
+    expect(freshness).not.toContain("expira");
+  });
+
+  it("renders none of the alias lines when the persisted row carries no alias", async () => {
+    mocks.getContactAction.mockResolvedValue(proposal({ address: ADDRESS }));
+    renderCard();
+
+    expect(await screen.findByText(`Dirección de esta versión: ${ADDRESS}`)).toBeTruthy();
+    expect(screen.queryByTestId("proposal-alias")).toBeNull();
+    expect(screen.queryByTestId("proposal-reverse-domain")).toBeNull();
+    expect(screen.queryByTestId("proposal-freshness")).toBeNull();
+  });
+
+  it("re-renders exactly the persisted row after a reload", async () => {
+    mocks.getContactAction.mockResolvedValue(
+      proposal({ address: ADDRESS, alias: aliasRow({ reverseDomainState: "unknown" }) }),
+    );
+    const { unmount } = renderCard();
+    expect((await screen.findByTestId("proposal-reverse-domain")).textContent).toBe(
+      "No pude verificar si esta dirección tiene un nombre principal.",
+    );
+    unmount();
+
+    // A reload reads the row again: the same two fields, the same two sentences.
+    renderCard();
+    expect((await screen.findByTestId("proposal-alias")).textContent).toBe(
+      "Este destinatario se agregó por sophie.sns.",
+    );
+    expect((await screen.findByTestId("proposal-reverse-domain")).textContent).toBe(
+      "No pude verificar si esta dirección tiene un nombre principal.",
+    );
+  });
+});
+
+/** The freshness label is pure, so its buckets are asserted without a fake clock. */
+describe("the freshness label and the reverse sentence (task 6.3)", () => {
+  const AT = "2026-10-10T00:00:00.000Z";
+
+  it("labels the age in the buckets the card can honestly name", () => {
+    expect(aliasAgeLabel(AT, new Date("2026-10-10T00:00:05.000Z"))).toBe("hace unos segundos");
+    expect(aliasAgeLabel(AT, new Date("2026-10-10T00:01:00.000Z"))).toBe("hace 1 minuto");
+    expect(aliasAgeLabel(AT, new Date("2026-10-10T00:07:30.000Z"))).toBe("hace 7 minutos");
+    expect(aliasAgeLabel(AT, new Date("2026-10-10T03:00:00.000Z"))).toBe("hace 3 horas");
+    expect(aliasAgeLabel(AT, new Date("2026-10-12T00:00:00.000Z"))).toBe("hace 2 días");
+    // A value we cannot read is not an age: it renders no age at all.
+    expect(aliasAgeLabel("no-es-una-fecha", new Date(AT))).toBeNull();
+  });
+
+  it("gives each reverse state its own sentence, keyed by the state alone", () => {
+    const base = { name: "sophie.sns", resolvedAt: AT, resolver: "sns/solana-devnet/v3" };
+    expect(
+      reverseDomainSentence({
+        ...base,
+        reverseDomain: "sophie.sns",
+        reverseDomainState: "present",
+      }),
+    ).toBe("El nombre principal de esta dirección es sophie.sns.");
+    expect(
+      reverseDomainSentence({ ...base, reverseDomain: null, reverseDomainState: "none" }),
+    ).toBe("Esta dirección no tiene un nombre principal registrado.");
+    expect(
+      reverseDomainSentence({
+        ...base,
+        reverseDomain: "sophie.sns",
+        reverseDomainState: "unknown",
+      }),
+    ).toBe("No pude verificar si esta dirección tiene un nombre principal.");
   });
 });

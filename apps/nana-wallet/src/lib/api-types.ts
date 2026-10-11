@@ -133,6 +133,21 @@ export type ContactAlias = {
   resolvedAt: ISODateTime;
 };
 
+/**
+ * Evidencia del alias de una tarjeta (design §2.4). La tarjeta renderiza la fila
+ * persistida, así que estas son las cuatro verdades que el servidor calculó al
+ * resolver el nombre: el alias no se vuelve a resolver nunca en el cliente.
+ * `reverseDomainState` conserva sus tres valores: `unknown` (una forma de error
+ * que no reconocemos) NUNCA se degrada a `none`.
+ */
+export type ContactActionProposalAlias = {
+  name: string;
+  resolvedAt: ISODateTime;
+  resolver: string;
+  reverseDomain: string | null;
+  reverseDomainState: ReverseDomainState;
+};
+
 export type Contact = {
   id: string;
   name: string;
@@ -255,6 +270,8 @@ export type ContactActionProposal = {
   revocationDisclosure?: string | null;
   expiresAt: ISODateTime;
   status: ContactActionProposalStatus;
+  /** Presente solo cuando el destinatario se agregó por un nombre `.sns`. */
+  alias?: ContactActionProposalAlias;
 };
 
 /** LiveKit carries only this wakeup; the UI reloads the canonical proposal by id. */
