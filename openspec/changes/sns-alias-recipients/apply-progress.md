@@ -2024,3 +2024,41 @@ selection.
 One work-unit commit for task 7.3: the new test file, this entry and the `7.3` checkbox. No `src/`
 change at all — the unit is proof, not behaviour. `Review Workload Forecast: size-exception` (the
 standing note at the top of `tasks.md`): this worktree does not push and does not open a PR.
+
+---
+
+## Slice 7 regression evidence and task 7.2's state (appended after 7.1 and 7.3 were committed)
+
+### Regression battery over the two committed units (77e6b24, e2a1ccd)
+
+Separated runs, exactly as the unit text asks, after `npm run lint` and `npm run typecheck` were clean:
+
+```text
+npx vitest run tests/integration/recipient-policy-*.test.ts          → 9 files, 119 passed
+npx vitest run tests/unit/policy-*.test.ts                           → 16 files, 185 passed
+npx vitest run tests/integration/contact-action-*.test.ts \
+  tests/integration/contact-proposal-publication.integration.test.ts → 4 files, 23 passed
+npx vitest run tests/unit/livekit/ tests/unit/confirmation-arbiter.test.ts → 8 files, 61 passed
+(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)
+                                                                     → 28 files, 208 passed (unchanged)
+```
+
+No failure above is new; the pristine baseline failures (`conversation-preview-claim-race`, the
+`wallets-sync` PEW-013 case, `realtime-agent-session`, `realtime-tool-binding`'s `send_token` case,
+`realtime-tools`) live in the suites not listed here and none of them were re-run as a whole. The
+frontend suite is unchanged at **208 passing**, and neither commit touched a single file under
+`apps/`, so that number is unaffected by construction as well as by measurement.
+
+### Task 7.2 — NOT started, and why
+
+`7.2` is left `[ ]` deliberately. It is the frontend half (the drift notice with both addresses and
+both names, and the keep / replace / remove actions, verified by
+`apps/nana-wallet/src/features/wallet/ContactAliasDrift.test.tsx`). It is not a re-scoping: the run
+that produced this entry had already spent its budget on 7.1 (verified, mutated and committed) and on
+7.3, and starting a multi-file frontend feature at that point would have left a third partial,
+unverified unit in the tree — the exact failure this change has already paid for eight times.
+
+Nothing about 7.2 is blocked by what landed here: `POST /v1/contacts/:id/check-alias` is live and
+returns the three states at HTTP 200, the `CONTACTO_SIN_ALIAS` refusal is on the shared error map, and
+`contactAliasCheckResponseSchema` (U4) already mirrors the response. The frontend needs the screen
+only.
