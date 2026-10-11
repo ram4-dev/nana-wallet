@@ -68,6 +68,7 @@ describe('realtime tool binding — declaration', () => {
       'get_history',
       'get_networks',
       'get_selected_recipient_address',
+      'list_contacts',
       'list_tokens',
       'search_recipients',
       'search_user_memory',

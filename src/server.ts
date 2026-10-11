@@ -312,6 +312,11 @@ export function buildServer(options: {
     // needs the wallet's `recipient_policy_state` before it may list grants.
     const policyRepository = new RecipientPolicyRepository(database);
     const financialTasks = new FinancialTaskRegistry();
+    // PMU-008..013: user-scoped contacts CRUD. Built here (rather than beside the
+    // contacts routes) so the SAME repository feeds the conversation service:
+    // the agent's `list_contacts` and `GET /v1/contacts` must enumerate the same
+    // contacts, and a second read would be the divergence this repo avoids.
+    const contactsRepository = new ContactsRepository(database);
     const service = createWalletConversationService({
       conversations,
       wallet: core.wallet,
@@ -319,6 +324,9 @@ export function buildServer(options: {
       financialTasks,
       grantCreator,
       contextRenewal: core.contextRenewal,
+      // The contact read the HTTP text agent enumerates through; identical to
+      // the app screen's `GET /v1/contacts`.
+      contacts: contactsRepository,
       // slice3-grant-execution: server-owned grant gate (original user
       // turn path only; the service never consults it for model-tool
       // previews). Requires the resolved chain-aware wallet seam; absent
@@ -397,8 +405,8 @@ export function buildServer(options: {
       });
     }
 
-    // PMU-008..013: user-scoped contacts CRUD.
-    const contactsRepository = new ContactsRepository(database);
+    // PMU-008..013: user-scoped contacts CRUD (repository hoisted above the
+    // conversation service so both share one instance).
     // The contacts surface (`/v1/contacts`, `/v1/recipient-policy`) recomposes
     // through the same recipient-policy service the grant-sync runtime builds:
     // the contact projection is written by the only adapter allowed to write it,

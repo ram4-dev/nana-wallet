@@ -324,6 +324,10 @@ async function runJob(
         voiceDecisionGate,
         confirmationArbiter,
         contactActions,
+        // The worker's own contact read (built in `createWorkerDependencies` from
+        // the same database), so `list_contacts` on the voice tool surface
+        // enumerates exactly what `GET /v1/contacts` enumerates.
+        contacts: dependencies.contacts,
       });
       const created = createAgentSession({ tools });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {

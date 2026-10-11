@@ -142,19 +142,24 @@ describe("the composer is the only full-rule policy writer", () => {
 });
 
 describe("ContactsRepository mutations stay behind the policy path and its HTTP vertical", () => {
-  it("is imported by the composition root and the contacts route only", () => {
+  it("is imported by the composition roots and the contacts route only", () => {
     // `src/server.ts` constructs the repository for the HTTP wiring (no
     // mutation of its own); `src/api/contacts.ts` is the pre-existing contacts
     // vertical design §3.3 leaves in place; `src/memory/contact-policy-adapter.ts`
     // is the policy service's injected contact port, kept beside the repository
-    // so the policy package never learns about embeddings. A fourth importer —
-    // including any module under `src/wallet/policy/**` — fails this case.
+    // so the policy package never learns about embeddings. `src/runtime/dependencies.ts`
+    // is the WORKER's composition root: it builds the same repository so the
+    // voice/text agent's `list_contacts` reads exactly what `GET /v1/contacts`
+    // reads, and — like `src/server.ts` — only CONSTRUCTS it, never mutates it.
+    // A fifth importer — including any module under `src/wallet/policy/**` —
+    // fails this case.
     expect(
       mentions(importsSymbol("ContactsRepository")),
       "ContactsRepository gained a new importer",
     ).toEqual([
       "src/api/contacts.ts",
       "src/memory/contact-policy-adapter.ts",
+      "src/runtime/dependencies.ts",
       "src/server.ts",
     ]);
   });
@@ -184,13 +189,17 @@ describe("ContactsRepository mutations stay behind the policy path and its HTTP 
     ).toEqual([]);
   });
 
-  it("lets the composition root wire the repository without mutating it", () => {
-    const server = sourceFiles().find((file) => file.path === "src/server.ts");
-    expect(server, "src/server.ts must exist").toBeDefined();
+  it("lets a composition root wire the repository without mutating it", () => {
+    // BOTH composition roots: the HTTP server and the worker dependency graph.
+    // Each constructs the repository for its own process and neither mutates it.
+    for (const path of ["src/server.ts", "src/runtime/dependencies.ts"]) {
+      const compositionRoot = sourceFiles().find((file) => file.path === path);
+      expect(compositionRoot, `${path} must exist`).toBeDefined();
 
-    // Positive control first: the wiring is there, so the negative below is not
-    // passing because the file changed shape.
-    expect(server!.source).toContain("new ContactsRepository(");
-    expect(server!.source).not.toMatch(/contacts\.(create|update|archive)\(/);
+      // Positive control first: the wiring is there, so the negative below is
+      // not passing because the file changed shape.
+      expect(compositionRoot!.source).toContain("new ContactsRepository(");
+      expect(compositionRoot!.source).not.toMatch(/contacts\.(create|update|archive)\(/);
+    }
   });
 });

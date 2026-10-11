@@ -5,6 +5,7 @@ import {
 } from "../agent/wallet-agent.js";
 import {
   canonicalizeTransferPreview,
+  type ContactListPort,
   type CreateDelegatedGrantInput,
   type CreateDelegatedGrantResult,
   type SendTokenInput,
@@ -276,6 +277,13 @@ export type WalletConversationDependencies = {
    * closed with `grant_creation_unavailable` instead of inventing a grant.
    */
   grantCreator?: GrantCreator;
+  /**
+   * Read-only contact enumeration seam. The composition roots (HTTP server and
+   * the worker's conversation service) supply the same `ContactsRepository` the
+   * contacts surface reads, so `list_contacts` and `GET /v1/contacts` agree on
+   * what the user's contacts are. Absent ⇒ `list_contacts` fails closed.
+   */
+  contacts?: ContactListPort;
 };
 
 /** Rolling consumption window for conversation-created grants (one day). */
@@ -636,6 +644,9 @@ export function createWalletConversationService(
         // DGC-6: thread the same service seam into the text agent so its
         // `create_grant` tool uses the exact recipient/amount guard logic.
         grantService: { createDelegatedGrant },
+        // The same contact read the contacts screen makes, so `list_contacts`
+        // enumerates exactly what `GET /v1/contacts` returns.
+        ...(dependencies.contacts ? { contacts: dependencies.contacts } : {}),
       };
       result = sanitizeResult(
         await handleMessage(workingSnapshot, input.text, options),

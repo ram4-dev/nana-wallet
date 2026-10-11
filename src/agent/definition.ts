@@ -8,6 +8,7 @@ import type { RecipientMemoryRuntime } from '../memory/runtime.js';
 import { createRecipientMemoryTools } from '../memory/tools.js';
 import { isValidRecipientAddress } from '../memory/address.js';
 import type { RecipientCandidate } from '../memory/types.js';
+import type { ContactRecord } from '../memory/contacts-repository.js';
 import type { RecipientSearchResult } from '../memory/service.js';
 import type { WalletProvider, TransferRequest } from '../wallet/provider.js';
 import { explorerUrlFor } from '../wallet/provider.js';
@@ -53,6 +54,12 @@ export type WalletAgentContext = {
   confirmationArbiter?: ConfirmationArbiter;
   /** Server-owned proposal lifecycle. Model input is deliberately narrower. */
   contactActions?: ContactActionPort;
+  /**
+   * Read-only enumeration of the user's active contacts. Structurally
+   * satisfied by `ContactsRepository`. Absent ⇒ `list_contacts` fails closed to
+   * `unavailable` with an empty list (never an invented address book).
+   */
+  contacts?: ContactListPort;
   /** Voice-only: plays the preview read-back aloud before the spoken decision. */
   /**
    * Delegated-grant creation seam (DGC-6). Present for the text agent when the
@@ -193,6 +200,19 @@ export type GrantCreationPort = {
   createDelegatedGrant(
     input: CreateDelegatedGrantInput,
   ): Promise<CreateDelegatedGrantResult>;
+};
+
+/**
+ * Narrow read-only seam the `list_contacts` tool calls. It is deliberately
+ * exactly one method and structurally satisfied by `ContactsRepository`, whose
+ * `listActive` is the SAME call the app screen's `GET /v1/contacts` makes
+ * (`src/api/contacts.ts`). Enumerating through a different query would let the
+ * agent and the screen disagree about what the user's contacts are — the
+ * divergence class this codebase has been bitten by — so the one repository is
+ * reused rather than a second read invented.
+ */
+export type ContactListPort = {
+  listActive(userId: string): Promise<ContactRecord[]>;
 };
 
 /**
@@ -552,14 +572,153 @@ export function normalizeBroadcastResult(output: unknown, network: string) {
 
 export function createWalletAgentDefinition(): WalletAgentDefinition {
   return {
-    instructions: (context) => buildWalletAgentInstructions(context.config, context.language),
+    instructions: (context) =>
+      `${buildWalletAgentInstructions(context.config, context.language)}\n${CONTACT_LIST_INSTRUCTIONS}`,
     tools: (context) => [
       ...createWalletOperations(context),
       ...createRecipientMemoryOperations(context),
+      ...createContactReadOperations(context),
       ...createContactActionOperations(context),
       ...createVoiceDecisionOperations(context),
     ],
   };
+}
+
+/**
+ * Routing guidance for the contact read surface. It is appended by the
+ * DEFINITION rather than by `buildWalletAgentInstructions`, so it is present
+ * exactly when the `list_contacts` tool is: the no-provider fallback in
+ * `wallet-agent.ts` (which serves the WDK tool source, not this definition)
+ * must never be told about a tool it does not have.
+ */
+const CONTACT_LIST_INSTRUCTIONS = `- To answer "which contacts do I have?" or "who can I send to?", call list_contacts. It enumerates the user's saved contacts and returns a bounded page plus the real total. Do NOT use search_recipients to enumerate contacts: it is a similarity search and returns nothing for a broad question like that. When its result has truncated=true, tell the user the real total and that you are reading only the first page.
+- list_contacts never returns an address. Never tell the user a contact's address from memory or from a list; an address reaches them only through the secure review card after they select a contact.`;
+
+/**
+ * Contact-listing bound. The default keeps a large address book from flooding
+ * the model's context (and, on voice, from being read aloud in full); the
+ * ceiling keeps a model that passes an enormous `limit` from doing the same.
+ */
+export const LIST_CONTACTS_DEFAULT_LIMIT = 20;
+export const LIST_CONTACTS_MAX_LIMIT = 50;
+
+/**
+ * Model-facing `list_contacts` input. `.strict()` and NO `query`: enumerating
+ * the user's contacts must not be expressed as a similarity search (see the
+ * tool below). Only a bounded page size is accepted.
+ */
+export const listContactsInputSchema = z
+  .object({
+    limit: z.number().int().min(1).max(LIST_CONTACTS_MAX_LIMIT).optional(),
+  })
+  .strict();
+export type ListContactsInput = z.infer<typeof listContactsInputSchema>;
+
+/** One address-free row of the contact list. Deliberately carries no address. */
+export type ListedContact = {
+  name: string;
+  description: string;
+  network: string | null;
+  /** Whether the stored provenance claims an `.sns` alias (see `carriesAlias`). */
+  hasAlias: boolean;
+};
+
+export type ListContactsResult = {
+  status: 'listed' | 'unavailable';
+  contacts: ListedContact[];
+  /** The REAL count of active contacts, before the limit was applied. */
+  total: number;
+  /** Whether the limit cut the list (`total > contacts.length`). */
+  truncated: boolean;
+  limit: number;
+  message?: string;
+};
+
+/**
+ * Whether a contact's stored `provenance` claims an `.sns` alias — the SAME
+ * predicate `contactAlias` applies in `src/api/contacts.ts` (source `sns`, a
+ * non-empty `name` and a non-empty `resolvedAt`). It is reduced to a boolean
+ * here: the alias is a LABEL, the list needs no timestamp, and this derivation
+ * never invents a shape the contacts surface does not already have.
+ */
+function carriesAlias(
+  provenance: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!provenance || provenance.source !== 'sns') return false;
+  const { name, resolvedAt } = provenance;
+  return (
+    typeof name === 'string' && name.length > 0 &&
+    typeof resolvedAt === 'string' && resolvedAt.length > 0
+  );
+}
+
+/**
+ * `list_contacts`: enumerate the user's active contacts.
+ *
+ * WHY THIS IS NOT `search_recipients`
+ * -----------------------------------
+ * `search_recipients` is an embedding-similarity search: its schema REQUIRES a
+ * non-empty `query` and its result is thresholded, so a question like "which
+ * contacts do I have" has no similar neighbour and comes back empty. Passing a
+ * fake query (`"*"`, `"contactos"`) would stay a similarity search asked to
+ * behave as an enumeration — still threshold-dependent, still able to return
+ * nothing. This tool instead reads through `ContactListPort` — the EXACT
+ * `ContactsRepository.listActive` call `GET /v1/contacts` makes — so the agent
+ * and the screen can never disagree about what the user's contacts are.
+ *
+ * NO ADDRESSES. This is a security decision, not tidiness. The change's
+ * architecture routes an address to the user ONLY through the secure review
+ * card (`search_recipients` strips them too), and on the voice surface a list
+ * read aloud is a NEW exfiltration path: a model can be talked into reading a
+ * stored address to whoever is in the room. The only way to obtain an address
+ * stays selection plus the review card, so the list carries `name`,
+ * `description`, `network` and `hasAlias` and nothing else.
+ *
+ * FAIL CLOSED. When the port is absent, or the read throws, the tool reports
+ * `unavailable` with an empty list and `total: 0` — it never invents contacts,
+ * never narrates "no contacts" for a store it could not read, and never throws.
+ */
+function createContactReadOperations(context: WalletAgentContext): AgentToolDefinition<unknown, unknown>[] {
+  const unavailable = (limit: number): ListContactsResult => ({
+    status: 'unavailable',
+    contacts: [],
+    total: 0,
+    truncated: false,
+    limit,
+    message: 'No puedo leer tus contactos en este momento.',
+  });
+  return [
+    {
+      name: 'list_contacts',
+      description:
+        'List the current user\'s saved contacts (names and descriptions only, never addresses). ' +
+        'Use this to answer "which contacts do I have?" or "who can I send to?" — do NOT use search_recipients for an enumeration. ' +
+        'It returns a bounded page plus `total` (the real count) and `truncated`; when `truncated` is true, tell the user the real total and that you are reading only the first page. ' +
+        'To get a contact\'s address, select that contact and let the user review the secure card — never read an address from memory.',
+      inputSchema: listContactsInputSchema,
+      execute: async (input) => {
+        const limit = (input as ListContactsInput).limit ?? LIST_CONTACTS_DEFAULT_LIMIT;
+        if (!context.contacts) return unavailable(limit);
+        try {
+          const all = await context.contacts.listActive(context.userId);
+          return {
+            status: 'listed',
+            contacts: all.slice(0, limit).map((contact) => ({
+              name: contact.name,
+              description: contact.description,
+              network: contact.network ?? null,
+              hasAlias: carriesAlias(contact.provenance),
+            })),
+            total: all.length,
+            truncated: all.length > limit,
+            limit,
+          } satisfies ListContactsResult;
+        } catch {
+          return unavailable(limit);
+        }
+      },
+    },
+  ];
 }
 
 /**

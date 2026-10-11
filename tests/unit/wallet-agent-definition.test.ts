@@ -46,6 +46,10 @@ describe("wallet agent definition", () => {
       "send_token",
       "create_grant",
       "search_recipients",
+      // Contact read (list_contacts): the bounded, address-free enumeration
+      // produced by the ONE shared definition, so it is part of the catalog
+      // for both the text agent and the realtime adapter.
+      "list_contacts",
       // Recipient lifecycle tools (tasks 4.2): both the text agent and the
       // realtime adapter consume this one definition, so the version-bound
       // trusted-recipient stage/confirm tools are part of the catalog.

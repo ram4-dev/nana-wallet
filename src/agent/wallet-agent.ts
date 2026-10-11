@@ -22,6 +22,7 @@ import {
   augmentPreviewOutput,
   guardedSendTokenToolSchema,
   type GrantCreationPort,
+  type ContactListPort,
   type SendTokenInput,
 } from './definition.js';
 import { getWdkTools } from './wdk-tools.js';
@@ -141,6 +142,11 @@ export type HandleMessageOptions = {
    * own seam here for the text agent; the voice agent uses `voiceService`.
    */
   grantService?: GrantCreationPort;
+  /**
+   * Read-only contact enumeration seam. The conversation service threads the
+   * per-request `ContactsRepository` here; absent ⇒ `list_contacts` fails closed.
+   */
+  contacts?: ContactListPort;
 };
 
 const selectedRecipientAddressSchema = z.object({}).strict();
@@ -434,6 +440,7 @@ export async function handleMessage(
               ...(recipientMemory ? { recipientMemory } : {}),
               ...(options.abortSignal ? { signal: options.abortSignal } : {}),
               ...(options.grantService ? { grantService: options.grantService } : {}),
+              ...(options.contacts ? { contacts: options.contacts } : {}),
             })
             : await getWdkTools();
           const tools = buildGuardedTools(baseTools, session, recipientMemory, agentConfig);
@@ -505,6 +512,7 @@ export async function handleMessage(
       ...(recipientMemory ? { recipientMemory } : {}),
       ...(options.abortSignal ? { signal: options.abortSignal } : {}),
       ...(options.grantService ? { grantService: options.grantService } : {}),
+      ...(options.contacts ? { contacts: options.contacts } : {}),
     })
     : await getWdkTools();
   const tools = buildGuardedTools(

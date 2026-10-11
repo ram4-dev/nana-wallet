@@ -26,6 +26,7 @@ import {
 } from "../wallet/policy/reconciler.js";
 import { isRecipientPolicyReconcilerEnabled } from "../config/recipient-policy.js";
 import { PostgresConversationRepository } from "../conversations/postgres-repository.js";
+import { ContactsRepository } from "../memory/contacts-repository.js";
 import {
   createWalletConversationService,
   type WalletConversationService,
@@ -81,6 +82,12 @@ export type WorkerDependencies = CoreDependencies & {
    * created by voice or text goes through exactly the same ledger composition.
    */
   grantCreator: GrantCreator;
+  /**
+   * Read-only contact enumeration over the recipients projection. Built here so
+   * the worker's conversation service (voice transcripts) and its realtime
+   * tools share ONE instance — the same `listActive` the contacts screen reads.
+   */
+  contacts: ContactsRepository;
   close(): Promise<void>;
 };
 
@@ -267,6 +274,11 @@ export function createWorkerDependencies(
     authorizationSigner,
     environment,
   });
+  // The worker process's contact read. It is the exact repository the HTTP
+  // contacts surface uses, so a voice or text turn enumerates the same contacts
+  // the app screen shows. Reused by the conversation service below and, through
+  // `WorkerDependencies`, by the per-binding realtime tools in the worker.
+  const contacts = new ContactsRepository(database);
   const conversationService = createWalletConversationService({
     conversations,
     wallet: core.wallet,
@@ -274,6 +286,9 @@ export function createWorkerDependencies(
     financialTasks,
     grantCreator,
     contextRenewal: core.contextRenewal,
+    // The same contact read the realtime tools get: `list_contacts` on the voice
+    // transcript path lists what `GET /v1/contacts` lists.
+    contacts,
     // PMU-014: claimed-recipient revalidation resolves the runtime for the
     // conversation's actual user instead of a fixed tenant.
     memoryForUser: (userId) => getMemoryRuntimeForUser(userId, environment),
@@ -286,6 +301,7 @@ export function createWorkerDependencies(
     ...(walletForUser ? { walletForUser } : {}),
     financialTasks,
     grantCreator,
+    contacts,
     async close() {
       await policyReconciler?.stop();
       if (core.walletReads !== core.wallet) await core.walletReads.close();
