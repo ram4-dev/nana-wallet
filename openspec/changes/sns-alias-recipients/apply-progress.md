@@ -2350,3 +2350,239 @@ Outcome in one line: **PASS WITH FINDINGS — not archive-ready. 0 defect-level 
 
 No production code, test, assertion, migration or contract was changed by this phase; only this pointer
 and the report were written. Nothing was pushed, archived or fixed.
+
+---
+
+# Apply progress: task 8.2 re-attempt — the keyless endpoint paced, and the four environmental blockers that are NOT the endpoint
+
+Work unit: **a second, deliberate attempt at 8.2 only** (opportunity opened by the user's instruction
+that the keyless endpoint may be usable for real use when the calls are paced). Root
+`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`, branch `feat/solana-operational`,
+HEAD `4fd4de1` at the start and in sync with origin. No production file, test, migration, contract,
+fixture or eval was changed; the earlier entries above are byte-for-byte untouched and both
+parent-owned rows in `tasks.md` are unchanged. **8.2 stays `[ ]`.**
+
+## The headline, in one line each
+
+1. **The endpoint is NOT the blocker.** Paced, the keyless public devnet endpoint answered every real
+   resolution: `sophie.sns` and `nanatest.sns` resolved live through the change's own transport and
+   resolver, with a 3 s pause between them (`867 ms` and `335 ms`, no throttle, no
+   `Connection rate limits exceeded`), and the screen's own resolve route answered `HTTP 200` for
+   `sophie.sns` at `1515 ms`. The unspaced burst recorded in design §10.2 N1 was **not** re-run, on
+   purpose: it would spend the limit that the paced calls needed.
+2. **8.2 still cannot pass here, and the reason is the environment, not the rate limit.** Four measured
+   blockers (B1–B4 below) each stop a different step of the task's own list. Two of them are not
+   fixable inside this task's authority at all.
+3. **Nothing live was implied.** The steps that could not run were not narrated as passing.
+
+## The label: what was live and what was injected
+
+- **Live:** the deployment's own HTTP surface (`buildServer`), the real SNS transport and resolver
+  compiled from this worktree's source, the real devnet RPC round trip, the real PostgreSQL schema and
+  rows of the stack database `nana-privy-impl-db-1`, and the real LLM agent turn (container
+  `AGENT_RUNTIME=llm`, the real model gateway).
+- **Injected — the only injected part:** the **Privy authentication boundary**
+  (`new DemoIdentityProvider('08c462d6-44e4-4368-be4e-5de2a7e39179')`). No `wallet`, `walletReads`,
+  `privyServer` or `recipientAliases` was injected: the resolver was the deployment's own
+  (`createConfiguredSnsResolver()`), built from `readSnsTransportConfig()`.
+- This is **not** "the production stack served this" and it is **not** presented as such: the in-process
+  server is a second process that imports the change's compiled modules. The stack's own listener on
+  `127.0.0.1:32800` was never asked to serve any of it.
+- The host-side route run additionally loaded **no `.env`** (`DOTENV_CONFIG_PATH=/dev/null`), so no
+  credential from `.env` entered the process and none was read, printed or logged. No secret, key,
+  seed, token or signature value appears anywhere in this entry: booleans, addresses, names and codes
+  only.
+
+## B1 — the container's `/app/dist` predates this change (and was not run)
+
+```
+$ docker exec nana-privy-impl-backend-1 sh -lc 'grep -c "recipient-aliases/resolve" /app/dist/api/contacts.js; grep -c "check-alias" /app/dist/api/contacts.js; ls /app/dist/wallet/sns 2>&1; stat -c "%y %n" /app/dist/server.js'
+0
+0
+ls: cannot access '/app/dist/wallet/sns': No such file or directory
+2026-10-10 21:44:52.920150234 +0000 /app/dist/server.js
+```
+The container's bundle was compiled at container start (21:44:52 UTC) about two hours **before** the
+first alias commit (`80fdbf6`, 23:55:04 UTC), so the
+parent's harness shape (`import /app/dist/**`) would have exercised pre-change code. The change's source
+was therefore compiled **in the container** into a scratch out-directory, leaving the deployed bundle
+untouched:
+```
+$ docker exec -w /app nana-privy-impl-backend-1 npx tsc -p tsconfig.json --outDir .sns-alias-live-dist
+EXIT=0
+$ docker exec nana-privy-impl-backend-1 sh -lc 'grep -c "recipient-aliases/resolve" /app/.sns-alias-live-dist/api/contacts.js; grep -c "check-alias" /app/.sns-alias-live-dist/api/contacts.js; ls /app/.sns-alias-live-dist/wallet/sns; grep -c "recipient-aliases/resolve" /app/dist/api/contacts.js'
+1
+1
+resolver.js  resolver.js.map  transport.js  transport.js.map
+0
+```
+**The artifact that carried the live half is the container's `/app/.sns-alias-live-dist/**`, compiled
+from the read-only bind-mounted host `src/`.** `grep` for the alias route in the deployed `/app/dist`
+still returns `0`, so the claim is checkable.
+
+## B2 — the container carries the WRONG SDK MAJOR, so the container cannot resolve at all
+
+```
+$ docker exec nana-privy-impl-backend-1 sh -lc 'grep -c "spl-name-service" /app/package.json; grep -m1 "\"version\"" /app/node_modules/@bonfida/spl-name-service/package.json'
+0
+  "version": "4.0.1"
+$ grep -m1 '"version"' node_modules/@bonfida/spl-name-service/package.json   # host worktree
+  "version": "3.0.23"
+```
+`src/wallet/sns/transport.ts:15-17` pins **3.0.23** and states why: *"v4 renamed `getDomainKeySync` to
+`getSnsDomainKeySync`, and exports no devnet resolver"*. The container's node_modules holds **4.0.1**,
+and its own `/app/package.json` does not name the dependency at all (the ad-hoc in-container install
+resolved unpinned). Measured inside the container, through the change's own transport:
+```
+[derive] THREW: sdk.devnet.utils.getDomainKeySync is not a function
+[outcome] {"ok":false,"failure":{"kind":"resolver_misconfigured","reason":"no_root"}}
+```
+So **no live resolution can run in the container**, and the fix is an install — outside this task's
+authority ("do not install dependencies"). The live resolution below therefore ran on the host worktree
+via `npx tsx`, whose `node_modules` holds the pinned `3.0.23`. Recorded as a real constraint on the
+harness the parent described, not as a workaround to hide.
+
+## Step-by-step: what the task asked for, and what was observed
+
+| # | Step (the task's own list) | Result |
+|---|---|---|
+| 1a | `POST /v1/recipient-aliases/resolve` for `sophie.sns` | **OBSERVED LIVE — HTTP 200** |
+| 1b | `POST /v1/contacts` with the alias, then `GET /v1/contacts` | **NOT RUN** — blocked by B3 (a real Privy policy write) and B4 (`request_hash`) |
+| 2 | add `sophie.sns` **through the agent** | **OBSERVED LIVE, NEGATIVE** — the typed agent path answers `address_review_required` and stages nothing (B5) |
+| 3 | the card carries the resolved address | **NOT OBSERVED** — no proposal row exists to read, because step 2 staged none |
+| 4 | the three-state reverse line | **OBSERVED LIVE — `none`**, the state the design predicted for devnet; `present` and `unknown` were **not** observed and are not claimed |
+| 5 | one explicit `check-alias` | **NOT RUN** — needs a contact with alias provenance, i.e. step 1b |
+| 6 | `recipients.address` + `applied_rules_hash` unchanged by the drift report | **BASELINE ONLY** — no drift report ran, so the asserted pair could not be exercised (see below) |
+
+### Step 1a + step 4 — the real route, the real resolver, the real devnet
+
+Direct, through the change's own transport (host worktree, pinned SDK), paced at 3 s:
+```
+[env] SNS_RPC_URL present in this process: false
+[env] resolved rpc host: api.devnet.solana.com/
+[resolve] sophie.sns -> ok address=3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2 resolver=sns/solana-devnet/v3 reverseDomainState=none reverseDomain=null resolvedAt=2026-10-11T05:07:31.933Z 867ms
+[pace] sleep 3000 ms before the next RPC-touching step
+[resolve] nanatest.sns -> ok address=BsNFJHm85Yk2hcugJG16KFm4bfdB5DwnTqfoSW4BuLFv resolver=sns/solana-devnet/v3 reverseDomainState=none reverseDomain=null resolvedAt=2026-10-11T05:07:35.271Z 335ms
+```
+Through the deployment's own HTTP surface, in-process, `identity` the only injected dependency:
+```
+$ DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgresql://postgres@127.0.0.1:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions' \
+  SNS_RPC_URL=https://api.devnet.solana.com RECIPIENT_POLICY_RECONCILER=disabled NOTIFICATIONS_OUTBOX_ENABLED=false \
+  npx tsx /tmp/sns-82-route.mts
+[resolve route] HTTP 200 {"ok":true,"data":{"name":"sophie.sns","address":"3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2","resolvedAt":"2026-10-11T05:08:49.278Z","resolver":"sns/solana-devnet/v3","reverseDomain":null,"reverseDomainState":"none"}}
+[pace] sleep 5000 ms before the next RPC-touching step
+[GET /v1/contacts] HTTP 200 count= 1 Test1:alias=null
+```
+`1515 ms` for the route's resolution; `17 ms` for the read; the read is the real stack database's real
+active contact and it carries `alias: null` because it was added by paste. `SNS_RPC_URL` in this
+worktree's `.env` **is** the shipped keyless default (`grep -q '^SNS_RPC_URL=https://api.devnet.solana.com$' .env`
+→ **true**), and it was passed explicitly to make the endpoint unambiguous; the transport's own default
+is the same value (`src/wallet/solana-devnet-provider.ts:35`). No value was added to `.env`.
+
+### Step 2 — the agent path, live, and its honest negative
+
+```
+$ docker exec -i -e RECIPIENT_POLICY_RECONCILER=disabled -e NOTIFICATIONS_OUTBOX_ENABLED=false \
+    -e SNS_RPC_URL=https://api.devnet.solana.com nana-privy-impl-backend-1 node --input-type=module - < /tmp/sns-82-agent.mjs
+[env] AGENT_RUNTIME = llm | RECIPIENT_POLICY_RECONCILER = disabled | NOTIFICATIONS_OUTBOX_ENABLED = false
+[agent] POST /v1/conversations HTTP 200 26e7bb17-93f4-4c08-80a3-1869b4cbebdd
+[agent] POST turns HTTP 200
+[agent] body {"status":"answer","message":"Necesito que revises y pegues la dirección en la tarjeta segura antes de guardar a Sophie (sophie.sns). Avisame cuando la tengas y lo confirmo."}
+```
+That sentence is verbatim the `unavailable` result of `createContactActionOperations`
+(`src/agent/definition.ts:571`), returned because `context.contactActions` is `undefined`
+(`definition.ts:576`). **B5: the typed (text) agent path has no `ContactActionPort` wired at all.**
+The port is supplied only by `src/livekit/realtime-tools/create-realtime-tools.ts:98` from
+`src/livekit/worker.ts:211` — i.e. only on the realtime/voice path, whose stage also refuses without a
+bound participant identity (`src/livekit/contact-proposal-publication.ts:326`). So *"add `sophie.sns`
+through the agent"* is not reachable from a text turn, and the card (step 3) has nothing to render.
+Nothing was staged: `contact_action_proposals` for that conversation is **0** (read back below), and
+`recipient_policy_sync_intent` is **0** for the whole database.
+
+### Step 6 — the pair, as a baseline only, and why it is not the assertion
+
+Read with the two actors that could move it in view. The task's assertion is that the **drift report**
+leaves `recipients.address` and `recipient_policy_state.applied_rules_hash` unchanged; **no drift report
+ran**, so this is a baseline, not that assertion:
+```
+recipients (user 08c462d6-…):  Test1 | active   | DFYT4RDcvr6vL46c7iVDmfBbEYQxAZhUxkgvwzuVHMEk | provenance name: NULL
+                               Sophie granddaughter | inactive | 0x1531F7AA08D5dF6E9e7d1e0dF8C88656BF9EBd5C | provenance name: NULL
+recipient_policy_state (wallet d8dd0511-…): desired_revision 0 | applied_revision 0 | applied_rules_hash NULL | status saved_not_configured
+```
+Identical before the live calls and after them. Note the honest weakness: `applied_rules_hash` is
+`NULL` in this stack (`saved_not_configured`, no composition has ever been applied), so even if the
+assertion had been takeable it would have compared `NULL` to `NULL`. It is recorded as a weak pair, not
+as a passed check.
+
+## B3 — why steps 1b/5/6 were refused: the stack's reconciler is live and capable
+
+The stack database is shared with the running `nana-privy-impl-backend-1`, whose 30 s reconciler loop is
+**running**. Measured read-only through the poll counter of an otherwise empty table:
+```
+T0: SELECT idx_scan FROM pg_stat_user_tables WHERE relname='recipient_policy_sync_intent' -> 1405
+T1 (+65 s)                                                                               -> 1407
+```
+Two ticks in 65 s. Its apply capability is not hypothetical either — `recipient_policy_state.status_detail`
+carries an owner-verified attachment naming a real policy and signer
+(`readPath: "owner_verified_listing"`, `policyId: jb227q0o7d3hmf0ksbi3hj6e`,
+`providerSignerId: np33q4k0i44p3g4kr2na0u9y`, the same value the sibling change's evidence already
+records), and `/health` reports `policySigner {"capable":true,"code":"verified"}`.
+`POST /v1/contacts` records a **due** intent in that same database
+(`listDueIntents`: `state IN ('pending','applying') AND next_attempt_at <= now()`,
+`src/wallet/policy/repository.ts:1120-1137`), so adding the contact would within ~30 s have the
+**deployed** process PATCH the user's live Privy policy — a real external write to the user's own
+wallet configuration, caused by this task and not undoable by this task. That is not an output the
+parent identified as expected, so it was not triggered: **steps 1b, 5 and 6 were deliberately not run
+for this reason**, and the reason is a policy decision only the user can make.
+
+## B4 — the same database is one migration behind, so the create path cannot complete there anyway
+
+```
+$ docker exec nana-privy-impl-db-1 psql -tAc "SELECT count(*) FROM information_schema.columns WHERE table_name='recipient_policy_sync_intent' AND column_name='request_hash'"  -> 0
+$ docker exec nana-privy-impl-db-1 psql -tAc "SELECT count(*) FROM schema_migrations WHERE name='017_recipient_alias_provenance.sql'"                                             -> 0
+$ docker exec nana-privy-impl-db-1 psql -tAc "SELECT pg_get_constraintdef(oid) … WHERE conname='recipient_policy_audit_event_ck'" | grep -c alias_destination_changed                    -> 0
+```
+`017` has not been applied to the stack database, and the intent INSERT names `request_hash`
+unconditionally (`src/wallet/policy/repository.ts:1083,1097`), while the drift path's audit row needs the
+widened `alias_destination_changed` vocabulary. Without `017`, the create and the drift audit cannot
+succeed in this database. Applying it was **not** done: it is a schema change to the user's running
+stack, it is outside the authorization for this task (which is an evidence task), and it would not by
+itself clear B3. Precedent for the *convention* exists — `014`–`016` were applied to this same database
+by the sibling change — but the deciding fact here is B3, not the mechanism.
+
+## What was created, and what it leaves behind
+
+| Created | Detail | Cleaned up |
+|---|---|---|
+| Container scratch build | `/app/.sns-alias-live-dist/**` inside `nana-privy-impl-backend-1` | **No — left in place deliberately**: it is the artifact that carried the live half (B1). The deployed `/app/dist` was not touched; `/app/package.json` and the image were not changed. |
+| One conversation + its turn | `26e7bb17-93f4-4c08-80a3-1869b4cbebdd` (05:09:11Z), stack DB, real turn written to `conversations` | **No — left, and declared.** No delete route exists for conversations. |
+| Contact / proposal / intent / audit rows | none | n/a — `contact_action_proposals` count is unchanged at **2** (both pre-existing, `2026-10-10 21:14–21:22`), `recipient_policy_sync_intent` **0**, `recipient_policy_audit` **0** |
+| Contacts, donors, wallets, grants, policy state | untouched | n/a — the two `recipients` rows and the `recipient_policy_state` row read identically before and after |
+| Host files | `/tmp/sns-82-{resolve,route,agent,diag}.m*` | outside the repository; the worktree's own tree is unchanged |
+
+`git status --porcelain -uall` → only `?? compose.privy-local.ports.yaml`, the user-owned untracked file,
+never read, modified or staged.
+
+## What remains unproven (nothing here is implied)
+
+Steps 1b, 3, 5 and the asserted form of 6; a live `present` or `unknown` reverse state on any network
+(the design's N2/§11 Q1 remain open); the live `check-alias` write path and its audit row; the whole
+voice/realtime agent path; the synthetic `class` half of the header (N4); `recipient_versions`
+provenance (2.6, declined); the no-ready-wallet idempotency branch (§11 Q8). The live resolution and the
+`none` reverse state are the only live facts added here.
+
+## Deviations
+
+1. **8.2 stays `[ ]`** — not because of the rate limit, which did not occur, but because four measured
+   environment blockers stop four different steps. The parent's two named outcomes (pass paced / record
+   the rate-limit blocker) do not cover this case, so the case is reported instead of forced into one.
+2. **The container was not used for the resolution** (B2: wrong SDK major), so the resolution ran on the
+   host worktree via `npx tsx` with the pinned SDK — the same transport and resolver modules, the same
+   live endpoint. The container WAS used for the agent turn, with its own real environment.
+3. **The scratch build replaced `npm run build`.** The precedent compiled into the deployed `/app/dist`;
+   this run compiled into a sibling directory instead, because overwriting the bundle a running stack
+   boots from is a larger mutation than the evidence needs.
+4. **The host route run loaded no `.env`** (`DOTENV_CONFIG_PATH=/dev/null`) so that no credential
+   entered the process. This means the Privy server client and wallet provider were absent in that
+   process; **neither is on the resolve or contact-read path**, and neither is claimed.
+5. **The N1 burst was not re-run**, deliberately, to keep the paced calls' headroom.

@@ -418,3 +418,46 @@ was satisfied rather than bypassed.
 code change), then archive. If the maintainer prefers to archive with 8.2 open, that is a partial
 archive with an externally-blocked live-evidence task and must be recorded as such — this report does
 not present the change as fully verified while that line stays `[ ]`.
+
+---
+
+## 15. Amendment — the 8.2 blocker is not the endpoint (measured after this report was written)
+
+Appended by the 8.2 re-attempt at HEAD `4fd4de1`. **The verdict above does not change**: task 8.2 is still
+`- [ ]` and the change is still not archive-ready. What changes is the **reason** the report names, and
+the reason is now measured rather than assumed. The body above — including C1 and the §14 table — is
+left byte-for-byte as written; this section supersedes only its *stated cause and next step*.
+
+- **Corrected claim.** §14's *"Recommended next step: obtain a keyed `SNS_RPC_URL` and complete 8.2 (it is
+  a variable change, not a code change)"* does **not** hold. A keyed endpoint is neither necessary nor
+  sufficient: paced at 3–5 s, the keyless public devnet endpoint resolved every real call
+  (`sophie.sns` → `3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2` in `867 ms`; `nanatest.sns` in `335 ms`;
+  the screen's own resolve route `HTTP 200` in `1515 ms`; no throttle), and the design's §10.2 **N1**
+  blocker text — *"the keyless default returns `Connection rate limits exceeded` on every call in a
+  burst"* — describes a **burst**, which the paced calls were not. The endpoint requirement in
+  `tasks.md:158` and in design §10.2 N1 is therefore recorded as **not the operative blocker**.
+- **The four blockers actually measured** (each stops a different step; full evidence in
+  `apply-progress.md`, "task 8.2 re-attempt"):
+  1. the stack container's `/app/dist` predates the change (no alias route at all);
+  2. the container carries `@bonfida/spl-name-service` **4.0.1**, while the change pins **3.0.23**
+     (`devnet.utils.getDomainKeySync` is gone in v4), so the container cannot resolve a name;
+  3. `nana-privy-impl-db-1` is at migration **016** (`request_hash` absent, audit CHECK unwidened), so the
+     create and drift-audit paths cannot complete there;
+  4. the stack's own 30 s policy reconciler is **live and capable** (`idx_scan` on
+     `recipient_policy_sync_intent` advanced 1405 → 1407 in 65 s; owner-verified attachment naming a real
+     policy and signer), so adding the contact would have the deployed process write a **real Privy
+     policy** for the user's wallet within ~30 s — an external mutation this task has no authority to
+     trigger, and one that would also destroy the very readback the task asserts.
+- **Also recorded, and relevant to that report's W2-adjacent claims:** the **typed (text) agent path has
+  no `ContactActionPort`**, so *"add `sophie.sns` through the agent"* is not reachable from a text turn —
+  observed live, not inferred: the turn answered verbatim the `address_review_required` sentence from
+  `src/agent/definition.ts:571` and staged nothing (`contact_action_proposals` for that conversation: 0).
+- **What is still open, unchanged in kind:** steps 1b, 3, 5 and the asserted form of 6 of task 8.2; the
+  live `check-alias` write; the voice/realtime agent path; a live `present`/`unknown` reverse state.
+  Nothing live is implied for any of them.
+
+**Corrected next step:** 8.2 cannot be closed by a variable change. It needs either (a) an explicit
+user decision to let a test run write a real Privy policy on the live stack (with an environment whose
+reconciler does not race the readback), or (b) a deliberately non-live environment, which cannot satisfy
+8.2's own wording. Until one of those is chosen, the honest state is: **8.2 open, blocker measured, and
+`[ ]`**.
