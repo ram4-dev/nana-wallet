@@ -232,6 +232,16 @@ async function runJob(
               }),
             }
           : {}),
+        // The unpublished-orphan cleanup. `stage` writes the row and only then
+        // delivers the card, and a delivery that fails deliberately leaves the
+        // row behind — but the one-open-per-conversation partial unique index has
+        // no expiry predicate, so without this cleanup a torn card could never be
+        // retried, in this session or any later one. This seam is the worker's own
+        // retry path, so the worker is the caller that owns it; the predicate
+        // (`published_at IS NULL`) lives in the service, which is what keeps a row
+        // whose card WAS delivered untouched.
+        supersedeUnpublished: ({ userId, conversationId }) =>
+          contactActionService.supersedeUnpublished(userId, conversationId),
         // The bound authenticated participant. `RoomConversation.bind` already
         // rejected a caller whose identity differs from `binding.sub`, so this is
         // the only participant a card may be delivered to. A room without it has
