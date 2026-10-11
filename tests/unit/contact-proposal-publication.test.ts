@@ -16,6 +16,7 @@ import {
   contactProposalSummary,
   createVoiceContactActions,
   REVIEW_CHANNEL_MESSAGE,
+  type VoiceContactActionDependencies,
 } from "../../src/livekit/contact-proposal-publication.js";
 import { createConfirmationArbiter } from "../../src/conversations/confirmation-arbiter.js";
 import { isCancellation, isConfirmation } from "../../src/livekit/resolution-phrases.js";
@@ -25,6 +26,8 @@ const USER_ID = "11111111-1111-4111-8111-111111111111";
 const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
 const PROPOSAL_ID = "33333333-3333-4333-8333-333333333333";
 const IDENTITY = "participant-1";
+/** The real devnet resolution of `sophie.sns`, recorded in the change's resources. */
+const ALIAS_ADDRESS = "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2";
 
 function proposal(overrides: Partial<ContactActionProposal> = {}): ContactActionProposal {
   return {
@@ -58,12 +61,14 @@ function harness(input: {
   publish?: (payload: Published) => Promise<void>;
   markPublished?: () => Promise<ContactActionProposal | null>;
   consumed?: boolean;
+  resolveAlias?: VoiceContactActionDependencies["resolveAlias"];
   /** Stands in for the persisted row the card renders. */
   currentOpenProposal?: () => Promise<{ proposalId: string; proposalVersion: number } | null>;
 } = {}) {
   const published: Published[] = [];
   const stageCalls: Array<Record<string, unknown>> = [];
   const consumedCalls: Array<{ proposalId: string; proposalVersion: number }> = [];
+  const resolveCalls: string[] = [];
   // Invocation order, recorded only on success. It proves the stamp happens
   // AFTER the delivery resolved: `["publish", "markPublished"]`, never the reverse.
   const order: string[] = [];
@@ -91,6 +96,14 @@ function harness(input: {
   const port = createVoiceContactActions({
     actions: actions as never,
     ...(input.noBoundVisualClient ? {} : { boundParticipantIdentity: IDENTITY }),
+    ...(input.resolveAlias
+      ? {
+          resolveAlias: async (call: { userId: string; snsName: string }) => {
+            resolveCalls.push(call.snsName);
+            return input.resolveAlias!(call);
+          },
+        }
+      : {}),
     publish: async (payload) => {
       published.push(payload);
       await (input.publish?.(payload) ?? Promise.resolve());
@@ -110,7 +123,7 @@ function harness(input: {
       return input.consumed ?? true;
     },
   });
-  return { port, arbiter, published, stageCalls, consumedCalls, order };
+  return { port, arbiter, published, stageCalls, consumedCalls, order, resolveCalls };
 }
 
 function card(published: Published): Record<string, unknown> {
@@ -291,5 +304,89 @@ describe("voice contact proposal publication", () => {
 
     expect(staged.status).toBe("conflict_active_window");
     expect(h.arbiter.current()).toMatchObject({ kind: "transfer", actionId: "preview-1" });
+  });
+
+  it("resolves an explicit .sns name before the proposal is persisted (task 6.1)", async () => {
+    const h = harness({
+      resolveAlias: async () => ({
+        status: "resolved",
+        snsName: "juan.sns",
+        address: ALIAS_ADDRESS,
+        resolvedAt: "2026-01-01T00:00:00.000Z",
+        resolver: "sns/solana-devnet/v3",
+        reverseDomain: null,
+        reverseDomainState: "none",
+      }),
+    });
+    const staged = await h.port.stage({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      origin: "voice",
+      action: "create",
+      name: "Juan",
+      snsName: "juan.sns",
+    });
+
+    // Positive control: the alias path DID produce a card, so the ordering
+    // assertion below is about order and not about a path that never ran.
+    expect(staged).toMatchObject({ status: "staged", proposalId: PROPOSAL_ID });
+    expect(h.resolveCalls).toEqual(["juan.sns"]);
+    // Resolved BEFORE the row exists: the server-side address reaches the
+    // service, not the model, and the client value is never the destination.
+    expect(h.stageCalls[0]).toMatchObject({
+      address: ALIAS_ADDRESS,
+      alias: { snsName: "juan.sns", resolvedAt: "2026-01-01T00:00:00.000Z" },
+    });
+    // The card is still published only AFTER the row exists and only to the
+    // bound participant, and it is the delivered card the window opens on.
+    expect(h.published).toHaveLength(1);
+    expect(card(h.published[0]!).proposalVersion).toBe(1);
+    expect(h.order).toEqual(["publish", "markPublished"]);
+  });
+
+  it("produces a typed refusal with no proposal and no card when the name cannot be resolved (task 6.1)", async () => {
+    const unreachable = harness({
+      resolveAlias: async () => ({ status: "refused", code: "RESOLVEDOR_NO_DISPONIBLE", reason: "unreachable" }),
+    });
+    const missing = harness({
+      resolveAlias: async () => ({ status: "refused", code: "NOMBRE_NO_ENCONTRADO", reason: "not_found" }),
+    });
+    const call = (h: ReturnType<typeof harness>) =>
+      h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Juan", snsName: "juan.sns" });
+
+    const first = await call(unreachable);
+    const second = await call(missing);
+
+    for (const [label, h, result] of [
+      ["unreachable", unreachable, first],
+      ["not_found", missing, second],
+    ] as const) {
+      expect(result.status, `${label} did not refuse`).toBe("alias_unresolved");
+      // The whole point of the typed outcome: the two are distinguishable and
+      // the unreachable one is never narrated as a non-existent name.
+      expect(result.message).toContain(result.code!);
+      expect(h.stageCalls, `${label} still persisted a proposal`).toHaveLength(0);
+      expect(h.published, `${label} still published a card`).toHaveLength(0);
+      expect(h.arbiter.current()).toBeUndefined();
+    }
+    expect(first.message).not.toBe(second.message);
+    expect(first.code).toBe("RESOLVEDOR_NO_DISPONIBLE");
+    expect(second.code).toBe("NOMBRE_NO_ENCONTRADO");
+  });
+
+  it("fails closed on an alias stage when no resolver is wired", async () => {
+    const h = harness();
+    const staged = await h.port.stage({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      origin: "voice",
+      action: "create",
+      name: "Juan",
+      snsName: "juan.sns",
+    });
+
+    expect(staged.status).toBe("alias_unresolved");
+    expect(h.stageCalls).toHaveLength(0);
+    expect(h.published).toHaveLength(0);
   });
 });

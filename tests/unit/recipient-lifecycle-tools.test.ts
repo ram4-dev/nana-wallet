@@ -143,6 +143,51 @@ describe("trusted-recipient lifecycle tools", () => {
     expect(staged[3].origin).toBe("voice");
   });
 
+  it("carries an explicit .sns name on create, and only on create", async () => {
+    const { port, staged } = recordingPort();
+    const ctx = context(port);
+
+    // Positive control first: the documented alias payload IS accepted, so the
+    // rejections below cannot be a false green from a broken fixture.
+    const accepted = parse("stage_trusted_recipient", ctx, { name: "Juan", snsName: "juan.sns" });
+    expect(accepted.success, "stage_trusted_recipient rejects an explicit .sns name").toBe(true);
+
+    const created = await tool("stage_trusted_recipient", ctx).execute(
+      { name: "Juan", snsName: "juan.sns" },
+      ctx,
+    );
+    expect(created).toMatchObject({ status: "staged", proposalId: PROPOSAL_ID });
+    // The name travels as a NAME, and no address travels with it.
+    expect(staged[0]).toMatchObject({ action: "create", name: "Juan", snsName: "juan.sns" });
+    expect(staged[0]).not.toHaveProperty("address");
+
+    // A name is not an address: the strict schema rejects one supplied beside it.
+    const withAddress = parse("stage_trusted_recipient", ctx, {
+      name: "Juan",
+      snsName: "juan.sns",
+      address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+    });
+    expect(withAddress.success, "stage_trusted_recipient accepted a model-supplied address").toBe(false);
+    expect(withAddress.success ? [] : withAddress.error.issues.map((issue) => issue.code)).toContain(
+      "unrecognized_keys",
+    );
+
+    // Versioned tools and the confirmation accept no name at all.
+    for (const name of ["stage_trusted_recipient_edit", "stage_trusted_recipient_removal"] as const) {
+      const result = parse(name, ctx, { contactId: CONTACT_ID, expectedVersion: 3, snsName: "juan.sns" });
+      expect(result.success, `${name} accepted snsName`).toBe(false);
+      expect(result.success ? [] : result.error.issues.map((issue) => issue.code)).toContain(
+        "unrecognized_keys",
+      );
+    }
+    const confirmWithName = parse("confirm_trusted_recipient_action", ctx, {
+      proposalId: PROPOSAL_ID,
+      proposalVersion: 1,
+      snsName: "juan.sns",
+    });
+    expect(confirmWithName.success, "a name was accepted as confirmation evidence").toBe(false);
+  });
+
   it("fails closed to a review request when no server-owned port is wired", async () => {
     const ctx = context();
     for (const name of LIFECYCLE_TOOLS) {

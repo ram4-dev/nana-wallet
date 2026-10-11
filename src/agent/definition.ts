@@ -93,7 +93,14 @@ export type ContactActionPort = {
     /** Display metadata only; it cannot identify a wallet address. */
     name?: string;
     description?: string;
-  }): Promise<{ status: 'staged' | 'confirmation_required' | 'conflict_active_window' | 'address_review_required' | 'proposal_not_published'; proposalId?: string; proposalVersion?: number; message: string }>;
+    /**
+     * An explicit `.sns` name the user supplied. It is a LABEL, never a
+     * destination: the server resolves it and the resolved address is what the
+     * user reviews and what the system stores. Accepted on `create` only — the
+     * versioned tools and the confirmation take no name.
+     */
+    snsName?: string;
+  }): Promise<{ status: 'staged' | 'confirmation_required' | 'conflict_active_window' | 'address_review_required' | 'proposal_not_published' | 'alias_unresolved'; proposalId?: string; proposalVersion?: number; message: string; code?: string }>;
   /**
    * Confirms one server-owned proposal. Stale or unknown ids fail closed and the
    * refusal names the proposal that is actually open (`currentProposalId` +
@@ -113,6 +120,13 @@ export type ContactActionPort = {
 const contactCreateInputSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
+  /**
+   * The alias the user said out loud. It is accepted as a NAME and nothing more:
+   * `.strict()` still refuses `address`, `network`, `policyId`, `signerId`, a cap,
+   * a confirmation, a timestamp and a turn count, so a model-inferred address has
+   * no key to travel on.
+   */
+  snsName: z.string().trim().min(1).max(70).optional(),
 }).strict();
 const contactChangeInputSchema = z.object({
   contactId: z.string().uuid(),
@@ -557,7 +571,7 @@ function createContactActionOperations(context: WalletAgentContext): AgentToolDe
   const unavailable = { status: 'address_review_required' as const, message: 'Necesito que revises y pegues la dirección en la tarjeta segura antes de guardar este destinatario.' };
   const stage = async (
     action: 'create' | 'edit' | 'remove',
-    value: { contactId?: string; expectedVersion?: number; name?: string; description?: string },
+    value: { contactId?: string; expectedVersion?: number; name?: string; description?: string; snsName?: string },
   ) => {
     if (!context.contactActions) return unavailable;
     return context.contactActions.stage({
@@ -571,7 +585,7 @@ function createContactActionOperations(context: WalletAgentContext): AgentToolDe
   return [
     {
       name: 'stage_trusted_recipient',
-      description: 'Stage a new trusted recipient for the secure review card. Supply only their display name and optional description. Never supply an address, network, policy, signer, cap, confirmation, timestamp, or turn count.',
+      description: 'Stage a new trusted recipient for the secure review card. Supply only their display name, an optional description, and — when the user gave one — the explicit .sns name they said (for example "juan.sns"); the server resolves that name and the resolved address is what the user reviews. Never supply an address, a resolution, an inferred address, a network, policy, signer, cap, confirmation, timestamp, or turn count.',
       inputSchema: contactCreateInputSchema,
       execute: (input) => stage('create', input as z.infer<typeof contactCreateInputSchema>),
     },

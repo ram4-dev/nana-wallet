@@ -76,6 +76,47 @@ export function contactProposalSummary(action: ContactActionProposal["action"], 
 export const REVIEW_CHANNEL_MESSAGE =
   "Para habilitar este destinatario necesito que revises la tarjeta en la pantalla y pegues la dirección. No puedo habilitarlo solo por voz.";
 
+/**
+ * The outcome of resolving an explicit `.sns` name the user supplied (design
+ * §2.3). `resolved` carries the server-observed address and the evidence the
+ * card must display; `refused` carries the typed taxonomy code so the two
+ * different failures — "that name does not exist" and "I could not reach the
+ * resolver" — are never narrated as the same thing.
+ */
+export type AliasResolution =
+  | {
+      status: "resolved";
+      snsName: string;
+      address: string;
+      resolvedAt: string;
+      resolver: string;
+      reverseDomain: string | null;
+      reverseDomainState: "present" | "none" | "unknown";
+    }
+  | { status: "refused"; code: string; reason: string };
+
+/**
+ * The server-owned sentence for each refusal, and the reason it is a map rather
+ * than one string: an unreachable resolver MUST NEVER be reported as a
+ * non-existent name (spec: *Unresolvable, unsupported or unreachable alias
+ * creates no permission*). The code is spoken verbatim so the distinction is
+ * audible, not just typed.
+ */
+export function aliasRefusalMessage(code: string): string {
+  switch (code) {
+    case "NOMBRE_NO_ENCONTRADO":
+      return "No encontré ese nombre (NOMBRE_NO_ENCONTRADO). No voy a habilitar este destinatario.";
+    case "RESOLVEDOR_NO_DISPONIBLE":
+      return "No pude consultar la red para resolver ese nombre (RESOLVEDOR_NO_DISPONIBLE). No voy a habilitar este destinatario.";
+    case "NOMBRE_NO_SOPORTADO":
+      return "Ese nombre no es un .sns que pueda usar (NOMBRE_NO_SOPORTADO). No voy a habilitar este destinatario.";
+    case "NOMBRE_AMBIGUO":
+      return "Ese nombre no me da una dirección confiable (NOMBRE_AMBIGUO). No voy a habilitar este destinatario.";
+    default:
+      return `No pude resolver ese nombre (${code}). No voy a habilitar este destinatario.`;
+  }
+}
+
 export type VoiceContactActionDependencies = {
   actions: Pick<ContactActionService, "stage" | "markPublished" | "read" | "consumeInTransaction">;
   /**
@@ -123,6 +164,16 @@ export type VoiceContactActionDependencies = {
     topic: string;
     destinationIdentities: string[];
   }) => Promise<void>;
+  /**
+   * Resolves an explicit `.sns` name **before** the proposal is persisted (design
+   * §2.3). Remote I/O, so it runs outside any transaction, and it is the only
+   * source of the address on the alias path: the model never supplies one.
+   *
+   * It is optional so a caller that cannot resolve names keeps the behaviour it
+   * had — and an alias request on such a caller FAILS CLOSED with a typed
+   * refusal rather than being emulated from the spoken label.
+   */
+  resolveAlias?: (input: { userId: string; snsName: string }) => Promise<AliasResolution>;
   /** The in-process window. Absent ⇒ no window ever opens and nothing is consumed. */
   arbiter?: ConfirmationArbiter;
   /**
@@ -149,6 +200,27 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         // review channel. The contact may still be saved as not enabled.
         return { status: "address_review_required", message: REVIEW_CHANNEL_MESSAGE };
       }
+
+      // An explicit `.sns` name is resolved BEFORE the proposal row exists, and
+      // before the unpublished-row cleanup below — a name that cannot be
+      // resolved must leave the database untouched (no proposal, no card, no
+      // superseded row). The refusal is typed so "does not exist" and "could not
+      // be reached" stay distinguishable.
+      let alias: AliasResolution | null = null;
+      if (input.snsName !== undefined) {
+        const resolution = dependencies.resolveAlias
+          ? await dependencies.resolveAlias({ userId: input.userId, snsName: input.snsName })
+          : ({ status: "refused", code: "RESOLVEDOR_NO_DISPONIBLE", reason: "resolver_unavailable" } as const);
+        if (resolution.status === "refused") {
+          return {
+            status: "alias_unresolved",
+            code: resolution.code,
+            message: aliasRefusalMessage(resolution.code),
+          };
+        }
+        alias = resolution;
+      }
+
       // A previous attempt for THIS conversation that never got its card
       // delivered is not a window (§8.2): supersede it first, so the retry
       // creates a fresh version instead of breaking the one-open index.
@@ -166,10 +238,21 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         ...(input.expectedVersion !== undefined ? { expectedVersion: input.expectedVersion } : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(alias
+          ? {
+              address: alias.address,
+              alias: {
+                snsName: alias.snsName,
+                resolvedAt: alias.resolvedAt,
+                resolver: alias.resolver,
+                reverseDomain: alias.reverseDomain,
+                reverseDomainState: alias.reverseDomainState,
+              },
+            }
+          : {}),
       });
 
-      const card = contactProposalCard(proposal, contactProposalSummary(proposal.action, input.name));
-      try {
+      const card = contactProposalCard(proposal, contactProposalSummary(proposal.action, input.name));      try {
         await dependencies.publish({
           bytes: new TextEncoder().encode(JSON.stringify(card)),
           reliable: true,

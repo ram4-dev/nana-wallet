@@ -1212,3 +1212,88 @@ by 5.3's cases, with zero failures and zero skipped.
 One work-unit commit: the backend projection, the mirrored type's consumer, the list rendering and
 their tests. `Review Workload Forecast: size-exception` (recorded at the top of `tasks.md`) — the change
 does not push and does not open a PR.
+
+---
+
+## Slice 6 (partial) — task 6.1: the alias name on the model surface, resolved before the proposal exists
+
+Handoff note: this run had a hard 20-minute budget and consumed it on 6.1 + the payload half of 6.2
+(see "Deviation" below). 6.2 is **not** complete and stays `[ ]`; 6.3, 6.4 and 6.5 are untouched.
+
+### What landed (task 6.1 → `[x]`)
+
+- `src/agent/definition.ts`: `contactCreateInputSchema` gains `snsName: z.string().trim().min(1).max(70).optional()`
+  with `.strict()` retained (still no `address`, `network`, `policyId`, `signerId`, cap, confirmation,
+  timestamp or turn count); `ContactActionPort.stage` carries `snsName`; the stage return union gains
+  `alias_unresolved` plus an optional typed `code`; the `stage_trusted_recipient` description now names
+  the alias as the only address-adjacent argument and still forbids an address or a resolution.
+- `src/livekit/contact-proposal-publication.ts`: new `AliasResolution` union, `aliasRefusalMessage(code)`
+  and the optional `resolveAlias` dependency. `stage` now resolves **after the bound-visual-client guard
+  and before `supersedeUnpublished` and `actions.stage`**, so a name that cannot be resolved leaves the
+  database untouched (no proposal row, no superseded row, no card), and returns
+  `{status:'alias_unresolved', code}`. An absent `resolveAlias` fails closed with
+  `RESOLVEDOR_NO_DISPONIBLE` instead of emulating a resolution.
+- `src/wallet/policy/contact-actions.ts`: `stage` accepts `address` + `alias` evidence, validates the
+  address canonically, refuses an address with no alias evidence and alias evidence with no address, and
+  binds the resolved address to the `address` column of the INSERT (`$11::text`, was a literal `NULL`).
+
+### Honest RED (how it was obtained)
+
+Written first, run against unmodified sources: 4 failures, 3 of them by name —
+`stage_trusted_recipient rejects an explicit .sns name` (`tests/unit/recipient-lifecycle-tools.test.ts`)
+and, in `tests/unit/contact-proposal-publication.test.ts`, `resolves an explicit .sns name before the
+proposal is persisted`, `produces a typed refusal with no proposal and no card when the name cannot be
+resolved`, and `fails closed on an alias stage when no resolver is wired`. No reversion was used to
+produce this RED: the tests and the production code were written in separate steps and the failing run
+is the one recorded above.
+
+### Mutation evidence (all restored; the tree is clean of them)
+
+| # | Mutation | Attributed failure | Reading |
+|---|---|---|---|
+| M-A | `snsName` removed from `contactCreateInputSchema` | `stage_trusted_recipient rejects an explicit .sns name` | the schema key is load-bearing, and its removal is caught by the positive control first |
+| M-B | address slot of the stage INSERT reverted to a literal `NULL` | *first attempt: no failure* → after strengthening, `expected null to be '3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWy…'` | see below |
+
+**M-B is the one worth keeping.** The first version of the assertion read the JavaScript parameter array
+(`inserts[0].values[10]`) and stayed **green** with the binding removed: it measured the call, not the
+statement, so it would have passed for the wrong reason for the rest of this change's life. The
+assertion now resolves the placeholder the **statement** names out of its `VALUES` tuple and asserts
+that slot's bound value, and the same mutation then fails by name. Recorded because a false green found
+by mutation is the same defect class as the negative controls this change has already been bitten by
+(`apply-progress`, slice 5).
+
+### Commands run (exact)
+
+```text
+npx vitest run tests/unit/recipient-lifecycle-tools.test.ts tests/unit/agent-tools-parity.test.ts tests/unit/contact-proposal-publication.test.ts  # 3 files, 28 passed
+npx vitest run tests/unit/contact-action-stage-alias.test.ts                                                                                      # 5 passed
+npm run typecheck                                                                                                                                 # clean
+npm run lint                                                                                                                                      # clean
+npx vitest run tests/integration/contact-action-address.test.ts tests/integration/contact-action-proposals.test.ts                                # 2 files, 13 passed (real DB)
+```
+
+The last run is the one that matters for 6.1's diff beyond its own suite: both suites
+create/publish/consume through the modified INSERT against the real database and did not regress.
+
+### Deviation (recorded, not smuggled)
+
+The **payload half of 6.2 landed in 6.1's commit**, because a coherent alias stage needs the payload
+schema to admit `addressSource:'sns'` and the INSERT to bind the address at the same moment: an address
+column bound while the payload still said `review_required` would have been a lie in between commits.
+Task 6.2 is nevertheless **not** complete — `replaceAddress`'s per-arm payload construction (the paste
+supersede clearing `snsName`/`resolvedAt`/`resolver`, and `source:'sns'`) is not implemented — so 6.2
+stays `[ ]` and its integration suite (`tests/integration/contact-action-alias-payload.test.ts`) does
+not exist yet. Task text naming `tests/unit/agent-tool-parity.test.ts` is stale: that file does not exist
+in this worktree; the real suite is `tests/unit/agent-tools-parity.test.ts` and it was run.
+
+### Unproven, stated
+
+- The alias stage's **persisted row has only unit-level proof** here (a fake `DatabaseClient` recording
+  the INSERT). The by-integration proof (`contact_action_proposals.address` and the payload read back
+  from Postgres) is 6.2's suite and is not written.
+- Nothing in this commit exercises the card, the confirm-time re-verification or the evals: 6.3, 6.4 and
+  6.5 are untouched, and no surface yet depends on this seam's alias arm (only the voice worker wires
+  `createVoiceContactActions`, and the text path's resolver dependency is not constructed).
+- `resolveAlias` is **not wired** in `src/livekit/worker.ts` yet: on the alias path the seam currently
+  fails closed with `RESOLVEDOR_NO_DISPONIBLE` until 6.4's wiring lands. Fail-closed, but not yet the
+  shipped behaviour.

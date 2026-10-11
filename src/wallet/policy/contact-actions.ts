@@ -10,8 +10,42 @@ const uuidSchema = z.string().uuid();
 const payloadSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(500).optional(),
-  addressSource: z.enum(["review_required", "pasted", "scanned"]),
+  addressSource: z.enum(["review_required", "pasted", "scanned", "sns"]),
+  /**
+   * The alias evidence. `snsName` is a LABEL; the authorization is
+   * `contact_action_proposals.address`, written by the server from the same
+   * resolution that produced these keys. All optional and additive: `016` stores
+   * this payload as JSONB with no CHECK on its keys, so no migration is needed.
+   */
+  snsName: z.string().trim().min(1).max(70).optional(),
+  resolvedAt: z.string().trim().min(1).optional(),
+  resolver: z.string().trim().min(1).optional(),
+  reverseDomain: z.string().trim().min(1).nullable().optional(),
+  reverseDomainState: z.enum(["present", "none", "unknown"]).optional(),
+  /** Explicit on success too, so an absence is never read as agreement (S11). */
+  reverify: z.enum(["verified", "unavailable"]).optional(),
 }).strict();
+
+/** The alias evidence a stage or a re-verification supersede persists. */
+export type ContactAliasEvidence = {
+  snsName: string;
+  resolvedAt: string;
+  resolver: string;
+  reverseDomain: string | null;
+  reverseDomainState: "present" | "none" | "unknown";
+};
+
+/** The payload keys an alias-origin proposal carries, built explicitly (never spread). */
+function aliasPayload(alias: ContactAliasEvidence): Record<string, unknown> {
+  return {
+    addressSource: "sns",
+    snsName: alias.snsName,
+    resolvedAt: alias.resolvedAt,
+    resolver: alias.resolver,
+    reverseDomain: alias.reverseDomain,
+    reverseDomainState: alias.reverseDomainState,
+  };
+}
 
 export type ContactActionProposal = {
   proposalId: string;
@@ -66,6 +100,10 @@ export class ContactActionService {
     userId: string; conversationId: string; origin: "text" | "voice" | "screen";
     action: "create" | "edit" | "remove"; contactId?: string; expectedVersion?: number;
     name?: string; description?: string; revokedGrantIds?: string[];
+    /** The SERVER-resolved address, passed by the alias arm and never by a model. */
+    address?: string;
+    /** The alias evidence that explains `address`. Present ⇒ this is the alias arm. */
+    alias?: ContactAliasEvidence;
   }): Promise<ContactActionProposal> {
     const action = actionSchema.parse(input.action);
     const origin = originSchema.parse(input.origin);
@@ -74,19 +112,31 @@ export class ContactActionService {
     if ((action === "edit" || action === "remove") && (!contactId || !Number.isInteger(input.expectedVersion) || input.expectedVersion! < 1)) {
       throw new Error("A versioned trusted recipient is required for this action.");
     }
-    const payload = payloadSchema.parse({
-      ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.description !== undefined ? { description: input.description } : {}),
-      addressSource: "review_required",
-    });
+    // The alias arm persists an address, and only the alias arm may: a `stage`
+    // that carried an address with no alias evidence would be an address from
+    // nowhere, which is exactly what this change forbids.
+    if (input.alias && input.address === undefined) throw new Error("An alias stage requires the resolved address.");
+    if (input.address !== undefined && !input.alias) throw new Error("An address can only reach a proposal through the alias arm.");
+    if (input.address !== undefined && !isValidSolanaAddress(input.address)) throw new Error("Expected a canonical Solana address.");
+    const payload = input.alias
+      ? payloadSchema.parse({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...aliasPayload(input.alias),
+        })
+      : payloadSchema.parse({
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          addressSource: "review_required",
+        });
     const proposalHash = hash({ action, contactId, expectedVersion: input.expectedVersion ?? null, payload });
     return this.database.withUserTransaction(input.userId, async (client) => {
       const result = await client.query<ProposalRow>(
         `INSERT INTO contact_action_proposals
           (user_id, conversation_id, action, contact_id, contact_version, address, revoked_grant_ids, version, proposal_hash, origin, expires_at, payload)
-         VALUES ($1,$2,$3,$4,$5,NULL,$6::uuid[],1,$7,$8,now() + ($9::bigint * interval '1 millisecond'),$10::jsonb)
+         VALUES ($1,$2,$3,$4,$5,$11::text,$6::uuid[],1,$7,$8,now() + ($9::bigint * interval '1 millisecond'),$10::jsonb)
          RETURNING ${columns}`,
-        [input.userId, conversationId, action, contactId, input.expectedVersion ?? null, input.revokedGrantIds ?? [], proposalHash, origin, this.ttlMs, JSON.stringify(payload)],
+        [input.userId, conversationId, action, contactId, input.expectedVersion ?? null, input.revokedGrantIds ?? [], proposalHash, origin, this.ttlMs, JSON.stringify(payload), input.address?.trim() ?? null],
       ).catch((error: unknown) => {
         // The partial unique index is the cross-process "one open proposal per
         // conversation" rule (§2.3): two processes cannot both hold an open
