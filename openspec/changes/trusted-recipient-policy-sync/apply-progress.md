@@ -6737,3 +6737,247 @@ Live evidence: proposal `94f7f262` (origin `voice`, action `create`, address NUL
 **Stack restarted** with `docker compose restart voice-worker backend` (not a bare `docker restart`, which orphans the `*-signer` sidecars that join via `network_mode: service:<name>`).
 
 **Freeze note.** This is a **source change**, so frozen candidate `ca4fdb2` is further superseded: a re-freeze plus a new review candidate are owed.
+
+---
+
+## Re-freeze of the frozen candidate — 2026-10-11
+
+Work unit: **re-run the freeze row "Freeze the candidate with normalization complete." on the current
+tree**, because the previously frozen candidate `ca4fdb2` was superseded by later source changes.
+Documentation only: **no source, test, migration, config, compose, container or database state was
+changed by this run**, and no code was edited. The freeze row in `tasks.md` is **already `[x]`** and was
+deliberately **not** flipped or touched: this entry records that the freeze was **redone**, it does not
+re-open the task. No earlier entry in this file was rewritten.
+
+Working root and only writable tree: `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`,
+branch `feat/solana-operational`, HEAD at measurement time
+`89a3569a10e9d4768c8fb7a2dd4d3d37ae910d6c`. The main checkout was never entered. No `git stash`,
+`checkout`, `reset`, `restore` or `clean` was run anywhere. The untracked
+`compose.privy-local.ports.yaml` was never touched, deleted, committed or gitignored.
+
+### What the previous freeze recorded, and how the new snapshot relates to it
+
+The previous freeze record (`ef988d4`, `docs(sdd): freeze the normalized candidate with normalization
+complete`, 2026-10-10 15:24 −03) named **two SHAs**:
+
+- **`ca4fdb2`** — the **measured source snapshot**: `git rev-parse HEAD` at that time, i.e. the tree every
+  normalizer in that run actually measured.
+- **`ef988d4`** — the **docs-only record commit** written after the measurement, touching only
+  `tasks.md` and this file and zero source bytes.
+
+Both are ancestors of today's HEAD, and `ef988d4` is a direct descendant of `ca4fdb2`. The task text
+names the two source changes that first superseded `ca4fdb2` — `6ba98f9` (the `x-opencode-session`
+header) and `337122b` (the `send_token` tool schema) — and both are confirmed ancestors of HEAD. Many
+more commits landed after them:
+
+```text
+$ git rev-list --count ca4fdb2..HEAD
+43
+$ git rev-list --count ef988d4..HEAD
+42
+$ git log --oneline ca4fdb2..HEAD | grep -cE '^[0-9a-f]+ (feat|fix|test|chore|refactor)'
+24
+```
+
+So **24 of the 43 commits since `ca4fdb2` are source-affecting** (the SNS alias vertical, the idempotency
+binding, contact provenance, the drift report, the voice contact-window fix, the dependency-tree
+restore, the security `.gitignore` change) and 19 are docs-only. `ca4fdb2` is therefore now far more than
+two commits behind, and every command below was measured on the **new** tree, not on it.
+
+**The new frozen snapshot is `89a3569a10e9d4768c8fb7a2dd4d3d37ae910d6c`** — the last commit before this
+freeze-record commit, and the exact tree every normalizer below measured. It **replaces `ca4fdb2` as
+the measured source snapshot**; the relation is: `ca4fdb2` → … 43 commits … → `ef988d4` (old record) →
+… 42 commits … → `89a3569` (**new measured snapshot**) → the docs-only re-freeze record commit written by
+this run. Like `ef988d4` before it, this run's record commit touches only `openspec/changes/.../`
+documentation and **zero source bytes**, so it cannot invalidate the normalization it records.
+
+### The exact normalizer commands, in order, with results
+
+All ten declared invocations were executed. Only `lint` is source-mutating, so each `lint` ran twice.
+
+| # | Command (cwd) | Exit | Mutated a byte? | Convergence evidence |
+|---|---|---|---|---|
+| 1 | `npm run lint` (backend, run 1) | 0 | **No** | `git status --porcelain -uall` byte-identical before/after (1 line) |
+| 2 | `npm run lint` (backend, run 2) | 0 | **No** | run-2 stdout byte-identical to run-1 stdout (`diff -q`) → convergent |
+| 3 | `npm run typecheck` (backend) | 0 | **No** | status byte-identical after |
+| 4 | `npm run build` (backend) | 0 | **No** | `dist/` is gitignored (`.gitignore:6`, `git check-ignore dist` → `.gitignore:6:dist/`); status unchanged |
+| 5 | `npm test` (backend) | 1 (failures) | **No** | status unchanged; per-name judgement below |
+| 6 | `npm run eval` (backend) | 0 | **No** | status unchanged; `Score 98% · Threshold 0% (passed) · Eval Files 10 · Evals 29` |
+| 7 | `npm run lint` (`apps/nana-wallet`, run 1) | 0 | **No** | status byte-identical after |
+| 8 | `npm run lint` (`apps/nana-wallet`, run 2) | 0 | **No** | run-2 stdout byte-identical to run-1 (`diff -q`) → convergent |
+| 9 | `npm run typecheck` (`apps/nana-wallet`) | 0 | **No** | status byte-identical after |
+| 10 | `npm test` (`apps/nana-wallet`) | 0 | **No** | `Test Files 29 passed (29)` / `Tests 220 passed (220)`, zero failures, zero skipped |
+
+**No normalizer mutated a byte on its first run, and no second `lint` run changed anything.** Therefore
+no re-normalization and no source re-snapshot were required, and no already-"frozen" byte had to be
+reported as pre-freeze drift. `openspec/config.yaml` declares `formatter: false`, so there is no format
+step in
+the set. Command logs were written to `/tmp/freeze2-logs/`; no log body was committed and no scratch
+file was created inside the repository.
+
+**Database — `npm run db:migrate` was NOT run, deliberately.** The worktree test DB
+`colloseumfeat-solana-operational-db-1` was already `Up About an hour (healthy)` on `127.0.0.1:55470`
+for the whole run and `.env` already carries `DATABASE_URL` for it (key and port read; **no value
+printed**). No `docker compose up -d db` of any form was issued, so the `:5432`-recreate trap could not
+trigger and the DB volume was never recreated. `db:migrate` was skipped because this worktree's
+`supabase/`-chain-built test DB rejects it with the **pre-existing** `relation "conversations" already
+exists` failure — running it would have been a no-op failure at best and is not part of the normalizer
+set. DB-backed execution is nonetheless proven rather than assumed: the full run skipped the same 10
+opt-in tests as the baseline (4 skipped files) and 13 of the 18 DB-backed suites below passed when run
+sequentially.
+
+### Full-suite result, judged by test name against the captured baseline
+
+Backend `npm test` (`vitest run`, default reporter, non-TTY):
+
+```text
+ Test Files  18 failed | 207 passed | 4 skipped (229)
+      Tests  45 failed | 1637 passed | 10 skipped (1692)
+   Duration  103.09s
+```
+
+Baseline authority: `.agent-workflow/tasks/trusted-recipient-policy-sync/91-test-baseline.md`
+**attempt 2** (CI-shaped DB, commit `a121b2c`, `6 failed | 1028 passed | 10 skipped (1044)`).
+
+**All 6 pristine baseline failures reproduced in the parallel run, each by name:**
+
+| # | Baseline test | Message this run |
+|---|---|---|
+| 1 | `tests/integration/api-voice-auth.test.ts` > returns the same 404 for a foreign conversation as for a missing one | `Test timed out in 15000ms.` (environment-shaped) |
+| 2 | `tests/integration/conversation-preview-claim-race.test.ts` > V8.5 two simultaneous confirms broadcast exactly once | `expected "broadcastTransfer" to be called once, but got 0 times` |
+| 3 | `tests/integration/wallets-sync.test.ts` > PEW-013 explicit activation with read-back | `expected 422 to be 200` |
+| 4 | `tests/unit/realtime-agent-session.test.ts` > allows one re-read when a confirmation is refused for an incomplete read-back | persona-prompt `to match /except when a confirmation is refus…/iu` |
+| 5 | `tests/unit/realtime-tool-binding.test.ts` > send_token previews … through the fixture spy | `expected [] to have a length of 1 but got +0` |
+| 6 | `tests/unit/realtime-tools.test.ts` > send_token delegates the preview and strips the recipient address | `expected "vi.fn()" to be called with arguments: [ StringContaining{…} ]` |
+
+The other **39 failures are not baseline failures**, and every one is contention-shaped. They were
+re-run with inter-file parallelism removed — `npx vitest run --no-file-parallelism <the 18 failed
+files>`, i.e. each file executed one at a time so no two suites contend on the shared test DB:
+
+```text
+ Test Files  5 failed | 13 passed (18)
+      Tests  5 failed | 120 passed (125)
+```
+
+**Every one of the 39 non-baseline failures changed nothing**: 13 of the 18 files went fully green, and
+the 5 residual failures are exactly 5 of the 6 pristine baseline failures, with byte-identical
+messages. So **0 change-caused regressions** and **no failure outside the baseline survives a
+non-parallel run**. Files that failed only under load and passed when run non-parallel:
+`api-contact-check-alias` (8), `api-contacts-alias-field` (2), `api-contacts-policy` (5),
+`api-contacts` (2), `api-recipient-aliases-resolve` (3), `contact-action-address` (4),
+`livekit-trusted-recipient.e2e` (1), `lock-order-concurrency` (1), `recipient-alias-create` (6),
+`recipient-drift` (2), `recipient-policy-reconciler` (4), `api-auth-logout` (1) — 39 test cases.
+
+**One baseline entry did not reproduce.** Baseline #1 `api-voice-auth` (a `Test timed out in 15000ms.`
+load timeout) failed in the parallel run and **passed** in the non-parallel run. That is a load
+artifact, and it matches task 5.3's closing record at `5eed078`, where the same case also did not
+reproduce. No check was weakened, skipped, retried into green by luck, or removed; the only thing
+removed in the re-run is **concurrency**, which is the artifact under judgement. A load timeout is not
+counted as a normalizer failure.
+
+### Tree state at the freeze and its classification
+
+```text
+$ git status --porcelain -uall
+?? compose.privy-local.ports.yaml
+
+$ git ls-files --others --exclude-standard
+compose.privy-local.ports.yaml
+
+$ git diff-index --name-only HEAD --      # (empty)
+$ git diff HEAD --stat                    # (empty)
+$ git status --porcelain -uall | grep -c '^ M\|^M '   # 0 modified tracked files
+```
+
+One line, one untracked path, **zero modified tracked files**, zero staged changes. The file is
+1368 bytes, mtime `10 oct. 00:20`, md5 `2eb38bf83fdf11628056044130b846fd` — unchanged by this run
+(it was already present and byte-identical before the first command, and every after-command status
+snapshot was `diff -q`-identical to the pre snapshot).
+
+**Documented deviation from the task's literal wording, stated plainly and not hidden.** The freeze row
+says "confirm an empty `git status --porcelain`". That cannot be satisfied in the letter here, because
+`compose.privy-local.ports.yaml` is a deliberate, **user-owned** local ports override that several
+commands in this worktree depend on. It is the **single known, preserved exception**: it was not
+deleted, not committed, not modified and not added to `.gitignore` (that would itself be a tracked-file
+byte change). Every other condition of the freeze holds exactly as written — zero modified tracked
+files, zero staged changes, and no other untracked path anywhere in the tree. This is the one and only
+deviation, and it is a pre-existing untracked artifact, not a freeze defect. **No other modification of
+any kind exists.**
+
+### Receipt-driven development — observed fact
+
+```text
+$ gentle-ai review mode status
+receipt-driven development: off (decided by clone_local)
+  global:      unset
+  clone-local: off
+```
+
+Recorded as an observation only. **No review was started, enabled, reopened or attempted by this run**:
+`gentle_review` / `gentle_review_capture` / `gentle_review_capture_group` were not called and no
+`gentle-ai review` lifecycle command was invoked. The switch is user-owned, the re-freeze does not
+require it to be on, and nothing here proposes turning it on.
+
+### After this point only check-only commands may run
+
+The candidate is frozen at `89a3569`. From here **only check-only commands may run** (`git status`,
+`git diff`, `git log`, test/typecheck invocations, read-only container/database reads). Any byte, path
+or mode change from here invalidates the receipt and requires re-normalization plus a new review of the
+new bytes. No code was edited in this phase and none may be. The re-freeze also **does not itself create
+a review candidate or a receipt**: the bounded native review over the new frozen snapshot is the
+parent-owned row and stays exactly as written.
+
+### Task checkboxes and parent-owned rows
+
+**No checkbox was changed by this run.** The freeze row is already `[x]` and the parent instruction
+explicitly forbids flipping it; this entry records a re-run, not a new completion. Every other
+implementation row was already `[x]` except task 5.2 and 5.7, whose `[ ]` states are deliberate and
+documented in their own closure notes and are **not** this work unit's scope. `tasks.md` was not
+modified at all by this run, so the two `<!-- sdd-owner: parent -->` rows remain **byte-for-byte**
+as written. The 5.2/5.7 rows likewise remain byte-for-byte identical to what their notes recorded.
+
+### Files changed by this work unit
+
+| File | Change |
+|---|---|
+| `openspec/changes/trusted-recipient-policy-sync/apply-progress.md` | this appended section only; earlier entries not rewritten |
+
+Zero source, test, migration, config, compose or container change. `tasks.md` untouched.
+
+### Workload / PR boundary
+
+One documentation work unit inside the parent-assigned slice-5 boundary (PR 7). No source file changed,
+so no review boundary moves and no normalizer has to be re-run. The Review Workload Forecast guard
+(`Decision needed before apply: Yes`, `Chained PRs recommended: Yes`, `400-line budget risk: High`)
+concerns code slices; this work unit measures and records and requests no `size:exception`.
+
+### Structured status consumed
+
+Artifact store `openspec`. Readiness was resolved against the artifacts directly before any command:
+`openspec/changes/trusted-recipient-policy-sync/{tasks,spec,design}.md`, this file's earlier entries
+(including the previous freeze record at `ef988d4`), `openspec/config.yaml` (`formatter: false`,
+`strict_tdd: false`), and `91-test-baseline.md` attempt 2 as the authoritative baseline. The parent
+prompt supplied the working root, the normalizer set, the RDD prohibition, the preserved-path
+exception, the DB/env facts and the output contract, so no native status dispatch was needed or
+performed. `actionContext`: one allowed edit root
+(`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed inside it; the
+main checkout was never entered and no edit root was violated.
+
+### Secret safety
+
+Nothing secret was read, printed, echoed or logged. No `.env`, `.secrets/`, token, key, seed, payload or
+signature **value** appears in any command, output, log or in this file. The only environment read was
+the presence and host port of `DATABASE_URL` (`:55470/`) — key and port only, no value. No signer probe
+and no credential access was performed in this phase.
+
+### What remains unproven
+
+1. `npm test` still exits 1 on this tree (45 failures under parallel load; 5 pristine baseline failures
+   under sequential load). That is the **pre-existing, environment-shaped** baseline, unchanged in
+   character by this re-freeze, and it is **not** a pass. The freeze certifies that no normalizer
+   mutated a byte and that the 39 load failures are contention artifacts — not that the suite is green.
+2. The literal "empty `git status --porcelain`" (see the single documented deviation above).
+3. The bounded native review of the new snapshot `89a3569` (parent-owned) — and with receipt-driven
+   development **off**, no receipt can exist for it.
+4. Task 5.2's U1/U4 probes and task 5.7's live screen/agent devnet steps remain uncollected, as their
+   own `[ ]` notes say; this run did not attempt them.
