@@ -109,17 +109,35 @@ export type ContactReply = {
   code(status: number): { send(payload: ContactApiError): void };
 };
 
+/**
+ * The service seam's refusal codes mapped onto HTTP (design §7). A DATA-driven
+ * map rather than a chain of ternaries: the alias arm added four codes whose
+ * statuses are not all `409`, and a missing entry would silently become a 500
+ * for a refusal that has an answer. `Record` over the closed code union makes a
+ * new code a type error here.
+ */
+const SEAM_ERROR_HTTP_STATUS: Record<string, number> = {
+  DATOS_INVALIDOS: 422,
+  CONTACTO_NO_ENCONTRADO: 404,
+  // Resolver taxonomy: a name this deployment cannot serve is a request problem
+  // (422), a name that does not exist is absent (404), an unusable name account
+  // is a conflict (409), and an unreachable registry is OUR availability (503).
+  NOMBRE_NO_SOPORTADO: 422,
+  NOMBRE_NO_ENCONTRADO: 404,
+  NOMBRE_AMBIGUO: 409,
+  RESOLVEDOR_NO_DISPONIBLE: 503,
+  // The alias add's own refusals: the name moved (a conflict) and the address is
+  // this wallet's own (a conflict).
+  SNS_DESTINO_CAMBIADO: 409,
+  DIRECCION_PROPIA: 409,
+  IDEMPOTENCIA_CUERPO_DISTINTO: 409,
+};
+
 function errorReply(reply: ContactReply, error: unknown): ContactApiError {
   // Identity failures map to 401 via the server-wide handler, never 500.
   if (error instanceof PrivyIdentityError) throw error;
   if (error instanceof RecipientPolicySeamError) {
-    const status =
-      error.code === "DATOS_INVALIDOS"
-        ? 422
-        : error.code === "CONTACTO_NO_ENCONTRADO"
-          ? 404
-          : 409;
-    reply.code(status);
+    reply.code(SEAM_ERROR_HTTP_STATUS[error.code] ?? 409);
     return {
       ok: false,
       error: { code: error.code, message: error.message },

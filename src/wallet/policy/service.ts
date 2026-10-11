@@ -59,6 +59,9 @@ import {
 } from "./composer.js";
 import {
   PolicyCompositionRefusalError,
+  RecipientAliasDestinationChangedError,
+  RecipientAliasResolutionError,
+  type RecipientAliasFailureCode,
   RecipientContactMissingError,
   RecipientIdempotencyBodyMismatchError,
   RecipientPolicyConflictError,
@@ -70,6 +73,8 @@ import {
   type RecipientPolicyValidationIssue,
 } from "./errors.js";
 import { mutationBodyHash } from "./request-hash.js";
+import type { SnsResolution, SnsResolveFailure, SnsResolver } from "../sns/resolver.js";
+import { ALIAS_NAME_MAX_LENGTH } from "../../contracts/http.js";
 import {
   acquirePolicyLease,
   releasePolicyLease,
@@ -96,6 +101,8 @@ export {
   PolicyEmptyCompositionUnprovenError,
   PolicyOrdinaryCapUnsupportedError,
   PolicyRuleCompositionUnprovenError,
+  RecipientAliasDestinationChangedError,
+  RecipientAliasResolutionError,
   RecipientContactMissingError,
   RecipientContactVersionConflictError,
   RecipientPolicyConflictError,
@@ -108,6 +115,7 @@ export {
 } from "./errors.js";
 export type { PolicyCompositionRefusalReason } from "./errors.js";
 export type {
+  RecipientAliasFailureCode,
   RecipientPolicySeamErrorCode,
   RecipientPolicyValidationIssue,
 } from "./errors.js";
@@ -159,10 +167,53 @@ export const recipientCreateInputSchema = z
   .object({
     name: z.string().trim().min(1),
     description: z.string().trim().default(""),
-    address: derivedAddressSchema,
+    /**
+     * Task 5.2 (design §2.1, correction C5): one strict schema with exactly the
+     * same two arms as the contract's `createContactInputSchema`, widened in the
+     * same work unit. `address` is required on the paste/scan arm and FORBIDDEN on
+     * the alias arm, and the `superRefine` below is what makes that structural
+     * rather than conventional.
+     */
+    address: derivedAddressSchema.optional(),
     network: derivedNetworkSchema.optional(),
+    source: z.enum(["pasted", "scanned", "sns"]).optional(),
+    snsName: z.string().trim().min(1).max(ALIAS_NAME_MAX_LENGTH).optional(),
+    expectedAddress: z.string().trim().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    const reject = (path: string, message: string) =>
+      context.addIssue({ code: "custom", path: [path], message });
+
+    if (input.snsName !== undefined) {
+      // Alias arm. `address` is rejected rather than ignored: a body that
+      // carried both would otherwise let the client's value look like the
+      // server's, which is exactly the confusion M3 forbids.
+      if (input.address !== undefined) {
+        reject("address", "an alias add never carries an address; the server resolves it");
+      }
+      if (input.expectedAddress === undefined) {
+        reject(
+          "expectedAddress",
+          "an alias add must echo the address it displayed so the server can veto a moved name",
+        );
+      }
+      if (input.source !== "sns") {
+        reject("source", "the alias arm is `source: 'sns'`");
+      }
+      return;
+    }
+
+    if (input.expectedAddress !== undefined) {
+      reject("expectedAddress", "expectedAddress belongs to the alias arm only");
+    }
+    if (input.source === "sns") {
+      reject("source", "`source: 'sns'` requires a snsName and an expectedAddress");
+    }
+    if (input.address === undefined) {
+      reject("address", "address is required unless an `.sns` name is supplied");
+    }
+  });
 
 /**
  * `PATCH /v1/contacts/:id` (design §9.2). `expectedVersion` is required: an edit
@@ -490,6 +541,17 @@ export type RecipientPolicyServiceDependencies = {
    * wallet without paying the production 3 000 ms budget.
    */
   policyLease?: { waitBudgetMs?: number; ownerId?: string };
+  /**
+   * Task 5.2 (design §4.1): the alias resolver, injected like every other
+   * collaborator. `null` means "this deployment wired none", which the alias arm
+   * answers with a typed `RESOLVEDOR_NO_DISPONIBLE` — never with an emulated
+   * resolution and never with the client's address.
+   *
+   * It is a DEPENDENCY rather than a module-level import so the remote read stays
+   * a seam a test can drive: resolution is network I/O, and I/O inside the
+   * contact transaction is forbidden (design §4.1).
+   */
+  aliases?: SnsResolver | null;
 };
 
 /** Per-mutation context a caller owns (the HTTP layer supplies the header value). */
@@ -689,6 +751,72 @@ type RemovalPlan = {
 // The service
 // ---------------------------------------------------------------------------
 
+export type RecipientAliasProvenance = Record<string, unknown>;
+
+/**
+ * One resolver failure mapped onto its typed seam code (task 5.2, design
+ * §1.3/§4.1). The union member is the whole input, so a new taxonomy entry is a
+ * type error here rather than a silently guessed status.
+ */
+const SNS_FAILURE_CODE: Record<
+  SnsResolveFailure["kind"],
+  { code: RecipientAliasFailureCode; message: string }
+> = {
+  malformed_name: {
+    code: "DATOS_INVALIDOS",
+    message: "That is not a resolvable `.sns` name.",
+  },
+  unsupported_tld: {
+    code: "NOMBRE_NO_SOPORTADO",
+    message: "Only `.sns` names are supported by this deployment.",
+  },
+  not_found: {
+    code: "NOMBRE_NO_ENCONTRADO",
+    message: "That name is not registered, so it has no address to add.",
+  },
+  ambiguous: {
+    code: "NOMBRE_AMBIGUO",
+    message:
+      "That name account does not carry the owner we require, so it cannot be used as a destination.",
+  },
+  unreachable: {
+    code: "RESOLVEDOR_NO_DISPONIBLE",
+    message:
+      "We could not reach the name registry, so nothing was saved. The name was not found to be missing either.",
+  },
+  resolver_misconfigured: {
+    code: "RESOLVEDOR_NO_DISPONIBLE",
+    message:
+      "This deployment has no working name resolver for the configured network, so nothing was resolved.",
+  },
+};
+
+/**
+ * The alias arm's provenance object (design §3.1). It is built from the RESOLVED
+ * value and nothing else, so the client cannot contribute a field to it.
+ *
+ * `reverify` is explicit — `'verified'` here, because the equality check against
+ * `expectedAddress` just agreed — rather than absent on success. An absent field
+ * would be ambiguous between "the re-resolution agreed" and "no re-verification
+ * happened", and this design does not let an ambiguous absence stand in for a
+ * security property.
+ */
+function aliasProvenance(resolution: SnsResolution): RecipientAliasProvenance {
+  return {
+    source: "sns",
+    name: resolution.name,
+    resolvedAt: resolution.resolvedAt,
+    resolver: resolution.resolver,
+    reverify: "verified",
+    nameAccount: resolution.nameAccount,
+    observedOwner: resolution.observedOwner,
+    observedParent: resolution.observedParent,
+    slot: resolution.slot,
+    reverseDomain: resolution.reverseDomain,
+    reverseDomainState: resolution.reverseDomainState,
+  };
+}
+
 export class RecipientPolicyService {
   private readonly database: DatabaseClient;
   private readonly repository: RecipientPolicyRepository;
@@ -704,6 +832,12 @@ export class RecipientPolicyService {
   private readonly leaseWaitBudgetMs: number;
   /** Who is asking, recorded on the lease row for diagnostics. */
   private readonly leaseOwnerId: string;
+  /**
+   * Task 5.2 (design §4.1): the alias resolver, or `null` when this deployment
+   * wired none. Never constructed here — the connection is built once by the
+   * composition root.
+   */
+  private readonly aliases: SnsResolver | null;
 
   public constructor(dependencies: RecipientPolicyServiceDependencies) {
     this.database = dependencies.database;
@@ -711,6 +845,7 @@ export class RecipientPolicyService {
     this.contacts = dependencies.contacts;
     this.listActiveGrants = dependencies.listActiveGrants;
     this.provider = dependencies.provider;
+    this.aliases = dependencies.aliases ?? null;
     this.leaseWaitBudgetMs =
       dependencies.policyLease?.waitBudgetMs ?? POLICY_LEASE_DEFAULT_WAIT_BUDGET_MS;
     this.leaseOwnerId = dependencies.policyLease?.ownerId ?? "backend";
@@ -759,6 +894,14 @@ export class RecipientPolicyService {
     options: RecipientMutationOptions = {},
   ): Promise<RecipientMutationResult> {
     const input = parseStrict(recipientCreateInputSchema, body);
+    // Design §4.1 step 1: resolution is REMOTE I/O, so it happens BEFORE the
+    // lease and BEFORE the mutation transaction — never inside it. A refusal
+    // here has already been proven to stage nothing, because nothing has been
+    // opened yet.
+    const resolution =
+      input.snsName !== undefined
+        ? await this.resolveAliasForCreate(input.snsName, input.expectedAddress!)
+        : null;
     // The body binding (design §6.2): computed from the PARSED body, so a value
     // the schema rejected can never define a hash, and computed HERE — never
     // accepted from a caller — so no request can declare itself a replay.
@@ -766,9 +909,12 @@ export class RecipientPolicyService {
     const contactInput: RecipientContactWriteInput = {
       name: input.name,
       description: input.description,
-      address: input.address,
+      // The SERVER's resolved address on the alias arm; the client's on the paste
+      // arm. `expectedAddress` was compared above and is never read otherwise.
+      address: resolution ? resolution.address : input.address!,
       // The derived scope, never the body's: the body may only agree with it.
       network: SOLANA_POLICY_NETWORK,
+      ...(resolution ? { provenance: aliasProvenance(resolution) } : {}),
     };
 
     const wallet = await this.repository.readReadySolanaWallet(userId);
@@ -829,6 +975,41 @@ export class RecipientPolicyService {
         duplicateOf,
       };
     });
+  }
+
+  /**
+   * Task 5.2 (design §4.1 steps 1-3): resolve the name and apply the veto.
+   *
+   * The client's `expectedAddress` is compared and can only veto. On any other
+   * outcome — including an unreachable registry — nothing is written, because a
+   * destination nobody verified must not become a permission.
+   */
+  private async resolveAliasForCreate(
+    snsName: string,
+    expectedAddress: string,
+  ): Promise<SnsResolution> {
+    const resolver = this.aliases;
+    if (!resolver) {
+      throw new RecipientAliasResolutionError({
+        code: "RESOLVEDOR_NO_DISPONIBLE",
+        message:
+          "This deployment has no SNS resolver wired, so the name was not verified. Nothing was saved.",
+      });
+    }
+    const outcome = await resolver.resolve(snsName);
+    if (!outcome.ok) {
+      const mapping = SNS_FAILURE_CODE[outcome.failure.kind];
+      throw new RecipientAliasResolutionError({
+        code: mapping.code,
+        message: mapping.message,
+      });
+    }
+    if (outcome.value.address !== expectedAddress) {
+      // The user confirmed an address that is no longer what the name resolves
+      // to. Nothing is staged: the client's value may veto and may never choose.
+      throw new RecipientAliasDestinationChangedError();
+    }
+    return outcome.value;
   }
 
   /**

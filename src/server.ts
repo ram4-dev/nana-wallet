@@ -426,11 +426,21 @@ export function buildServer(options: {
         ),
       );
     };
+    // Task 5.1/5.2 (design §1/§4.1): the alias resolver, built ONCE here and
+    // injected into both consumers — the resolve route and the create alias arm,
+    // which must resolve through the SAME deployment resolver. A transport that
+    // cannot be built (an empty endpoint) yields `null`, which both answer with a
+    // typed refusal instead of emulating a resolution.
+    const recipientAliases =
+      options.recipientAliases !== undefined
+        ? options.recipientAliases
+        : createConfiguredSnsResolver();
     const recipientPolicy = createRecipientPolicyService({
       database,
       repository: policyRepository,
       contacts: policyContactsPort,
       listActiveGrants: listActivePolicyGrants,
+      aliases: recipientAliases,
       provider: createUnavailablePolicyApplyPort(
         "provider_unavailable: this deployment has no signed apply capability wired into the HTTP API; the composer records the desired revision and the reconciler applies it.",
       ),
@@ -481,14 +491,6 @@ export function buildServer(options: {
     app.addHook("onClose", async () => {
       await policyReconciler?.stop();
     });
-    // Task 5.1 (design §1/§7): the alias resolver. Built ONCE here and injected,
-    // so the route never constructs a connection per request. A transport that
-    // cannot be built (an empty endpoint) yields `null`, which the route reports
-    // as an unavailable resolver rather than emulating one.
-    const recipientAliases =
-      options.recipientAliases !== undefined
-        ? options.recipientAliases
-        : createConfiguredSnsResolver();
     app.register(registerContactsRoutes, {
       resolveUserId,
       contacts: contactsRepository,

@@ -940,3 +940,77 @@ npx tsc --noEmit -p tsconfig.json                                       # clean
   from the recorded bytes. That a real keyless endpoint answers at all is task 1.6/8.2's evidence.
 - `resolve` is proven non-writing by table counts around each call in the real database, not by
   inspecting the handler.
+
+## 5.2 — the create alias arm (`expectedAddress` veto, provenance, typed conflicts)
+
+| Item | Where |
+|---|---|
+| The two-arm strict schema at the service seam | `recipientCreateInputSchema` (`src/wallet/policy/service.ts`) |
+| The resolver dependency | `RecipientPolicyServiceDependencies.aliases` (`SnsResolver \| null`) |
+| Resolution before the lease and the transaction | `resolveAliasForCreate`, `create` step 1 |
+| The provenance object | `aliasProvenance()` — built from the RESOLVED value only |
+| The typed refusals | `RecipientAliasDestinationChangedError` (`SNS_DESTINO_CAMBIADO`), `RecipientAliasResolutionError` (the resolver taxonomy) |
+| The route's code→status map | `SEAM_ERROR_HTTP_STATUS` (`src/api/contacts.ts`) |
+| Suites | `tests/unit/policy-alias-arm.test.ts` (8), `tests/integration/recipient-alias-create.test.ts` (6) |
+
+The address that reaches the port is the one the SERVER resolved. `expectedAddress` is compared once and
+then never read again, so a client can veto a moved name and can never choose a destination. Resolution
+is remote I/O and therefore runs **before** the lease and before `withUserTransaction` — asserted
+directly (`withUserTransaction` not called on any refusal), not inferred from the code's shape.
+
+**Two consequences worth recording, both deliberate:**
+
+- The alias arm re-resolves **before** the replay lookup, so a same-key retry after the name moved is
+  refused (`409 SNS_DESTINO_CAMBIADO`) instead of being answered from the stored intent. Being caught by
+  the veto first is the safer order: the retry cannot write the new address under the old key. The body
+  binding still catches a same-key request carrying a different `snsName` (`409
+  IDEMPOTENCIA_CUERPO_DISTINTO`), which is what task 3.1 promised for this arm.
+- The paste arm's port input is byte-identical to before (asserted as a whole object equality plus an
+  explicit `"provenance" in written === false`), so the repository's own `{origin:'user'}` default keeps
+  applying and the alias arm remains the only writer of a non-default provenance.
+
+### The honest RED
+
+`npx vitest run tests/integration/recipient-alias-create.test.ts` **before** the resolver was wired into
+`createRecipientPolicyService` → **4 failed / 5**, every failure `RESOLVEDOR_NO_DISPONIBLE`
+(`expected 409 to be 201`, `expected 409 to be 503`, `expected 'RESOLVEDOR_NO_DISPONIBLE' to be
+'SNS_DESTINO_CAMBIADO'`) — the fail-closed arm of an unwired deployment, which is a real behaviour and
+not an import error. The unit suite's own RED (`npm run vitest tests/unit/policy-alias-arm.test.ts`,
+6 failed / 8) was captured before any implementation existed.
+
+### Mutation evidence
+
+| Mutation | Failure observed, by name | Restored |
+|---|---|---|
+| The veto removed (`outcome.value.address !== expectedAddress` → `false && …`) | 3 tests: *refuses a moved name with 409 and stores nothing* (unit), *refuses a moved name with 409 and writes nothing at all* (integration, `expected 201 to be 409`), *refuses a same-key replay carrying a DIFFERENT name, and a replay after the name moved* (integration) | yes |
+| `resolution.address` → `input.expectedAddress` when storing | **none — 14 passed** | yes |
+
+The second row is a REAL finding, not a missing test: under the veto the two expressions are provably
+equal whenever a write happens, so no test can distinguish them and the mutation is undetectable by
+construction. The load-bearing guard is the **veto** (row 1); `resolution.address` is kept because it
+states which value the code means, not because it is a second line of defence. Recorded so nobody reads
+it as an independently proven property.
+
+**A false green the first mutation run created, worth recording:** the veto removal wrote an
+alias-source contact that the suite's cleanup did not track, so the *next* mutation run reported a
+failure that belonged to the previous one. The suite now cleans by DELTA (every alias-source row that
+appeared during the run and was not in the pre-run snapshot) and the moved-name assertion is scoped to
+its own alias name. Re-run of the second mutation on the cleaned database: 14 passed, 0 rows leaked.
+
+### Commands run
+
+```text
+npx vitest run tests/unit/policy-alias-arm.test.ts tests/integration/recipient-alias-create.test.ts  # 14 passed
+npm run lint                                                                                          # clean
+npx tsc --noEmit -p tsconfig.json                                                                     # clean
+```
+
+### Unproven by 5.2, stated
+
+- **No composed-policy assertion in this unit.** The composed allowlist is a set built from
+  `recipients.address` (`composer.ts`), and the contact written here is the same address the paste arm
+  writes, so "the composed policy contains the address and not the alias" is held by the composer's
+  address-only contract (task 1.5's structural guard and slice 2's suites) rather than re-proven by a
+  new integration case in this unit.
+- `recipients.provenance` is read back from the real row and matched field by field, but only for the
+  fields the design §3.1 shape names; `slot` is asserted through the unit suite.

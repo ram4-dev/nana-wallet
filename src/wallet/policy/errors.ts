@@ -199,7 +199,21 @@ export type RecipientPolicySeamErrorCode =
    * The idempotency body binding (design §6.2, §15 D-A). The key was already used
    * with a DIFFERENT body, so the stored result answers another question.
    */
-  | "IDEMPOTENCIA_CUERPO_DISTINTO";
+  | "IDEMPOTENCIA_CUERPO_DISTINTO"
+  /**
+   * Task 5.2 (design §4.1): the SERVER's resolution of `snsName` disagreed with
+   * the address the client displayed and asked the server to veto. Nothing is
+   * written: the client's address may veto, and it may never choose.
+   */
+  | "SNS_DESTINO_CAMBIADO"
+  /**
+   * The resolver's own total taxonomy, carried onto the service seam so a route
+   * maps a refusal from its typed class instead of matching message text.
+   */
+  | "NOMBRE_NO_SOPORTADO"
+  | "NOMBRE_NO_ENCONTRADO"
+  | "NOMBRE_AMBIGUO"
+  | "RESOLVEDOR_NO_DISPONIBLE";
 
 /** One bounded validation issue: the path and the code, never the value. */
 export type RecipientPolicyValidationIssue = {
@@ -410,5 +424,53 @@ export class RecipientIdempotencyBodyMismatchError extends RecipientPolicySeamEr
       message:
         "That Idempotency-Key was already used with a different request body; refusing to answer it with the result the first request produced. Nothing was applied.",
     });
+  }
+}
+
+/**
+ * Task 5.2 (design §4.1): the alias arm resolved the name itself and the result
+ * is NOT the address the client displayed, so the request is refused with nothing
+ * staged.
+ *
+ * WHY THE CLIENT'S ADDRESS IS COMPARED AND NEVER STORED
+ * ----------------------------------------------------
+ * `expectedAddress` is the address the user was shown and confirmed. Storing it
+ * would let the client inject a destination; ignoring the difference would let a
+ * name that moved between the preview and the submit silently change where the
+ * money goes. Comparing it and refusing is the only outcome that keeps BOTH
+ * properties: the client can veto, and the server writes only what it read.
+ *
+ * The client's value is not carried on the error: echoing it back would give a
+ * caller a comparison oracle over addresses it did not prove it displayed.
+ */
+export class RecipientAliasDestinationChangedError extends RecipientPolicySeamError {
+  constructor() {
+    super({
+      code: "SNS_DESTINO_CAMBIADO",
+      message:
+        "That name now resolves to a different address than the one you confirmed; nothing was saved. Search again and confirm the new address.",
+    });
+  }
+}
+
+/**
+ * Task 5.2 (design §1.3/§4.1): the resolver's failure taxonomy carried onto the
+ * service seam, one typed code per member.
+ *
+ * `not_found` and `unreachable` are different codes on purpose. "El nombre no
+ * existe" and "no pudimos consultar" are different facts, and the spec forbids
+ * reporting the second as the first — a caller that only saw an opaque failure
+ * would have to guess which sentence to show.
+ */
+export type RecipientAliasFailureCode =
+  | "DATOS_INVALIDOS"
+  | "NOMBRE_NO_SOPORTADO"
+  | "NOMBRE_NO_ENCONTRADO"
+  | "NOMBRE_AMBIGUO"
+  | "RESOLVEDOR_NO_DISPONIBLE";
+
+export class RecipientAliasResolutionError extends RecipientPolicySeamError {
+  constructor(input: { code: RecipientAliasFailureCode; message: string }) {
+    super({ code: input.code, message: input.message });
   }
 }
