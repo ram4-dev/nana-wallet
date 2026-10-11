@@ -2197,3 +2197,124 @@ One work-unit commit for task 7.2: two new frontend modules, the one wiring edit
 entry and the `7.2` checkbox. No root `src/` file changed, so the HTTP contract, the migration chain and the
 composer are untouched. `Review Workload Forecast: size-exception` (standing note at the top of `tasks.md`):
 this worktree does not push and does not open a PR. Slice U8 is **not** started.
+
+---
+
+# Apply progress: work unit U8 — verify and close (tasks 8.1, 8.2, 8.3)
+
+Work unit: **U8, the closing slice** (tasks 8.1, 8.2, 8.3). Working root
+`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational` (branch `feat/solana-operational`,
+HEAD `916b195` == `origin/feat/solana-operational`). This slice verifies and records; it changes no
+behaviour. The full evidence file is
+`.agent-workflow/tasks/sns-alias-recipients/03-closeout-suite-baseline-and-live-evidence.md`.
+
+## Completed tasks
+
+| Task | What landed | Persisted checkbox |
+|---|---|---|
+| 8.1 | Full backend and frontend suites, lint, typecheck and evals run; the by-failure-name baseline comparison against `91-test-baseline.md` attempt 2; both additivity claims verified explicitly | `- [x]` |
+| 8.2 | The live attempt made against the configured keyless endpoint (2 of 2 paced resolutions observed); the prerequisite is absent, so the task **stays open** with the blocker recorded verbatim | `- [ ]` |
+| 8.3 | The commit/push state recorded by `git log --oneline`, `git status --porcelain -uall` and the `HEAD` vs `origin` comparison | `- [x]` |
+
+## 8.1 — the comparison, by failure name
+
+Command results: `npm run lint` exit 0; `npm run typecheck` exit 0; `npm test` `Test Files 21 failed |
+204 passed | 4 skipped (229)`, `Tests 51 failed | 1631 passed | 10 skipped (1692)`; `npm run eval` exit 0
+(`Eval Files 10`, `Evals 29`, `Score 98%`); frontend `lint && typecheck && test` exit 0 with
+`Test Files 29 passed (29)`, `Tests 220 passed (220)`.
+
+Baseline at `a121b2c`: `6 failed | 1028 passed | 10 skipped (1044)`. **5 of the baseline's 6 failures
+reproduced with byte-identical first messages; the sixth (the timing-shaped `api-voice-auth` timeout) did
+not reproduce.** No baseline failure changed shape.
+
+The 46 further failures in the combined invocation are the documented contention/load family — 37 bare
+`Test timed out in 5000ms` in the alias/drift/resolve API suites (they serialize on one demo wallet's
+lease over a real Fastify server), 9 `expected 409 to be 201/200/404` in the pre-existing contacts
+suites, plus a cross-suite `recipients_user_id_users_fk` cleanup race and one
+`notifications-reconciliation` assertion. **Every one clears when its file is re-run alone at the
+default 5000 ms timeout** — eleven individual re-runs plus one separated notifications set, all green,
+with no assertion relaxed and no suite edited. **No failure lies outside the baseline six and the
+load-contention family: the comparison is clean.**
+
+**The load-bearing claim, verified rather than assumed:** the existing paste/scan suite
+(`tests/integration/api-contacts.test.ts`) passes alone (**3 passed**), and the whole
+`trusted-recipient-policy-sync` suite as the separated nine-file set passes **`9 files / 119 tests`** —
+the same 119 recorded for that set in slices U1–U3. The feature is additive.
+
+A second, recorded trap for the next run: `DB_HOST_PORT` is unset in the environment, so a bare
+`docker compose up -d db` collides with `nana-privy-impl-db-1` on `127.0.0.1:5432` and the container
+fails to start (`port is already allocated`). The suites were run against the worktree database on 55470
+via `DB_HOST_PORT=55470 docker compose up -d db`; `npm run db:migrate` was not run (pre-existing
+`relation "conversations" already exists` on this CI-shaped database, as recorded since U2).
+
+## 8.2 — the attempt, and why the checkbox stays `[ ]`
+
+`SNS_RPC_URL` and `SOLANA_DEVNET_RPC_URL` are **both unset**, so `readSnsTransportConfig()` resolves to
+the keyless public devnet endpoint — the prerequisite design §10.2 N1 names is **absent**. Per the task's
+verbatim stop condition the task stays `[ ]`.
+
+The attempt was still made honestly, through the **real** transport (`readSnsTransportConfig()` →
+`createSnsTransport()` → `createSnsResolver({ network: "solana-devnet" })`), paced at one resolution per
+user action, with no fixture and no injected transport: `sophie.sns` → `3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2`
+(753 ms) and `nanatest.sns` → `BsNFJHm85Yk2hcugJG16KFm4bfdB5DwnTqfoSW4BuLFv` (397 ms), both with the
+devnet root as `observedParent` and `reverseDomainState: "none"`; no throttling was observed. This
+reproduces the **resolution** half live and re-confirms `none` as the reverse state.
+
+**It is not presented as live proof of 8.2.** Nothing was added through the screen path or the agent, no
+card was published, no `check-alias` was run, and no database readback of `recipients.address` /
+`applied_rules_hash` was taken. The blocker is recorded verbatim in the evidence file; a single keyed
+`SNS_RPC_URL` — a variable change with no code change — is what would clear it.
+
+## 8.3 — the recorded state
+
+`git status --porcelain -uall` → only `?? compose.privy-local.ports.yaml`. `git rev-parse HEAD
+origin/feat/solana-operational` → both `916b1954222ae68d784d67729406c966c44d81c8`, and
+`git rev-list --left-right --count HEAD...origin/feat/solana-operational` → `0 0`.
+
+Twenty conventional commits carry this change, `80fdbf6` through `916b195`, each outcome-first and
+English with its tests or its docs in the same commit and no AI attribution. The user-owned untracked
+`compose.privy-local.ports.yaml` is preserved, was never read, modified or staged, and appears in no
+commit. **The no-push wording in the task text no longer matches reality and is recorded as such rather
+than restated:** the parent has been pushing this branch between slices under the standing
+`feat/solana-operational`-only instruction, so `HEAD` is in sync with origin and there is no unpushed
+state to claim. No PR exists. This task did not push.
+
+## Files changed
+
+New: `.agent-workflow/tasks/sns-alias-recipients/03-closeout-suite-baseline-and-live-evidence.md`, and
+this append. Modified: the `8.1` and `8.3` checkbox lines and the U8 row of `tasks.md`. **No production
+file, test file, eval, fixture or assertion was touched** — 8.1 is a measurement, and no diff was shrunk
+to reach a number. The database was started, not migrated.
+
+## Deviations
+
+1. **8.2 stays `[ ]`, deliberately, and this is the honest outcome rather than a failure to try.** The
+   stop condition is explicit and was followed verbatim. The live observation that *was* obtainable is
+   recorded, labelled as one component of the path, never as the path.
+2. **`api-voice-auth` did not reproduce.** It is the baseline's only failure the baseline itself
+   classified as environment/timing-shaped and undiagnosed. It was **not** re-run in isolation to force
+   a verdict, because fewer failures than the baseline is not a regression and diagnosing it would
+   require commands outside this task's scope. Recorded as not reproduced, not as fixed.
+3. **No new regression report is raised for the combined-invocation family.** The task instructs
+   isolated re-runs and both results; the parallel result (46 failures) and the isolated result (all
+   green) are both recorded, and the family was already recorded as contention in earlier slices.
+4. **The database was started with an explicit `DB_HOST_PORT`.** The alternative — editing the
+   user-owned untracked `compose.privy-local.ports.yaml` — would have touched a file this task is
+   forbidden to touch, so the variable was passed on the command line instead.
+
+## What remains unproven
+
+The live end-to-end alias add and every live drift check (8.2, N1), the live screen/agent/card/
+`check-alias`/readback path, a live `present` reverse state on any network (N2/§11 Q1), the synthetic
+`class` half of the header (N4/§11 Q6), `recipient_versions` provenance (2.6, declined), the no-ready-
+wallet idempotency branch (§11 Q8, pre-existing, not fixed), the SDK's in-container install cost (N5),
+and `ambiguous` beyond the three derivable conditions (N3/§11 Q2). None is implied anywhere.
+
+## Workload / boundary
+
+One work-unit commit for the closeout record: the evidence file, this append and the two checkbox flips.
+Rollback is reverting that commit; no source file, migration or contract is involved, so nothing else in
+the repository can depend on it. `Review Workload Forecast: size-exception` (standing note at the top of
+`tasks.md`): this worktree's no-PR rule stands and this slice opens no PR. U8 is complete except 8.2,
+which is blocked on a keyed endpoint and left visibly `[ ]`. Both parent-owned rows in `tasks.md` are
+byte-for-byte unchanged.
