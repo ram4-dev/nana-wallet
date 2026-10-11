@@ -500,3 +500,165 @@ migration was needed, so nothing was applied to the worktree database.
 Slice U2 is complete: tasks 2.1–2.6 are all `- [x]`. Task 3.1 (Slice U3) is untouched and still
 `- [ ]`; `request_hash` has no reader or writer yet. Both parent-owned rows in `tasks.md` are
 byte-for-byte unchanged.
+
+---
+
+# Apply progress: work unit U3 — the idempotency body binding (task 3.1)
+
+Work unit: **U3** (task 3.1 only; U4 was deliberately not started). Working root
+`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational` (branch `feat/solana-operational`,
+HEAD `7f9fceb` at start). No push, no PR. `AGENTS.md`, `.pi/skills/nana-wallet-flow/SKILL.md` and
+`gentle-ai-work-unit-commits/SKILL.md` were read **before** the first edit.
+
+## Completed tasks
+
+| Task | What landed | Persisted checkbox |
+|---|---|---|
+| 3.1 | `src/wallet/policy/request-hash.ts` (canonical body hash), `request_hash` written by every keyed intent insert and compared on replay, the typed `409 IDEMPOTENCIA_CUERPO_DISTINTO` | `- [x]` |
+
+## Files changed
+
+New: `src/wallet/policy/request-hash.ts`, `tests/integration/recipient-idempotency-body.test.ts`,
+`tests/unit/idempotency-request-hash.test.ts`, this append and the one checkbox flip in `tasks.md`.
+Modified: `src/wallet/policy/repository.ts` (`PolicyIntentRecord.requestHash`, `PolicyIntentRow`,
+`INTENT_COLUMNS`, `mapIntent`, `InsertPolicyIntentInput.requestHash`, the insert statement),
+`src/wallet/policy/service.ts` (the hash computation on create/edit/remove, the comparison in
+`replayIdempotentMutation`, `requestHash` threaded through `runMutation` and `applyRemoval`),
+`src/wallet/policy/errors.ts` (`RecipientIdempotencyBodyMismatchError`, the code union).
+
+No migration was needed: the column already exists in `017` (design §15 D-C) and is present in this
+worktree's database (`colloseumfeat-solana-operational-db-1`, port 55470) via the `supabase/` mirror.
+Nothing was applied to the database; `npm run db:migrate` was not run (it fails on this database with
+`relation "conversations" already exists`, pre-existing and not this unit's).
+
+## What the hash is over, and why it is canonical
+
+`mutationBodyHash(body)` is `sha256:<hex>` over a canonical form of the **parsed** body: declared keys
+first in a declared order (never `Object.keys` insertion order), then every other key in UTF-16
+code-unit order, keys never dropped, arrays sorted by their canonical JSON. The `sha256:` prefix
+matches `composedRulesHash` so a stored value names its own algorithm.
+
+The canonicalization is not decoration: `JSON.stringify(body)` would make the hash depend on the order
+the caller happened to build the object in, so key-permuted JSON for the same request would be refused
+— a guard that fires on valid operations is worse than the hole it closes (the same reasoning that
+rejected the no-column alternative in design §6.3). `localeCompare` is used nowhere: it is
+locale-sensitive and would make a stored hash mean different things on different hosts.
+
+## The honest RED, captured before the implementation
+
+`npx vitest run tests/integration/recipient-idempotency-body.test.ts` against unmodified `src/`
+(commit `7f9fceb`) — `3 failed | 2 passed (5)`:
+
+| Case | RED result |
+|---|---|
+| `persists the request hash on the intent the key produced` | `expected 'object' to be 'string'` — `request_hash` is `NULL` because nothing writes it |
+| `refuses a replay of the same key with a different destination address` | `expected a typed refusal, but the mutation completed` — **the hole itself**: the mismatched replay returned the first request's contact |
+| `refuses a replay of the same key with a different description` | `expected a typed refusal, but the mutation completed` |
+| `replays the same key with the same body …` (positive control) | passed BEFORE the change |
+| `falls back to the stored result when the intent row predates the column` (positive control) | passed BEFORE the change |
+
+Both positive controls were green before the implementation, which is what keeps the two `NULL`-tolerant
+cases from being a false green: they pass for a reason that survives the change, not because a fixture
+or column was missing. The failure is a behavioural one (the mutation resolved when a refusal was
+required), not a missing import — no test in this unit imports a symbol that did not exist yet.
+
+## TDD cycle evidence
+
+| Task | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|
+| 3.1 | 3 failing cases above, captured against unmodified `src/` | `tests/integration/recipient-idempotency-body.test.ts` → `5 passed` | `tests/unit/idempotency-request-hash.test.ts` (6 cases: determinism, key-order independence, code-unit (not locale) order, array sorting with a positive control that the SET still matters, key sets never dropped, nested canonicalization) plus the two opposite directions in the integration suite (strict mismatch refused, tolerant `NULL` replayed) | none needed: `request-hash.ts` was extracted as its own module on the first pass and the service wiring is a parameter threaded through the existing call chain (`runMutation`/`applyRemoval`), so no reshape followed the green |
+
+### Mutation evidence (each guard removed, failure observed **by name**, then restored)
+
+| Mutation | What it broke | Observed | Restored |
+|---|---|---|---|
+| **A — the comparison is removed** (`if (intent.requestHash !== null && intent.requestHash !== requestHash)` → `if (false)`) | the strict, load-bearing direction: nothing binds the key to the body any more | `2 failed \| 3 passed`: `refuses a replay … with a different destination address` and `refuses a replay … with a different description` fail **by name**, both with `expected a typed refusal, but the mutation completed`. The tolerant cases still pass, so the failure is exactly the guard and nothing else | yes, byte-identical restore verified by reading the method back |
+| **B — the tolerant fallback is removed** (`intent.requestHash !== null &&` deleted, so a `NULL` row is compared) | the additive direction: a pre-`017` row turns into a conflict | `1 failed \| 4 passed`: `falls back to the stored result when the intent row predates the column` fails **by name**, while the same-body replay still passes (equal hashes). This is the tolerance being genuinely guarded, not incidentally true | yes, byte-identical restore |
+
+Mutation B is the one that matters most: without it, "a `NULL` hash falls back to today's behaviour"
+could have passed simply because the comparison never ran on that row.
+
+## Commands run (exact)
+
+| # | Command | Result |
+|---|---|---|
+| 1 | `npx vitest run tests/integration/recipient-idempotency-body.test.ts` (pre-implementation) | **RED** — `Test Files 1 failed (1)`, `Tests 3 failed \| 2 passed (5)` |
+| 2 | `npm run typecheck` | clean (`tsc -p tsconfig.test.json --noEmit`) |
+| 3 | `npm run lint` | clean (`eslint src tests --max-warnings=0`); a second run is a no-op and changed no byte |
+| 4 | `npx vitest run tests/integration/recipient-idempotency-body.test.ts` | `Tests 5 passed (5)` |
+| 5 | `npx vitest run tests/unit/idempotency-request-hash.test.ts` | `Tests 6 passed (6)` |
+| 6 | `npx vitest run tests/integration/recipient-policy-*.test.ts tests/integration/recipient-idempotency-body.test.ts` (one separated run over the ten files) | `Test Files 10 passed (10)`, `Tests 124 passed (124)` |
+| 7 | `npx vitest run tests/unit/policy-*.test.ts tests/unit/idempotency-request-hash.test.ts` (**separated run**, serialized on the demo wallet's lease) | `Test Files 16 passed (16)`, `Tests 183 passed (183)` |
+| 8 | `npx vitest run tests/unit/livekit/` (the dependency tree) | `Test Files 7 passed (7)`, `Tests 50 passed (50)` |
+| 9 | `npx vitest run tests/integration/api-contacts-policy.test.ts tests/integration/recipient-self-address.test.ts tests/integration/recipient-duplicate-disclosure.test.ts` | `Test Files 3 passed (3)`, `Tests 18 passed (18)` — the pre-existing replay suites (same body replayed verbatim) still answer `200/201` twice, which is the additivity proof for the tolerant direction |
+
+No database was started or migrated (already up on 55470); no install was run, so no lockfile entry was
+touched and `--legacy-peer-deps` was never used.
+
+## Deviations from the design (and from the task text)
+
+1. **The mismatched-body case is proven with `address` and `description`, not with `snsName`.** Task
+   3.1's integration list names "a different `snsName`", but `snsName` is not in
+   `recipientCreateInputSchema` yet — contract task 4.1 and alias-arm task 5.2 add it — so a body
+   carrying it is rejected as `DATOS_INVALIDOS` today and could not reach the replay comparison at all.
+   The case is therefore written with the two body fields that DO exist and that the hole is about:
+   the destination `address` (the address the alias arm will resolve to, and the field whose silent
+   substitution makes the bug user-visible) and `description` (the field the rejected no-column
+   alternative could not see at all, design §6.3). No `snsName` assertion is claimed.
+2. **`remove` writes the hash but has no reader for it, on purpose.** `remove` never calls
+   `replayIdempotentMutation`; the unique `(wallet_id, idempotency_key)` index is what answers its
+   replay (design §6.3's pre-existing boundary, not fixed here). The hash is still written there so the
+   column means one thing on every keyed intent instead of being `NULL` on one path and populated on
+   two — a `NULL` that meant "no body was declared" on a removal row and "written before `017`" on a
+   create row would make the tolerant comparison unreadable. `recordEnrollmentIntent` supplies no key
+   and therefore no hash, which is the `NULL`-as-not-comparable case the column was designed for.
+3. **The conflict is raised without recording a policy stop.** Design §6.2 says "raising a typed `409`
+   instead of returning the stored contact" and says nothing about a stop; the closest precedent in the
+   file, `RecipientPolicyRevisionConflictError`, explicitly records none because it is a client-side
+   conflict reached before any composition exists. Same here: nothing was staged, so there is no policy
+   state for a stop to describe, and recording one would make a client retry an unchanged body.
+4. **`RecipientPolicySeamErrorCode` gained `IDEMPOTENCIA_CUERPO_DISTINTO` here, ahead of task 4.1** —
+   the same deviation task 2.4 recorded for `DIRECCION_PROPIA`. 4.1 adds the code to
+   `RECIPIENT_POLICY_ERROR_CODES` in `src/contracts/http.ts` for the client-visible mirror; the service
+   could not raise a typed refusal without naming the code. The route mapper in `src/api/contacts.ts`
+   already maps every non-`DATOS_INVALIDOS`, non-`CONTACTO_NO_ENCONTRADO` seam code to HTTP `409`, so
+   the `409` half holds by construction. **No contract file, no frontend file and no MSW fixture was
+   touched** — that is slice U4 and was not started.
+5. **The hash is computed in `create`/`edit`/`remove` and threaded down, not read from
+   `RecipientMutationOptions`.** The options object is caller-supplied; a caller could then declare any
+   body it liked and defeat the guard. Computing it from the parsed body inside the service is what
+   makes the comparison meaningful, and the `request-hash` module is pure so the value is testable
+   without a database.
+
+## Workload / PR boundary
+
+This is work unit U3 and it is the commit that carries this append: three modified source files, one
+new source module, two new suites, and the single checkbox flip. Rollback is the removal of
+`request-hash.ts`, the comparison, the error class and the column plumbing, plus the format string of
+one `INSERT`; every other caller keeps the same call shape (`requestHash` is a new positional parameter
+on two private methods and an optional field on `InsertPolicyIntentInput`), so nothing outside
+`src/wallet/policy/**` depends on this unit. The forecast's `size-exception` stands and no diff was
+shrunk to reach 400 lines.
+
+## Structured status consumed
+
+Launched by the parent with `openspec`-store artifacts and a resolved delivery decision
+(`size-exception`, no push/no PR, one bounded slice = task 3.1). The Review Workload Gate's guard lines
+(`Decision needed before apply: Yes` / `Chained PRs recommended: Yes` / `400 line budget risk: High`)
+were already resolved in the parent prompt, so the gate did not block. `actionContext` carried one
+hard root (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed
+inside it, the untracked user-owned `compose.privy-local.ports.yaml` was neither touched nor committed,
+and no `git stash`/`checkout`/`reset`/`restore`/`clean` was used. `skill_resolution: paths-injected`
+(both `SKILL.md` paths were read before the first edit).
+
+## Remaining work
+
+Task 3.1 is `- [x]`; slice U3 is complete. U4–U8 are untouched and still `- [ ]` (task 4.1 was
+explicitly NOT started). Both parent-owned rows at the end of `tasks.md` are byte-for-byte unchanged.
+
+**Unproven by this unit, stated rather than implied:** the alias arm's own mismatch case (`snsName`)
+cannot exist until 4.1 and 5.2 land, so the conflict is proven on the two body fields that exist today;
+the `409` HTTP status is proven only by the route's mapping rule and its existing contract suites, not
+by a new route case in this unit; and a replay that arrives on a DIFFERENT wallet than the one that
+wrote the key is out of the lookup's scope by construction (the index is per wallet) and was not
+exercised.

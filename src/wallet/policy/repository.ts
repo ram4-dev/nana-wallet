@@ -147,6 +147,14 @@ export interface PolicyIntentRecord {
   contactVersion: number | null;
   composedRules: GrantPolicyRule[];
   composedHash: string;
+  /**
+   * The hash of the request body this key was used with (design §6.2, `017`).
+   *
+   * `null` means NOT COMPARABLE, and that is the whole reason the guard is
+   * additive: a row written before `017`, or by a path that supplies no key, must
+   * fall back to the stored-result behaviour instead of turning into a conflict.
+   */
+  requestHash: string | null;
   idempotencyKey: string | null;
   state: PolicyIntentState;
   attemptCount: number;
@@ -255,6 +263,11 @@ export interface InsertPolicyIntentInput {
   contactVersion?: number | null;
   composedRules: GrantPolicyRule[];
   composedHash: string;
+  /**
+   * The canonical hash of the parsed body that supplied this key (design §6.2).
+   * Omitted means `NULL`, which a reader must treat as NOT COMPARABLE.
+   */
+  requestHash?: string | null;
   idempotencyKey?: string | null;
 }
 
@@ -459,8 +472,9 @@ const STATE_COLUMNS = `wallet_id, user_id, desired_revision, applied_revision,
   next_attempt_at, verified_at, created_at, updated_at`;
 
 const INTENT_COLUMNS = `id, wallet_id, user_id, desired_revision, origin, action,
-  contact_id, contact_version, composed_rules, composed_hash, idempotency_key,
-  state, attempt_count, last_error, last_attempt_at, next_attempt_at, applied_at,
+  contact_id, contact_version, composed_rules, composed_hash, request_hash,
+  idempotency_key, state, attempt_count, last_error, last_attempt_at,
+  next_attempt_at, applied_at,
   created_at, updated_at`;
 
 const PROPOSAL_COLUMNS = `id, user_id, wallet_id, conversation_id, kind, action,
@@ -511,6 +525,7 @@ type PolicyIntentRow = {
   contact_version: string | number | null;
   composed_rules: GrantPolicyRule[];
   composed_hash: string;
+  request_hash: string | null;
   idempotency_key: string | null;
   state: string;
   attempt_count: string | number;
@@ -595,6 +610,7 @@ function mapIntent(row: PolicyIntentRow): PolicyIntentRecord {
       row.contact_version === null ? null : Number(row.contact_version),
     composedRules: row.composed_rules,
     composedHash: row.composed_hash,
+    requestHash: row.request_hash,
     idempotencyKey: row.idempotency_key,
     state: row.state as PolicyIntentState,
     attemptCount: Number(row.attempt_count),
@@ -1057,8 +1073,9 @@ export class RecipientPolicyRepository {
         const result = await query.query<PolicyIntentRow>(
           `INSERT INTO recipient_policy_sync_intent
              (wallet_id, user_id, desired_revision, origin, action, contact_id,
-              contact_version, composed_rules, composed_hash, idempotency_key)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
+              contact_version, composed_rules, composed_hash, request_hash,
+              idempotency_key)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11)
            RETURNING ${INTENT_COLUMNS}`,
           [
             input.walletId,
@@ -1070,6 +1087,7 @@ export class RecipientPolicyRepository {
             input.contactVersion ?? null,
             JSON.stringify(input.composedRules),
             input.composedHash,
+            input.requestHash ?? null,
             input.idempotencyKey ?? null,
           ],
         );

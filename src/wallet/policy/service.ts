@@ -60,6 +60,7 @@ import {
 import {
   PolicyCompositionRefusalError,
   RecipientContactMissingError,
+  RecipientIdempotencyBodyMismatchError,
   RecipientPolicyConflictError,
   RecipientPolicyNotSerializedError,
   RecipientPolicyRemovalConflictError,
@@ -68,6 +69,7 @@ import {
   RecipientSelfAddressError,
   type RecipientPolicyValidationIssue,
 } from "./errors.js";
+import { mutationBodyHash } from "./request-hash.js";
 import {
   acquirePolicyLease,
   releasePolicyLease,
@@ -757,6 +759,10 @@ export class RecipientPolicyService {
     options: RecipientMutationOptions = {},
   ): Promise<RecipientMutationResult> {
     const input = parseStrict(recipientCreateInputSchema, body);
+    // The body binding (design §6.2): computed from the PARSED body, so a value
+    // the schema rejected can never define a hash, and computed HERE — never
+    // accepted from a caller — so no request can declare itself a replay.
+    const requestHash = mutationBodyHash(input);
     const contactInput: RecipientContactWriteInput = {
       name: input.name,
       description: input.description,
@@ -799,6 +805,7 @@ export class RecipientPolicyService {
         userId,
         wallet.walletId,
         options,
+        requestHash,
       );
       if (replayed) return replayed;
 
@@ -806,6 +813,7 @@ export class RecipientPolicyService {
         userId,
         wallet.walletId,
         options,
+        requestHash,
         async (client) => {
           const contact = await this.contacts.create(userId, contactInput, client);
           return { contact, action: "create" as const };
@@ -840,6 +848,7 @@ export class RecipientPolicyService {
     options: RecipientMutationOptions = {},
   ): Promise<RecipientMutationResult> {
     const input = parseStrict(recipientEditInputSchema, body);
+    const requestHash = mutationBodyHash(input);
     const targetId = parseStrict(contactIdInputSchema, { contactId }).contactId;
     const patch: RecipientContactPatchInput = {
       ...(input.name !== undefined ? { name: input.name } : {}),
@@ -883,6 +892,7 @@ export class RecipientPolicyService {
         userId,
         wallet.walletId,
         options,
+        requestHash,
       );
       if (replayed) return replayed;
 
@@ -898,6 +908,7 @@ export class RecipientPolicyService {
         userId,
         wallet.walletId,
         options,
+        requestHash,
         async (client, state) => {
         if (
           input.expectedPolicyRevision !== undefined &&
@@ -986,17 +997,35 @@ export class RecipientPolicyService {
   }
 
   /**
-   * Design §9.2 idempotency: a replayed `Idempotency-Key` returns the STORED
-   * result — the same desired revision and the same computed permission
-   * snapshot — and performs no second composition, no second PATCH and no second
-   * audit row. The unique `(wallet_id, idempotency_key)` index arbitrates; this
-   * lookup is what turns its rejection into the stored result instead of an
-   * internal error on the second call.
+   * Design §9.2 idempotency, plus the body binding of §6.2: a replayed
+   * `Idempotency-Key` returns the STORED result — the same desired revision and
+   * the same computed permission snapshot — and performs no second composition,
+   * no second PATCH and no second audit row. The unique
+   * `(wallet_id, idempotency_key)` index arbitrates; this lookup is what turns
+   * its rejection into the stored result instead of an internal error on the
+   * second call.
+   *
+   * WHY THE BODY IS COMPARED HERE
+   * ----------------------------
+   * The lookup matches `(wallet_id, user_id, idempotency_key)` and the row's
+   * other hash, `composed_hash`, is the composed-POLICY hash — so without this
+   * comparison the key alone decided the answer, and a replay carrying a
+   * different body silently received the first request's result. That is
+   * invisible on the paste path (the body IS the address) and wrong on the alias
+   * path, where it reports `maria.sns` as added while the contact that exists is
+   * the one created for `juan.sns`.
+   *
+   * A stored `null` means NOT COMPARABLE, which is the whole point: a row
+   * written before the column existed, or by a path that supplies no key, keeps
+   * today's behaviour, so this guard can never break a replay that is already in
+   * flight. The refusal is raised before the stored result is read and before any
+   * composition, so a mismatched replay applies nothing.
    */
   private async replayIdempotentMutation(
     userId: string,
     walletId: string,
     options: RecipientMutationOptions,
+    requestHash: string,
   ): Promise<RecipientMutationResult | null> {
     const key = options.idempotencyKey ?? null;
     if (!key) return null;
@@ -1006,6 +1035,15 @@ export class RecipientPolicyService {
       key,
     );
     if (!intent?.contactId) return null;
+    // The body binding (design §6.2). A `null` stored hash means NOT COMPARABLE —
+    // a row written before the column existed, or by a path that supplies none —
+    // so it keeps today's behaviour; only a hash this service itself wrote can
+    // turn a replay into a conflict, which is what keeps the guard additive.
+    // The comparison runs BEFORE the stored result is read and before anything is
+    // composed, so a refused replay applies nothing at all.
+    if (intent.requestHash !== null && intent.requestHash !== requestHash) {
+      throw new RecipientIdempotencyBodyMismatchError();
+    }
     const contact = await this.contacts.readActive(userId, intent.contactId);
     if (!contact) return null;
     return {
@@ -1104,6 +1142,12 @@ export class RecipientPolicyService {
       expectedVersion,
       idempotencyKey: idempotencyKey ?? null,
     });
+    // The same body binding as create/edit. A removal has NO replay lookup (the
+    // unique `(wallet_id, idempotency_key)` index is what answers it), so this hash
+    // has no reader on this path today: it is written so the column means ONE
+    // thing — "the body this key was used with" — on every keyed intent, and so a
+    // future reader cannot mistake a removal row for an undeclared body.
+    const requestHash = mutationBodyHash(input);
     const targetId = parseStrict(contactIdInputSchema, { contactId }).contactId;
 
     // Phase A step 1: the target contact (its address is what the alias and grant
@@ -1166,6 +1210,7 @@ export class RecipientPolicyService {
               targetId,
               input.expectedVersion,
               input.idempotencyKey ?? null,
+              requestHash,
               options,
               plan,
               client,
@@ -1373,6 +1418,7 @@ export class RecipientPolicyService {
     contactId: string,
     expectedVersion: number,
     idempotencyKey: string | null,
+    requestHash: string,
     options: RecipientMutationOptions,
     plan: RemovalPlan,
     client: Queryable,
@@ -1522,6 +1568,7 @@ export class RecipientPolicyService {
         contactVersion: archived.version,
         composedRules: composed.rules,
         composedHash: composed.hash,
+        requestHash,
         idempotencyKey,
       },
       client,
@@ -1743,6 +1790,7 @@ export class RecipientPolicyService {
     userId: string,
     walletId: string,
     options: RecipientMutationOptions,
+    requestHash: string,
     step: (
       client: Queryable,
       state: PolicyStateRecord,
@@ -1834,6 +1882,7 @@ export class RecipientPolicyService {
             // these instead of recomputing from mutable tables (design §2.2).
             composedRules: composed.rules,
             composedHash: composed.hash,
+            requestHash,
             idempotencyKey: options.idempotencyKey ?? null,
           },
           client,

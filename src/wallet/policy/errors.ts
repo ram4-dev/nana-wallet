@@ -194,7 +194,12 @@ export type RecipientPolicySeamErrorCode =
    * D13's unconditional half (design §2.5). The destination is the wallet's own
    * address, read from the server's own `user_wallets` record.
    */
-  | "DIRECCION_PROPIA";
+  | "DIRECCION_PROPIA"
+  /**
+   * The idempotency body binding (design §6.2, §15 D-A). The key was already used
+   * with a DIFFERENT body, so the stored result answers another question.
+   */
+  | "IDEMPOTENCIA_CUERPO_DISTINTO";
 
 /** One bounded validation issue: the path and the code, never the value. */
 export type RecipientPolicyValidationIssue = {
@@ -370,6 +375,40 @@ export class RecipientSelfAddressError extends RecipientPolicySeamError {
       code: "DIRECCION_PROPIA",
       message:
         "That address is this wallet's own; it cannot be added as a trusted recipient.",
+    });
+  }
+}
+
+/**
+ * Design §6.2 (correction C8, D-A). An `Idempotency-Key` was ALREADY used with a
+ * different body, so the stored result it produced answers a different question.
+ * Returning it would report `maria.sns` as added while the contact that exists is
+ * the one created for `juan.sns` — a wrong statement about where money can go.
+ *
+ * WHY THIS IS A REFUSAL AND NOT THE STORED RESULT
+ * ---------------------------------------------
+ * The persisted body hash is the witness to what the key was used with, so the
+ * mismatch is PROVEN rather than inferred from a row the user may have edited
+ * since. That is why the no-column alternative in §6.3 — comparing the stored
+ * contact's provenance — was rejected: a legitimate rename would look like a
+ * different request.
+ *
+ * No stop is recorded and nothing is staged: like
+ * `RecipientPolicyRevisionConflictError`, this is a CLIENT-side conflict reached
+ * before any composition exists, so there is no policy state for a stop to
+ * describe. It is raised before the mutation transaction, so the refusal applies
+ * nothing — not a contact, not an intent, not a revision.
+ *
+ * Neither hash is carried on the error: both are derived from a request body, and
+ * echoing one back would hand a caller a comparison oracle over bodies it never
+ * sent.
+ */
+export class RecipientIdempotencyBodyMismatchError extends RecipientPolicySeamError {
+  constructor() {
+    super({
+      code: "IDEMPOTENCIA_CUERPO_DISTINTO",
+      message:
+        "That Idempotency-Key was already used with a different request body; refusing to answer it with the result the first request produced. Nothing was applied.",
     });
   }
 }
