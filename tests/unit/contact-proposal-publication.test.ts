@@ -217,7 +217,16 @@ describe("voice contact proposal publication", () => {
 
     const consumed = await h.port.confirm!({ userId: USER_ID, conversationId: CONVERSATION_ID, proposalId: PROPOSAL_ID, proposalVersion: 1, source: "voice" });
     expect(consumed.status).toBe("consumed");
-    expect(h.consumedCalls).toEqual([{ userId: USER_ID, conversationId: CONVERSATION_ID, proposalId: PROPOSAL_ID, proposalVersion: 1 }]);
+    // `reverify: "unavailable"` (task 6.4): this harness wires no re-verification, so
+    // the consume is told the check could not be made. The persisted row decides
+    // whether the key belongs — a version with no alias claim keeps its payload.
+    expect(h.consumedCalls).toEqual([{
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      proposalId: PROPOSAL_ID,
+      proposalVersion: 1,
+      reverify: "unavailable",
+    }]);
     // The window is closed and the same evidence cannot authorize twice.
     expect(h.arbiter.current()).toBeUndefined();
 

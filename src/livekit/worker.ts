@@ -24,7 +24,10 @@ import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
 import { createConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
 import { ContactActionService } from "../wallet/policy/contact-actions.js";
-import { createVoiceContactActions } from "./contact-proposal-publication.js";
+import { createAliasReverifier, createVoiceContactActions } from "./contact-proposal-publication.js";
+import { createSnsResolver, type SnsResolver } from "../wallet/sns/resolver.js";
+import { createSnsTransport, readSnsTransportConfig } from "../wallet/sns/transport.js";
+import { SOLANA_POLICY_NETWORK } from "../wallet/policy/service.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
 import { attachVoiceDecisionTranscripts } from "./voice-decision-transcripts.js";
 import {
@@ -41,6 +44,23 @@ import {
   bindWalletForUser,
   type WalletForUser,
 } from "../wallet/user-wallet.js";
+
+/**
+ * The worker process's SNS resolver, built through the transport's own config
+ * reader so `SNS_RPC_URL` has one definition (design §1.4). A transport that
+ * cannot be built (an empty endpoint) yields `null`, and the caller reports the
+ * re-verification as unavailable instead of pretending it happened.
+ */
+function createWorkerSnsResolver(): SnsResolver | null {
+  try {
+    return createSnsResolver({
+      transport: createSnsTransport(readSnsTransportConfig()),
+      network: SOLANA_POLICY_NETWORK,
+    });
+  } catch {
+    return null;
+  }
+}
 
 export function bindLiveKitWalletForUser(
   walletForUser: WalletForUser,
@@ -182,8 +202,28 @@ async function runJob(
         })),
       });
       const memoryService = getConfiguredRecipientMemoryService();
+      const contactActionService = new ContactActionService(dependencies.database);
+      // The same SNS seam the HTTP alias route uses, built once per session from
+      // the transport's own reader (design §1.4): no second definition of the
+      // endpoint's precedence. A transport that cannot be built yields `null`, and
+      // the re-verification is then reported as unavailable rather than emulated.
+      const snsResolver = createWorkerSnsResolver();
       const contactActions = createVoiceContactActions({
-        actions: new ContactActionService(dependencies.database),
+        actions: contactActionService,
+        // The confirm-time re-verification: it re-resolves the name the displayed
+        // version was frozen from, immediately before the persisted consume, and
+        // supersedes when the address moved. Wired here so the alias arm stops
+        // being fail-closed in production: without this dependency a confirmation
+        // of an alias proposal records `reverify:'unavailable'` instead of
+        // checking the name (never a silent "verified").
+        ...(snsResolver
+          ? {
+              reverifyAlias: createAliasReverifier({
+                actions: contactActionService,
+                resolver: snsResolver,
+              }),
+            }
+          : {}),
         // The bound authenticated participant. `RoomConversation.bind` already
         // rejected a caller whose identity differs from `binding.sub`, so this is
         // the only participant a card may be delivered to. A room without it has
@@ -203,10 +243,7 @@ async function runJob(
         // immutable version this is the only way the worker can learn its handle:
         // it is what makes a stale refusal actionable instead of a dead end.
         currentOpenProposal: async ({ userId, conversationId }) => {
-          const open = await new ContactActionService(dependencies.database).readOpen(
-            userId,
-            conversationId,
-          );
+          const open = await contactActionService.readOpen(userId, conversationId);
           return open
             ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion }
             : null;
@@ -217,16 +254,19 @@ async function runJob(
         // `beforeCommit` hook, which is the `L5` slot the design names. The
         // guarantee is identical because the row update is the serialization
         // point, not the transaction that surrounds it.
-        consume: async ({ userId, conversationId, proposalId, proposalVersion }) => {
+        consume: async ({ userId, conversationId, proposalId, proposalVersion, reverify }) => {
           const consumed = await dependencies.database.withUserTransaction(
             userId,
             (client) =>
-              new ContactActionService(dependencies.database).consumeInTransaction(client, {
+              contactActionService.consumeInTransaction(client, {
                 userId,
                 proposalId,
                 proposalVersion,
                 consumedByTool: "confirm_trusted_recipient_action",
                 consumedBySession: conversationId,
+                // Recorded in the SAME statement as the consume, so the row is never
+                // observable as open-with-an-outcome (design §4.4/S11).
+                ...(reverify ? { reverify } : {}),
               }),
           );
           return consumed !== null;

@@ -66,6 +66,7 @@ function aliasPayload(alias: ContactAliasEvidence): Record<string, unknown> {
 function supersededPayload(
   original: ContactActionProposal["payload"],
   source: "pasted" | "scanned" | "sns",
+  observed?: ContactAliasEvidence,
 ): Record<string, unknown> {
   const generic = {
     ...(original.name !== undefined ? { name: original.name } : {}),
@@ -78,9 +79,15 @@ function supersededPayload(
       "An sns supersede requires the alias evidence of the version it supersedes.",
     );
   }
+  // The freshness of the claim belongs to the version's own address: a supersede
+  // produced by a FRESH observation carries that observation's instant, so the
+  // card cannot label a just-observed address with the earlier resolution's age
+  // (design §4.3; the seam that performs the fresh resolution supplies it).
   return {
     ...generic,
-    ...aliasPayload({ snsName, resolvedAt, resolver, reverseDomain, reverseDomainState }),
+    ...aliasPayload(
+      observed ?? { snsName, resolvedAt, resolver, reverseDomain, reverseDomainState },
+    ),
   };
 }
 
@@ -239,7 +246,19 @@ export class ContactActionService {
     });
   }
 
-  public async replaceAddress(userId: string, input: { proposalId: string; expectedProposalVersion: number; address: string; source?: "pasted" | "scanned" | "sns" }): Promise<ContactActionProposal | null> {
+  public async replaceAddress(userId: string, input: {
+    proposalId: string;
+    expectedProposalVersion: number;
+    address: string;
+    source?: "pasted" | "scanned" | "sns";
+    /**
+     * The alias evidence of the observation that produced `address`, when the
+     * supersede comes from a FRESH resolution (design §4.3). Optional: a paste or
+     * scan supersede carries none, and the `sns` arm falls back to the superseded
+     * version's own evidence.
+     */
+    alias?: ContactAliasEvidence;
+  }): Promise<ContactActionProposal | null> {
     if (!isValidSolanaAddress(input.address)) throw new Error("Expected a canonical Solana address.");
     return this.database.withUserTransaction(userId, async (client) => {
       const old = await client.query<ProposalRow>(`SELECT ${columns} FROM contact_action_proposals WHERE id=$1 AND user_id=$2 AND version=$3 AND status='open' AND expires_at > now() FOR UPDATE`, [uuidSchema.parse(input.proposalId), userId, input.expectedProposalVersion]);
@@ -247,7 +266,9 @@ export class ContactActionService {
       if (!prior) return null;
       const original = map(prior);
       await client.query(`UPDATE contact_action_proposals SET status='superseded' WHERE id=$1 AND user_id=$2 AND version=$3 AND status='open'`, [original.proposalId, userId, original.proposalVersion]);
-      const payload = payloadSchema.parse(supersededPayload(original.payload, input.source ?? "pasted"));
+      const payload = payloadSchema.parse(
+        supersededPayload(original.payload, input.source ?? "pasted", input.alias),
+      );
       const result = await client.query<ProposalRow>(
         `INSERT INTO contact_action_proposals
           (user_id, conversation_id, action, contact_id, contact_version, address, previous_address, revoked_grant_ids, version, supersedes_id, proposal_hash, origin, expires_at, payload)
@@ -298,12 +319,30 @@ export class ContactActionService {
    * because the row update is the serialization point. `confirmedUserTurn` is
    * recorded for audit only; it is never a predicate here.
    */
-  public async consumeInTransaction(client: Queryable, input: { userId: string; proposalId: string; proposalVersion: number; consumedByTool: string; consumedBySession: string; confirmedUserTurn?: number }): Promise<ContactActionProposal | null> {
+  public async consumeInTransaction(client: Queryable, input: {
+    userId: string; proposalId: string; proposalVersion: number;
+    consumedByTool: string; consumedBySession: string; confirmedUserTurn?: number;
+    /**
+     * The OUTCOME of the confirm-time re-verification (design §4.4/S11), written
+     * into the consumed version's own payload in the SAME statement as the
+     * consume, so the row is never observable as "open with a re-verification
+     * outcome". `undefined` (a non-alias version, or a caller that performs no
+     * re-verification) leaves the payload untouched rather than asserting a
+     * verification that never happened. The row decides whether the key belongs:
+     * a version with no alias claim keeps its payload byte-identical even when a
+     * caller reports that it could not re-verify.
+     */
+    reverify?: "verified" | "unavailable";
+  }): Promise<ContactActionProposal | null> {
     const result = await client.query<ProposalRow>(
-      `UPDATE contact_action_proposals SET status='consumed', consumed_at=now(), consumed_by_tool=$4, consumed_by_session=$5, confirmed_user_turn=COALESCE($6, confirmed_user_turn)
+      `UPDATE contact_action_proposals SET status='consumed', consumed_at=now(), consumed_by_tool=$4, consumed_by_session=$5, confirmed_user_turn=COALESCE($6, confirmed_user_turn),
+          payload = CASE
+            WHEN $7::text IS NULL OR payload->>'addressSource' <> 'sns' THEN payload
+            ELSE payload || jsonb_build_object('reverify', $7::text)
+          END
         WHERE id=$1 AND user_id=$2 AND version=$3 AND status='open' AND consumed_at IS NULL AND expires_at > now()
         RETURNING ${columns}`,
-      [uuidSchema.parse(input.proposalId), input.userId, input.proposalVersion, input.consumedByTool, input.consumedBySession, input.confirmedUserTurn ?? null],
+      [uuidSchema.parse(input.proposalId), input.userId, input.proposalVersion, input.consumedByTool, input.consumedBySession, input.confirmedUserTurn ?? null, input.reverify ?? null],
     );
     return result.rows[0] ? map(result.rows[0]) : null;
   }

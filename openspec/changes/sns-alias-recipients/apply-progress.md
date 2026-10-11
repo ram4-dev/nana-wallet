@@ -1533,3 +1533,187 @@ One work-unit commit for task 6.3: the additive read field (both sides) plus the
 their tests. `Review Workload Forecast: size-exception` (the standing note at the top of `tasks.md`) —
 this worktree does not push and does not open a PR. The earlier entries above are byte-for-byte
 untouched.
+
+## Task 6.4 — the confirm-time re-verification (appended; the earlier entries are untouched)
+
+### Completed tasks
+
+| Task | What landed | Persisted checkbox |
+|---|---|---|
+| 6.4 | Re-verification at confirm in S10's order (after the affirmative, immediately before the persisted consume), the fail-closed supersede with re-publication gating the window, the unreachable asymmetry with an explicit `reverify` record, the resolver wired into the worker, and the re-verification outcome persisted with the consumed row | `- [x]` |
+
+### Files changed
+
+Modified: `src/livekit/contact-proposal-publication.ts` (`AliasReverification`, `createAliasReverifier()`,
+the `reverifyAlias` dependency, the confirm-time block, `republishSupersededCard()`, the `reverify` field
+on the consume dependency), `src/wallet/policy/contact-actions.ts` (`replaceAddress` gains an optional
+fresh `alias` evidence, `supersededPayload()` honors it, `consumeInTransaction` writes the outcome in the
+same statement behind a row-level gate), `src/livekit/worker.ts` (the resolver built from the transport's
+own reader, the adapter wired, the outcome passed through to the consume),
+`tests/unit/contact-proposal-publication.test.ts` (one expectation updated, see deviations).
+New: `tests/unit/contact-proposal-reverify.test.ts` (13 cases),
+`tests/integration/livekit-contact-alias-reverify.e2e.test.ts` (5 cases). Plus the checkbox flip and this
+entry.
+
+### The re-verification behaviour, in one paragraph
+
+The confirmation path asks for the re-verification **after** `waitAndConsume` returns `consumed` and
+**immediately before** `dependencies.consume(...)`, outside every transaction (the only transaction on
+this path is the one the consume opens) — deliberately, because checking before the affirmative would
+leave the whole bounded window unchecked (S10). `unchanged` proceeds and the row records
+`reverify:'verified'`; a version with no alias claim is `not_alias` and records nothing, because there was
+no subject for a check. A **difference** calls `replaceAddress` with the newly observed address and
+`source:'sns'`, which supersedes version *n* into a NEW row (*n+1*, `supersedes_id` set,
+`published_at` NULL, and the freshly observed alias evidence so the new card's freshness is this
+observation's); the worker then re-publishes the card for *n+1*, and only a successful delivery stamps
+`published_at`, opens the arbiter window for *n+1* and clears the window for *n* — so version *n* is never
+consumed (the conditional UPDATE matches zero rows once it is `superseded`) and the model is handed the
+**new row's** handle (`currentProposalId` is *n+1*'s own id: a supersede inserts a new row, so the old id
+would be refused forever). An **unreachable** resolver proceeds with the displayed address and the row
+records `reverify:'unavailable'`, and that outcome is never reported as a change of destination. An
+answer that the name no longer resolves (`not_found`/`ambiguous`/`malformed`/`unsupported`/misconfigured)
+fails closed with a typed code and consumes nothing: it is neither the unreachable case nor a change of
+destination. Proposal expiry is never the guard — the guard is the equality check at confirm time, which
+also means a long-lived preview is still safe (test 5 below proves the window and the harness TTL are
+irrelevant to it).
+
+Evidence per path:
+
+| Path | Evidence |
+|---|---|
+| Ordering | `tests/unit/contact-proposal-reverify.test.ts` asserts the ORDER over one log (`["publish","reverify","consume"]`) and that no re-verification happens when no affirmative arrives (M1) |
+| Supersede | unit: `publishedVersions == [1,2]`, zero consumes, new handle returned, window on *n+1*; integration: version *n* `status='superseded'` with `consumed_at IS NULL`, *n+1* chained with the new address and `published_at` stamped, the stale consume returns NULL **from the SQL**, and the returned handle is *n+1*'s own row id (M3, M4) |
+| Unreachable | unit: `consumed[0].reverify == 'unavailable'` and the message never says "cambió"; integration: the row is `consumed` with `payload->>'reverify' = 'unavailable'`, one row, the displayed address (M2, M5) |
+
+### The honest RED (how it was obtained) — **reversion-RED, disclosed**
+
+For 6.3 the suites were written and run before the implementation. **For 6.4 they were not**: the
+implementation was written first, so the RED was obtained by reverse-applying the 6.4 implementation
+diff (`git diff` over the three source files → `/tmp/64-impl.patch`, then `patch -R -p1`) and running the
+new suite against the pre-implementation tree. This is a reversion-RED, not a genuine
+write-test-first RED, and it is reported as such. The failing run, verbatim:
+
+```text
+npx vitest run tests/unit/contact-proposal-reverify.test.ts      # against the reverse-applied tree
+ FAIL  runs AFTER the affirmative and IMMEDIATELY BEFORE the consume (S10)
+   AssertionError: expected [ 'publish', 'consume' ] to deeply equal [ 'publish', 'reverify', 'consume' ]
+ FAIL  consumes an unchanged resolution exactly once and records it as verified
+   AssertionError: expected undefined to be 'verified' // Object.is equality
+ FAIL  proceeds with the displayed address when the resolver cannot be reached, and says so
+   AssertionError: expected undefined to be 'unavailable' // Object.is equality
+ FAIL  supersedes, re-publishes and re-opens the window for the new version when the name moved
+   AssertionError: expected [ { …(4) } ] to have a length of +0 but got 1
+ FAIL  leaves the window closed when the new card cannot be delivered
+   AssertionError: expected [ { …(4) } ] to have a length of +0 but got 1
+ FAIL  fails closed when the registry answers that the name no longer resolves
+   AssertionError: expected [ { …(4) } ] to have a length of +0 but got 1
+ FAIL  treats a missing re-verification dependency as unavailable, never as verified
+   AssertionError: expected undefined to be 'unavailable' // Object.is equality
+ Tests  8 failed | 2 passed (10)
+```
+
+The two that passed at RED (no affirmative ⇒ no re-verification; `not_alias` ⇒ nothing recorded) are
+trivially true without the feature and are declared regression pins, not new behaviour. The file was
+extended **after** that RED run with the four adapter cases (they could not have been collected against
+the reverse-applied tree, because they import `createAliasReverifier`), and that extension is stated
+rather than presented as part of the RED.
+
+### Mutation evidence (each guard removed, failure observed **by name**, restored immediately)
+
+| Mutation | Failure observed, by name | Reading |
+|---|---|---|
+| M1 — the re-verification moved BEFORE `waitAndConsume` (S10's rejected alternative) | *does not re-verify at all when the affirmative never arrives* — `expected [ { …(3) } ] to have a length of +0 but got 1` | the placement is load-bearing: the rejected alternative re-checks before the bounded window and is caught |
+| M2 — `unreachable` treated as an ANSWER (`unresolvable`) | *separates an unreachable registry from an answer that the name is gone* / *proceeds with the displayed address …* — `expected 'unresolvable' to be 'unavailable'` | the asymmetry is asserted in both directions; the "safer-sounding" fail-closed-on-anything choice is caught |
+| M3 — the superseded id reported as the open handle | integration *supersedes into an immutable new version…* — `expected { …(4) } to match object { …(3) }` | the handle the model must reuse is the NEW row's id; handing back the old one is caught |
+| M4 — the card not re-published before the window moves | unit *supersedes, re-publishes…* `expected [ 1 ] to deeply equal [ 1, 2 ]`; integration *…unpublished and unconsumable…* | publication gates the window: no delivery ⇒ no re-open, and the window is not silently moved |
+| M5 — the persisted outcome clause removed from the consume UPDATE | integration *stages the alias card…*, *supersedes…*, *proceeds with the displayed address…* — the `reverify` assertions on the ROW fail | the `reverify` record is a persisted fact, not a caller-side argument: removing the SQL clause fails the row assertions |
+| M6 — the row-level `addressSource='sns'` gate removed from the same UPDATE | integration *records nothing for a version with no alias claim, even when the caller cannot re-verify* — `expected 'unavailable' to be null` | a "could not check" report cannot be written onto an address that never came from a name |
+
+All six were restored; `git diff` on the sources shows only the intended change. **What the assertions
+inspect:** every 6.4 assertion about the re-verification reads the persisted row via SQL
+(`status`, `consumed_at`, `payload->>'reverify'`, `supersedes_id`, `previous_address`, `published_at`,
+`payload->>'resolvedAt'`); no assertion in the integration suite reads a JavaScript argument array. The
+unit suite asserts ORDER over an event log and the outcome a fake records, which is what a seam with no
+database can honestly inspect.
+
+### A behaviour change this task forced (reported, not smuggled)
+
+**A confirmation hands back the NEW row's id.** `replaceAddress` inserts a NEW row with its own id and
+chains the old one by `supersedes_id`, so after a supersede the open handle is not the id the model used.
+The design's `reverifyAlias` return type named only `supersededProposalVersion`; `changed` now also
+carries `supersededProposalId`, and `currentProposalId` reports it. Without that, a model retrying with
+the old id is refused forever by `matchesCurrent` — the dead end the existing refusal wording exists to
+avoid. Found by the integration test, not by reading.
+
+### Commands run (exact)
+
+```text
+npm run lint && npm run typecheck                                                       # root, clean
+npx vitest run tests/unit/contact-proposal-reverify.test.ts                             # 13 passed
+npx vitest run tests/integration/livekit-contact-alias-reverify.e2e.test.ts             # 5 passed (real table)
+npx vitest run tests/unit/contact-proposal-publication.test.ts tests/unit/contact-proposal-reverify.test.ts
+    # 2 files, 25 passed
+npx vitest run tests/integration/recipient-policy-*.test.ts                             # 9 files, 119 passed (own run)
+npx vitest run tests/unit/policy-*.test.ts                                              # 16 files, 185 passed (own run)
+npx vitest run tests/integration/contact-action-*.test.ts tests/unit/contact-action-*.test.ts \
+    tests/unit/contact-proposal-*.test.ts tests/integration/contact-proposal-publication.integration.test.ts
+    # 59 passed
+npx vitest run tests/unit/livekit/ tests/unit/confirmation-arbiter.test.ts              # 8 files, 61 passed
+(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)            # 28 files, 208 passed
+```
+
+No install was run in this task, so the `--legacy-peer-deps` hazard was not touched.
+
+### Deviations
+
+1. **`reverify` is recorded on the consumed proposal row, not (only) in the contact provenance.** The
+   design (§4.4) says the record lands in the *contact* provenance, written by the contact-add arm "which
+   re-resolves too and records its own outcome". That arm cannot record `'unavailable'` in this
+   deployment: task 5.2 landed — correctly, per the other spec requirement — a typed `503` refusal when its
+   own resolution is unreachable, so no contact row exists to carry the record, and the create contract
+   carries no reference to the authorizing proposal. What 6.4 *can* persist is the outcome on the version
+   whose address was actually authorized, in the same statement as the consume; that is what is
+   implemented and asserted. The contact provenance still records `reverify:'verified'` through the
+   contact-add arm's own resolution (2.3, unchanged). **Recorded as a partial gap**, with the exact reason.
+2. **The worker builds its own resolver** (`createWorkerSnsResolver()`), mirroring
+   `createConfiguredSnsResolver` in `src/server.ts` through the same `readSnsTransportConfig()` reader, so
+   the endpoint's precedence still has one definition. `src/server.ts` is a Fastify factory and is not
+   importable from the worker process.
+3. **The text path has no port construction of its own.** The task asked to wire "the text path's own port
+   construction"; `createVoiceContactActions` has exactly one production call site
+   (`src/livekit/worker.ts:185`), and it feeds both surfaces because `createRealtimeTools` passes the same
+   port into the shared agent definition. Verified by grep over `src/` (`createVoiceContactActions`,
+   `ContactActionPort`): there is no second construction to wire, so nothing was wired twice.
+4. **One pre-existing unit expectation was updated** (`tests/unit/contact-proposal-publication.test.ts`):
+   the consume call for a caller that wires no re-verification now carries `reverify:'unavailable'`, which
+   is the deliberate S11 record. The persisted row is unaffected when the version has no alias claim (M6).
+5. **`replaceAddress` gained an optional fresh `alias` evidence** so the superseded version's freshness is
+   the new observation's instant (6.2's deviation 3 explicitly deferred this to "the seam that performs
+   the fresh resolution"). Without it the new card would label a just-observed address with the earlier
+   resolution's age.
+6. **An `unresolvable` outcome was added to the seam's vocabulary.** The task names only
+   `not_alias`/`unchanged`/difference/`unavailable`; mapping a `not_found`/`ambiguous` answer onto
+   `unavailable` would report "could not check" for a check that WAS made, and mapping it onto `changed`
+   would invent a destination. It fails closed with the resolver's typed code and consumes nothing.
+
+### Unproven, stated
+
+- **No live name was resolved.** Every byte in the integration suite comes from the recorded devnet
+  values through an injected transport; 8.2 owns the live attempt and its blocker.
+- **The "consumed but not stored" edge remains** (design §4.4): an unreachable pre-consume check proceeds,
+  and if the later contact-add arm is unreachable too, the affirmative is spent with no contact created.
+  Nothing is authorized for an unseen address and the recovery is a fresh proposal — stated, not fixed
+  here.
+- **The consume predicate still has no `published_at` clause** (6.2's finding). The re-open guarantee
+  relies on `readOpen()`'s `published_at IS NOT NULL`, which is the predicate that exists; the code
+  comment in `src/api/contact-actions.ts` calling an unstamped version "therefore unconsumable" is still
+  stronger than the SQL behind it.
+- **6.5 (the evals) and slice U7 (drift) are untouched**, and no eval, drift, endpoint or UI behaviour is
+  claimed here.
+
+### Workload / boundary
+
+One work-unit commit for task 6.4: the seam, the adapter, the persisted record, the worker wiring and
+their tests. `Review Workload Forecast: size-exception` (the standing note at the top of `tasks.md`) —
+this worktree does not push and does not open a PR. The earlier entries above are byte-for-byte
+untouched.

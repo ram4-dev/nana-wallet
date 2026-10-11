@@ -1,4 +1,5 @@
 import type { ContactActionPort } from "../agent/definition.js";
+import type { SnsResolver } from "../wallet/sns/resolver.js";
 import type {
   ContactActionProposal,
   ContactActionService,
@@ -117,6 +118,114 @@ export function aliasRefusalMessage(code: string): string {
   }
 }
 
+/**
+ * The confirm-time re-verification's outcome (design §4.2–§4.4, decisions S10/S11).
+ *
+ * `not_alias` is not a synonym for `unchanged`: it says the version carries no
+ * alias claim at all, so there was nothing to re-resolve and nothing to record.
+ * `unresolvable` is the one outcome that must never reuse the wording of the
+ * others: the registry ANSWERED and the name no longer leads to a destination, so
+ * the confirmation fails closed instead of proceeding with an address whose
+ * justification is gone.
+ */
+export type AliasReverification =
+  | { status: "not_alias" }
+  | { status: "unchanged" }
+  | { status: "unavailable" }
+  | {
+      status: "changed";
+      /**
+       * The NEW version's identity. A supersede inserts a NEW ROW (with its own
+       * id) chained by `supersedes_id`, and the current handle is that row's id —
+       * so the confirmation surface must hand the model the new id, not the one it
+       * used for the version that no longer exists.
+       */
+      supersededProposalId: string;
+      supersededProposalVersion: number;
+      observedAddress: string;
+    }
+  | { status: "unresolvable"; code: string };
+
+export type AliasReverificationDependencies = {
+  actions: Pick<ContactActionService, "read" | "replaceAddress">;
+  /** The same seam the create path uses. Never cached across calls (§4.2). */
+  resolver: SnsResolver;
+};
+
+/**
+ * The re-verification ADAPTER: re-resolve the name the displayed version was
+ * frozen from, compare it against that version's own address, and supersede when
+ * they differ (design §4.3).
+ *
+ * It performs remote I/O only — it opens no transaction and takes no lease, so a
+ * caller can place it immediately before the persisted consume without putting an
+ * RPC call inside the mutation transaction. It is deliberately NOT memoized: the
+ * whole point is to observe the name at the moment the address is authorized, and
+ * a cache would answer with an address obtained for a different moment.
+ */
+export function createAliasReverifier(
+  dependencies: AliasReverificationDependencies,
+): (input: { userId: string; proposalId: string; proposalVersion: number }) => Promise<AliasReverification> {
+  return async ({ userId, proposalId, proposalVersion }) => {
+    const proposal = await dependencies.actions.read(userId, proposalId);
+    // The version the user is confirming must be the one that was read: anything
+    // else and there is no claim to re-verify.
+    if (!proposal || proposal.proposalVersion !== proposalVersion) return { status: "unavailable" };
+    const { addressSource, snsName } = proposal.payload;
+    if (addressSource !== "sns" || !snsName) return { status: "not_alias" };
+
+    const outcome = await dependencies.resolver.resolve(snsName);
+    if (!outcome.ok) {
+      // UNREACHABLE ⇒ proceed with the displayed address (the re-verification is a
+      // divergence detector, not an authority gate) and record that it could not
+      // be made. Every OTHER failure is an answer, and an answer that the name no
+      // longer leads to the displayed destination fails closed.
+      if (outcome.failure.kind === "unreachable") return { status: "unavailable" };
+      return { status: "unresolvable", code: reverifyRefusalCode(outcome.failure.kind) };
+    }
+    if (outcome.value.address === proposal.address) return { status: "unchanged" };
+
+    const superseded = await dependencies.actions.replaceAddress(userId, {
+      proposalId,
+      expectedProposalVersion: proposalVersion,
+      address: outcome.value.address,
+      source: "sns",
+      // The freshly observed evidence, so the new version's claim is about ITS
+      // address and its freshness line reports THIS observation (design §4.3).
+      alias: {
+        snsName: outcome.value.name,
+        resolvedAt: outcome.value.resolvedAt,
+        resolver: outcome.value.resolver,
+        reverseDomain: outcome.value.reverseDomain,
+        reverseDomainState: outcome.value.reverseDomainState,
+      },
+    });
+    // Zero rows: the version was superseded, consumed or expired concurrently.
+    // Nothing was created for it, so the confirmation cannot proceed.
+    if (!superseded) return { status: "unavailable" };
+    return {
+      status: "changed",
+      supersededProposalId: superseded.proposalId,
+      supersededProposalVersion: superseded.proposalVersion,
+      observedAddress: outcome.value.address,
+    };
+  };
+}
+
+/** The typed refusal code for a resolution failure that is an ANSWER, not a gap. */
+function reverifyRefusalCode(kind: string): string {
+  switch (kind) {
+    case "not_found":
+      return "NOMBRE_NO_ENCONTRADO";
+    case "ambiguous":
+      return "NOMBRE_AMBIGUO";
+    case "resolver_misconfigured":
+      return "RESOLVEDOR_NO_DISPONIBLE";
+    default:
+      return "NOMBRE_NO_SOPORTADO";
+  }
+}
+
 export type VoiceContactActionDependencies = {
   actions: Pick<ContactActionService, "stage" | "markPublished" | "read" | "consumeInTransaction">;
   /**
@@ -174,6 +283,23 @@ export type VoiceContactActionDependencies = {
    * refusal rather than being emulated from the spoken label.
    */
   resolveAlias?: (input: { userId: string; snsName: string }) => Promise<AliasResolution>;
+  /**
+   * The confirm-time re-verification (design §4.2, decision S10): called AFTER the
+   * affirmative and IMMEDIATELY BEFORE the persisted consume, so the address is
+   * compared against the one the user is confirming rather than one observed
+   * before the bounded window opened. Remote I/O, never inside a transaction,
+   * never satisfied from a cache.
+   *
+   * Absent ⇒ the confirmation proceeds with the displayed address and records the
+   * re-verification as `unavailable`: a caller that cannot re-verify must not
+   * claim it did, and it must not block a user on a detector that cannot widen
+   * anything either.
+   */
+  reverifyAlias?: (input: {
+    userId: string;
+    proposalId: string;
+    proposalVersion: number;
+  }) => Promise<AliasReverification>;
   /** The in-process window. Absent ⇒ no window ever opens and nothing is consumed. */
   arbiter?: ConfirmationArbiter;
   /**
@@ -185,6 +311,8 @@ export type VoiceContactActionDependencies = {
     conversationId: string;
     proposalId: string;
     proposalVersion: number;
+    /** The outcome the consume must record with the row, when it is an alias one. */
+    reverify?: "verified" | "unavailable";
   }) => Promise<boolean>;
 };
 
@@ -379,15 +507,133 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
           currentProposalVersion: input.proposalVersion,
         };
       }
+      // ── THE RE-VERIFICATION (design §4.2, decision S10) ──────────────────────
+      // AFTER the affirmative and IMMEDIATELY BEFORE the persisted consume. The
+      // placement is deliberate: re-verifying before `waitAndConsume` would leave
+      // the whole bounded affirmative window (up to 2 000 ms) unchecked, so the
+      // address compared would be older than the one being authorized. This call
+      // is remote I/O and runs OUTSIDE every transaction — the only transaction on
+      // this path is the one `dependencies.consume` opens below.
+      const recheck: AliasReverification = dependencies.reverifyAlias
+        ? await dependencies.reverifyAlias({
+            userId: input.userId,
+            proposalId: input.proposalId,
+            proposalVersion: input.proposalVersion,
+          })
+        : { status: "unavailable" };
+
+      if (recheck.status === "changed") {
+        // FAIL CLOSED, then hand the user the NEW card: version n is superseded and
+        // never consumed, and the window re-opens for n+1 ONLY after it is
+        // re-published (a window is opened here only if the stamp succeeded).
+        //
+        // The window for THIS version is cleared unconditionally, before the
+        // delivery is even attempted: `changed` means the version was superseded, so
+        // an armed window bound to it must not survive the re-publication failing.
+        arbiter.clear(input.proposalId);
+        const republished = await republishSupersededCard(
+          dependencies,
+          {
+            userId: input.userId,
+            proposalId: recheck.supersededProposalId,
+            proposalVersion: recheck.supersededProposalVersion,
+          },
+          arbiter,
+        );
+        return {
+          status: "confirmation_required",
+          message: republished
+            ? `La dirección de ese nombre cambió: la tarjeta muestra la dirección nueva (versión ${recheck.supersededProposalVersion}). Mirala y confirmame otra vez.`
+            : "La dirección de ese nombre cambió y no pude mostrarte la tarjeta nueva. Generá la propuesta otra vez.",
+          // The handle that IS open: the new row's id, never the superseded one.
+          currentProposalId: recheck.supersededProposalId,
+          currentProposalVersion: recheck.supersededProposalVersion,
+        };
+      }
+
+      if (recheck.status === "unresolvable") {
+        // The registry ANSWERED and the name no longer leads anywhere: nothing is
+        // consumed and nothing is authorized for the displayed address. This is
+        // never narrated as a change of destination, and it is never the
+        // unreachable case either (`reverifyRefusalCode` names it).
+        return {
+          status: "confirmation_required",
+          message: `No pude confirmar ese nombre: ya no resuelve a la dirección de la tarjeta (${recheck.code}). Generá la propuesta otra vez.`,
+          currentProposalId: input.proposalId,
+          currentProposalVersion: input.proposalVersion,
+        };
+      }
+
+      // `unchanged` agreed; `unavailable` could not be reached and proceeds with
+      // the DISPLAYED address, recorded as such (S11). `not_alias` has nothing to
+      // record, because the version carries no alias claim at all.
       const consumed = await dependencies.consume({
         userId: input.userId,
         conversationId: input.conversationId,
         proposalId: input.proposalId,
         proposalVersion: input.proposalVersion,
+        ...(recheck.status === "unchanged"
+          ? { reverify: "verified" as const }
+          : recheck.status === "unavailable"
+            ? { reverify: "unavailable" as const }
+            : {}),
       });
       if (!consumed) return { status: "confirmation_required", message: "Esta propuesta ya no está disponible; generá una nueva." };
       arbiter.clear(input.proposalId);
       return { status: "consumed", message: "Listo, ya registré tu confirmación." };
     },
   };
+}
+
+/**
+ * Re-publishes the card for a version that superseded the one the user was
+ * reviewing, and re-opens the window only when the delivery actually happened
+ * (design §4.3): `markPublished` is what stamps `published_at`, and a version
+ * whose `published_at` is NULL can never be offered as the current handle
+ * (`readOpen()` requires it), so a failed delivery leaves no window to consume.
+ *
+ * The old window is cleared by the caller BEFORE this runs — a window that could
+ * still consume version n after the address changed under it is exactly what must
+ * not survive this path, whatever the delivery below does.
+ */
+async function republishSupersededCard(
+  dependencies: VoiceContactActionDependencies,
+  input: { userId: string; proposalId: string; proposalVersion: number },
+  arbiter: VoiceContactActionDependencies["arbiter"],
+): Promise<boolean> {
+  try {
+    const superseded = await dependencies.actions.read(input.userId, input.proposalId);
+    if (!superseded || superseded.proposalVersion !== input.proposalVersion) return false;
+    const card = contactProposalCard(
+      superseded,
+      contactProposalSummary(superseded.action, superseded.payload.name),
+    );
+    const destination = dependencies.boundParticipantIdentity;
+    if (!destination) return false;
+    await dependencies.publish({
+      bytes: new TextEncoder().encode(JSON.stringify(card)),
+      reliable: true,
+      topic: CONTACT_PROPOSAL_TOPIC,
+      destinationIdentities: [destination],
+    });
+    const published = await dependencies.actions.markPublished(
+      input.userId,
+      superseded.proposalId,
+      superseded.proposalVersion,
+    );
+    if (!published) return false;
+    const opened = arbiter?.open({
+      kind: "contact",
+      actionId: published.proposalId,
+      userId: input.userId,
+      conversationId: published.conversationId,
+      version: published.proposalVersion,
+      createdAt: Date.now(),
+    });
+    return opened ? opened.status === "opened" : false;
+  } catch {
+    // A delivery or stamp failure leaves version n+1 unpublished: no window
+    // re-opens, and version n was never consumed. Fail closed, never halfway.
+    return false;
+  }
 }
