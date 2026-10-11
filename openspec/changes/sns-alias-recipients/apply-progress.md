@@ -1014,3 +1014,66 @@ npx tsc --noEmit -p tsconfig.json                                               
   new integration case in this unit.
 - `recipients.provenance` is read back from the real row and matched field by field, but only for the
   fields the design §3.1 shape names; `slot` is asserted through the unit suite.
+
+## 5.3 — the alias form on the add-recipient screen
+
+| Item | Where |
+|---|---|
+| The two-form field and the explicit "Buscar" | `apps/nana-wallet/src/features/wallet/AddTrustedRecipient.tsx` |
+| The resolved address rendered verbatim | `data-testid="alias-address"`, `break-all`, never `truncate` |
+| The three reverse states | `reverseDomainLine()` → `data-testid="alias-reverse-domain"` |
+| The freshness line | `freshnessLabel(resolvedAt)` → `data-testid="alias-freshness"` |
+| The duplicate disclosure | outside the form, `data-testid="duplicate-disclosure"` |
+| Colocated suite | `AddTrustedRecipient.test.tsx` (+7 cases, 27 total) |
+
+Copy is rioplatense, as the repo requires for the front. The alias arm posts
+`{source:'sns', snsName, expectedAddress, name, description, network}`; the paste arm is unchanged and
+performs **no** resolution (asserted: a base58 value shows no "Buscar" and calls nothing). The client
+`solanaAddressPattern` stays a labelled pre-check.
+
+**Two decisions worth recording:**
+
+- **The server owns the refusal sentences.** Each taxonomy code arrives with its own message from the
+  contract, and the screen renders it instead of inventing a second wording that could drift from the
+  backend's. The code is read only to pick the fallback when a message is absent. The four refusals are
+  asserted to read differently from each other, which is the actual requirement ("no existe" and "no se
+  pudo consultar" are not the same thing to a user).
+- **A failed re-search keeps the last resolution on screen, with its age.** Clearing it would leave a
+  user who is confirming an address with nothing to look at; the freshness line is a transparency
+  affordance and never the guard, because the guard is the server's re-resolve-and-compare.
+
+The pre-existing copy assertion of *"has no chain picker in the recipient form"* was updated to the new
+sentence, because the field now accepts a `.sns` name and the old sentence said only "direcciones". The
+test's substance — a single configured network, no selector, no `combobox` — is unchanged, and the
+review of that edit belongs to whoever reads this commit.
+
+### The honest RED
+
+`npx vitest run src/features/wallet/AddTrustedRecipient.test.tsx` before the UI existed → **7 failed /
+27**, all seven new cases, all on the missing "Buscar" action (`Unable to find role="button" with name
+"Buscar"`). The 20 pre-existing cases stayed green, so RED was specific to the new behaviour rather than
+to a broken file.
+
+### Mutation evidence
+
+| Mutation | Failure observed, by name | Restored |
+|---|---|---|
+| `unknown` rendered with the `none` sentence | *muestra los tres estados del nombre principal sin colapsarlos* — `expected 'Esta dirección no tiene un nombre pri…' to contain 'No pudimos verificar'` | yes |
+| The "Guardar" disabled guard removed (`false`) | *no deja guardar antes de resolver, y no resuelve en el camino de pegado* | yes |
+
+Both mutations were applied together and produced exactly two attributed failures, so each guard is
+load-bearing on its own clause.
+
+### Commands run
+
+```text
+(cd apps/nana-wallet) npx vitest run src/features/wallet/AddTrustedRecipient.test.tsx   # 27 passed
+(cd apps/nana-wallet) npm run lint && npm run typecheck                                 # clean
+```
+
+### Unproven by 5.3, stated
+
+- The three states are proven by driving the component with a stubbed `api`; the MSW fixtures that serve
+  the same three states over HTTP are `handlers.test.ts`'s evidence (task 4.1), not re-driven here.
+- No live resolution happens in this suite: the address is a fixture, so nothing here claims a devnet
+  name was reached.

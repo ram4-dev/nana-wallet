@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createContact: vi.fn(),
+  resolveRecipientAlias: vi.fn(),
   updateContact: vi.fn(),
   deleteContact: vi.fn(),
   getContactRemovalPreview: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({
   api: {
     createContact: (...args: unknown[]) => mocks.createContact(...args),
+    resolveRecipientAlias: (...args: unknown[]) => mocks.resolveRecipientAlias(...args),
     updateContact: (...args: unknown[]) => mocks.updateContact(...args),
     deleteContact: (...args: unknown[]) => mocks.deleteContact(...args),
     getContactRemovalPreview: (...args: unknown[]) => mocks.getContactRemovalPreview(...args),
@@ -29,7 +31,7 @@ vi.mock("@/lib/api", () => ({
   getErrorMessage: (error: unknown) => String(error),
 }));
 
-import type { Contact, ContactPermission } from "@/lib/api-types";
+import type { Contact, ContactPermission, RecipientAliasResolveResponse } from "@/lib/api-types";
 
 import { AddTrustedRecipient } from "./AddTrustedRecipient";
 
@@ -140,6 +142,7 @@ function contactWith(permission: ContactPermission): Contact {
 describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
   beforeEach(() => {
     mocks.createContact.mockReset();
+    mocks.resolveRecipientAlias.mockReset();
     mocks.updateContact.mockReset();
     mocks.deleteContact.mockReset();
     mocks.getContactRemovalPreview.mockReset();
@@ -293,6 +296,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
 describe("AddTrustedRecipient (readiness states as reported by the backend)", () => {
   beforeEach(() => {
     mocks.createContact.mockReset();
+    mocks.resolveRecipientAlias.mockReset();
     mocks.updateContact.mockReset();
     mocks.deleteContact.mockReset();
     mocks.getContactRemovalPreview.mockReset();
@@ -397,9 +401,9 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
 
     expect(screen.queryByLabelText("Red de la dirección")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/solo podés agregar direcciones de solana devnet/i),
-    ).toBeInTheDocument();
+    // La frase cambió con la tarea 5.3 (el campo ahora acepta un nombre `.sns`),
+    // pero lo que fija esta prueba sigue igual: una sola red, sin selector.
+    expect(screen.getByText(/pegá una dirección de solana devnet/i)).toBeInTheDocument();
   });
 
   it("discloses the automatic-payment revocation before an address replacement", async () => {
@@ -495,5 +499,235 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       }),
     );
     expect(mocks.getContactRemovalPreview).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Task 5.3 — el alta por alias en la pantalla (design §2.1/§2.4, spec "Server-resolved
+   * alias address is accepted only as displayed").
+   *
+   * Lo que estas pruebas fijan:
+   *
+   *   1. la dirección que se muestra y se confirma es la que devolvió el SERVIDOR,
+   *      entera y sin truncar, y es la que viaja como `expectedAddress`;
+   *   2. los tres estados del nombre principal se muestran distintos, y `unknown`
+   *      nunca se degrada a `none` (ni al revés);
+   *   3. no existe / no se pudo consultar / sufijo no soportado leen distinto;
+   *   4. un resolver caído conserva la última resolución a la vista con su edad y no
+   *      rompe el camino de pegado;
+   *   5. la dirección propia y el duplicado son dos refusals distintas.
+   */
+  function apiError(code: string, message: string): Error & { code: string } {
+    const error = new Error(message) as Error & { code: string };
+    error.code = code;
+    return error;
+  }
+
+  const ALIAS_NAME = "juan.sns";
+  const ALIAS_ADDRESS = "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2";
+
+  function aliasResolution(overrides: Partial<RecipientAliasResolveResponse> = {}) {
+    return {
+      name: ALIAS_NAME,
+      address: ALIAS_ADDRESS,
+      resolvedAt: new Date().toISOString(),
+      resolver: "sns/solana-devnet/v3",
+      reverseDomain: null,
+      reverseDomainState: "none" as const,
+      ...overrides,
+    };
+  }
+
+  async function openCreateWithAlias(name = ALIAS_NAME) {
+    render(
+      <Wrapper>
+        <AddTrustedRecipient userId="u1" onContactsChanged={mocks.refetch} />
+      </Wrapper>,
+    );
+    await userEvent.click(screen.getByTestId("add-recipient"));
+    await userEvent.type(screen.getByLabelText("Nombre"), "Nieta");
+    await userEvent.type(screen.getByLabelText("Dirección"), name);
+  }
+
+  describe("AddTrustedRecipient — alta por alias (task 5.3)", () => {
+    it("muestra la dirección resuelta entera y guarda el alias con expectedAddress", async () => {
+      mocks.resolveRecipientAlias.mockResolvedValue(aliasResolution());
+      mocks.createContact.mockResolvedValue(CONTACT);
+      await openCreateWithAlias();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+
+      // La dirección se muestra verbatim: sin truncar y sin abreviar.
+      const shown = await screen.findByText(ALIAS_ADDRESS);
+      expect(shown).toBeInTheDocument();
+      expect(shown.textContent).toBe(ALIAS_ADDRESS);
+      expect(shown.className).not.toMatch(/truncate/);
+
+      await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+      await waitFor(() =>
+        expect(mocks.createContact).toHaveBeenCalledWith({
+          name: "Nieta",
+          description: "",
+          source: "sns",
+          snsName: ALIAS_NAME,
+          expectedAddress: ALIAS_ADDRESS,
+          network: "solana-devnet",
+        }),
+      );
+    });
+
+    it("no deja guardar antes de resolver, y no resuelve en el camino de pegado", async () => {
+      mocks.resolveRecipientAlias.mockResolvedValue(aliasResolution());
+      await openCreateWithAlias();
+
+      // Un nombre sin resolver no habilita el guardado: la confirmación es de la
+      // dirección, y todavía no hay dirección.
+      expect(screen.getByRole("button", { name: "Guardar" })).toBeDisabled();
+      expect(mocks.resolveRecipientAlias).not.toHaveBeenCalled();
+
+      // El camino de pegado no consulta ningún nombre: sigue siendo una dirección.
+      const addressField = screen.getByLabelText("Dirección");
+      await userEvent.clear(addressField);
+      await userEvent.type(addressField, "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
+      expect(screen.queryByRole("button", { name: "Buscar" })).not.toBeInTheDocument();
+      expect(mocks.resolveRecipientAlias).not.toHaveBeenCalled();
+    });
+
+    it("distingue no existe de no se pudo consultar, y de sufijo no soportado", async () => {
+      const cases: Array<{ code: string; message: string; status: number }> = [
+        { code: "NOMBRE_NO_ENCONTRADO", message: "No existe un nombre así.", status: 404 },
+        {
+          code: "RESOLVEDOR_NO_DISPONIBLE",
+          message: "No pudimos consultar el nombre en este momento.",
+          status: 503,
+        },
+        {
+          code: "NOMBRE_NO_SOPORTADO",
+          message: "Este despliegue solo resuelve nombres .sns.",
+          status: 422,
+        },
+        {
+          code: "NOMBRE_AMBIGUO",
+          message: "No pudimos confirmar a qué dirección apunta el nombre.",
+          status: 409,
+        },
+      ];
+      const rendered: string[] = [];
+      for (const testCase of cases) {
+        mocks.resolveRecipientAlias.mockReset();
+        mocks.resolveRecipientAlias.mockRejectedValue(apiError(testCase.code, testCase.message));
+        const view = render(
+          <Wrapper>
+            <AddTrustedRecipient userId="u1" />
+          </Wrapper>,
+        );
+        await userEvent.click(screen.getByTestId("add-recipient"));
+        await userEvent.type(screen.getByLabelText("Dirección"), ALIAS_NAME);
+        await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+
+        const alert = await screen.findByRole("alert");
+        rendered.push(alert.textContent ?? "");
+        expect(alert.textContent).toContain(testCase.message);
+        view.unmount();
+      }
+      // Ninguna de las cuatro lee igual que otra: son cuatro hechos distintos.
+      expect(new Set(rendered).size).toBe(cases.length);
+    });
+
+    it("muestra los tres estados del nombre principal sin colapsarlos", async () => {
+      const cases: Array<{
+        state: "present" | "none" | "unknown";
+        reverseDomain: string | null;
+        expected: string;
+      }> = [
+        { state: "present", reverseDomain: "juan.sns", expected: "El nombre principal" },
+        { state: "none", reverseDomain: null, expected: "no tiene un nombre principal" },
+        { state: "unknown", reverseDomain: null, expected: "No pudimos verificar" },
+      ];
+      const rendered = new Set<string>();
+      for (const testCase of cases) {
+        mocks.resolveRecipientAlias.mockReset();
+        mocks.resolveRecipientAlias.mockResolvedValue(
+          aliasResolution({
+            reverseDomainState: testCase.state,
+            reverseDomain: testCase.reverseDomain,
+          }),
+        );
+        const view = render(
+          <Wrapper>
+            <AddTrustedRecipient userId="u1" />
+          </Wrapper>,
+        );
+        await userEvent.click(screen.getByTestId("add-recipient"));
+        await userEvent.type(screen.getByLabelText("Dirección"), ALIAS_NAME);
+        await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+
+        const line = await screen.findByTestId("alias-reverse-domain");
+        expect(line.textContent).toContain(testCase.expected);
+        rendered.add(line.textContent ?? "");
+        view.unmount();
+      }
+      expect(rendered.size).toBe(cases.length);
+    });
+
+    it("conserva la última resolución con su edad cuando el resolver no responde, y deja pegar", async () => {
+      mocks.resolveRecipientAlias.mockResolvedValueOnce(
+        aliasResolution({ resolvedAt: new Date(Date.now() - 4 * 60_000).toISOString() }),
+      );
+      await openCreateWithAlias();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+      expect(await screen.findByText(ALIAS_ADDRESS)).toBeInTheDocument();
+
+      mocks.resolveRecipientAlias.mockRejectedValue(
+        apiError("RESOLVEDOR_NO_DISPONIBLE", "No pudimos consultar el nombre en este momento."),
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Buscar otra vez" }));
+
+      // La resolución anterior NO se borra: sigue a la vista, con su edad, para que
+      // el usuario sepa qué dirección estaba confirmando.
+      expect(await screen.findByText(ALIAS_ADDRESS)).toBeInTheDocument();
+      const freshness = await screen.findByTestId("alias-freshness");
+      expect(freshness.textContent).toMatch(/hace \d+/);
+
+      // Y el camino de pegado sigue usable sin haber resuelto nada.
+      const addressField = screen.getByLabelText("Dirección");
+      await userEvent.clear(addressField);
+      await userEvent.type(addressField, "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
+      expect(mocks.resolveRecipientAlias).toHaveBeenCalledTimes(2);
+    });
+
+    it("discloses el duplicado con el nombre de la otra persona y guarda igual", async () => {
+      mocks.resolveRecipientAlias.mockResolvedValue(aliasResolution());
+      mocks.createContact.mockResolvedValue({
+        ...CONTACT,
+        duplicateOf: { contactId: "c9", name: "Mamá" },
+      });
+      await openCreateWithAlias();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Guardar" }));
+
+      const disclosure = await screen.findByTestId("duplicate-disclosure");
+      expect(disclosure.textContent).toContain("Mamá");
+      expect(disclosure.textContent).toContain(ALIAS_ADDRESS);
+      // El alta se hizo igual: es un aviso, no una negativa.
+      expect(mocks.createContact).toHaveBeenCalledTimes(1);
+    });
+
+    it("la dirección propia lee distinto que un duplicado", async () => {
+      mocks.resolveRecipientAlias.mockResolvedValue(aliasResolution());
+      mocks.createContact.mockRejectedValue(
+        apiError("DIRECCION_PROPIA", "Esta dirección es la de tu propia billetera."),
+      );
+      await openCreateWithAlias();
+
+      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Guardar" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("propia billetera");
+      expect(screen.queryByTestId("duplicate-disclosure")).not.toBeInTheDocument();
+    });
   });
 });

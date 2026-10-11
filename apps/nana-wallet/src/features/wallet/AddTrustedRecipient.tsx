@@ -5,7 +5,13 @@ import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, getErrorMessage, queryKeys } from "@/lib/api";
-import type { Contact, ContactPermission, ContactRemovalPreview } from "@/lib/api-types";
+import type {
+  Contact,
+  ContactPermission,
+  ContactRemovalPreview,
+  RecipientAliasResolveResponse,
+  ReverseDomainState,
+} from "@/lib/api-types";
 
 type EditorState = { contact?: Contact } | null;
 type PendingRemoval = { contact: Contact; preview: ContactRemovalPreview } | null;
@@ -16,10 +22,69 @@ type PendingAddressChange = {
   preview: ContactRemovalPreview;
 } | null;
 
+/**
+ * Pre-chequeo del lado del cliente, y nada más: una dirección con forma de base58
+ * pasa por acá, pero quien decide es el servidor. Un valor con un punto es un
+ * CANDIDATO A NOMBRE (design §2.1): el camino de pegado sigue existiendo y nunca se
+ * fuerza a nadie a usar la fuente más débil.
+ */
 const solanaAddressPattern = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 function isPlausibleSolanaAddress(address: string): boolean {
   return solanaAddressPattern.test(address);
+}
+
+function isNameCandidate(value: string): boolean {
+  return value.trim().includes(".");
+}
+
+/**
+ * Los tres estados del nombre principal, en su propia oración (design §2.4).
+ *
+ * `unknown` NUNCA se muestra como `none`: "no pudimos verificar si tiene un
+ * nombre" no es "no tiene un nombre". Y `none` SÍ se muestra, aunque sea el estado
+ * esperado en devnet: es un hecho de la cadena, no un fallo.
+ */
+function reverseDomainLine(state: ReverseDomainState, domain: string | null): string {
+  switch (state) {
+    case "present":
+      return domain
+        ? `El nombre principal de esta dirección es ${domain}.`
+        : "El nombre principal de esta dirección es el que muestra la pantalla.";
+    case "none":
+      return "Esta dirección no tiene un nombre principal registrado.";
+    case "unknown":
+      return "No pudimos verificar si esta dirección tiene un nombre principal.";
+  }
+}
+
+/**
+ * La frescura se deriva de `resolvedAt` y es una ayuda de transparencia, nunca el
+ * guard: lo que autoriza es la igualdad que el servidor vuelve a chequear.
+ */
+function freshnessLabel(resolvedAt: string, now: number = Date.now()): string {
+  const age = now - new Date(resolvedAt).getTime();
+  if (!Number.isFinite(age) || age < 60_000) return "Resuelto hace instantes";
+  const minutes = Math.floor(age / 60_000);
+  if (minutes < 60) return `Resuelto hace ${minutes} minuto${minutes === 1 ? "" : "s"}`;
+  const hours = Math.floor(minutes / 60);
+  return `Resuelto hace ${hours} hora${hours === 1 ? "" : "s"}`;
+}
+
+/**
+ * El servidor es dueño de estas oraciones (design §1.3): "no existe" y "no se pudo
+ * consultar" llegan con mensajes distintos desde el contrato, así que la pantalla
+ * las muestra tal cual en vez de inventar una segunda redacción que pueda
+ * discrepar. El código se lee sólo para elegir el fallback cuando no hay mensaje.
+ */
+function aliasErrorMessage(error: unknown): string {
+  const code = (error as { code?: string } | null)?.code;
+  if (code === "RESOLVEDOR_NO_DISPONIBLE") {
+    return (
+      (error as Error).message || "No pudimos consultar el nombre en este momento. Probá de nuevo."
+    );
+  }
+  return getErrorMessage(error);
 }
 
 /**
@@ -68,6 +133,15 @@ export function AddTrustedRecipient({
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [resolution, setResolution] = useState<RecipientAliasResolveResponse | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
+  /**
+   * El aviso de duplicado sobrevive al guardado: es el RESULTADO del alta, no
+   * parte del formulario, así que se muestra después de que el formulario se
+   * cierra. Guarda la dirección con la que se guardó, porque la resolución del
+   * formulario ya no está.
+   */
+  const [duplicateOf, setDuplicateOf] = useState<{ name: string; address: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval>(null);
@@ -84,18 +158,47 @@ export function AddTrustedRecipient({
     setName("");
     setAddress("");
     setError(null);
+    setResolution(null);
   }
   function openCreate() {
     setEditor({});
     setName("");
     setAddress("");
     setError(null);
+    setResolution(null);
+    setDuplicateOf(null);
   }
   function openEdit(contact: Contact) {
     setEditor({ contact });
+    setDuplicateOf(null);
     setName(contact.name);
     setAddress(contact.address);
     setError(null);
+    // La edición no resuelve nombres: cambia la dirección de un contacto que ya
+    // existe, así que una resolución vieja no tiene nada que hacer acá.
+    setResolution(null);
+    setDuplicateOf(null);
+  }
+
+  /**
+   * La búsqueda explícita del nombre (design §2.1). Sólo la pantalla pide esto:
+   * es una LECTURA sin efectos, y una dirección resuelta todavía no es una
+   * autorización — lo que autoriza es el `expectedAddress` que el usuario ve.
+   */
+  async function searchAlias() {
+    const cleanAddress = address.trim();
+    if (!isNameCandidate(cleanAddress)) return;
+    setIsResolving(true);
+    setError(null);
+    try {
+      setResolution(await api.resolveRecipientAlias({ name: cleanAddress }));
+    } catch (resolveError) {
+      // La última resolución NO se borra: si el resolver no responde, el usuario
+      // sigue viendo qué dirección estaba confirmando y hace cuánto.
+      setError(aliasErrorMessage(resolveError));
+    } finally {
+      setIsResolving(false);
+    }
   }
   async function refreshContacts() {
     await queryClient.invalidateQueries({ queryKey: queryKeys.contacts(userId) });
@@ -107,7 +210,8 @@ export function AddTrustedRecipient({
     const cleanName = name.trim();
     const cleanAddress = address.trim();
     if (!cleanName) return setError("Poné el nombre de la persona de confianza.");
-    if (!isPlausibleSolanaAddress(cleanAddress))
+    const aliasArm = !editor?.contact && resolution !== null;
+    if (!aliasArm && !isPlausibleSolanaAddress(cleanAddress))
       return setError("Pegá una dirección válida de Solana.");
     setIsSaving(true);
     setError(null);
@@ -128,6 +232,27 @@ export function AddTrustedRecipient({
           return;
         }
         await updateContact(editor.contact, cleanName, cleanAddress, []);
+      } else if (aliasArm && resolution) {
+        // Variante alias: el servidor vuelve a resolver y compara. La dirección
+        // guardada es la que resolvió ÉL; `expectedAddress` sólo puede vetar.
+        const created = await api.createContact({
+          name: cleanName,
+          description: "",
+          source: "sns",
+          snsName: resolution.name,
+          expectedAddress: resolution.address,
+          network: "solana-devnet",
+        });
+        // Después de `resetEditor`: el aviso pertenece a la LISTA, no al
+        // formulario que se acaba de cerrar.
+        await refreshContacts();
+        resetEditor();
+        setDuplicateOf(
+          created.duplicateOf
+            ? { name: created.duplicateOf.name, address: resolution.address }
+            : null,
+        );
+        return;
       } else {
         await api.createContact({
           name: cleanName,
@@ -255,13 +380,53 @@ export function AddTrustedRecipient({
           />
           <Input
             value={address}
-            onChange={(event) => setAddress(event.target.value)}
-            placeholder="Dirección de Solana"
+            onChange={(event) => {
+              setAddress(event.target.value);
+              // Cambiar el texto invalida la resolución anterior: lo que se
+              // guarda tiene que ser lo que el usuario está viendo ahora.
+              setResolution(null);
+            }}
+            placeholder="Dirección de Solana o nombre .sns"
             aria-label="Dirección"
           />
+          {!editor.contact && isNameCandidate(address) ? (
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="press min-h-10 w-full font-extrabold"
+                onClick={() => void searchAlias()}
+                disabled={isResolving}
+              >
+                {isResolving ? "Buscando" : resolution ? "Buscar otra vez" : "Buscar"}
+              </Button>
+              {resolution ? (
+                <div className="space-y-1 rounded-xl border border-border bg-muted/40 p-3">
+                  <p className="text-xs font-bold text-muted-foreground">
+                    ¿La dirección que aparece acá es la correcta para {resolution.name}?
+                  </p>
+                  {/*
+                    Entera y sin truncar: es la dirección que el usuario confirma,
+                    así que no se abrevia ni se corta con puntos suspensivos.
+                  */}
+                  <p className="break-all font-mono text-sm font-bold" data-testid="alias-address">
+                    {resolution.address}
+                  </p>
+                  <p className="text-xs text-muted-foreground" data-testid="alias-reverse-domain">
+                    {reverseDomainLine(resolution.reverseDomainState, resolution.reverseDomain)}
+                  </p>
+                  <p className="text-xs text-muted-foreground" data-testid="alias-freshness">
+                    {freshnessLabel(resolution.resolvedAt)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <p className="text-sm text-muted-foreground">
-            Solo podés agregar direcciones de Solana devnet.
+            Pegá una dirección de Solana devnet, o buscá un nombre .sns y confirmá la dirección que
+            resuelve.
           </p>
+
           {error ? (
             <p className="text-base font-bold text-destructive" role="alert">
               {error}
@@ -276,7 +441,16 @@ export function AddTrustedRecipient({
             >
               Cancelar
             </Button>
-            <Button type="submit" className="press min-h-10 font-extrabold" disabled={isSaving}>
+            <Button
+              type="submit"
+              className="press min-h-10 font-extrabold"
+              disabled={
+                isSaving ||
+                // Alta por nombre: hasta que el servidor no resuelva, no hay
+                // dirección que confirmar, así que no hay nada que guardar.
+                (!editor.contact && isNameCandidate(address) && resolution === null)
+              }
+            >
               {isSaving ? "Guardando" : editor.contact ? "Guardar cambios" : "Guardar"}
             </Button>
           </div>
@@ -285,6 +459,17 @@ export function AddTrustedRecipient({
       {error && !editor ? (
         <p className="mt-3 text-base font-bold text-destructive" role="alert">
           {error}
+        </p>
+      ) : null}
+      {/* Fuera del formulario a propósito: el aviso es el RESULTADO del alta, y el
+          formulario ya se cerró cuando se muestra. */}
+      {duplicateOf ? (
+        <p
+          className="mt-3 rounded-xl border border-border bg-muted/40 p-3 text-sm"
+          data-testid="duplicate-disclosure"
+        >
+          Esta dirección ya está en tu lista como {duplicateOf.name}: {duplicateOf.address} ya es de
+          confianza, así que esto no cambia a quién le podés pagar.
         </p>
       ) : null}
       {pendingRemoval ? (
