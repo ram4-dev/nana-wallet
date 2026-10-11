@@ -213,7 +213,14 @@ export type RecipientPolicySeamErrorCode =
   | "NOMBRE_NO_SOPORTADO"
   | "NOMBRE_NO_ENCONTRADO"
   | "NOMBRE_AMBIGUO"
-  | "RESOLVEDOR_NO_DISPONIBLE";
+  | "RESOLVEDOR_NO_DISPONIBLE"
+  /**
+   * Task 7.1 (design §5.2): the drift check was asked about a contact that
+   * carries no alias claim at all, so there is nothing to compare. It is a
+   * refusal rather than an "unchanged" answer: silence would report a check that
+   * never happened.
+   */
+  | "CONTACTO_SIN_ALIAS";
 
 /** One bounded validation issue: the path and the code, never the value. */
 export type RecipientPolicyValidationIssue = {
@@ -472,5 +479,23 @@ export type RecipientAliasFailureCode =
 export class RecipientAliasResolutionError extends RecipientPolicySeamError {
   constructor(input: { code: RecipientAliasFailureCode; message: string }) {
     super({ code: input.code, message: input.message });
+  }
+}
+
+/**
+ * Task 7.1 (design §5.2): the drift check was asked about a contact with no
+ * alias claim, so there is nothing to compare against the registry.
+ *
+ * It is a refusal and not an `unchanged` answer on purpose: `unchanged` is a
+ * statement about a comparison that was made, and none was. Answering it here
+ * would let a caller read agreement out of a check that never happened.
+ */
+export class RecipientAliasMissingError extends RecipientPolicySeamError {
+  constructor() {
+    super({
+      code: "CONTACTO_SIN_ALIAS",
+      message:
+        "This contact was not added from an `.sns` name, so there is no name to check. Nothing was changed.",
+    });
   }
 }

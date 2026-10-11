@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import {
+  contactAliasCheckResponseSchema,
   contactSchema,
   contactPermissionSchema,
   contactRemovalPreviewQuerySchema,
@@ -131,6 +132,9 @@ const SEAM_ERROR_HTTP_STATUS: Record<string, number> = {
   SNS_DESTINO_CAMBIADO: 409,
   DIRECCION_PROPIA: 409,
   IDEMPOTENCIA_CUERPO_DISTINTO: 409,
+  // The drift check's refusal: a contact with no alias claim has nothing to
+  // check, and that is a conflict with the request, not a server fault.
+  CONTACTO_SIN_ALIAS: 409,
 };
 
 function errorReply(reply: ContactReply, error: unknown): ContactApiError {
@@ -331,6 +335,46 @@ export async function registerContactsRoutes(
             reverseDomain: outcome.value.reverseDomain,
             reverseDomainState: outcome.value.reverseDomainState,
           }),
+        };
+      } catch (error) {
+        return errorReply(reply, error);
+      }
+    },
+  );
+
+  /**
+   * Task 7.1 (design §5.2/§5.4): the explicit, user-initiated drift check.
+   *
+   * It is a POST because it writes evidence, and it is explicitly NOT on the
+   * transfer, preview or compose path: re-resolving for a payment would re-introduce
+   * a destination mutable by whoever controls the name, and failing a payment
+   * because of drift would hand that same party a denial-of-service lever over the
+   * user's own money. The drift state alone refuses nothing.
+   *
+   * All three resolver-reachable outcomes answer HTTP 200, because `state` IS the
+   * answer: an unverifiable third-party registry must not turn the user's own
+   * contact list into a failing request. The only refusals are structural — the
+   * contact does not exist (404) or carries no alias claim (409).
+   */
+  app.post(
+    "/v1/contacts/:id/check-alias",
+    async (
+      request: FastifyRequest<{ Params: { id: string } }>,
+      reply,
+    ): Promise<
+      | { ok: true; data: unknown }
+      | { ok: false; error: { code: string; message: string } }
+    > => {
+      try {
+        const userId = await dependencies.resolveUserId(request);
+        const result = await dependencies.recipientPolicy.checkAliasDrift(
+          userId,
+          request.params.id,
+        );
+        reply.code(200);
+        return {
+          ok: true,
+          data: contactAliasCheckResponseSchema.parse(result),
         };
       } catch (error) {
         return errorReply(reply, error);

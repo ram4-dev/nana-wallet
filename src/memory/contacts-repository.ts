@@ -326,6 +326,62 @@ export class ContactsRepository {
       : this.database.withUserTransaction(userId, run);
   }
 
+  /**
+   * Task 7.1 (design §5.2): write ONE drift record onto a contact's provenance,
+   * guarded by the two facts the check compared against.
+   *
+   * WHY THE GUARD IS THE WHOLE POINT
+   * --------------------------------
+   * The check reads the contact, resolves the stored alias over the network, and
+   * then writes. Between the read and the write a user can replace the address or
+   * rewrite the provenance, and an unguarded `UPDATE` would then attach a drift
+   * claim to a contact it no longer describes — evidence asserting a comparison
+   * that never happened against the row that now exists. The `address` and
+   * `provenance->>'name'` predicates make that race affect ZERO rows instead, and
+   * the caller reports that as `unavailable`/`contact_changed`, never as
+   * `changed`.
+   *
+   * Only the `drift` key is set (`jsonb_set(..., true)`), so the rest of the
+   * provenance object — the alias name, the resolution instant, the resolver
+   * identity — survives byte-for-byte. Nothing else about the contact is touched:
+   * no address, no version, no status, no `address_confirmed_at`.
+   */
+  public async writeAliasDrift(
+    userId: string,
+    recipientId: string,
+    guard: {
+      /** The address the check compared against, as read. */
+      comparedAddress: string;
+      /** The alias name the check resolved, as read. */
+      expectedName: string;
+      /** The bounded drift record: `{observedAddress, observedAt, resolver}`. */
+      drift: Record<string, unknown>;
+    },
+    client?: Queryable,
+  ): Promise<boolean> {
+    const run = async (executor: Queryable): Promise<boolean> => {
+      const result = await executor.query<{ id: string }>(
+        `UPDATE recipients
+            SET provenance = jsonb_set(provenance, '{drift}', $4::jsonb, true)
+          WHERE user_id = $1 AND id = $2 AND status = 'active'
+            AND address = $3
+            AND provenance->>'name' = $5
+        RETURNING id`,
+        [
+          userId,
+          recipientId,
+          guard.comparedAddress,
+          JSON.stringify(guard.drift),
+          guard.expectedName,
+        ],
+      );
+      return result.rows.length > 0;
+    };
+    return client
+      ? run(client)
+      : this.database.withUserTransaction(userId, run);
+  }
+
   /** Owner-scoped projection read including archived contacts for mutation replies. */
   public async read(
     userId: string,

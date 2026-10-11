@@ -33,6 +33,7 @@ function project(record: {
   address: string;
   network?: "solana-devnet" | null;
   version: number;
+  provenance?: Record<string, unknown> | null;
 }): RecipientContactRecord {
   return {
     id: record.id,
@@ -41,6 +42,9 @@ function project(record: {
     address: record.address,
     network: record.network ?? null,
     version: record.version,
+    // Task 7.1: the drift check reads the alias claim from here. It is carried
+    // unchanged — the adapter projects, it never interprets provenance.
+    provenance: record.provenance ?? {},
   };
 }
 
@@ -113,6 +117,24 @@ export function createRecipientContactMutationPort(input: {
     async readActive(userId: string, contactId: string, client?: Queryable) {
       const record = await input.contacts.readActive(userId, contactId, client);
       return record ? project(record) : null;
+    },
+
+    /**
+     * Task 7.1 (design §5.2): the guarded drift evidence write, straight through
+     * to the repository's single `UPDATE`. The guard is not re-implemented here;
+     * one definition of it is the point.
+     */
+    async writeAliasDrift(
+      userId: string,
+      contactId: string,
+      guard: {
+        comparedAddress: string;
+        expectedName: string;
+        drift: Record<string, unknown>;
+      },
+      client?: Queryable,
+    ) {
+      return input.contacts.writeAliasDrift(userId, contactId, guard, client);
     },
   };
 }

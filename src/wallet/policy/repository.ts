@@ -81,7 +81,13 @@ export type PolicyIntentState =
   | "superseded"
   | "failed";
 
-/** The full `recipient_policy_audit.event` CHECK vocabulary (migration 015). */
+/**
+ * The full `recipient_policy_audit.event` CHECK vocabulary (migration 015, widened
+ * by exactly one value in 017). `alias_destination_changed` is task 7.1's drift
+ * event: the stored alias now resolves elsewhere and nothing about the contact
+ * was changed. It is deliberately NOT `drift_repaired`, which asserts the
+ * opposite (the reconciler converged the policy).
+ */
 export type PolicyAuditEvent =
   | "intent_recorded"
   | "revocation_disclosed"
@@ -98,7 +104,8 @@ export type PolicyAuditEvent =
   | "binding_invalidated"
   | "proposal_published"
   | "proposal_consumed"
-  | "evidence_refused";
+  | "evidence_refused"
+  | "alias_destination_changed";
 
 export type ContactProposalKind = "contact" | "transfer";
 export type ContactProposalAction = PolicyIntentAction;

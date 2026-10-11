@@ -1789,3 +1789,148 @@ is untouched by this task and no behaviour file was left modified by the mutatio
 One work-unit commit for task 6.5: the eval file, this entry and the `6.5` checkbox. Nothing in `src/`
 and nothing in `apps/`. `Review Workload Forecast: size-exception` (the standing note at the top of
 `tasks.md`): this worktree does not push and does not open a PR.
+
+---
+
+## Task 7.1 — the explicit drift check: endpoint, guarded write, audit event, never-follow (appended; the earlier entries are untouched)
+
+Status: complete. One work-unit commit. The implementation in `src/` was written by an earlier run
+that was killed by the time cap **after** writing it and **before** verifying or committing it; it was
+**not adopted**. Every claim below was re-derived from the diff and re-verified from the persisted
+rows, and two clauses the earlier draft got wrong were strengthened (see "What was NOT adopted").
+
+### What the unit is
+
+`POST /v1/contacts/:id/check-alias` (`src/api/contacts.ts`) → `RecipientPolicyService.checkAliasDrift`
+(`src/wallet/policy/service.ts`) → one guarded `UPDATE` (`ContactsRepository.writeAliasDrift`,
+`src/memory/contacts-repository.ts`) plus one append-only audit row.
+
+Answer shape: `{state:'unchanged'|'changed'|'unavailable', storedAddress, observedAddress?, reason?}`
+at HTTP **200 for the three resolver-reachable outcomes**, because `state` is the answer and a
+third-party registry's bad day must not turn the user's own contact list into a failing request. The
+only refusals are structural: `404 CONTACTO_NO_ENCONTRADO` (no such contact) and
+`409 CONTACTO_SIN_ALIAS` (the contact carries no alias claim, so nothing was compared — answering
+`unchanged` there would report a comparison that never happened).
+
+### The guard, and why it is the whole point
+
+The check reads the contact, resolves the stored alias **over the network**, and then writes. Between
+the read and the write the user can replace the address or rewrite the provenance, and an unguarded
+`UPDATE` would attach a drift claim to a contact it no longer describes — evidence asserting a
+comparison that never happened against the row that now exists. The single statement carries both
+predicates:
+
+```sql
+UPDATE recipients
+   SET provenance = jsonb_set(provenance, '{drift}', $4::jsonb, true)
+ WHERE user_id = $1 AND id = $2 AND status = 'active'
+   AND address = $3                  -- the address the check compared against
+   AND provenance->>'name' = $5      -- the alias the check resolved
+RETURNING id
+```
+
+Zero rows ⇒ the caller reports `unavailable`/`contact_changed`, **never** `changed`. Only the `drift`
+key is set (`jsonb_set(..., true)`), so the alias claim survives byte-for-byte; no `address`, no
+`version`, no `status`, no `address_confirmed_at`.
+
+### RED, and how it was obtained (honest statement)
+
+The implementation was **not mine**, so RED is produced **by reversion** and it is **weaker evidence**
+than a true RED-first cycle: a reversion proves the tests fail without the code, not that the code was
+written to make a failing test pass.
+
+```text
+reversion: "/v1/contacts/:id/check-alias" → "/v1/contacts/:id/check-alias-REVERSION" in src/api/contacts.ts
+npx vitest run tests/integration/api-contact-check-alias.test.ts
+  → Test Files 1 failed (1); Tests 8 failed (8)
+  × positive control: an unchanged name answers 200 and writes nothing at all
+  × a moved name records the drift, one audit row, and changes nothing else
+  × a name that no longer exists is reported honestly as changed
+  × an unreachable resolver is unavailable, never changed and never 'still fine'
+  × an unwired deployment answers unavailable instead of emulating a check
+  × refuses a contact with no alias claim, and reports a missing contact as missing
+  × with no ready wallet the drift record is still written and no audit row is attempted
+  × is never consulted by a payment: the composed allowlist still carries the frozen address
+restored: 1 occurrence of the original route path
+```
+
+The **positive control fails first** in that run, which is the point of putting it first: the suite is
+not green because nothing is wired.
+
+### Mutation evidence — each guard, removed, failing by name
+
+The two SQL predicates are the guard under test. Each was neutralised to a tautology (the parameter
+stays used and typed, so the mutation isolates the predicate and not the statement's validity),
+observed, and restored byte-for-byte (`git diff --stat` back to `+56` for the file).
+
+| Mutation (in `ContactsRepository.writeAliasDrift`) | Result | Named failure |
+| --- | --- | --- |
+| `AND address = $3` → `AND (address = $3 OR address <> $3)` | 1 failed / 1 passed | `a concurrent address edit makes the drift write a no-op, reported as unavailable` |
+| `AND provenance->>'name' = $5` → `AND (provenance->>'name' = $5 OR provenance->>'name' <> $5)` | 1 failed / 1 passed | `a concurrent provenance rewrite makes the drift write a no-op too` |
+
+Both are load-bearing and **orthogonal**: each mutation leaves the other case green, so neither test is
+passing on the strength of the other predicate. A guard that produced no failure would be unreachable;
+neither did.
+
+Nothing in these assertions inspects a JavaScript argument array: every one of them reads the persisted
+row (`recipients.address`, `recipients.version`, `recipients.provenance`, `recipient_policy_state`,
+`delegated_grants`) or the persisted audit row (`SELECT event FROM recipient_policy_audit WHERE
+detail->>'contactId' = $2`). That was the exact false-green an earlier unit hit.
+
+### What was NOT adopted from the killed run, and what was fixed
+
+1. **Two vacuous clauses.** The earlier draft asserted `stateRows()` and `grantRows()` were unchanged.
+   For a fresh private user with no grant, `toEqual([])` is a statement about an empty set — it would
+   have passed against a check that revoked every grant in the database. The suite now provisions one
+   `delegated_grants` row (with a `provider_policy_id`, since the drift path must not touch it) and
+   asserts non-vacuity before the negative claims: `expect(beforeState).toHaveLength(1)` and
+   `expect(beforeGrants.length).toBeGreaterThan(0)`. Both passed on the re-run, so the "nothing else
+   moved" claims are now facts about real rows.
+2. The rest of the draft **was** verified and kept: the route, the refusal, the three states, the
+   guarded statement, the audit boundary, and the never-follow assertions all hold against the real
+   database.
+
+### Verify
+
+```text
+npm run lint                 → clean (eslint src tests --max-warnings=0)
+npm run typecheck            → clean (tsc -p tsconfig.test.json --noEmit)
+npx vitest run tests/integration/api-contact-check-alias.test.ts tests/integration/recipient-drift.test.ts
+  → Test Files 2 passed (2); Tests 10 passed (10)
+```
+
+The task's own verify line (`docker compose up -d db && npm run db:migrate && npm test -- …`) is **not
+runnable in this worktree as written**: the DB is built the CI way from the `supabase/` chain, so
+`db:migrate` fails on `relation "conversations" already exists` (pre-existing, recorded in earlier
+entries). The database was already up on port 55470 and the suites ran against it. The full
+`npm run lint && … && npm test` gate is 8.1's job.
+
+### Guarantees, with the evidence for each
+
+- **Never auto-follows.** The only mutation on this path is the guarded `provenance` write. The
+  statement's `SET` clause has no `address`; there is no `desired_revision` advance, no revision bump,
+  no recomposition, no grant write. Evidence: `recipients.address = 3aHrqufW…` and
+  `recipients.version` unchanged after a check that observed `BsNFJHm8…`, with
+  `recipient_policy_state` and every `delegated_grants` row identical (`toEqual` against a non-vacuously
+  populated snapshot).
+- **Never blocks a payment.** Nothing on the transfer, preview or compose path reads
+  `provenance.drift`, and the composed allowlist is built from `recipients.address`. Evidence in this
+  unit: a contact with a recorded drift is still selected by the same address predicate the composer
+  uses. The **structural** proof is task 7.3.
+
+### What remains unproven
+
+- No live resolution: the resolver is injected (`sophie.sns` → the fixture address). Slice 8.2 owns the
+  live devnet evidence; a live RPC in a test would be flaky by construction.
+- The `reason` string vocabulary (`contact_changed`, `destination_moved`, `name_no_longer_exists`,
+  `resolver_unavailable`, the failure `kind`) is returned to the client but is not part of a frozen
+  client contract yet; 7.2 consumes `state` only.
+- Non-`not_found` resolver failures are all reported `unavailable`. Only `unreachable` is exercised;
+  `malformed` / `unsupported` / `ambiguous` share the branch by construction, not by test.
+
+### Workload / boundary
+
+One work-unit commit for task 7.1: `src/api/contacts.ts`, `src/memory/contact-policy-adapter.ts`,
+`src/memory/contacts-repository.ts`, `src/wallet/policy/{errors,repository,service}.ts`, the two new
+integration suites, this entry and the `7.1` checkbox. `Review Workload Forecast: size-exception` (the
+standing note at the top of `tasks.md`): this worktree does not push and does not open a PR.

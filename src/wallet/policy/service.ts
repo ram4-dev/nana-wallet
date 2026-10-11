@@ -60,6 +60,7 @@ import {
 import {
   PolicyCompositionRefusalError,
   RecipientAliasDestinationChangedError,
+  RecipientAliasMissingError,
   RecipientAliasResolutionError,
   type RecipientAliasFailureCode,
   RecipientContactMissingError,
@@ -74,6 +75,7 @@ import {
 } from "./errors.js";
 import { mutationBodyHash } from "./request-hash.js";
 import type { SnsResolution, SnsResolveFailure, SnsResolver } from "../sns/resolver.js";
+import { SNS_NETWORKS } from "../sns/resolver.js";
 import { ALIAS_NAME_MAX_LENGTH } from "../../contracts/http.js";
 import {
   acquirePolicyLease,
@@ -295,6 +297,14 @@ export type RecipientContactRecord = {
   address: string;
   network: typeof SOLANA_POLICY_NETWORK | null;
   version: number;
+  /**
+   * Task 7.1 (design §5.2): the durable per-contact provenance, carried on the
+   * read so the drift check can compare the stored alias name against the
+   * registry. Optional so an existing port implementation that does not project
+   * it stays valid; an absent value is read as "no alias claim", never as an
+   * agreement.
+   */
+  provenance?: Record<string, unknown>;
 };
 
 /** The create shape the port writes. The network is always the derived scope. */
@@ -387,6 +397,29 @@ export type RecipientContactMutationPort = {
     contactId: string,
     client?: Queryable,
   ): Promise<RecipientContactRecord | null>;
+  /**
+   * Task 7.1 (design §5.2): the ONE guarded drift write.
+   *
+   * It returns `false` when the guard matched no row, which is the race the
+   * predicate exists for: the contact's address or its provenance name was
+   * rewritten between the read and this write, so the drift claim is SKIPPED
+   * rather than attached to a contact it no longer describes. The caller reports
+   * that as `unavailable`, never as `changed`.
+   *
+   * Optional on the port so a double that only serves the mutation paths stays
+   * valid; a deployment without it reports the check as unavailable instead of
+   * claiming a record nobody wrote.
+   */
+  writeAliasDrift?(
+    userId: string,
+    contactId: string,
+    guard: {
+      comparedAddress: string;
+      expectedName: string;
+      drift: Record<string, unknown>;
+    },
+    client?: Queryable,
+  ): Promise<boolean>;
 };
 
 /**
@@ -754,6 +787,30 @@ type RemovalPlan = {
 export type RecipientAliasProvenance = Record<string, unknown>;
 
 /**
+ * The drift check's answer (task 7.1, design §5.2). `state` is the answer, not an
+ * error: an unreachable registry is UNKNOWN and must not turn the user's contact
+ * list into a failing request, and a registry that answered "no such name" is a
+ * fact about the world, not a fault of the caller.
+ *
+ * `observedAddress` is present only when a resolution actually returned an
+ * address. Its absence is meaningful: nothing was observed.
+ */
+export type RecipientAliasDriftCheck = {
+  state: "unchanged" | "changed" | "unavailable";
+  storedAddress: string;
+  observedAddress?: string;
+  reason?: string;
+};
+
+/**
+ * The bounded resolver identity recorded in `provenance.drift`. It comes from the
+ * resolver's own closed network map, so the evidence names the same resolver the
+ * address was frozen from instead of a hand-written string that could drift.
+ */
+const ALIAS_RESOLVER_ID =
+  SNS_NETWORKS[SOLANA_POLICY_NETWORK]?.resolverId ?? "unknown";
+
+/**
  * One resolver failure mapped onto its typed seam code (task 5.2, design
  * §1.3/§4.1). The union member is the whole input, so a new taxonomy entry is a
  * type error here rather than a silently guessed status.
@@ -1010,6 +1067,177 @@ export class RecipientPolicyService {
       throw new RecipientAliasDestinationChangedError();
     }
     return outcome.value;
+  }
+
+  /**
+   * Task 7.1 (design §5.2/§5.3/§5.4): the explicit drift check.
+   *
+   * WHAT IT DETECTS: the stored alias claim now resolves to a different address
+   * than the one frozen at add time, or no longer resolves at all. It records that
+   * as evidence (`provenance.drift` plus one append-only audit row) and returns
+   * the comparison.
+   *
+   * WHAT IT MUST NEVER DO, and why the shape of this method is the guarantee:
+   *
+   *   1. **Never follow the name.** There is no write of `recipients.address`
+   *      anywhere on this path, no `desired_revision` advance, no revision bump,
+   *      no recomposition, no grant revocation and no `delegated_grants` write.
+   *      The only mutation is the guarded `provenance` update, reached through the
+   *      contact port. If the drift could rewrite the destination, consent would
+   *      be to a NAME — mutable by whoever controls it — instead of an address.
+   *   2. **Never block a payment.** Nothing here is consulted by the transfer,
+   *      preview or compose path (task 7.3 asserts that structurally, and the
+   *      composed allowlist is built from `recipients.address`). The tempting
+   *      "fail closed on drift" would hand a stranger who transfers the name a
+   *      denial-of-service lever over the user's own payments.
+   *
+   * A contact with no alias claim is refused rather than answered `unchanged`: an
+   * "unchanged" reply would report a comparison that never happened.
+   */
+  public async checkAliasDrift(
+    userId: string,
+    contactId: string,
+  ): Promise<RecipientAliasDriftCheck> {
+    const contact = await this.contacts.readActive(userId, contactId);
+    if (!contact) throw new RecipientContactMissingError();
+
+    const provenance = contact.provenance ?? {};
+    const name =
+      typeof provenance.name === "string" && provenance.name.length > 0
+        ? provenance.name
+        : null;
+    if (provenance.source !== "sns" || !name) {
+      throw new RecipientAliasMissingError();
+    }
+
+    const resolver = this.aliases;
+    if (!resolver) {
+      // No resolver wired is UNKNOWN, never "still fine".
+      return {
+        state: "unavailable",
+        storedAddress: contact.address,
+        reason: "resolver_unavailable",
+      };
+    }
+
+    const outcome = await resolver.resolve(name);
+    if (!outcome.ok) {
+      if (outcome.failure.kind === "not_found") {
+        // The registry ANSWERED and the name now leads nowhere. That is drift,
+        // reported honestly as such rather than as "could not check".
+        return this.recordAliasDrift(userId, contact, name, {
+          reason: "name_no_longer_exists",
+        });
+      }
+      // unreachable / resolver_misconfigured / malformed / unsupported /
+      // ambiguous: the check could not establish a destination, so it must not
+      // claim the destination either moved or did not.
+      return {
+        state: "unavailable",
+        storedAddress: contact.address,
+        reason: outcome.failure.kind,
+      };
+    }
+
+    if (outcome.value.address === contact.address) {
+      // Nothing moved: no write of any kind, including no "all clear" record.
+      return { state: "unchanged", storedAddress: contact.address };
+    }
+    return this.recordAliasDrift(userId, contact, name, {
+      observedAddress: outcome.value.address,
+      reason: "destination_moved",
+    });
+  }
+
+  /**
+   * The drift evidence write (design §5.2/§5.3): one guarded `UPDATE` on the
+   * contact's `provenance`, plus one append-only audit row when a ready Solana
+   * wallet exists to hang the row on.
+   *
+   * The guarded `UPDATE` and the audit row share one transaction: a drift record
+   * without its audit row, or an audit row without the record, would be evidence
+   * that disagrees with itself.
+   *
+   * Zero rows from the guard is the concurrency case the predicate exists for and
+   * is reported as `unavailable`/`contact_changed` — never as `changed`, because
+   * the comparison no longer describes the row.
+   *
+   * STATED BOUNDARY (design §5.2): `recipient_policy_audit.wallet_id` is NOT NULL,
+   * so the audit row needs a ready Solana wallet. An alias-origin contact can exist
+   * without one (the create path writes it saved-and-not-enabled). In that case the
+   * drift state is still returned and `provenance.drift` is still written, so the
+   * evidence is not lost; only the append-only trail is skipped, and it is skipped
+   * rather than invented.
+   */
+  private async recordAliasDrift(
+    userId: string,
+    contact: RecipientContactRecord,
+    name: string,
+    input: { observedAddress?: string; reason: string },
+  ): Promise<RecipientAliasDriftCheck> {
+    const writeAliasDrift = this.contacts.writeAliasDrift?.bind(this.contacts);
+    if (!writeAliasDrift) {
+      return {
+        state: "unavailable",
+        storedAddress: contact.address,
+        reason: "drift_write_unavailable",
+      };
+    }
+
+    const drift: Record<string, unknown> = {
+      observedAddress: input.observedAddress ?? null,
+      observedAt: new Date().toISOString(),
+      resolver: ALIAS_RESOLVER_ID,
+    };
+
+    const written = await this.database.withUserTransaction(userId, async (client) => {
+      const updated = await writeAliasDrift(
+        userId,
+        contact.id,
+        {
+          comparedAddress: contact.address,
+          expectedName: name,
+          drift,
+        },
+        client,
+      );
+      if (!updated) return false;
+
+      const wallet = await this.repository.readReadySolanaWallet(userId, client);
+      if (wallet) {
+        await this.repository.appendPolicyAudit(
+          userId,
+          {
+            walletId: wallet.walletId,
+            event: "alias_destination_changed",
+            reason: input.reason,
+            detail: {
+              contactId: contact.id,
+              name,
+              storedAddress: contact.address,
+              observedAddress: input.observedAddress ?? null,
+            },
+          },
+          client,
+        );
+      }
+      return true;
+    });
+
+    if (!written) {
+      return {
+        state: "unavailable",
+        storedAddress: contact.address,
+        reason: "contact_changed",
+      };
+    }
+
+    return {
+      state: "changed",
+      storedAddress: contact.address,
+      ...(input.observedAddress ? { observedAddress: input.observedAddress } : {}),
+      reason: input.reason,
+    };
   }
 
   /**
