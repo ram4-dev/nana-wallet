@@ -175,6 +175,38 @@ export class ContactActionService {
         });
     const proposalHash = hash({ action, contactId, expectedVersion: input.expectedVersion ?? null, payload });
     return this.database.withUserTransaction(input.userId, async (client) => {
+      // THE WRITE PATH HAS TO AGREE WITH THE READ PATH.
+      //
+      // `contact_action_proposals_one_open_idx` is `(user_id, conversation_id)
+      // WHERE status = 'open'` and carries NO `expires_at` clause, and nothing in
+      // this codebase ever WRITES `status='expired'` — expiry is only ever a
+      // predicate. So a window whose TTL ran out while its `status` was still
+      // `'open'` kept the partial unique index occupied for the rest of the row's
+      // life, and every later `stage` for that conversation was refused.
+      //
+      // `readOpen` already treats that same row as gone (`expires_at > now()` is
+      // one of its predicates, and the conditional consume requires it too). The
+      // database was therefore disagreeing with the code's own reading of the
+      // world, and the ordinary manual-testing shape — stage, then not confirm
+      // within the five-minute TTL — locked the conversation PERMANENTLY.
+      //
+      // `expires_at <= now()` is the unambiguous half of the cleanup, and it cannot
+      // free a live window: a live window IS `expires_at > now()`, which is exactly
+      // what `readOpen`, `markPublished` and the conditional consume all require.
+      // A row that never crossed its TTL is untouched, so the one-open rule is not
+      // weakened — the second live `stage` still raises
+      // `ContactActionProposalConflictError`.
+      //
+      // `published_at` is deliberately NOT part of this predicate: the recorded
+      // defect was a PUBLISHED, expired row, and a window that ran out is dead
+      // whether or not its card was ever delivered. `supersedeUnpublished` keeps
+      // its own, narrower `published_at IS NULL` predicate for the torn-card case
+      // that only the transport can witness.
+      await client.query(
+        `UPDATE contact_action_proposals SET status='expired'
+          WHERE user_id=$1 AND conversation_id=$2 AND status='open' AND expires_at <= now()`,
+        [input.userId, conversationId],
+      );
       const result = await client.query<ProposalRow>(
         `INSERT INTO contact_action_proposals
           (user_id, conversation_id, action, contact_id, contact_version, address, revoked_grant_ids, version, proposal_hash, origin, expires_at, payload)
@@ -292,8 +324,14 @@ export class ContactActionService {
    * about what the user was shown. But the row is still `status='open'`, and the
    * partial unique index `contact_action_proposals_one_open_idx` would make the
    * retry for the same conversation fail with
-   * `ContactActionProposalConflictError` until it was superseded or expired —
-   * i.e. the user could not fix a torn card without waiting out the TTL.
+   * `ContactActionProposalConflictError` until it was superseded — i.e. the user
+   * could not fix a torn card without waiting out the TTL.
+   *
+   * Waiting out the TTL was never a fix either: nothing wrote `status='expired'`,
+   * so the index stayed occupied for the rest of the row's life. That half is
+   * handled inside `stage`, which now supersedes the window it finds already dead
+   * (`expires_at <= now()`) in the same transaction as its insert. This method
+   * remains the half only the transport can witness: the delivery ATTEMPT failed.
    *
    * `published_at IS NULL` is the load-bearing part of the predicate, and it is
    * what makes calling this safe: §8.2 stamps `published_at` BEFORE the arbiter

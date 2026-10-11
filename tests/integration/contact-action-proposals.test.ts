@@ -147,6 +147,98 @@ suite("contact action proposals", () => {
     expect(other.proposalVersion).toBe(1);
   });
 
+  it("still rejects a second proposal while the first window is LIVE (only dead rows may be freed)", async () => {
+    const userId = await provisionUser();
+    const conversationId = randomUUID();
+    const actions = service(database);
+
+    // The default service TTL is five minutes, so this row is a live window — never
+    // published, and still a window: `expires_at > now()` is what makes it one, and
+    // `published_at` plays no part in the one-open rule. This is the guard that the
+    // expired-row cleanup below does not over-reach into the invariant it protects.
+    const live = await actions.stage({ userId, conversationId, origin: "text", action: "create", name: "Sofía" });
+    await expect(
+      actions.stage({ userId, conversationId, origin: "text", action: "create", name: "Lucas" }),
+    ).rejects.toBeInstanceOf(ContactActionProposalConflictError);
+
+    // The live row was left exactly as it was: nothing superseded, nothing expired.
+    const stored = await database.query<{ status: string }>(
+      "SELECT status FROM contact_action_proposals WHERE id = $1",
+      [live.proposalId],
+    );
+    expect(stored.rows.map((row) => row.status)).toEqual(["open"]);
+  });
+
+  it("frees a conversation whose open window already expired, so the retry stages instead of colliding", async () => {
+    const userId = await provisionUser();
+    const conversationId = randomUUID();
+
+    // A negative TTL persists the row already past `expires_at`. This is the shape
+    // manual testing produces BY NOTHING MORE than staging and not confirming
+    // within the TTL: `status` is still `'open'`.
+    const dead = await new ContactActionService(database, -1_000).stage({
+      userId, conversationId, origin: "text", action: "create", name: "Sofía",
+    });
+
+    // Positive control: the row exists and really is `open`. The partial unique
+    // index has no `expires_at` clause, so this is the row that locks the
+    // conversation — the collision asserted below is not a missing fixture.
+    const stored = await database.query<{ status: string; published_at: Date | string | null }>(
+      "SELECT status, published_at FROM contact_action_proposals WHERE id = $1",
+      [dead.proposalId],
+    );
+    expect(stored.rows.map((row) => [row.status, row.published_at])).toEqual([["open", null]]);
+
+    // The READ path already treats it as gone…
+    expect(await service(database).readOpen(userId, conversationId)).toBeNull();
+
+    // …so the WRITE path has to agree. Before the fix this exact second stage
+    // rejected with `ContactActionProposalConflictError`, and kept rejecting for as
+    // long as the row lived: the conversation was locked permanently, because
+    // nothing ever writes `status='expired'` either.
+    const retry = await service(database).stage({
+      userId, conversationId, origin: "text", action: "create", name: "Sofía",
+    });
+    expect(retry.proposalVersion).toBe(1);
+    expect(retry.status).toBe("open");
+    expect(retry.proposalId).not.toBe(dead.proposalId);
+
+    // One open row, one terminal dead row — never two open windows.
+    const rows = await database.query<{ id: string; status: string }>(
+      `SELECT id, status FROM contact_action_proposals
+        WHERE user_id = $1 AND conversation_id = $2 ORDER BY created_at`,
+      [userId, conversationId],
+    );
+    expect(rows.rows.map((row) => [row.id === dead.proposalId ? "dead" : "retry", row.status])).toEqual([
+      ["dead", "expired"],
+      ["retry", "open"],
+    ]);
+  });
+
+  it("frees the conversation of a window that expired after its card was published", async () => {
+    const userId = await provisionUser();
+    const conversationId = randomUUID();
+    const actions = service(database);
+
+    // The recorded defect shape: the card WAS delivered and then the window ran
+    // out. `markPublished` requires an unexpired row, so the row is published
+    // first and aged afterwards.
+    const published = await actions.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    expect(await actions.markPublished(userId, published.proposalId, published.proposalVersion)).not.toBeNull();
+    await database.query(
+      "UPDATE contact_action_proposals SET expires_at = now() - interval '1 second' WHERE id = $1",
+      [published.proposalId],
+    );
+
+    // `status='open'`, `published_at IS NOT NULL`, `expires_at < now()`: the read
+    // path reports no open proposal, so the write path may not refuse one either.
+    expect(await actions.readOpen(userId, conversationId)).toBeNull();
+
+    const retry = await actions.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    expect(retry.status).toBe("open");
+    expect(retry.proposalId).not.toBe(published.proposalId);
+  });
+
   it("refuses to consume an expired proposal", async () => {
     const userId = await provisionUser();
     const conversationId = randomUUID();

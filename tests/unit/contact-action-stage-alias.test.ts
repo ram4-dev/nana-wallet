@@ -8,6 +8,11 @@
  * A fake `DatabaseClient` records the bound parameters, and the fake row echoes
  * them back the way `map()` reads a real one. Every negative assertion is
  * preceded by a positive control.
+ *
+ * The fake DISCRIMINATES the statements it is asked to run: `stage` now cleans up
+ * an already-dead window inside its transaction before it inserts (its own
+ * UPDATE), and only the INSERT returns a row. Echoing the INSERT's row shape back
+ * for the UPDATE would be the double inventing a row the database never returns.
  */
 import { describe, expect, it } from "vitest";
 
@@ -28,6 +33,11 @@ const EVIDENCE = {
 
 type Insert = { text: string; values: unknown[] };
 
+/** The statement kind the service sends, read off the statement itself. */
+function kind(statement: Insert): string {
+  return statement.text.trimStart().split(/\s+/, 1)[0] ?? "";
+}
+
 /**
  * The value bound to one slot of the INSERT's `VALUES` tuple.
  *
@@ -44,12 +54,18 @@ function boundValue(insert: Insert, slot: number): unknown {
 }
 
 function service() {
+  const statements: Insert[] = [];
   const inserts: Insert[] = [];
   const database = {
     withUserTransaction: async (_userId: string, operation: (client: never) => Promise<unknown>) =>
       operation({
         query: async (text: string, values: unknown[] = []) => {
-          inserts.push({ text, values });
+          const statement = { text, values };
+          statements.push(statement);
+          // Only the INSERT owns a returned row. The stage-time cleanup of a dead
+          // window is an UPDATE with nothing to return.
+          if (kind(statement) !== "INSERT") return { rows: [], rowCount: 0 };
+          inserts.push(statement);
           return {
             rows: [
               {
@@ -73,7 +89,7 @@ function service() {
         },
       } as never),
   } as never;
-  return { actions: new ContactActionService(database), inserts };
+  return { actions: new ContactActionService(database), inserts, statements };
 }
 
 describe("the alias arm of ContactActionService.stage", () => {
@@ -125,6 +141,30 @@ describe("the alias arm of ContactActionService.stage", () => {
     expect(proposal.address).toBeNull();
     expect(boundValue(inserts[0]!, 5)).toBeNull();
     expect(proposal.payload).toEqual({ name: "Marta", addressSource: "review_required" });
+  });
+
+  it("frees an expired window BEFORE it inserts, and only an expired one", async () => {
+    const { actions, statements } = service();
+    await actions.stage({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      origin: "text",
+      action: "create",
+      name: "Marta",
+    });
+
+    // ORDER IS THE POINT: the cleanup runs in the SAME transaction and BEFORE the
+    // insert the partial unique index judges. After it, the insert has already
+    // collided and there is nothing left to clean.
+    expect(statements.map(kind)).toEqual(["UPDATE", "INSERT"]);
+    const cleanup = statements[0]!;
+    // `status='open' AND expires_at <= now()` and NOTHING ELSE: a LIVE window
+    // (`expires_at > now()`) is exactly what the one-open rule protects, and
+    // `published_at` must not appear, so a delivered card cannot be freed here.
+    expect(cleanup.text).toMatch(/status='open' AND expires_at <= now\(\)/);
+    expect(cleanup.text).not.toMatch(/published_at/);
+    // The cleanup is scoped to the owner AND the conversation, like the index.
+    expect(cleanup.values).toEqual([USER_ID, CONVERSATION_ID]);
   });
 
   it("refuses an address that arrived without alias evidence", async () => {
