@@ -353,3 +353,81 @@ unit") is recorded, not hidden.
   positive control first — that is the right shape.
 - **Nothing in this pass mutated production code, tests, migrations, or containers.** The only writes are
   this report and the appended pointer in `apply-progress.md`.
+
+---
+
+## Re-verification at `1fda587` (independent `sdd-verify`, **not** the receipt-driven native review)
+
+Added 2026-10-11. This report was written against an older tree and had not been re-derived since
+`ca4fdb2`. This pass re-verified the two agent fixes that landed **after** it and reconfirmed its
+findings by spot-check. **RDD is off** (`gentle-ai review mode status` → `off (decided by
+clone_local)`), so no native review was started, enabled or attempted — that switch is user-owned
+and this document is not a receipt.
+
+### The two post-verification fixes
+
+**Fix A — `6ba98f9` (`x-opencode-session`).** The header is really sent, per conversation, scoped to
+the `opencode-go` provider rather than to global fetch (`src/agent/model.ts:36-40`,
+`src/agent/wallet-agent.ts:523`). Verified. **The commit's "every agent turn failed" is an
+over-reach**: the LLM-dependent text turn is the accurate scope. Three surfaces were never affected
+— deterministic turns short-circuit before the agent (`src/agent/wallet-agent.ts:518` →
+`handleDeterministicTurn`), cancel/confirm/no-pending turns return without a model call
+(`:368-450`), and **voice/realtime never used this provider at all** (`src/livekit/create-agent-session.ts:61`
+builds a `RealtimeModel`). The failure surface was `agent_error` → sanitized to `internal_error`
+(`src/conversations/service.ts:1941-1943`). The header alone is **not sufficient**: the same turn
+also needs Fix B and a valid API key.
+
+**Fix B — `337122b` (`send_token` schema).** Proven empirically, not just by reading: pre-fix the
+union serialized to top-level keys `$schema,anyOf` with `type = undefined` (matching the live
+`got 'type: null'`); post-fix it carries `type: "object"` while both branches stay objects
+(`src/agent/definition.ts:245-248`, handed to the provider at `src/agent/wallet-agent.ts:195`).
+Nothing was narrowed: 12/12 in `tests/unit/agent-tool-schema-object.test.ts`.
+
+**"Fix B was masked by Fix A" — plausible only, NOT provable.** The two defects sit on different
+layers (request header vs request body), so **no in-repo code path can order them**; the ordering is
+the gateway's. The support is one recorded live observation in `apply-progress.md:6450,6501`. The
+separate finding that Fix B is necessary, however, stands **independently** of that ordering. Also
+worth knowing: **Fix A is invisible to the tests** — the gateway double returns HTTP 200 regardless
+of headers, so the Fix B suite would pass with A reverted. The coupling is real only against the
+live gateway.
+
+### Corrected verdict — requirement #22 *Version-bound recipient lifecycle tools in both agents*: **PASS → PARTIAL**
+
+**CRITICAL / candidate.** The tool **declarations are genuinely shared** (`src/agent/definition.ts:587,593,599,605`
+from the one definition) — which is exactly what this report originally checked. But in the text
+agent **every one of them returns the fail-closed constant**, so the requirement is satisfied
+**structurally and not functionally**. Independently confirmed: `grep -rn contactActions src/` → 9
+hits, **zero** in `src/agent/wallet-agent.ts`; `HandleMessageOptions` (`:131-137`) has
+`grantService` — the exact precedent for such a port — but no `contactActions`; the context built at
+`:483-507` passes one and not the other.
+
+**"One missing wire" or "never built"?** Two pieces are missing for text: (a) a text-side
+`ContactActionPort` implementation wired into `handleMessage`, and (b) **delivery of the
+proposal/card to the text user** — nothing in the text surface ever surfaces the `proposalId` that
+the (origin-agnostic, reusable) review routes are keyed by. So the tool surface is one wire away;
+**the user-facing half was never built for text.** The app screen is **not** that route: it uses no
+proposals at all (`apps/nana-wallet/src/lib/api.ts:483` → `src/api/contacts.ts:253-255`
+`recipientPolicy.create(..., { origin: "screen" })`), and the card routes it does use only
+read/replace the address of an **already-existing** proposal (`src/api/contact-actions.ts:164,190`).
+
+### New findings
+
+| id | severity | causality | finding |
+| --- | --- | --- | --- |
+| D2 | WARNING | candidate | This report's C1 citations are **stale**: 5.1 is now `[x]` (`tasks.md:163`), and the "Freeze the candidate" row it named has been superseded by the two parent-owned rows (`tasks.md:224,225`). The blocking condition itself still holds. |
+| D3 | SUGGESTION | candidate | The `globalThis.fetch` harness wrapper recorded as deviation-1 of `apply-progress.md` is now **redundant**; the source fix supersedes it. |
+| D4 | SUGGESTION | **follow-up — pre-existing, not this change** | `evals/agent/model-factory.ts:37-44` builds the `opencode-go` provider **without** `x-opencode-session`, so the eval harness still cannot reach the gateway honestly. Recorded, not attributed to this change. |
+
+### Resolved ambiguity worth recording
+
+The pristine baseline failure named `send_token` and Fix B are **different objects**: the baseline
+entry is the **voice/realtime** tool binding (`src/livekit/realtime-tools/`) while Fix B changes the
+**AI-SDK** `inputSchema` on the text path. Fix B cannot fix the baseline entry, so that entry is
+**not stale on the strength of Fix B** — and no full suite was re-run in this pass, so neither entry's
+current state is claimed here.
+
+### What remains unproven after this pass
+
+The two live gateway rejections (recorded, not reproduced — they need a secret-bearing network
+call); every other `[x]` row; the 6 baseline and ~39 lease-contention failures; and the unchanged
+#9 / #26 reasoning. **Do not read this addendum as a green suite.
