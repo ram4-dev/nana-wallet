@@ -47,6 +47,43 @@ function aliasPayload(alias: ContactAliasEvidence): Record<string, unknown> {
   };
 }
 
+/**
+ * The payload of the version that supersedes `original`, built explicitly PER ARM.
+ *
+ * The spread form this replaces — `{...original.payload, addressSource: source}` —
+ * carried every alias key onto the new address, so a PASTE supersede of an
+ * alias-origin proposal left a stale alias claim (`snsName`, `resolvedAt`,
+ * `resolver`, `reverseDomain*`, `reverify`) on a row whose address the user had
+ * just replaced (design §4.3). The alias is a claim about THIS address, so it
+ * cannot outlive it.
+ *
+ * The `sns` arm is the re-resolution supersede of §4.3: it can only describe a
+ * version that already carried alias evidence, and it carries a complete claim
+ * rather than half of one. `reverify` is deliberately not carried by either arm:
+ * it reports a re-verification of the address the SUPERSEDED version displayed,
+ * so it does not describe the new one.
+ */
+function supersededPayload(
+  original: ContactActionProposal["payload"],
+  source: "pasted" | "scanned" | "sns",
+): Record<string, unknown> {
+  const generic = {
+    ...(original.name !== undefined ? { name: original.name } : {}),
+    ...(original.description !== undefined ? { description: original.description } : {}),
+  };
+  if (source !== "sns") return { ...generic, addressSource: source };
+  const { snsName, resolvedAt, resolver, reverseDomain, reverseDomainState } = original;
+  if (!snsName || !resolvedAt || !resolver || !reverseDomainState || reverseDomain === undefined) {
+    throw new Error(
+      "An sns supersede requires the alias evidence of the version it supersedes.",
+    );
+  }
+  return {
+    ...generic,
+    ...aliasPayload({ snsName, resolvedAt, resolver, reverseDomain, reverseDomainState }),
+  };
+}
+
 export type ContactActionProposal = {
   proposalId: string;
   proposalVersion: number;
@@ -202,7 +239,7 @@ export class ContactActionService {
     });
   }
 
-  public async replaceAddress(userId: string, input: { proposalId: string; expectedProposalVersion: number; address: string; source?: "pasted" | "scanned" }): Promise<ContactActionProposal | null> {
+  public async replaceAddress(userId: string, input: { proposalId: string; expectedProposalVersion: number; address: string; source?: "pasted" | "scanned" | "sns" }): Promise<ContactActionProposal | null> {
     if (!isValidSolanaAddress(input.address)) throw new Error("Expected a canonical Solana address.");
     return this.database.withUserTransaction(userId, async (client) => {
       const old = await client.query<ProposalRow>(`SELECT ${columns} FROM contact_action_proposals WHERE id=$1 AND user_id=$2 AND version=$3 AND status='open' AND expires_at > now() FOR UPDATE`, [uuidSchema.parse(input.proposalId), userId, input.expectedProposalVersion]);
@@ -210,7 +247,7 @@ export class ContactActionService {
       if (!prior) return null;
       const original = map(prior);
       await client.query(`UPDATE contact_action_proposals SET status='superseded' WHERE id=$1 AND user_id=$2 AND version=$3 AND status='open'`, [original.proposalId, userId, original.proposalVersion]);
-      const payload = payloadSchema.parse({ ...original.payload, addressSource: input.source ?? "pasted" });
+      const payload = payloadSchema.parse(supersededPayload(original.payload, input.source ?? "pasted"));
       const result = await client.query<ProposalRow>(
         `INSERT INTO contact_action_proposals
           (user_id, conversation_id, action, contact_id, contact_version, address, previous_address, revoked_grant_ids, version, supersedes_id, proposal_hash, origin, expires_at, payload)

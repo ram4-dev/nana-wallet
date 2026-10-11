@@ -1297,3 +1297,123 @@ in this worktree; the real suite is `tests/unit/agent-tools-parity.test.ts` and 
 - `resolveAlias` is **not wired** in `src/livekit/worker.ts` yet: on the alias path the seam currently
   fails closed with `RESOLVEDOR_NO_DISPONIBLE` until 6.4's wiring lands. Fail-closed, but not yet the
   shipped behaviour.
+
+---
+
+## Task 6.2 — the alias payload and the supersede path (appended; the earlier entries are untouched)
+
+### Completed tasks
+
+| Task | What landed | Persisted checkbox |
+|---|---|---|
+| 6.2 | `replaceAddress`'s `source` gains `"sns"`; the superseding payload is built explicitly **per arm** by `supersededPayload()` instead of by spreading the original, so a paste supersede of an alias-origin proposal clears every alias key; the alias stage's address binding and `addressSource:'sns'` payload now have by-integration proof | `- [x]` |
+
+The `payloadSchema` widening (`addressSource:"sns"` + the six optional alias keys) and the alias stage's
+`contact_action_proposals.address` binding landed in 6.1's commit and are re-proved here against the real
+database rather than against a recorded call.
+
+### Files changed
+
+Modified: `src/wallet/policy/contact-actions.ts` (`supersededPayload()`, the `source` union, one line of
+`replaceAddress`). New: `tests/integration/contact-action-alias-payload.test.ts` (5 cases). Plus the
+checkbox flip in `tasks.md` and this entry.
+
+### The honest RED (how it was obtained)
+
+The suite was written and run **against unmodified sources**, before any production edit; no reversion
+was used and no test was written after the implementation. The failing run, verbatim:
+
+```text
+npx vitest run tests/integration/contact-action-alias-payload.test.ts
+ FAIL  clears every alias key when a paste supersede replaces an alias address
+   AssertionError: expected { name: 'Sophie', …(6) } to deeply equal { name: 'Sophie', …(1) }
+ FAIL  keeps the alias claim on an sns supersede and refuses it on a paste-origin proposal
+   AssertionError: promise resolved "{ …(14) }" instead of rejecting
+ Tests  2 failed | 3 passed (5)
+```
+
+Both failures name the behaviour the task is about: the spread kept `snsName`/`resolvedAt`/`resolver` on
+the new version, and `source:'sns'` had no explicit arm (so it was accepted over a paste-origin proposal
+with no alias evidence at all). The other three cases passed at RED because they assert guarantees that
+already held (the alias stage's address binding, the unpublished/new-version rule, the `.strict()` read
+path): they are regression pins, not new behaviour, and they are declared as such.
+
+`source: "sns"` was also a **type** error at RED time (`tsc` would reject the argument). The runtime RED
+above is the stronger evidence and it is the one recorded; the type widening is verified by the clean
+`npm run typecheck` after the implementation, not by the RED run (vitest transpiles without typechecking,
+so the compile error was never the failure that stopped the suite).
+
+### Mutation evidence (each guard removed, failure observed **by name**, then restored)
+
+**What the assertions inspect: the STATEMENT and the ROW, never the call.** The paste-clear assertion asks
+Postgres `payload ? 'snsName'` on the row (`hasKey()`) and compares the decoded row's payload; no
+assertion reads a JavaScript argument array — the 6.1 run's M-B failure (a binding removed and the
+assertion still green) is the defect this suite was written to avoid.
+
+| Mutation | Failure observed, by name | Reading |
+|---|---|---|
+| M-A — the per-arm build reverted to the spread `{...original.payload, addressSource: source}` | *clears every alias key when a paste supersede replaces an alias address* — `AssertionError: expected { name: 'Sophie', …(6) } to deeply equal { name: 'Sophie', …(1) }`, diff naming `"resolvedAt"`, `"resolver"`, `"snsName"` | the whole point of the task: without the explicit per-arm build the new version keeps a stale alias claim on the replaced address |
+| M-B — the `sns`-arm evidence guard removed (`if (false)`) | *keeps the alias claim on an sns supersede and refuses it on a paste-origin proposal* — `AssertionError: promise resolved "{ …(14) }" instead of rejecting` | the refusal is load-bearing: without it an `sns` supersede over an `addressSource:'review_required'` proposal silently produces an alias-labelled version with no alias evidence |
+| M-C — `.strict()` dropped from `payloadSchema` | *fails the read path when the stored payload stops being strict-parseable* — `AssertionError: promise resolved "{ …(14) }" instead of rejecting` | `.strict()` is live on the read path: with it dropped, an unknown key on the persisted JSONB is silently accepted instead of failing the decode |
+
+All three were restored; `git diff` on the source shows only the intended change.
+
+### A finding from the RED run (not fixed here, not 6.2's scope)
+
+The first version of the "unpublished new version" case asserted that `consumeInTransaction` **cannot**
+consume a version whose `published_at` is still NULL. It failed: the consume predicate is `id AND version
+AND status='open' AND consumed_at IS NULL AND expires_at > now()`, with no `published_at` clause, so the
+call succeeded on an unpublished version. The assertion was rewritten to the guarantee the codebase
+actually makes — `readOpen()` (the handle a confirmation surface gets, and the worker's own path in
+`src/livekit/worker.ts:206`) requires `published_at IS NOT NULL`, so no window can re-open before
+re-publication. The comment in `src/api/contact-actions.ts` that says an unstamped version is "therefore
+unconsumable" is stronger than the SQL behind it; that discrepancy is pre-existing, is not introduced by
+this task, and is reported rather than silently relied on.
+
+### Commands run (exact)
+
+```text
+npx vitest run tests/integration/contact-action-alias-payload.test.ts tests/integration/contact-action-address.test.ts tests/integration/contact-action-proposals.test.ts tests/unit/contact-action-stage-alias.test.ts
+    # 4 files, 23 passed (5 of them this suite's)
+npm run lint && npm run typecheck                                                       # root, clean
+npx vitest run tests/integration/recipient-policy-*.test.ts                             # 9 files, 119 passed (own run)
+npx vitest run tests/unit/policy-*.test.ts                                              # 16 files, 185 passed (own run)
+npx vitest run tests/unit/livekit/ tests/unit/confirmation-arbiter.test.ts              # 8 files, 61 passed
+(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)            # 28 files, 201 passed
+```
+
+No install was run in this task (`@livekit/rtc-node` and `pino` are present; nothing was added, removed
+or re-resolved), so the `--legacy-peer-deps` hazard was not touched.
+
+### Deviations
+
+1. **`source:'sns'` requires the superseded version to carry complete alias evidence** (guard, M-B).
+   The task names the parameter widening only; the guard is the smallest thing that keeps a widening from
+   producing a half claim (`addressSource:'sns'` with no `snsName`). It is an added refusal, not a changed
+   mechanism, and it is testable and mutation-proven.
+2. **`reverify` is not carried by either supersede arm.** It reports a re-verification of the address the
+   *superseded* version displayed, so it does not describe the new one; clearing it is consistent with
+   the paste-clear the design asks for. 6.4's re-verify seam can set it when it writes the new version.
+3. **`resolvedAt` on an `sns` supersede is the superseded version's value.** 6.2's scope carries the
+   alias claim explicitly; refreshing the freshness value belongs to the seam that performs the fresh
+   resolution (6.4), and no caller of that arm exists yet.
+
+### Unproven, stated
+
+- **No caller reaches either new arm yet.** `source:'sns'` has no production caller (6.4's worker
+  re-publish is the intended one) and the route still passes no `source`, so the paste default is
+  unchanged on the HTTP path. The suite drives the service directly — the same level at which the
+  guarantee is defined.
+- **The `sns` arm's freshness is not asserted**: the test pins the alias claim and the address, not
+  whether 6.4 refreshes `resolvedAt`.
+- **The consume predicate's missing `published_at` clause is not fixed** (see the finding above); only
+  `readOpen`'s gate is proven.
+- 6.3 (the card lines) and 6.4 (the re-verify seam, worker wiring, re-publication) are untouched, and no
+  card, eval or drift behaviour is claimed here.
+
+### Workload / boundary
+
+One work-unit commit for task 6.2: the supersede path, its schema-visible behaviour and its integration
+suite. `Review Workload Forecast: size-exception` (the standing note at the top of `tasks.md`) — the
+change does not push and does not open a PR. The source diff is 39 insertions / 2 deletions plus the new
+suite; the earlier entries above are byte-for-byte untouched.
