@@ -1934,3 +1934,93 @@ One work-unit commit for task 7.1: `src/api/contacts.ts`, `src/memory/contact-po
 `src/memory/contacts-repository.ts`, `src/wallet/policy/{errors,repository,service}.ts`, the two new
 integration suites, this entry and the `7.1` checkbox. `Review Workload Forecast: size-exception` (the
 standing note at the top of `tasks.md`): this worktree does not push and does not open a PR.
+
+---
+
+## Task 7.3 — the structural proof that no payment path resolves a name or reads drift (appended; the earlier entries are untouched)
+
+Status: complete. One work-unit commit. New file `tests/unit/sns-no-payment-path.test.ts` (5 cases).
+
+### Why structural
+
+The property is a negative over the whole payment surface: nothing on the transfer, preview or
+compose path may read `provenance.drift` or resolve a name. A behaviour test can only exercise the
+paths someone thought to write down, and the failure mode here is a path nobody thought about —
+`resolve` being reintroduced at preview time "to be safe". The stakes are not stylistic: `sophie.sns`
+is controlled by whoever holds it, so re-resolving for a payment would make the destination mutable
+AFTER consent, and failing on drift would hand that party a denial-of-service lever over the user's
+own money.
+
+### What it asserts
+
+1. **Positive control first.** The three detectors are exercised on the exact shapes they exist to
+   catch (`import … "../wallet/sns/resolver.js"`, `provenance->>'drift'`, `row.provenance.drift`,
+   `jsonb_set(provenance, '{drift}'…)`, `resolver.resolve(name)`, `aliases.reverseLookup(address)`) and
+   on the benign shapes they must **not** confuse (the composer's own membership `provenance[address]`,
+   `Promise.resolve(…)`, `source.resolve(request)`, `require.resolve(…)`). A typo in a regex would
+   otherwise turn every assertion below into a silent no-op.
+2. **No payment-path file imports the resolver** or names `SnsResolver` / `createSnsResolver` / the SDK.
+   The file set is 26 files and is **walked, not hand-listed**, for `src/conversations/**` and
+   `src/wallet/grants/**`, so a new module in either tree is covered the day it lands — the guard
+   cannot be outgrown by adding a file. It also names `composer.ts`, `apply.ts`, `readback.ts`,
+   `contact-actions.ts`, `src/api/conversations.ts` and the agent transfer modules.
+3. **No payment-path file reads the drift key** (comments stripped first: the service *documents* the
+   drift record, which is prose, not a read), and globally the drift key is read as a persisted row in
+   **exactly one** module — `src/memory/contacts-repository.ts`, the guarded write. That pin is the
+   alarm if a read ever appears elsewhere.
+4. **No payment-path file calls any `.resolve(…)`/`.reverseLookup(…)`** — the *wider* pattern on
+   purpose, so a renamed resolver object cannot slip past — and globally the resolver-shaped call sites
+   outside `src/wallet/sns/**` are **exactly** `src/api/contacts.ts`, `src/livekit/contact-proposal-publication.ts`
+   and `src/wallet/policy/service.ts`, with the per-file call **counts** pinned to 1 / 1 / 2. Those four
+   calls are the three named alias sites (the side-effect-free resolve route, the create alias arm, the
+   drift check) plus the worker's confirm-time `reverifyAlias`.
+5. **The composition path targets stored addresses**: `composer.ts` carries no `snsName` / `resolvedAt` /
+   `reverseDomain` / `drift`, and its `ComposedProvenance` is the **membership** map of design §3.4 —
+   the third provenance, kept distinct from `recipients.provenance`, which the composer never reads.
+
+### RED, and how it was obtained (honest statement)
+
+This test is **mine**, so unlike 7.1 it did not need reversion RED — but a new structural test cannot
+be its own RED (it is written against existing code, and its first run was red for its own reasons:
+two false positives from `Promise.resolve` / `source.resolve` / `require.resolve` and from the
+service's doc comment, all of which are now pinned as negative controls in case 1). The load-bearing
+evidence for this unit is therefore the **mutation run below**, which is the stronger form: each
+forbidden shape was reintroduced into the real `composer.ts` and the intended assertion failed **by
+name**.
+
+### Mutation evidence — each detector, reintroduced, failing by name
+
+| Mutation (appended to the real `src/wallet/policy/composer.ts`) | Named failure |
+| --- | --- |
+| `import { createSnsResolver } from "../sns/resolver.js";` | `no payment-path file imports the resolver module` |
+| `const drift = provenance.drift;` | `no payment-path file reads the drift key` (and `the composition path targets stored addresses, never a name`) |
+| `await resolver.resolve(name);` | `no payment-path file can resolve a name, and the resolver's callers are exactly the alias sites` |
+
+Each mutation was the only change in its run, `composer.ts` was restored byte-for-byte after each
+(`git diff --stat -- src/wallet/policy/composer.ts` is empty and the file's tail is its original
+`return {…}`), and no other test in the file failed as collateral.
+
+### Verify
+
+```text
+npx vitest run tests/unit/sns-no-payment-path.test.ts   → Test Files 1 passed (1); Tests 5 passed (5)
+npm run lint                                            → clean (eslint src tests --max-warnings=0)
+npm run typecheck                                       → clean (tsc -p tsconfig.test.json --noEmit)
+```
+
+The task's verify line is `npm test -- tests/unit/sns-no-payment-path.test.ts`; running that exact
+command means running the whole suite, which is 8.1's job. The targeted command above is the same file
+selection.
+
+### What remains unproven
+
+- The guard is textual over the file set, so it catches a forbidden shape **in these files**; a payment
+  path that reached a resolution indirectly through a NEW helper module outside the walked trees would
+  need that module added to the set. The global `callers` exhaustion covers this for the resolver
+  itself (any new caller anywhere in `src/` fails it), which is why both halves exist.
+
+### Workload / boundary
+
+One work-unit commit for task 7.3: the new test file, this entry and the `7.3` checkbox. No `src/`
+change at all — the unit is proof, not behaviour. `Review Workload Forecast: size-exception` (the
+standing note at the top of `tasks.md`): this worktree does not push and does not open a PR.
