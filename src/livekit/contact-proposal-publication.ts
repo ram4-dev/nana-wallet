@@ -4,6 +4,7 @@ import type {
   ContactActionProposal,
   ContactActionService,
 } from "../wallet/policy/contact-actions.js";
+import { ContactActionProposalConflictError } from "../wallet/policy/repository.js";
 import type { ConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
 
 /**
@@ -332,8 +333,10 @@ export type VoiceContactActionDependencies = {
    * a paste creates a new immutable version, the worker's in-memory window still
    * points at the version the agent staged, and nothing in the session can learn
    * the new one by itself. This is the server-owned source of that fact, and it is
-   * used for exactly two things: reporting the current handle on a refusal, and
-   * aligning the in-process window to the row the card actually shows.
+   * used for exactly two things: reporting the current handle on a refusal — both
+   * the confirm-time stale/unknown id and the stage-time one-open conflict, which
+   * the next turn recovers from by retrying with that handle — and aligning the
+   * in-process window to the row the card actually shows.
    *
    * Optional so a caller that owns neither (a text-only wiring) keeps the
    * fail-closed behaviour: without it the in-process window is the only authority
@@ -434,28 +437,55 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         conversationId: input.conversationId,
       });
 
-      const proposal = await dependencies.actions.stage({
-        userId: input.userId,
-        conversationId: input.conversationId,
-        origin: "voice",
-        action: input.action,
-        ...(input.contactId !== undefined ? { contactId: input.contactId } : {}),
-        ...(input.expectedVersion !== undefined ? { expectedVersion: input.expectedVersion } : {}),
-        ...(input.name !== undefined ? { name: input.name } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(alias
-          ? {
-              address: alias.address,
-              alias: {
-                snsName: alias.snsName,
-                resolvedAt: alias.resolvedAt,
-                resolver: alias.resolver,
-                reverseDomain: alias.reverseDomain,
-                reverseDomainState: alias.reverseDomainState,
-              },
-            }
-          : {}),
-      });
+      // A LIVE open window is a REFUSAL, not a crash.
+      //
+      // `contact_action_proposals_one_open_idx` is the cross-process one-open rule,
+      // and `ContactActionService.stage` reports its violation as the typed error
+      // caught below. The declared port already carries the status that says so,
+      // but awaiting this call unguarded let the error ESCAPE the port: on the
+      // voice path nothing catches it, so a live open window turned a
+      // conversational turn into a crash instead of telling the model which
+      // proposal is open and how to recover.
+      //
+      // An EXPIRED window is not this case — `stage` supersedes the dead window it
+      // finds before inserting — so what arrives here is a genuinely live one, and
+      // it must stay a refusal. What changes is only that the refusal is now
+      // REPORTED rather than thrown.
+      //
+      // ONLY the typed conflict is mapped. Anything else is re-thrown untouched: a
+      // database or transport failure reported as a business status would be a lie
+      // about what the user was shown, and a silent one, because a refusal looks
+      // like an answer.
+      let proposal: ContactActionProposal;
+      try {
+        proposal = await dependencies.actions.stage({
+          userId: input.userId,
+          conversationId: input.conversationId,
+          origin: "voice",
+          action: input.action,
+          ...(input.contactId !== undefined ? { contactId: input.contactId } : {}),
+          ...(input.expectedVersion !== undefined ? { expectedVersion: input.expectedVersion } : {}),
+          ...(input.name !== undefined ? { name: input.name } : {}),
+          ...(input.description !== undefined ? { description: input.description } : {}),
+          ...(alias
+            ? {
+                address: alias.address,
+                alias: {
+                  snsName: alias.snsName,
+                  resolvedAt: alias.resolvedAt,
+                  resolver: alias.resolver,
+                  reverseDomain: alias.reverseDomain,
+                  reverseDomainState: alias.reverseDomainState,
+                },
+              }
+            : {}),
+        });
+      } catch (error: unknown) {
+        if (!(error instanceof ContactActionProposalConflictError)) throw error;
+        return conflictActiveWindowRefusal(
+          await readOpenProposalHandle(dependencies, input.userId, input.conversationId),
+        );
+      }
 
       const card = contactProposalCard(proposal, contactProposalSummary(proposal.action, input.name));      try {
         await dependencies.publish({
@@ -660,6 +690,63 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
       return { status: "consumed", message: "Listo, ya registré tu confirmación." };
     },
   };
+}
+
+/**
+ * The refusal for a live one-open conflict, carrying the open handle when it could
+ * be read (design §2.3/§8.2).
+ *
+ * The typed status is what keeps this a refusal rather than a partial success:
+ * nothing was staged, no card was delivered, no window opened, and the arbiter is
+ * not touched. The message names the version and the id of the proposal that IS
+ * open, so the next turn can confirm that one instead of repeating a request that
+ * can never succeed — the same recovery the confirm-time refusal offers, in the
+ * field names this port already declares (`proposalId` + `proposalVersion`).
+ *
+ * Without the handle the refusal is still correct, and it still says so; what is
+ * missing is only the one-step recovery, which is why the handle is never allowed
+ * to turn a refusal into a failure.
+ */
+function conflictActiveWindowRefusal(
+  open: { proposalId: string; proposalVersion: number } | null,
+): Awaited<ReturnType<ContactActionPort["stage"]>> {
+  if (!open) {
+    return {
+      status: "conflict_active_window",
+      message:
+        "Ya hay una propuesta esperando tu confirmación para esta conversación. Cancelala o confirmala antes de generar otra.",
+    };
+  }
+  return {
+    status: "conflict_active_window",
+    message: `Ya hay una propuesta esperando tu confirmación para esta conversación: la versión ${open.proposalVersion} (${open.proposalId}). Cancelala o confirmala antes de generar otra.`,
+    proposalId: open.proposalId,
+    proposalVersion: open.proposalVersion,
+  };
+}
+
+/**
+ * The open proposal's handle, read BEST-EFFORT from the persisted authority.
+ *
+ * Same authority and same purpose as the confirm-time refusal
+ * (`currentOpenProposal` → `ContactActionService.readOpen`): a refusal that names
+ * the open version is recoverable in one step instead of being a dead end.
+ *
+ * BEST-EFFORT is the point, and it is why this never becomes a reason to fail. A
+ * caller that wired no lookup at all and a lookup that fails both yield `null`, and
+ * the refusal is then unchanged — just not actionable in one step. It is also read
+ * only AFTER the conflict is known, so a stage that succeeds pays nothing for it.
+ */
+async function readOpenProposalHandle(
+  dependencies: VoiceContactActionDependencies,
+  userId: string,
+  conversationId: string,
+): Promise<{ proposalId: string; proposalVersion: number } | null> {
+  try {
+    return (await dependencies.currentOpenProposal?.({ userId, conversationId })) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
