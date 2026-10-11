@@ -1717,3 +1717,75 @@ One work-unit commit for task 6.4: the seam, the adapter, the persisted record, 
 their tests. `Review Workload Forecast: size-exception` (the standing note at the top of `tasks.md`) —
 this worktree does not push and does not open a PR. The earlier entries above are byte-for-byte
 untouched.
+
+---
+
+## Task 6.5 — the agent evals for the alias flow, both contexts
+
+`evals/agent/recipient-alias.eval.ts` (new). Six claims, observed through the adapter each context
+actually uses: the AI SDK surface (`toAiSdkTools`) for text, the LiveKit realtime surface
+(`toLivekitRealtimeTools`) plus the **production** voice port (`createVoiceContactActions`) for voice.
+Deterministic and offline — no model, no network, no database, no live RPC; the transport is injected and
+the only address any case may name is the recorded `sophie.sns` fixture
+(`3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2`). 8.2 owns the live attempt.
+
+Scorers, one per claim in the task text:
+
+| Scorer | Claim |
+|---|---|
+| `create_tool_exposes_sns_name_and_no_authority_key` | the create tool carries `snsName` on both surfaces, exposes no `address`/`network`/`policy`/`signer`/`cap` key, accepts `{name, snsName}` and refuses `{name, address}` with `unrecognized_keys` |
+| `name_resolved_server_side_before_any_proposal` | the payload is gated on the runtime schema, then the server port receives the NAME, and on voice the production `stage` records `resolve` → `stage` → `publish` → `markPublished` in that order |
+| `failed_resolution_is_typed_and_cardless` | refused resolution ⇒ `alias_unresolved` + the code spoken verbatim + the honest "No voy a habilitar" sentence, with **zero** stage calls and **zero** cards |
+| `spoken_sentence_never_reads_an_address` | the sentence asks for the screen ("tarjeta"/"pantalla") and carries no base58 value — with a **positive control** that the address detector fires on a sentence that does |
+| `unsupported_suffix_refused_without_fallback` | `NOMBRE_NO_SOPORTADO` is refused by its own code, nothing staged, no card, and no address invented as a fallback |
+| `name_never_a_confirmation_argument` | the confirmation schema refuses `name` and `snsName` with `unrecognized_keys`, and the executed call carries no name to the port |
+
+### Honest RED, stated plainly
+
+**This is an additive harness over already-landed behaviour (6.1–6.4), so there is no
+behaviour-first RED to report.** Nothing in `src/` was changed by this task; the eval was written
+against the behaviour that already exists. The load-bearing evidence is the **mutation**, not a RED
+phase: `snsName` was deleted from `contactCreateInputSchema` (`src/agent/definition.ts:129`), the
+focused eval run, and the failure read **by name**:
+
+```text
+{0} create_tool_exposes_sns_name_and_no_authority_key     # both contexts
+{0} name_resolved_server_side_before_any_proposal         # both contexts
+{1} failed_resolution_is_typed_and_cardless
+{1} name_never_a_confirmation_argument
+{1} spoken_sentence_never_reads_an_address
+{1} unsupported_suffix_refused_without_fallback
+```
+
+The file was restored from a byte-for-byte backup and `git diff --stat src/agent/definition.ts` is
+empty — the mutation is fully reverted, not "re-fixed". The mutation also exposed a real weakness in
+the first draft: the text branch asserted only the recorded server call, which the deleted schema did
+not change, so `name_resolved_server_side_before_any_proposal` stayed green. The eval now gates the
+call on the same schema the runtime gates it on (`createPayloadParsed`), which is why the second row
+above is `0`.
+
+### Commands run (exact)
+
+```text
+npx evalite run evals/agent/recipient-alias.eval.ts --hideTable            # 2 evals, 100% (text, voice)
+npx evalite run evals/agent/recipient-alias.eval.ts                        # after mutation: 83% overall
+npx evalite run evals/agent/recipient-alias.eval.ts --outputPath ...       # per-scorer, by name
+npm run eval                                                               # 10 files, 29 evals, exit 0
+```
+
+`npm run eval` output lists the new file with its cases: `100% evals/agent/recipient-alias.eval.ts
+(2 evals)` inside `npx evalite run --hideTable`. The command exits 0 (threshold 0). The suite total is
+98% because `evals/agent/wallet-agent.eval.ts` (18 model-backed evals, network) sits at 98%; that file
+is untouched by this task and no behaviour file was left modified by the mutation above.
+
+### Unproven, stated
+
+- The model-backed half of `npm run eval` talks to a provider; its 98% is **not** a baseline
+  comparison, only the observed number for this run. A by-name baseline is 8.1's job.
+- No live name was resolved — the same boundary every earlier unit states.
+
+### Workload / boundary
+
+One work-unit commit for task 6.5: the eval file, this entry and the `6.5` checkbox. Nothing in `src/`
+and nothing in `apps/`. `Review Workload Forecast: size-exception` (the standing note at the top of
+`tasks.md`): this worktree does not push and does not open a PR.
