@@ -36,7 +36,19 @@ export type ErrCode =
   | "COBERTURA_DESCONOCIDA"
   | "PERMISO_CONFIGURACION_BLOQUEADA"
   | "COMPOSICION_VACIA_NO_SOPORTADA"
-  | "PROPUESTA_OBSOLETA";
+  | "PROPUESTA_OBSOLETA"
+  // Task 4.1 (design §7): los ocho códigos del alias. Espejo de
+  // RECIPIENT_POLICY_ERROR_CODES en src/contracts/http.ts — el resolver suma su
+  // taxonomía, y las dos negativas que el servicio ya lanzaba en el seam (2.4 y
+  // 3.1) más la negativa del chequeo de drift.
+  | "NOMBRE_NO_SOPORTADO"
+  | "NOMBRE_NO_ENCONTRADO"
+  | "NOMBRE_AMBIGUO"
+  | "RESOLVEDOR_NO_DISPONIBLE"
+  | "SNS_DESTINO_CAMBIADO"
+  | "DIRECCION_PROPIA"
+  | "IDEMPOTENCIA_CUERPO_DISTINTO"
+  | "CONTACTO_SIN_ALIAS";
 
 export type Money = {
   amount: string;
@@ -111,6 +123,16 @@ export type NotificationFeedItem = {
   readAt: ISODateTime | null;
 };
 
+/**
+ * Evidencia del alias tal como la devuelve el servidor: `{name, resolvedAt}` o
+ * `null` cuando el contacto no vino de un alias (design §3.2/§5.4). El alias es
+ * una etiqueta: la dirección de pago sigue siendo `address`.
+ */
+export type ContactAlias = {
+  name: string;
+  resolvedAt: ISODateTime;
+};
+
 export type Contact = {
   id: string;
   name: string;
@@ -122,6 +144,8 @@ export type Contact = {
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   permission: ContactPermission;
+  /** Opcional: un contacto leído antes de U5 no trae la clave. */
+  alias?: ContactAlias | null;
 };
 
 /**
@@ -145,12 +169,41 @@ export type ContactPermission = {
   reason?: string;
 };
 
+/**
+ * Las dos variantes de `POST /v1/contacts`, nombradas igual que en el backend
+ * (`contactSourceSchema`). `sns` es la variante alias; `pasted`/`scanned` son el
+ * pegado/escaneo de siempre.
+ */
+export type ContactSource = "pasted" | "scanned" | "sns";
+
+/**
+ * Cuerpo de `POST /v1/contacts`. `address` es obligatoria en la variante de
+ * pegado y **prohibida** en la variante alias: ahí la dirección la resuelve el
+ * servidor y `expectedAddress` solo puede vetar (design §2.1).
+ */
 export type CreateContactInput = {
   name: string;
   description: string;
-  address: string;
-  /** The only configured network; callers never select a chain. */
+  address?: string;
+  /** La única red configurada; los clientes nunca eligen cadena. */
   network?: "solana-devnet";
+  source?: ContactSource;
+  snsName?: string;
+  expectedAddress?: string;
+};
+
+/**
+ * Aviso de dirección duplicada (design §2.5): la dirección ya está en la lista
+ * como otra persona. Es un campo hermano y plano del contacto — nunca un wrapper
+ * — y `null` significa que nadie más la tenía.
+ */
+export type ContactDuplicateDisclosure = {
+  contactId: string;
+  name: string;
+};
+
+export type CreateContactResponse = Contact & {
+  duplicateOf?: ContactDuplicateDisclosure | null;
 };
 
 export type UpdateContactInput = {
@@ -243,6 +296,43 @@ export type ContactActionAddressResponse = {
 };
 
 export type RevealedCbu = { id: string; address: string };
+
+/**
+ * Los tres estados del lookup inverso (design §1.6/§2.4). Nunca se colapsan:
+ * `none` es el estado esperado en devnet y `unknown` es una forma de error no
+ * reconocida, que jamás se muestra como `none`.
+ */
+export type ReverseDomainState = "present" | "none" | "unknown";
+
+/** `POST /v1/recipient-aliases/resolve` — cuerpo estricto, solo el nombre. */
+export type RecipientAliasResolveInput = { name: string };
+
+/**
+ * Respuesta de la resolución: exactamente lo que la pantalla necesita mostrar.
+ * `observedOwner`, `nameAccount`, `observedParent` y `slot` son evidencia del
+ * servidor y no viajan al cliente; tampoco hay `expiresAt` porque no existe TTL
+ * de resolución (design §7, corrección C10).
+ */
+export type RecipientAliasResolveResponse = {
+  name: string;
+  address: string;
+  resolvedAt: ISODateTime;
+  resolver: string;
+  reverseDomain: string | null;
+  reverseDomainState: ReverseDomainState;
+};
+
+/** Design §5.2/§7: los tres desenlaces alcanzables responden 200. */
+export type ContactAliasCheckState = "unchanged" | "changed" | "unavailable";
+
+/** `POST /v1/contacts/:id/check-alias` — el reporte de drift de un contacto. */
+export type ContactAliasCheckResponse = {
+  state: ContactAliasCheckState;
+  storedAddress: string;
+  /** Presente solo cuando el nombre ahora resuelve a otra dirección. */
+  observedAddress?: string;
+  reason?: string;
+};
 
 export type AgendaEvent = {
   id: string;

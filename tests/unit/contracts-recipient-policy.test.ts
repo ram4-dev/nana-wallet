@@ -229,15 +229,31 @@ describe("recipient policy contract (task 3.1)", () => {
     expect(Object.keys(updateContactResponseSchema.shape)).not.toContain("chain");
   });
 
-  it("pins the six new error codes and keeps the four legacy codes verbatim", () => {
-    expect([...RECIPIENT_POLICY_ERROR_CODES]).toEqual([
+  it("pins the widened error-code set and keeps the six published codes verbatim", () => {
+    // Task 4.1 appends the eight alias codes to the SAME closed set (design §7)
+    // instead of opening a second vocabulary. The six codes slice U2/U3's
+    // client-visible mirror shipped keep their exact order and meaning, so this
+    // pin asserts them as the head of the set rather than replacing them.
+    const published = [
       "CONFLICTO_POLITICA",
       "REVISION_POLITICA_OBSOLETA",
       "COBERTURA_DESCONOCIDA",
       "PERMISO_CONFIGURACION_BLOQUEADA",
       "COMPOSICION_VACIA_NO_SOPORTADA",
       "PROPUESTA_OBSOLETA",
+    ];
+    expect([...RECIPIENT_POLICY_ERROR_CODES]).toEqual([
+      ...published,
+      "NOMBRE_NO_SOPORTADO",
+      "NOMBRE_NO_ENCONTRADO",
+      "NOMBRE_AMBIGUO",
+      "RESOLVEDOR_NO_DISPONIBLE",
+      "SNS_DESTINO_CAMBIADO",
+      "DIRECCION_PROPIA",
+      "IDEMPOTENCIA_CUERPO_DISTINTO",
+      "CONTACTO_SIN_ALIAS",
     ]);
+    expect([...RECIPIENT_POLICY_ERROR_CODES].slice(0, published.length)).toEqual(published);
     const backend = repoFile("src/contracts/http.ts");
     for (const legacy of [
       "DATOS_INVALIDOS",

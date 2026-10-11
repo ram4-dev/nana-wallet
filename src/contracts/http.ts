@@ -282,6 +282,15 @@ export type PolicyReadiness = z.infer<typeof policyReadinessSchema>;
  * Design §9.2: the six new business codes for the recipient-policy surface.
  * `DATOS_INVALIDOS`, `VERSION_OBSOLETA`, `CONTACTO_NO_ENCONTRADO` and
  * `ERROR_INTERNO` stay valid verbatim, so no current client breaks.
+ *
+ * Task 4.1 (design §7) appends the eight alias codes to the SAME closed set
+ * rather than opening a second vocabulary: `NOMBRE_NO_SOPORTADO`,
+ * `NOMBRE_NO_ENCONTRADO`, `NOMBRE_AMBIGUO` and `RESOLVEDOR_NO_DISPONIBLE` are the
+ * resolver's total failure taxonomy; `SNS_DESTINO_CAMBIADO` is the
+ * `expectedAddress` veto; `DIRECCION_PROPIA` and `IDEMPOTENCIA_CUERPO_DISTINTO`
+ * are the two refusals tasks 2.4 and 3.1 already raise on the service seam; and
+ * `CONTACTO_SIN_ALIAS` is the drift check's refusal. The first six keep their
+ * order and their meaning — nothing is removed, renamed or reordered.
  */
 export const RECIPIENT_POLICY_ERROR_CODES = [
   "CONFLICTO_POLITICA",
@@ -290,6 +299,17 @@ export const RECIPIENT_POLICY_ERROR_CODES = [
   "PERMISO_CONFIGURACION_BLOQUEADA",
   "COMPOSICION_VACIA_NO_SOPORTADA",
   "PROPUESTA_OBSOLETA",
+  // Resolver taxonomy (design §1.3/§7).
+  "NOMBRE_NO_SOPORTADO",
+  "NOMBRE_NO_ENCONTRADO",
+  "NOMBRE_AMBIGUO",
+  "RESOLVEDOR_NO_DISPONIBLE",
+  // The alias add's own refusals.
+  "SNS_DESTINO_CAMBIADO",
+  "DIRECCION_PROPIA",
+  "IDEMPOTENCIA_CUERPO_DISTINTO",
+  // The drift check's refusal.
+  "CONTACTO_SIN_ALIAS",
 ] as const;
 export const recipientPolicyErrorCodeSchema = z.enum(
   RECIPIENT_POLICY_ERROR_CODES,
@@ -307,6 +327,26 @@ export const contactPermissionSchema = z.object({
 });
 export type ContactPermission = z.infer<typeof contactPermissionSchema>;
 
+/**
+ * Design §3.2 correction C3 / §5.4: the bounded alias evidence a contact read
+ * may carry — `{name, resolvedAt} | null`. It is the `recipients.provenance`
+ * object reduced to the two names a client needs; the rest of that object is
+ * server-side evidence (design §3.1). `null` is a contact with no alias claim,
+ * which is a fact and not a missing field.
+ */
+export const contactAliasSchema = z
+  .object({
+    name: z.string().min(1),
+    resolvedAt: z.string(),
+  })
+  // STRICT on purpose, unlike the non-strict read schema around it: a second
+  // address inside the alias evidence is refused loudly instead of being
+  // stripped, so no later reader can mistake `alias.address` for the payment
+  // target. The alias is a label; the sibling `address` is the destination.
+  .strict()
+  .nullable();
+export type ContactAlias = NonNullable<z.infer<typeof contactAliasSchema>>;
+
 export const contactSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -318,17 +358,93 @@ export const contactSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   permission: contactPermissionSchema,
+  /**
+   * OPTIONAL on purpose: a contact read before slice U5 wires `provenance`
+   * through `RECIPIENT_COLUMNS` has no `alias` key at all, and a required field
+   * would turn every existing read into a parse failure. Adding it does not
+   * change any existing field's name, type or optionality.
+   */
+  alias: contactAliasSchema.optional(),
 });
 export type Contact = z.infer<typeof contactSchema>;
 
+/** Design §2.1: the two arms of `POST /v1/contacts`, named exactly. */
+export const contactSourceSchema = z.enum(["pasted", "scanned", "sns"]);
+export type ContactSource = z.infer<typeof contactSourceSchema>;
+
+/**
+ * The alias name's maximum length. Shared with the mirrored frontend field and
+ * with the resolver's own normalization, so the client and the server reject the
+ * same string.
+ */
+export const ALIAS_NAME_MAX_LENGTH = 70;
+
+/**
+ * `POST /v1/contacts` — design §2.1, one strict schema with exactly two arms:
+ *
+ *   * **paste/scan** — `address` present, `snsName` absent, `source` absent or
+ *     `pasted`/`scanned`. This is today's body, byte for byte: a client that
+ *     does not send the alias fields is indistinguishable from before.
+ *   * **alias** — `snsName` and `expectedAddress` present, `address` absent,
+ *     `source === "sns"`.
+ *
+ * Anything else is a validation failure (`422 DATOS_INVALIDOS`), including a
+ * body carrying both arms. `expectedAddress` can only ever VETO: the stored
+ * destination is the one the server resolves, so the client cannot inject an
+ * address and the server cannot silently store one the user never saw.
+ *
+ * *Rejected alternative:* `z.discriminatedUnion("source", …)`. It reads better
+ * but would require `source` on every request and break today's paste client.
+ *
+ * `.strict()` is kept, so an unknown key is REJECTED rather than ignored — the
+ * refusal has to survive the widening.
+ */
 export const createContactInputSchema = z
   .object({
     name: z.string().trim().min(1),
     description: z.string().trim().default(""),
-    address: z.string().trim().min(1),
+    /** Required on the paste/scan arm; forbidden on the alias arm. */
+    address: z.string().trim().min(1).optional(),
     network: z.literal("solana-devnet").optional(),
+    source: contactSourceSchema.optional(),
+    snsName: z.string().trim().min(1).max(ALIAS_NAME_MAX_LENGTH).optional(),
+    expectedAddress: z.string().trim().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    const reject = (path: string, message: string) =>
+      context.addIssue({ code: "custom", path: [path], message });
+
+    if (input.snsName !== undefined) {
+      // Alias arm. Every one of these is a way to make the alias look like an
+      // authorization, so each is named rather than folded into "invalid".
+      if (input.address !== undefined) {
+        reject("address", "an alias add never carries an address; the server resolves it");
+      }
+      if (input.expectedAddress === undefined) {
+        reject(
+          "expectedAddress",
+          "an alias add must echo the address it displayed so the server can veto a moved name",
+        );
+      }
+      if (input.source !== "sns") {
+        reject("source", "the alias arm is `source: 'sns'`");
+      }
+      return;
+    }
+
+    // Paste/scan arm: the alias-only keys are forbidden, and today's hard
+    // requirement — no address, no add — is preserved exactly.
+    if (input.expectedAddress !== undefined) {
+      reject("expectedAddress", "expectedAddress belongs to the alias arm only");
+    }
+    if (input.source === "sns") {
+      reject("source", "`source: 'sns'` requires a snsName and an expectedAddress");
+    }
+    if (input.address === undefined) {
+      reject("address", "address is required unless an `.sns` name is supplied");
+    }
+  });
 export type CreateContactInput = z.infer<typeof createContactInputSchema>;
 
 export const updateContactInputSchema = z
@@ -399,9 +515,103 @@ export type RevealedCbu = z.infer<typeof revealedCbuSchema>;
  */
 export const contactsResponseSchema = z.array(contactSchema);
 
-export const createContactResponseSchema = contactSchema;
+/**
+ * Design §2.5: the bounded duplicate disclosure, carried on the CREATE response
+ * so both surfaces render the same fact instead of each guessing. It is a FLAT
+ * sibling of the contact (`data.duplicateOf`), never a wrapper object, and
+ * `null` means "no active contact holds this address" — the add still succeeded.
+ */
+export const contactDuplicateDisclosureSchema = z.object({
+  contactId: z.string().uuid(),
+  name: z.string().min(1),
+});
+export type ContactDuplicateDisclosure = z.infer<
+  typeof contactDuplicateDisclosureSchema
+>;
+
+/**
+ * `POST /v1/contacts` (201). Every field of `contactSchema` keeps its name, type
+ * and optionality; the only addition is the optional disclosure above. A flat
+ * sibling is what keeps `data` a contact for every client written before this
+ * change.
+ */
+export const createContactResponseSchema = contactSchema.extend({
+  duplicateOf: contactDuplicateDisclosureSchema.nullable().optional(),
+});
+export type CreateContactResponse = z.infer<
+  typeof createContactResponseSchema
+>;
 
 export const updateContactResponseSchema = contactSchema;
+
+/**
+ * Design §1.6/§2.4: the reverse lookup's three distinct states. They are never
+ * collapsed: `none` is the expected devnet state (a fact about the chain, not a
+ * failure), and `unknown` is an unrecognized error shape that must never be
+ * rendered as `none` nor degraded into it.
+ */
+export const reverseDomainStateSchema = z.enum(["present", "none", "unknown"]);
+export type ReverseDomainState = z.infer<typeof reverseDomainStateSchema>;
+
+/**
+ * `POST /v1/recipient-aliases/resolve` (design §1/§7). Strict `{name}` and
+ * nothing else: the resolver is a read with NO side effects — no proposal, no
+ * contact, no audit, no cache — so there is nothing else to send and no
+ * `Idempotency-Key` requirement.
+ */
+export const recipientAliasResolveInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(ALIAS_NAME_MAX_LENGTH),
+  })
+  .strict();
+export type RecipientAliasResolveInput = z.infer<
+  typeof recipientAliasResolveInputSchema
+>;
+
+/**
+ * `POST /v1/recipient-aliases/resolve` (200). A closed field set of exactly the
+ * six names the client needs. `observedOwner`, `nameAccount`, `observedParent`
+ * and `slot` are server-side evidence and are deliberately NOT returned; and
+ * `expiresAt` is deliberately absent (design §7, correction C10) because no
+ * resolution TTL exists — the UI renders the age of `resolvedAt` instead of
+ * inventing one.
+ */
+export const recipientAliasResolveResponseSchema = z.object({
+  name: z.string().min(1),
+  address: z.string().min(1),
+  resolvedAt: z.string(),
+  resolver: z.string().min(1),
+  reverseDomain: z.string().nullable(),
+  reverseDomainState: reverseDomainStateSchema,
+});
+export type RecipientAliasResolveResponse = z.infer<
+  typeof recipientAliasResolveResponseSchema
+>;
+
+/**
+ * Design §5.2/§7: the drift check answers all three resolver-reachable outcomes
+ * at HTTP 200 — the state IS the answer, not an error. `observedAddress` is
+ * present only when the name now resolves elsewhere; `reason` names the bounded
+ * cause without quoting a body.
+ */
+export const contactAliasCheckStateSchema = z.enum([
+  "unchanged",
+  "changed",
+  "unavailable",
+]);
+export type ContactAliasCheckState = z.infer<
+  typeof contactAliasCheckStateSchema
+>;
+
+export const contactAliasCheckResponseSchema = z.object({
+  state: contactAliasCheckStateSchema,
+  storedAddress: z.string().min(1),
+  observedAddress: z.string().min(1).optional(),
+  reason: z.string().optional(),
+});
+export type ContactAliasCheckResponse = z.infer<
+  typeof contactAliasCheckResponseSchema
+>;
 
 /**
  * `GET /v1/recipient-policy`. It carries the readiness snapshot verbatim: the

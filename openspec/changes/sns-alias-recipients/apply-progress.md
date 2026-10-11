@@ -662,3 +662,219 @@ the `409` HTTP status is proven only by the route's mapping rule and its existin
 by a new route case in this unit; and a replay that arrives on a DIFFERENT wallet than the one that
 wrote the key is out of the lookup's scope by construction (the index is per wallet) and was not
 exercised.
+
+---
+
+# Work unit U4 — task 4.1: the alias contract mirror (front and back in one commit)
+
+## What landed
+
+The whole alias contract, mirrored across the front/back boundary in **one** work unit, because
+`AGENTS.md` requires both sides to move together. Front and back typecheck **independently**: no
+cross-boundary import was added, and two structural assertions (one per side) hold the line.
+
+### Backend — `src/contracts/http.ts` (the source of truth)
+
+| Surface | Change |
+|---|---|
+| `createContactInputSchema` | Widened with optional `source`/`snsName`/`expectedAddress`; `address` is now optional **and required by the refinement on the paste arm only**; one `.superRefine` admits exactly the two arms of design §2.1; `.strict()` retained |
+| `contactSourceSchema` / `ContactSource` | New: `"pasted" \| "scanned" \| "sns"` |
+| `ALIAS_NAME_MAX_LENGTH` | New: `70`, the one bound the client and the server reject on |
+| `contactAliasSchema` / `ContactAlias` | New: `{name, resolvedAt} \| null`, **`.strict()`** so a second address inside the alias evidence is refused rather than stripped |
+| `contactSchema.alias` | New, OPTIONAL: `contactAliasSchema.optional()` — a read that predates U5's provenance plumbing has no key, and a required field would have broken every existing read |
+| `createContactResponseSchema` | Now `contactSchema.extend({duplicateOf})` — a **flat sibling**, no wrapper object; every existing field keeps name, type and optionality |
+| `contactDuplicateDisclosureSchema` | New: `{contactId, name}` for design §2.5's disclosure |
+| `reverseDomainStateSchema` / `ReverseDomainState` | New: `"present" \| "none" \| "unknown"` |
+| `recipientAliasResolveInputSchema` | New, `.strict()` `{name}` — nothing else, no chain selector |
+| `recipientAliasResolveResponseSchema` | New, closed set of exactly six: `name, address, resolvedAt, resolver, reverseDomain, reverseDomainState`. `observedOwner`/`nameAccount`/`observedParent`/`slot` are server-side evidence and are NOT returned; `expiresAt` is deliberately absent (C10) |
+| `contactAliasCheckStateSchema` / `ContactAliasCheckResponse` | New: `unchanged \| changed \| unavailable` at HTTP 200, with optional `observedAddress`/`reason` |
+| `RECIPIENT_POLICY_ERROR_CODES` | Widened from 6 to 14: the six published codes keep their exact order and meaning, then `NOMBRE_NO_SOPORTADO`, `NOMBRE_NO_ENCONTRADO`, `NOMBRE_AMBIGUO`, `RESOLVEDOR_NO_DISPONIBLE`, `SNS_DESTINO_CAMBIADO`, `DIRECCION_PROPIA`, `IDEMPOTENCIA_CUERPO_DISTINTO`, `CONTACTO_SIN_ALIAS` |
+
+`DIRECCION_PROPIA` and `IDEMPOTENCIA_CUERPO_DISTINTO` already existed on the service seam
+(`src/wallet/policy/errors.ts`, tasks 2.4 and 3.1, recorded there as deliberate early additions), so
+this unit **mirrors** them into the HTTP contract instead of inventing them — exactly as intended.
+
+### Frontend — the mirror, in the same unit
+
+| File | Change |
+|---|---|
+| `apps/nana-wallet/src/lib/api-types.ts` | The eight `ErrCode` members; `ContactAlias`; `Contact.alias?: ContactAlias \| null`; `CreateContactInput` widened with `source?`/`snsName?`/`expectedAddress?` and `address?`; `ContactSource`; `ContactDuplicateDisclosure`; `CreateContactResponse`; `ReverseDomainState`; `RecipientAliasResolveInput`; `RecipientAliasResolveResponse`; `ContactAliasCheckState`; `ContactAliasCheckResponse` |
+| `apps/nana-wallet/src/lib/api.ts` | `createContact` now returns `CreateContactResponse` (a superset, so every existing caller still typechecks); new `resolveRecipientAlias({name})` (read-only POST, **no** idempotency key minted) and `checkContactAlias(contactId)`; the error-code passthrough is `parseEnvelope`'s existing one, so every new code survives un-rewritten |
+| `apps/nana-wallet/src/mocks/handlers.ts` | New `POST /recipient-aliases/resolve` and `POST /contacts/:id/check-alias` handlers plus the alias arm of `POST /contacts`, all driven by ONE `resolveAliasFixture()` so the three surfaces cannot disagree. Every taxonomy row and every drift state is reachable through the real HTTP path by name/contact id, not by a module flag. The diff is **purely additive** (`261 insertions, 0 deletions`): the paste/scan branch is byte-identical to before |
+
+## The honest RED, captured before the implementation
+
+Written first, run against unmodified `src/` and `apps/nana-wallet/src/`.
+
+| Run | Result |
+|---|---|
+| `npx vitest run tests/unit/contracts-recipient-alias.test.ts` | **RED — `14 failed \| 1 passed (15)`** |
+| `(cd apps/nana-wallet && npx vitest run src/lib/api-alias.test.ts src/mocks/handlers.test.ts)` | **RED — `19 failed \| 6 passed (25)`** |
+
+This is an assertion-level RED, not a module-resolution one. The widened surfaces are imported **by
+name** (`createContactInputSchema`, `contactSchema`, `createContactResponseSchema`,
+`RECIPIENT_POLICY_ERROR_CODES` all exist today), so the failures are behavioural: `address` was still
+required, `.strict()` dropped the alias keys, `contactSchema` stripped `alias`, and
+`[...RECIPIENT_POLICY_ERROR_CODES]` was still six long.
+
+The passes, and why each one is honest rather than a false green:
+
+| Passed at RED | Why it is not a false green |
+|---|---|
+| `never crosses the front/back boundary` (backend), `keeps the mirrored frontend files free of backend imports` (front) | Structural regression guards: they must hold **before and after**, and they exist to fail if this unit introduces an import across the boundary. A RED here would have been the bug, not the goal |
+| `keeps the pre-existing contact fixtures reachable` | The positive control for the MSW suite: the fixture module loads and serves today's surface |
+| The paste-body / paste-fixture / code-passthrough cases | Regression guards for additivity. They pass before (`jsonRequest` forwards the body verbatim; `parseEnvelope` already passes any code through) and must keep passing. Weaker evidence, stated as such |
+| `still rejects every server-owned key` was made to fail at RED **deliberately**: a positive control asserting the alias arm parses was added at the top, because without it the test passed at RED for the wrong reason (everything was rejected) |
+
+## TDD cycle evidence
+
+| Task | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|
+| 4.1 | `14 failed \| 1 passed` (backend) and `19 failed \| 6 passed` (front), captured above | `tests/unit/contracts-recipient-alias.test.ts` + `tests/unit/contracts-recipient-policy.test.ts` → `27 passed`; front `src/lib/api-alias.test.ts` + `src/mocks/handlers.test.ts` → `25 passed` | The two arms are exercised from both sides and from opposite directions: paste arm parses (`== today's body`), alias arm parses, ten mixed shapes are rejected, ten forbidden keys are rejected on **both** arms, and the same taxonomy/drift tables are asserted once at the schema level and once through the MSW HTTP path | one pass, no reshape: the alias-specific schemas were extracted as named exports on the first write, and the mock's single `resolveAliasFixture` was factored out so the resolve route, the alias arm and the drift check share one table. The front `prettier` pass was the only reflow |
+
+### Mutation evidence (each guard removed, failure observed **by name**, then restored byte-identically)
+
+| Mutation | Observed | Restored |
+|---|---|---|
+| **A — the alias arm stops forbidding `address`** | `× admits exactly two create arms and rejects every mixed one` | yes |
+| **B — the alias arm stops requiring `expectedAddress`** | `× admits exactly two create arms and rejects every mixed one` | yes |
+| **C — `NOMBRE_AMBIGUO` dropped from the closed code set** | `× pins the eight new error codes and keeps the six published ones verbatim` | yes |
+| **D — `contactAliasSchema` loses `.strict()`** | `× carries the alias evidence on the contact read, optionally` | yes |
+| **E — the create response loses `duplicateOf`** | `× adds the duplicate disclosure to the create response without a wrapper` | yes |
+| **F — the MSW resolve handler is registered under another path** | `× registers the resolve and check-alias handlers` | yes |
+| **G — the MSW alias arm stops vetoing a moved name** | `× refuses an alias create whose echoed address no longer matches` | yes |
+| **H — the MSW self-address refusal is removed** | `× refuses the wallet's own address on the alias arm` | yes |
+| **I — the disclosure always reports `null`** | `× discloses an existing holder by name and still creates the contact` | yes |
+| **J — `resolveRecipientAlias` is renamed away from the api surface** | `× exposes the two mirrored alias methods` | yes |
+| **K — the drift check reports `changed` as `unchanged`** | `× reports each drift state for a contact that carries an alias` | yes |
+
+Mutation F was botched on the first attempt (the replacement produced invalid syntax, so the file
+failed to load and the run showed a suite-level error rather than a named failure). It was redone as a
+path change, which then failed **by name**. Reported rather than glossed: a suite-load error is not
+mutation evidence.
+
+## New contract surface, enumerated
+
+**Fields added (all optional, none renaming or retyping an existing one):**
+
+- `POST /v1/contacts` body: `source?: "pasted"|"scanned"|"sns"`, `snsName?: string` (≤70, trimmed),
+  `expectedAddress?: string`; `address` becomes optional **at the type level** and is still required by
+  the paste arm's refinement.
+- `Contact` reads: `alias?: {name, resolvedAt} | null`.
+- `POST /v1/contacts` response: `duplicateOf?: {contactId, name} | null` (flat sibling, no wrapper).
+
+**Endpoints mirrored:**
+
+| Method + path | Body | Success | Errors |
+|---|---|---|---|
+| `POST /v1/recipient-aliases/resolve` | strict `{name}`; read-only, no side effects | `200 {name, address, resolvedAt, resolver, reverseDomain, reverseDomainState}` | `422 DATOS_INVALIDOS`, `422 NOMBRE_NO_SOPORTADO`, `404 NOMBRE_NO_ENCONTRADO`, `409 NOMBRE_AMBIGUO`, `503 RESOLVEDOR_NO_DISPONIBLE` |
+| `POST /v1/contacts/:id/check-alias` | — | `200 {state: unchanged\|changed\|unavailable, storedAddress, observedAddress?, reason?}` | `404 CONTACTO_NO_ENCONTRADO` (mapped to the front's `NO_ENCONTRADO` in the mock — see deviations), `409 CONTACTO_SIN_ALIAS` |
+| `POST /v1/contacts` (alias arm) | `{source:'sns', name, snsName, expectedAddress, description, network?}` | as before, plus `duplicateOf` | adds `409 SNS_DESTINO_CAMBIADO`, `409 DIRECCION_PROPIA`, `409 IDEMPOTENCIA_CUERPO_DISTINTO`, plus the resolver taxonomy |
+
+**Error codes (closed set, 6 → 14):** `NOMBRE_NO_SOPORTADO`, `NOMBRE_NO_ENCONTRADO`,
+`NOMBRE_AMBIGUO`, `RESOLVEDOR_NO_DISPONIBLE`, `SNS_DESTINO_CAMBIADO`, `DIRECCION_PROPIA`,
+`IDEMPOTENCIA_CUERPO_DISTINTO`, `CONTACTO_SIN_ALIAS`.
+
+## Commands run (exact)
+
+| # | Command | Result |
+|---|---|---|
+| 1 | `npx vitest run tests/unit/contracts-recipient-alias.test.ts` (pre-implementation) | **RED** — `Tests 14 failed \| 1 passed (15)` |
+| 2 | `(cd apps/nana-wallet && npx vitest run src/lib/api-alias.test.ts src/mocks/handlers.test.ts)` (pre-implementation) | **RED** — `Test Files 2 failed (2)`, `Tests 19 failed \| 6 passed (25)` |
+| 3 | `npm run typecheck` (root) | clean |
+| 4 | `npm run lint` (root; the only source-mutating normalizer) | clean; a second run changes no byte |
+| 5 | `npx vitest run tests/unit/contracts-recipient-alias.test.ts tests/unit/contracts-recipient-policy.test.ts` | `Tests 27 passed (27)` |
+| 6 | `npx vitest run tests/integration/recipient-policy-*.test.ts` (**separated run**) | `Test Files 9 passed (9)`, `Tests 119 passed (119)` |
+| 7 | `npx vitest run tests/unit/policy-*.test.ts` (**separated run**) | `Test Files 15 passed (15)`, `Tests 177 passed (177)` |
+| 8 | `npx vitest run tests/integration/api-contacts-policy.test.ts tests/integration/recipient-self-address.test.ts tests/integration/recipient-duplicate-disclosure.test.ts tests/integration/recipient-idempotency-body.test.ts tests/unit/recipient-memory-service.test.ts tests/unit/recipient-resolution.test.ts tests/unit/policy-service-contract.test.ts` | `Test Files 7 passed (7)`, `Tests 71 passed \| 1 skipped (72)` — the widened `createContactInputSchema`/`contactSchema` break no existing contact suite |
+| 9 | `npx vitest run tests/unit/livekit/` (dependency tree) | `Test Files 7 passed (7)`, `Tests 50 passed (50)`; `node_modules/@livekit/rtc-node` and `node_modules/pino` both present |
+| 10 | `(cd apps/nana-wallet && npm run lint && npm run typecheck && npx vitest run)` | lint clean, typecheck clean, `Test Files 28 passed (28)`, **`Tests 193 passed (193)`** |
+| 11 | Mutation rounds A–K | every guard produced a failure **by name**; all files restored byte-identically |
+
+**Frontend suite did not drop:** 193 passing now, of which 25 are the two new files, so the pre-existing
+suite stands at 168 — above the 156+ baseline. **No install was run**, so no lockfile entry was
+touched, `--legacy-peer-deps` was never used, and the voice dependency tree is intact. No database was
+started or migrated (the U4 unit touches no SQL); the integration suites that need it ran green against
+the running worktree DB.
+
+## Deviations from the design (and from the task text)
+
+1. **The 3.1 pin had to move with the set it pins.** `tests/unit/contracts-recipient-policy.test.ts`
+   asserted `[...RECIPIENT_POLICY_ERROR_CODES]` was exactly the six codes. Design §7 explicitly says
+   that set widens here, so the pin was updated to the published six **plus** the eight alias codes,
+   with an added assertion that the published six remain the head of the array in order. Nothing was
+   removed from the pin and no earlier task's behaviour changed.
+2. **`contactAliasSchema` is `.strict()` while `contactSchema` around it is not.** The task asked for
+   `.strict()` where the existing schemas are strict; the read schema is not. Strictness was applied to
+   the nested alias object anyway, deliberately: an `alias.address` that a server accidentally emitted
+   would otherwise be silently stripped, and a silent second address inside the alias evidence is
+   exactly the confusion the freeze exists to prevent. The outer read schema's tolerance is untouched.
+3. **The MSW 404 for `check-alias` emits the front's `NO_ENCONTRADO`, not `CONTACTO_NO_ENCONTRADO`.**
+   The front's `ErrCode` has never had a `CONTACTO_NO_ENCONTRADO` member — every existing contact
+   handler in this file answers 404 with `NO_ENCONTRADO`, and task 3.1's pin deliberately scoped the
+   mirror to `RECIPIENT_POLICY_ERROR_CODES`. Mirroring the backend's exact 404 word would have meant
+   editing a decision this task does not own, so the established front vocabulary is kept and the gap
+   is recorded here instead of being papered over. `CONTACTO_SIN_ALIAS` **is** new and **is** mirrored.
+4. **The MSW alias fixtures declare their own own-address constant.** Design §2.5 compares against the
+   server's own `user_wallets.address`. The dev MSW fixture still carries the legacy placeholder wallet
+   address (`0x4b1f…`, used by the wallet surface and pinned by other suites), so the alias fixture
+   declares `MOCK_SELF_ADDRESS` (the recorded `nanatest.sns` payer) as this fake deployment's own
+   address. It is a fixture limitation, not a claim about production wiring — see "unproven".
+5. **`npm test -- <paths>` was run as `npx vitest run <paths>`.** The task's verify lines use the npm
+   passthrough form; the repo's `test` script is `vitest run`, so the two are equivalent and `--` is not
+   forwarded by this npm version. The front suite was additionally run in full (`npx vitest run`), which
+   is the stronger check.
+
+## Workload / PR boundary
+
+This is work unit **U4** and it is the commit that carries this append. Files: `src/contracts/http.ts`
+(+213/−3), `apps/nana-wallet/src/lib/api-types.ts`, `apps/nana-wallet/src/lib/api.ts`,
+`apps/nana-wallet/src/mocks/handlers.ts` (+261/−0, purely additive), two new suites
+(`tests/unit/contracts-recipient-alias.test.ts`, `apps/nana-wallet/src/lib/api-alias.test.ts`,
+`apps/nana-wallet/src/mocks/handlers.test.ts`), the one-line update to the 3.1 pin, and the single
+checkbox flip. Rollback is the removal of the alias schemas, the two client methods, the three MSW
+fixtures and the eight codes — every existing field, endpoint and fixture survives unchanged, which is
+what makes the rollback boundary clean. The forecast's `size-exception` stands; no diff was shrunk to
+reach 400 lines.
+
+## Structured status consumed
+
+Launched by the parent with `openspec`-store artifacts and a resolved delivery path for the Review
+Workload Gate: the forecast's guard lines (`Decision needed before apply: Yes`, `Chained PRs
+recommended: Yes`, `400-line budget risk: High`) are already answered by `Chain strategy:
+size-exception` under this worktree's standing no-push/no-PR instruction, and the parent's launch named
+task 4.1 as the single bounded slice (U5 explicitly out of scope). No `actionContext.mode:
+workspace-planning`, one authoritative root:
+`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`; every write stayed inside it. The
+untracked user-owned `compose.privy-local.ports.yaml` was neither read, modified nor committed, and no
+`git stash`/`checkout`/`reset`/`restore`/`clean` was used. No secret, key or seed was read, printed or
+written, and the devnet addresses here are public values already recorded in
+`.agent-workflow/tasks/sns-alias-recipients/01-sns-devnet-resources.md`. `skill_resolution:
+paths-injected` (both `SKILL.md` paths were read before the first edit, as was `AGENTS.md`).
+
+## Remaining work
+
+Task 4.1 is `- [x]`; nothing else in slice 4 exists. Slices U5–U8 are untouched and still `- [ ]`. Both
+parent-owned rows at the end of `tasks.md` are byte-for-byte unchanged.
+
+**Unproven by this unit, stated rather than implied:**
+
+- The contract is proven as a **shape**; nothing here proves the route behaviour. `POST
+  /v1/recipient-aliases/resolve` and `POST /v1/contacts/:id/check-alias` do not exist in
+  `src/api/contacts.ts` yet — that is U5 and U7. The design §7 status/code mapping is mirrored and
+  pinned as data, not exercised against a real route.
+- `createContactInputSchema` is the contract-level schema. `recipientCreateInputSchema`
+  (`src/wallet/policy/service.ts`) is the service seam and is **not** widened here; C5's "both widen in
+  the same work unit" is satisfied only on the contract side, and U5 owns the service-side arm.
+- `contactSchema.alias` is now expressible, but **nothing populates it**: `RECIPIENT_COLUMNS`,
+  `ContactRecord` and the route projection are untouched (U5's task 5.4). The MSW fixture serving an
+  alias is a fixture, not a backend read.
+- The `DIRECCION_PROPIA` and `IDEMPOTENCIA_CUERPO_DISTINTO` refusals are proven to exist as codes and to
+  pass through the client unchanged. That they are raised by a real create is task 2.4/3.1's evidence,
+  not re-proven here.
+- The MSW self-address fixture uses its own constant, so the mock does not prove that a real
+  `user_wallets.address` comparison is wired (design §2.5's honest boundary: with no ready Solana wallet
+  the comparison is vacuous).
+- `npm run eval` was NOT run: this unit changes no agent surface, so `AGENTS.md` rule 2 does not apply
+  to it. The full backend `npm test` is task 8.1's job with its by-name baseline; only the suites named
+  above were run.

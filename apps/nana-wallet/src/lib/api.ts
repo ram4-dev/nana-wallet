@@ -6,10 +6,12 @@ import type {
   BillStatus,
   ConfirmableIntent,
   Contact,
+  ContactAliasCheckResponse,
   ContactPermission,
   ContactRemovalPreview,
   CreateAgendaEventInput,
   CreateContactInput,
+  CreateContactResponse,
   DeleteContactInput,
   DeleteContactResponse,
   ContactActionAddressResponse,
@@ -24,6 +26,8 @@ import type {
   MovementsPage,
   PaymentIntent,
   PaymentResult,
+  RecipientAliasResolveInput,
+  RecipientAliasResolveResponse,
   RevealedCbu,
   ConversationTurnResult,
   ConversationState,
@@ -476,7 +480,30 @@ export const api = {
   getContacts: () => request<Contact[]>("/v1/contacts"),
 
   createContact: (input: CreateContactInput, idempotencyKey: string = createIdempotencyKey()) =>
-    request<Contact>("/v1/contacts", jsonRequest("POST", input), idempotencyKey),
+    request<CreateContactResponse>("/v1/contacts", jsonRequest("POST", input), idempotencyKey),
+
+  /**
+   * Design §1/§7: resuelve un nombre `.sns` a una dirección. Es una LECTURA sin
+   * efectos: no crea propuesta, contacto, auditoría ni caché, y por eso no manda
+   * clave de idempotencia. Una dirección resuelta todavía no es una autorización;
+   * lo que autoriza es el `expectedAddress` que la pantalla muestra y confirma.
+   */
+  resolveRecipientAlias: (input: RecipientAliasResolveInput) =>
+    request<RecipientAliasResolveResponse>(
+      "/v1/recipient-aliases/resolve",
+      jsonRequest("POST", input),
+    ),
+
+  /**
+   * Design §5.2: chequeo explícito de drift de un contacto. Los tres desenlaces
+   * alcanzables responden 200 con su estado; un contacto sin alias es la negativa
+   * tipada CONTACTO_SIN_ALIAS.
+   */
+  checkContactAlias: (contactId: string) =>
+    request<ContactAliasCheckResponse>(
+      `/v1/contacts/${encodeURIComponent(contactId)}/check-alias`,
+      jsonRequest("POST", {}),
+    ),
 
   updateContact: (
     contactId: string,

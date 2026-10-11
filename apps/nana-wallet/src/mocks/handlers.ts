@@ -9,10 +9,12 @@ import type {
   Contact,
   ContactActionAddressResponse,
   ContactActionProposal,
+  ContactAliasCheckResponse,
   ContactPermission,
   CreateDelegatedGrantRequest,
   CreateAgendaEventInput,
   CreateContactInput,
+  CreateContactResponse,
   CurrentWalletResponse,
   DelegatedGrant,
   ErrCode,
@@ -22,7 +24,10 @@ import type {
   PaymentResult,
   PolicyReadiness,
   ConversationTurnResult,
+  RecipientAliasResolveInput,
+  RecipientAliasResolveResponse,
   ReplaceContactActionAddressInput,
+  ReverseDomainState,
   TransferIntentInput,
   UpdateContactInput,
   WalletPermissionResponse,
@@ -149,10 +154,154 @@ const seededContact = (
   updatedAt: "2026-08-01T12:00:00-03:00",
 });
 
+/**
+ * Task 4.1: los fixtures del alias. Están guiados por el NOMBRE que pide el
+ * cliente, así que cada fila de la taxonomía y cada estado de drift se alcanza
+ * por el mismo camino HTTP que usa la app en vez de por una bandera de módulo.
+ *
+ * `sophie.sns` y `nanatest.sns` son los dos nombres observados en devnet
+ * (tarea 1.3): `nanatest.sns` es el nombre que resuelve a su propio pagador, que
+ * es justamente el fixture de la dirección propia.
+ */
+const MOCK_SELF_ADDRESS = "BsNFJHm85Yk2hcugJG16KFm4bfdB5DwnTqfoSW4BuLFv";
+const MOCK_SOPHIE_ADDRESS = "swqrv48gsrwpBFbftEwnP2vB4jckpvfGJfXkwaniLCC";
+const MOCK_JUAN_ADDRESS = "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2";
+const MOCK_RARO_ADDRESS = "7Np41oeYqPefeNQEHSv1UDhYrehxin3NStELsSKCT4K2";
+const MOCK_UNCHANGED_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+const MOCK_UNREACHABLE_ADDRESS = "2cQPQjNGxkkBNyoTmsUnUFnoqCcQ3UQNqBmY9yTVSNbH";
+const MOCK_RESOLVED_AT = "2026-10-10T18:04:11.482Z";
+
+const ALIAS_RESOLUTIONS: Record<
+  string,
+  { address: string; reverseDomain: string | null; reverseDomainState: ReverseDomainState }
+> = {
+  "juan.sns": {
+    address: MOCK_JUAN_ADDRESS,
+    reverseDomain: null,
+    reverseDomainState: "none",
+  },
+  "sophie.sns": {
+    address: MOCK_SOPHIE_ADDRESS,
+    reverseDomain: "sophie.sns",
+    reverseDomainState: "present",
+  },
+  // La forma de error no reconocida: `unknown` nunca se degrada a `none`.
+  "raro.sns": {
+    address: MOCK_RARO_ADDRESS,
+    reverseDomain: null,
+    reverseDomainState: "unknown",
+  },
+  // El nombre que resuelve a su propio pagador (tarea 1.3).
+  "nanatest.sns": {
+    address: MOCK_SELF_ADDRESS,
+    reverseDomain: null,
+    reverseDomainState: "none",
+  },
+};
+
+/** Nombres cuyo resolver no se puede alcanzar: 503, nunca 404. */
+const UNREACHABLE_ALIAS_NAMES = new Set(["lento.sns"]);
+
+/** Nombres cuyo header no Apunta al root configurado: 409. */
+const AMBIGUOUS_ALIAS_NAMES = new Set(["ambiguo.sns"]);
+
+/** Sufijos que este despliegue no atiende: 422 NOMBRE_NO_SOPORTADO. */
+const UNSUPPORTED_ALIAS_SUFFIXES = [".sol", ".eth", ".com", ".xyz"];
+
+type AliasResolveFixtureResult =
+  | { ok: true; data: RecipientAliasResolveResponse }
+  | { ok: false; code: ErrCode; message: string; status: number };
+
+/**
+ * Una sola función para la ruta de resolución, el alta por alias y el chequeo de
+ * drift, así los tres fixtures no pueden discrepar entre sí. Canonicaliza como lo
+ * hace el resolver real (design §1.2): minúsculas y sufijo `.sns` obligatorio.
+ */
+function resolveAliasFixture(rawName: string): AliasResolveFixtureResult {
+  const name = rawName.trim().toLowerCase();
+  if (!name.includes(".")) {
+    return {
+      ok: false,
+      code: "DATOS_INVALIDOS",
+      message: "El nombre tiene que terminar en .sns.",
+      status: 422,
+    };
+  }
+  if (!name.endsWith(".sns") || UNSUPPORTED_ALIAS_SUFFIXES.some((s) => name.endsWith(s))) {
+    return {
+      ok: false,
+      code: "NOMBRE_NO_SOPORTADO",
+      message: "Este despliegue solo resuelve nombres .sns.",
+      status: 422,
+    };
+  }
+  if (UNREACHABLE_ALIAS_NAMES.has(name)) {
+    // "No pudimos consultar" no es "no existe": son dos hechos distintos.
+    return {
+      ok: false,
+      code: "RESOLVEDOR_NO_DISPONIBLE",
+      message: "No pudimos consultar el nombre en este momento.",
+      status: 503,
+    };
+  }
+  if (AMBIGUOUS_ALIAS_NAMES.has(name)) {
+    return {
+      ok: false,
+      code: "NOMBRE_AMBIGUO",
+      message: "No pudimos confirmar a qué dirección apunta el nombre.",
+      status: 409,
+    };
+  }
+  const resolution = ALIAS_RESOLUTIONS[name];
+  if (!resolution) {
+    return {
+      ok: false,
+      code: "NOMBRE_NO_ENCONTRADO",
+      message: "No existe un nombre así.",
+      status: 404,
+    };
+  }
+  return {
+    ok: true,
+    data: {
+      name,
+      address: resolution.address,
+      resolvedAt: MOCK_RESOLVED_AT,
+      resolver: "sns/solana-devnet/v3",
+      reverseDomain: resolution.reverseDomain,
+      reverseDomainState: resolution.reverseDomainState,
+    },
+  };
+}
+
 let contacts: Contact[] = [
   seededContact("contact-sofia", "Sofía", "Mi nieta", "0000003100010000000001"),
   seededContact("contact-julian", "Julián", "Mi nieto", "0000003100010000000002"),
   seededContact("contact-marta", "Marta", "Mi hija", "0000003100010000000003"),
+  // Task 4.1: los tres estados de drift de un contacto que sí vino de un alias,
+  // más el caso sin alias (contact-sofia, arriba) para CONTACTO_SIN_ALIAS.
+  {
+    ...seededContact("contact-alias-unchanged", "Nieta Sol", "Mi nieta", MOCK_JUAN_ADDRESS),
+    alias: { name: "juan.sns", resolvedAt: MOCK_RESOLVED_AT },
+  },
+  {
+    ...seededContact(
+      "contact-alias-changed",
+      "Cambió de nombre",
+      "Ya no es mío",
+      MOCK_UNCHANGED_ADDRESS,
+    ),
+    alias: { name: "raro.sns", resolvedAt: MOCK_RESOLVED_AT },
+  },
+  {
+    ...seededContact(
+      "contact-alias-unreachable",
+      "Sin respuesta",
+      "No pudimos chequear",
+      MOCK_UNREACHABLE_ADDRESS,
+    ),
+    alias: { name: "lento.sns", resolvedAt: MOCK_RESOLVED_AT },
+  },
 ];
 
 const revealCounts = new Map<string, number>();
@@ -570,6 +719,66 @@ export const handlers = [
   http.post(apiPath("/contacts"), async ({ request }) => {
     const input = (await request.json()) as CreateContactInput;
     const now = new Date().toISOString();
+
+    // Variante alias (design §2.1/§4.1): el servidor resuelve, el
+    // `expectedAddress` del cliente solo puede vetar, y la dirección que se
+    // guarda es la resuelta — nunca la del cuerpo.
+    if (input.snsName !== undefined) {
+      const resolution = resolveAliasFixture(input.snsName);
+      if (!resolution.ok) return err(resolution.code, resolution.message, resolution.status);
+      const resolved = resolution.data;
+      if (input.expectedAddress !== undefined && input.expectedAddress !== resolved.address) {
+        return err(
+          "SNS_DESTINO_CAMBIADO",
+          "El nombre ahora apunta a otra dirección. Volvé a buscarlo y confirmá la nueva.",
+          409,
+        );
+      }
+      if (resolved.address === MOCK_SELF_ADDRESS) {
+        // Es la dirección de la propia billetera: ni se guarda ni se reporta
+        // como duplicado de contacto.
+        return err(
+          "DIRECCION_PROPIA",
+          "Esa dirección es la de tu propia billetera: no se puede agregar.",
+          409,
+        );
+      }
+      const duplicate = contacts.find(
+        (item) => item.status === "active" && item.address === resolved.address,
+      );
+      const aliasContact: Contact = {
+        id: crypto.randomUUID(),
+        name: input.name,
+        description: input.description,
+        address: resolved.address,
+        ...(input.network ? { network: input.network } : {}),
+        version: 1,
+        status: "active",
+        permission: {
+          state: "pending",
+          desiredRevision: 1,
+          appliedRevision: 0,
+          retryable: true,
+        },
+        alias: { name: resolved.name, resolvedAt: resolved.resolvedAt },
+        createdAt: now,
+        updatedAt: now,
+      };
+      contacts = [...contacts, aliasContact];
+      return ok<CreateContactResponse>(
+        {
+          ...aliasContact,
+          duplicateOf: duplicate ? { contactId: duplicate.id, name: duplicate.name } : null,
+        },
+        201,
+      );
+    }
+
+    // Variante pegado/escaneo: idéntica a la de siempre, y la ausencia de
+    // dirección se rechaza como la rechaza el contrato estricto.
+    if (input.address === undefined) {
+      return err("DATOS_INVALIDOS", "Falta la dirección.", 422);
+    }
     const contact: Contact = {
       id: crypto.randomUUID(),
       name: input.name,
@@ -589,6 +798,58 @@ export const handlers = [
     };
     contacts = [...contacts, contact];
     return ok(contact, 201);
+  }),
+
+  // Design §1/§7: la resolución es una LECTURA. No escribe propuesta, ni
+  // contacto, ni auditoría, ni caché. Cuerpo estricto `{name}` y nada más.
+  http.post(apiPath("/recipient-aliases/resolve"), async ({ request }) => {
+    const body = (await request.json()) as Partial<RecipientAliasResolveInput>;
+    const keys = Object.keys(body);
+    if (keys.length !== 1 || keys[0] !== "name" || typeof body.name !== "string") {
+      return err("DATOS_INVALIDOS", "Mandá exactamente un nombre.", 422);
+    }
+    const resolution = resolveAliasFixture(body.name);
+    if (!resolution.ok) return err(resolution.code, resolution.message, resolution.status);
+    return ok<RecipientAliasResolveResponse>(resolution.data);
+  }),
+
+  // Design §5.2: los tres desenlaces alcanzables responden 200 con su estado;
+  // un contacto sin alias es la negativa tipada CONTACTO_SIN_ALIAS.
+  http.post(apiPath("/contacts/:id/check-alias"), ({ params }) => {
+    const contactId = String(params["id"]);
+    const contact = contacts.find((item) => item.id === contactId && item.status === "active");
+    if (!contact) return err("NO_ENCONTRADO", "No encontramos a esa persona.", 404);
+    const aliasName = contact.alias?.name;
+    if (!aliasName) {
+      return err("CONTACTO_SIN_ALIAS", "Ese contacto no se agregó por un nombre.", 409);
+    }
+    const resolution = resolveAliasFixture(aliasName);
+    const storedAddress = contact.address;
+    if (!resolution.ok) {
+      if (resolution.code === "RESOLVEDOR_NO_DISPONIBLE") {
+        // No alcanzable NO es "cambió": se reporta tal cual y sin dirección
+        // observada con la que no contamos.
+        return ok<ContactAliasCheckResponse>({
+          state: "unavailable",
+          storedAddress,
+          reason: "resolver_unreachable",
+        });
+      }
+      return ok<ContactAliasCheckResponse>({
+        state: "changed",
+        storedAddress,
+        reason: "name_no_longer_exists",
+      });
+    }
+    if (resolution.data.address === storedAddress) {
+      return ok<ContactAliasCheckResponse>({ state: "unchanged", storedAddress });
+    }
+    return ok<ContactAliasCheckResponse>({
+      state: "changed",
+      storedAddress,
+      observedAddress: resolution.data.address,
+      reason: "address_changed",
+    });
   }),
 
   http.patch(apiPath("/contacts/:id"), async ({ params, request }) => {
