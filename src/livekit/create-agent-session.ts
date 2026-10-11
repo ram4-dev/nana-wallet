@@ -35,6 +35,36 @@ export type AgentSessionComposition = {
 };
 
 /**
+ * Transcription guidance for the session's input audio.
+ *
+ * WHY THIS IS CONFIGURED AT ALL
+ * ----------------------------
+ * The default was `{ model: "gpt-4o-mini-transcribe" }` and nothing else, so the
+ * transcriber had no idea what this app is about. A user dictating a `.sns` name
+ * was heard the way Spanish pronounces it and written the way Spanish writes it:
+ * a live session produced `snsName: "sofi.sns"` for a domain registered as
+ * `sophie.sns`, and the resolver correctly answered `NOMBRE_NO_ENCONTRADO`. The
+ * failure was in the listener, not in the resolver, and it made the feature
+ * unusable for names that are not Spanish words.
+ *
+ * The provider documents `prompt` for exactly this: *"Prompts can help correct
+ * specific words or acronyms that the model misrecognizes in the audio."* The
+ * `language` field is supplied for accuracy AND latency.
+ *
+ * NOT `keywords`: the provider documents that field as supported by
+ * `gpt-transcribe`/`gpt-live-transcribe` only, so it is deliberately omitted
+ * rather than sent to a model that does not read it.
+ */
+const TRANSCRIPTION_LANGUAGE = process.env.OPENAI_TRANSCRIPTION_LANGUAGE ?? "es";
+const TRANSCRIPTION_PROMPT =
+  process.env.OPENAI_TRANSCRIPTION_PROMPT ??
+  "El usuario dicta nombres de dominio .sns, por ejemplo 'juan.sns' o 'sophie.sns'. " +
+  "Esos nombres suelen ser nombres propios o palabras en INGLES, y deben escribirse " +
+  "con su ortografia original en ingles, NO con la pronunciacion espanola. " +
+  "Transcribi el nombre completo, incluido el sufijo .sns, sin traducirlo ni " +
+  "reescribirlo foneticamente. Otras frases son espanol rioplatense.";
+
+/**
  * Instruction for the session's opening turn, appended to
  * `NANI_REALTIME_INSTRUCTIONS` for that turn only.
  *
@@ -62,6 +92,14 @@ export function createAgentSession(options: {
     model: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2.1-mini",
     voice: process.env.OPENAI_REALTIME_VOICE ?? "marin",
     apiKey,
+    // The same transcription model the plugin defaults to, so nothing about the
+    // transcription's latency changes — what changes is that it now knows what it
+    // is listening for. See TRANSCRIPTION_PROMPT above.
+    inputAudioTranscription: {
+      model: process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe",
+      language: TRANSCRIPTION_LANGUAGE,
+      prompt: TRANSCRIPTION_PROMPT,
+    },
   });
   const agent = new Agent({
     instructions: NANI_REALTIME_INSTRUCTIONS,
