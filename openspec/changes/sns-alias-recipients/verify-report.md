@@ -461,3 +461,54 @@ user decision to let a test run write a real Privy policy on the live stack (wit
 reconciler does not race the readback), or (b) a deliberately non-live environment, which cannot satisfy
 8.2's own wording. Until one of those is chosen, the honest state is: **8.2 open, blocker measured, and
 `[ ]`**.
+
+---
+
+## 16. Post-verification finding: the text agent has no contact-action port (defect, not an environment blocker)
+
+Added 2026-10-11 after the task 8.2 live attempt, which is what exposed it.
+
+**Finding — CRITICAL (corrects the verdict on the `unified-agent-tools` requirement).** The
+trusted-recipient lifecycle tools are **unreachable from the text agent**. `createContactActionOperations`
+(`src/agent/definition.ts:576`) returns its `address_review_required` constant whenever
+`context.contactActions` is absent, and the text path never supplies it:
+
+| Check | Result |
+| --- | --- |
+| `contactActions` occurrences in `src/agent/wallet-agent.ts` | **0** |
+| `HandleMessageOptions` declaring `contactActions` | **0** (it declares `grantService`, the exact precedent for this kind of port) |
+| Every production call site of `contactActions` | `src/livekit/worker.ts:211` + `:308`, `src/livekit/realtime-tools/create-realtime-tools.ts:52` + `:98` — **all voice** |
+| `git log -S "contactActions" -- src/agent/wallet-agent.ts` | **empty** — it was never wired, including by the sibling `trusted-recipient-policy-sync` change |
+
+**Observed live, not inferred:** a real text turn asking to add `sophie.sns` returned
+`HTTP 200 {"status":"answer","message":"Necesito que revises y pegues la dirección en la tarjeta
+segura antes de guardar a Sophie (sophie.sns)."}` — verbatim the `unavailable` constant — with
+**0** `contact_action_proposals` rows created.
+
+**Why this is a finding and not an environment blocker.** Tasks B1–B4 of the 8.2 attempt are
+deployment state (stale container `dist`, SDK v4 in the container, a live reconciler, the stack DB
+one migration behind). This one is a **code gap**: task 6.4 of this change explicitly required
+wiring "**and the text path's own port construction**", and the run that closed 6.4 recorded as a
+deviation that *"there is no second ('text path') port construction — `createVoiceContactActions`
+has one production call site feeding both surfaces (grep-verified)"* and marked the task `[x]`.
+**That premise is false**: one call site feeds one surface. The task was closed on a wrong
+premise.
+
+**Scope question the finding leaves open (a product/design decision, not an implementation
+detail).** The spec requirement *Version-bound recipient lifecycle tools in both agents* says the
+shared surface "SHALL expose" the tools to both agents, and its scenario compares **tool name
+lists** — which is satisfied, because the tool is in both lists from the one definition. What is
+**not** satisfied is the intent plus task 6.4's explicit wiring requirement: the text agent can
+never successfully stage a contact. Closing it is not a one-line thread-through, because the
+confirmation arbiter is process-local to the worker (`design.md` §7.2) while the text agent runs
+in the backend process, so a text confirmation needs its own design decision (a separate route, or
+the card in the app UI). **Recording it rather than silently expanding scope.**
+
+**Corrected verdict rows:**
+- *Version-bound recipient lifecycle tools in both agents* — **PASS → PARTIAL**: exposed in both,
+  usable only by voice.
+- Task **6.4** — its "wire the text path's own port construction" clause is **not done** despite
+  the `[x]`. Left `[x]` here because un-checking a landed task is the change owner's call, and
+  flagged so it is not read as complete.
+- Task **8.2** — remains `[ ]`, and its blocker is now **two** things: the four deployment-state
+  blockers *and* this code gap. The task's own stop condition assumed the RPC was the only gate.
