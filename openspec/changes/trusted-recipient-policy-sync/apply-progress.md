@@ -7124,3 +7124,57 @@ any contact, while that EVM rule is present. Every new intent fails the same way
 **State left behind, stated plainly.** The contact `Sophie` exists as `inactive`; `desired_revision` is
 ahead of `applied_revision`; the remote policy was **not** changed by this attempt. The open decision is
 whether the fix is the comparator's network scoping or the removal of the foreign-network rule.
+
+---
+
+## Task 5.7 — resolution: the removal defect is fixed, the screen half converged, the agent half is still unexecuted
+
+**The earlier blocker entry in this record was WRONG about the cause, and is corrected here.** It
+claimed the blocking address was a foreign-network EVM address that the comparator failed to scope.
+Reading the real policy rules disproved that: the remote rule contained three **Solana** addresses and
+the unexplained one was `3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2` — the address of the contact
+that had just been **removed**. The EVM address was never in the policy at all.
+
+**The real defect, and it is worse than a foreign-network gap.** `listComposerContacts`
+(`src/wallet/policy/repository.ts`) selects `status = 'active'`, and the composer fed that **same**
+array to both the rule addresses and the provenance map. So a removal could never converge: the row
+goes `inactive` → drops out of provenance → the address stays in the remote policy → the comparator
+correctly refuses to delete an address it cannot explain → **permanent block**. Adding worked; only
+removal was structurally impossible. The audit trail is the proof: `create` → `applied`, then `remove`
+→ `blocked_conflict`.
+
+**Fixed at `ad5876e`.** `ComposeInput` now carries `contactProvenanceAddresses` — the user's contact
+addresses on the composer's network regardless of `status` — used **only** for the provenance map.
+Rules keep being built from active consent alone, so the removed address leaves the rules while
+remaining explainable to the comparator. The fail-closed property is preserved and mutation-tested: an
+address belonging to no contact row **still** blocks. The consent baseline is untouched — it is written
+from the enrollment snapshot, not from `composed.provenance`, which has exactly one consumer (the
+comparator).
+
+**Screen half — executed and converged, with signed readback evidence before and after.**
+- The policy's rule held three addresses (`3aHrqufW…` the removed contact, `AfHaCDtRK…` the baseline,
+  `DFYT4RDcvr…` the still-active contact) with provenance explaining two, and the decision was
+  `blocked_conflict` / `recipient_address_without_provenance`.
+- After the fix, the same readback computes `patch_required` and provenance explains all three.
+- After the reconciler applied it: the rule holds **only** the baseline and the active contact — the
+  removed contact's address is gone — the decision is `composed`, revisions are **2/2** (they were
+  2/1), and every intent is `applied` (the failed one is gone).
+
+**Preservation, read not asserted:** the baseline address and the unrelated active contact
+(`Test1`) are both still present after the change, so inclusion of what should stay and removal of
+what should go are both evidenced. **`Test1` was never touched.**
+
+**Honest limits on this evidence.** The readback is authenticated with the app credentials, not a
+user-signed read — the harness prints `signerConfigured` so the distinction stays visible, and the
+capability probe reports `{ capable: true, code: "verified" }` in both processes. The convergence was
+triggered by returning the terminal `failed` intent to `pending` so the deployment's **own** reconciler
+re-ran it through the real path; nothing was fabricated and no success was written by hand.
+
+**Still unexecuted, with its blocker.** The **agent** operation was not performed: the text agent
+cannot stage a trusted recipient at all (its `contactActions` port is never supplied —
+`src/agent/definition.ts:576,609` return the fail-closed constant), so the only reachable agent surface
+is voice, which requires a live call. Task 5.7 therefore stays `[ ]`: the screen half is done, the
+agent half is not.
+
+**Residue cleared:** the removed contact's address is out of the policy, and the earlier stalled
+`failed` intent no longer exists.
