@@ -9,6 +9,12 @@ export type ContactRecord = {
   description: string;
   address: string;
   network?: 'solana-devnet' | null;
+  /**
+   * Where this address came from (design §3.1): `{origin:'user', source:'pasted'}`
+   * for the paste/scan path, and the alias evidence object for a contact added by
+   * `.sns` name. `{}` is the honest "nothing is claimed" value, never a guess.
+   */
+  provenance: Record<string, unknown>;
   version: number;
   status: "active" | "inactive";
   createdAt: string;
@@ -20,6 +26,8 @@ export type ContactWriteInput = {
   description: string;
   address: string;
   network?: 'solana-devnet' | null;
+  /** Design §3.2 correction C1: the alias evidence, written instead of discarded. */
+  provenance?: Record<string, unknown>;
 };
 
 export type ContactPatchInput = {
@@ -27,6 +35,11 @@ export type ContactPatchInput = {
   description?: string;
   address?: string;
   network?: 'solana-devnet' | null;
+  /**
+   * Design §3.2 correction C2. `undefined` on an address edit means "clear";
+   * `null` is the same explicit "no claim" value. See `update`.
+   */
+  provenance?: Record<string, unknown> | null;
   expectedVersion: number;
 };
 
@@ -36,6 +49,7 @@ type RecipientRow = {
   description: string;
   address: string;
   network: 'solana-devnet' | null;
+  provenance: Record<string, unknown> | null;
   version: number | string;
   status: string;
   created_at: string | Date;
@@ -55,6 +69,9 @@ function mapRecipient(row: RecipientRow): ContactRecord {
     description: row.description,
     address: row.address,
     ...(row.network === 'solana-devnet' ? { network: 'solana-devnet' as const } : {}),
+    // The column is NOT NULL DEFAULT '{}', so an absent value is the empty
+    // claim — the same thing the database would have stored.
+    provenance: row.provenance ?? {},
     version: Number(row.version),
     status: row.status === "active" ? "active" : "inactive",
     createdAt: iso(row.created_at),
@@ -75,7 +92,7 @@ export class ContactsNotFoundError extends Error {}
 export class ContactsConflictError extends Error {}
 
 const RECIPIENT_COLUMNS =
-  "id, name, description, address, network, version, status, created_at, updated_at";
+  "id, name, description, address, network, provenance, version, status, created_at, updated_at";
 
 /**
  * User-surface contacts repository (PMU-008..013): recipient CRUD for the HTTP
@@ -130,7 +147,10 @@ export class ContactsRepository {
           network,
           vectorLiteral(embedding),
           embeddingModelRevision,
-          JSON.stringify({ origin: "user" }),
+          // Design §3.2 correction C1: the caller's provenance wins, and the
+          // paste/scan vocabulary is the default rather than the only value.
+          // Without this the alias evidence is written and silently discarded.
+          JSON.stringify(input.provenance ?? { origin: "user" }),
         ],
       );
       const row = result.rows[0];
@@ -195,6 +215,26 @@ export class ContactsRepository {
           ? redactAddressLikeText(input.description).trim()
           : row.description;
       const nextAddress = input.address?.trim() ?? row.address;
+      /**
+       * Design §3.2 correction C2 — the one conditional column write.
+       *
+       * A patch that carries an address IS an address edit: the service uses the
+       * same vocabulary (`metadataOnly = input.address === undefined` in
+       * `src/wallet/policy/service.ts`). On that arm the claim is CLEARED unless
+       * the caller states a new one, because a missed caller that kept a stale
+       * claim would leave `juan.sns -> <old address>` on a row that no longer has
+       * that address — and a later drift check would then report "no drift" for a
+       * name with nothing to do with the destination. Clearing loses a claim;
+       * keeping a stale one states something false, so the default clears.
+       *
+       * Every other patch is metadata-only (renaming never invalidates a freeze)
+       * and preserves the stored provenance unchanged unless the caller replaces
+       * it explicitly.
+       */
+      const nextProvenance =
+        input.address !== undefined
+          ? input.provenance ?? {}
+          : input.provenance ?? row.provenance ?? {};
       // The stored network is resolved the same way on read-back, so a patch that
       // carries no `network` cannot widen the edit into EVM acceptance either.
       const nextNetwork = resolveRecipientNetwork(
@@ -211,6 +251,7 @@ export class ContactsRepository {
              address = $6, network = $7,
              embedding = $8::vector,
              embedding_model_revision = $9,
+             provenance = $10::jsonb,
              version = version + 1,
              updated_at = now()
          WHERE user_id = $1 AND id = $2
@@ -227,6 +268,7 @@ export class ContactsRepository {
           // agent retrieval reflects the current projection.
           contentChanged ? vectorLiteral(embedding) : vectorLiteral(embedding),
           contentChanged ? embeddingModelRevision : embeddingModelRevision,
+          JSON.stringify(nextProvenance),
         ],
       );
       const updatedRow = updated.rows[0];
