@@ -6981,3 +6981,40 @@ and no credential access was performed in this phase.
    development **off**, no receipt can exist for it.
 4. Task 5.2's U1/U4 probes and task 5.7's live screen/agent devnet steps remain uncollected, as their
    own `[ ]` notes say; this run did not attempt them.
+
+---
+
+## Corrections at `9a90bfa` — three claims in this record are false against the tree
+
+Added 2026-10-11. Written by **appending**, not rewriting: the earlier wording stays in place so the
+record shows what was believed, and this section says what is actually true.
+
+**1. `supersedeUnpublished` was never wired in production.** An earlier entry states it *"is wired in
+the contact seam exactly as §8.2's orphan-row retry describes"*. It was wired in the seam's
+**signature** and in **tests**, never in production: `grep -rn supersedeUnpublished src/` returned only
+the declaration (`src/livekit/contact-proposal-publication.ts:301`), the optional call (`:417`) and the
+service method (`src/wallet/policy/contact-actions.ts:303`); the worker's
+`createVoiceContactActions({ ... })` never passed it. Fixed at `9a90bfa`. Two further inaccuracies in
+that entry: it attributes the intent to "§8.2's orphan-row retry", but §8.2 (`design.md:1116-1135`)
+contains no orphan-row retry text at all — the section that specifies the intent is the task-4.7 entry,
+which is explicit that the caller is *the voice retry path*.
+
+**2. The collateral did not end at the TTL. It was permanent.** That same entry says the conflict lasts
+*"until that row is superseded or expires (5 min TTL)"*. Expiry is only ever a **predicate** in this
+schema, never a stored transition: nothing anywhere writes `status='expired'`, and the partial unique
+index is `WHERE status = 'open'`
+(`src/db/migrations/015_recipient_policy_sync.sql:193-194`) with **no `expires_at` clause**. So a torn
+card blocked its own conversation **indefinitely**, across sessions, until someone superseded or
+consumed a row the user could never see. The 5-minute figure is the TTL constant, not the duration of
+the fault.
+
+**3. The same predicate mismatch also lets an EXPIRED row block a new stage.** `readOpen`
+(`contact-actions.ts:224-235`) filters `status='open' AND published_at IS NOT NULL AND expires_at >
+now()`, so it correctly reports that no window is open. `stage` (`:175-201`) does a bare INSERT and
+handles only the unique-index error, and the index ignores expiry. **The read path treats an expired
+row as gone; the write path is blocked by it.** Observed live on the stack: a published, expired row
+(`5145ff29-…`, created `2026-10-10T21:16:51Z`) sat `open` in conversation `35f03e26-…`, so the next
+stage in that conversation would have thrown `ContactActionProposalConflictError` — a member that does
+**not** exist in the port's status union (`src/agent/definition.ts:103`), so it propagates as a crash
+instead of being reported to the model. That row was superseded to unblock; the code fix is tracked
+separately as this change's fourth unwired-seam-class defect.
