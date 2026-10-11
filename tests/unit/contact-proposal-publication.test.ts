@@ -21,6 +21,7 @@ import {
 import { createConfirmationArbiter } from "../../src/conversations/confirmation-arbiter.js";
 import { isCancellation, isConfirmation } from "../../src/livekit/resolution-phrases.js";
 import type { ContactActionProposal } from "../../src/wallet/policy/contact-actions.js";
+import type { ContactProposalApplication } from "../../src/wallet/policy/service.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 const CONVERSATION_ID = "22222222-2222-4222-8222-222222222222";
@@ -49,6 +50,26 @@ function proposal(overrides: Partial<ContactActionProposal> = {}): ContactAction
   };
 }
 
+/**
+ * The outcome a real transaction returns. `action`/`contactId`/`permission` are the
+ * ones the stub's own service would have written; the integration suites are where
+ * the rows (and the revision, and the intent) are asserted for real.
+ */
+type AppliedOutcome = Extract<ContactProposalApplication, { status: "applied" }>;
+
+const APPLIED: AppliedOutcome = {
+  status: "applied",
+  action: "create",
+  contactId: "44444444-4444-4444-8444-444444444444",
+  permission: {
+    state: "applied",
+    desiredRevision: 1,
+    appliedRevision: 1,
+    retryable: false,
+  },
+  policyRevision: 1,
+};
+
 type Published = {
   bytes: Uint8Array;
   reliable: true;
@@ -61,6 +82,8 @@ function harness(input: {
   publish?: (payload: Published) => Promise<void>;
   markPublished?: () => Promise<ContactActionProposal | null>;
   consumed?: boolean;
+  /** The honest outcome the seam must answer with, when the default `APPLIED` is not it. */
+  outcome?: ContactProposalApplication;
   resolveAlias?: VoiceContactActionDependencies["resolveAlias"];
   /** Stands in for the persisted row the card renders. */
   currentOpenProposal?: () => Promise<{ proposalId: string; proposalVersion: number } | null>;
@@ -118,9 +141,12 @@ function harness(input: {
         persisted && persisted.status === "open" && persisted.publishedAt
           ? { proposalId: persisted.proposalId, proposalVersion: persisted.proposalVersion }
           : null),
-    consume: async (call) => {
+    applyProposal: async (call) => {
       consumedCalls.push(call);
-      return input.consumed ?? true;
+      if (input.outcome) return input.outcome;
+      // `consumed: false` is the LOST CAS: it is `not_consumable`, never a refusal
+      // of the mutation itself.
+      return input.consumed === false ? { status: "not_consumable" as const } : APPLIED;
     },
   });
   return { port, arbiter, published, stageCalls, consumedCalls, order, resolveCalls };
@@ -209,7 +235,7 @@ describe("voice contact proposal publication", () => {
       .toEqual({ status: "refused", code: "no_window" });
   });
 
-  it("consumes once through the injected L5 consume, and refuses when it returns false", async () => {
+  it("applies once through the injected L5 application, and refuses when the CAS is lost", async () => {
     const h = harness();
     await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
     const window = h.arbiter.current()!;
@@ -217,14 +243,21 @@ describe("voice contact proposal publication", () => {
 
     const consumed = await h.port.confirm!({ userId: USER_ID, conversationId: CONVERSATION_ID, proposalId: PROPOSAL_ID, proposalVersion: 1, source: "voice" });
     expect(consumed.status).toBe("consumed");
-    // `reverify: "unavailable"` (task 6.4): this harness wires no re-verification, so
-    // the consume is told the check could not be made. The persisted row decides
-    // whether the key belongs — a version with no alias claim keeps its payload.
+    // The application seam is ONE call carrying the proposal identity, the origin
+    // and the tool, and it owns BOTH the CAS consume and the contact mutation. The
+    // bare CAS-only call this replaced is exactly what let a confirmation report
+    // success while saving nothing.
+    // `reverify: "unavailable"` (task 6.4): this harness wires no re-verification,
+    // so the application is told the check could not be made. The persisted row
+    // decides whether the key belongs — a version with no alias claim keeps its
+    // payload.
     expect(h.consumedCalls).toEqual([{
       userId: USER_ID,
       conversationId: CONVERSATION_ID,
       proposalId: PROPOSAL_ID,
       proposalVersion: 1,
+      origin: "voice",
+      tool: "confirm_trusted_recipient_action",
       reverify: "unavailable",
     }]);
     // The window is closed and the same evidence cannot authorize twice.

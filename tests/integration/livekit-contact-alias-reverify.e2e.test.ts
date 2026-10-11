@@ -22,6 +22,10 @@ import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.j
 import { createConfirmationArbiter } from "../../src/conversations/confirmation-arbiter.js";
 import { isCancellation, isConfirmation } from "../../src/livekit/resolution-phrases.js";
 import {
+  createProposalApplicationService,
+  proposalApplicationSeam,
+} from "./helpers/proposal-application-service.js";
+import {
   createAliasReverifier,
   createVoiceContactActions,
   type AliasResolution,
@@ -108,6 +112,9 @@ suite("the confirm-time alias re-verification against the real table (task 6.4)"
   afterAll(async () => {
     if (userIds.length > 0) {
       await database.query("DELETE FROM contact_action_proposals WHERE user_id = ANY($1::uuid[])", [userIds]);
+      // Confirmations now really create contact rows, so they must go before the
+      // user rows they reference (`recipients_user_id_users_fk`).
+      await database.query("DELETE FROM recipients WHERE user_id = ANY($1::uuid[])", [userIds]);
       await database.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [userIds]);
     }
     await database.close();
@@ -179,17 +186,13 @@ suite("the confirm-time alias re-verification against the real table (task 6.4)"
         const open = await actions.readOpen(userId, conversationId);
         return open ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion } : null;
       },
-      consume: async ({ userId, conversationId, proposalId, proposalVersion, reverify }) =>
-        (await database.withUserTransaction(userId, (client) =>
-          actions.consumeInTransaction(client, {
-            userId,
-            proposalId,
-            proposalVersion,
-            consumedByTool: "confirm_trusted_recipient_action",
-            consumedBySession: conversationId,
-            ...(reverify ? { reverify } : {}),
-          }),
-        )) !== null,
+      // The REAL application transaction (design flow (c)): the CAS plus the
+      // contact mutation, and the consume records the re-verification outcome in
+      // the same statement. A CAS-only double would prove the ordering below while
+      // proving nothing about what the confirmation persisted.
+      applyProposal: proposalApplicationSeam({
+        service: createProposalApplicationService(database),
+      }),
     });
     return { port, arbiter, delivered };
   }
@@ -381,17 +384,9 @@ suite("the confirm-time alias re-verification against the real table (task 6.4)"
         const open = await actions.readOpen(owner, conversation);
         return open ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion } : null;
       },
-      consume: async ({ userId: owner, conversationId: conversation, proposalId, proposalVersion, reverify }) =>
-        (await database.withUserTransaction(owner, (client) =>
-          actions.consumeInTransaction(client, {
-            userId: owner,
-            proposalId,
-            proposalVersion,
-            consumedByTool: "confirm_trusted_recipient_action",
-            consumedBySession: conversation,
-            ...(reverify ? { reverify } : {}),
-          }),
-        )) !== null,
+      applyProposal: proposalApplicationSeam({
+        service: createProposalApplicationService(database),
+      }),
     });
     void resolver;
 
@@ -403,31 +398,59 @@ suite("the confirm-time alias re-verification against the real table (task 6.4)"
       name: "Sofía",
     });
     expect(staged.status).toBe("staged");
+
+    // A create whose review channel never completed carries no address, and
+    // design flow (c) refuses it with PROPUESTA_SIN_DIRECCION because it could
+    // never produce a contact — so it is not confirmable at all. The user pastes
+    // the address here, which is the path a voice proposal with no verified name
+    // actually takes: a NEW version carries it, and its `addressSource` stays
+    // `review_required` — the version still claims no alias, which is exactly
+    // what this test is about.
+    const replacement = await actions.replaceAddress(userId, {
+      proposalId: staged.proposalId!,
+      expectedProposalVersion: staged.proposalVersion!,
+      address: SOPHIE_ADDRESS,
+    });
+    expect(replacement).not.toBeNull();
+    await actions.markPublished(userId, replacement!.proposalId, replacement!.proposalVersion);
+
+    // Align the in-process window to the row the card actually shows, so the
+    // affirmative below authorizes THAT version.
+    await port.confirm!({
+      userId,
+      conversationId,
+      proposalId: replacement!.proposalId,
+      proposalVersion: replacement!.proposalVersion,
+      source: "voice",
+    });
+    const window = arbiter.current()!;
     arbiter.recordEvidence({
       text: "dale",
       isFinal: true,
       authenticatedSpeaker: true,
-      createdAt: Date.now() + 1,
+      createdAt: window.createdAt + 1,
       userId,
       conversationId,
     });
     const result = await port.confirm!({
       userId,
       conversationId,
-      proposalId: staged.proposalId!,
-      proposalVersion: staged.proposalVersion!,
+      proposalId: replacement!.proposalId,
+      proposalVersion: replacement!.proposalVersion,
       source: "voice",
     });
 
     // Positive control: the confirmation was honored...
     expect(result.status).toBe("consumed");
-    const [row] = await rows(userId);
+    const persisted = await rows(userId);
+    const row = persisted[persisted.length - 1]!;
     expect(row!.status).toBe("consumed");
     // ...and the row kept its payload: the alias key belongs to a version that
     // carries an alias claim, so a caller reporting "could not check" cannot
-    // write it onto an address that never came from a name.
+    // write it onto an address that never came from a name. `pasted` is exactly
+    // that: an address the review channel supplied, claiming no alias.
     expect(row!.reverify).toBeNull();
-    expect(row!.payload_address_source).toBe("review_required");
+    expect(row!.payload_address_source).toBe("pasted");
   });
 
   it("proceeds with the displayed address and records the re-verification as unavailable when the registry cannot be reached", async () => {

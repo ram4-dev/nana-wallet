@@ -30,6 +30,10 @@ import { ContactActionService } from "../../src/wallet/policy/contact-actions.js
 import { createConfirmationArbiter } from "../../src/conversations/confirmation-arbiter.js";
 import { isCancellation, isConfirmation } from "../../src/livekit/resolution-phrases.js";
 import {
+  createProposalApplicationService,
+  proposalApplicationSeam,
+} from "./helpers/proposal-application-service.js";
+import {
   CONTACT_PROPOSAL_TOPIC,
   createVoiceContactActions,
   type VoiceContactActionDependencies,
@@ -52,6 +56,9 @@ suite("contact proposal publication gate", () => {
   afterAll(async () => {
     if (userIds.length > 0) {
       await database.query("DELETE FROM contact_action_proposals WHERE user_id = ANY($1::uuid[])", [userIds]);
+      // Confirmations now really create contact rows, so they must go before the
+      // user rows they reference (`recipients_user_id_users_fk`).
+      await database.query("DELETE FROM recipients WHERE user_id = ANY($1::uuid[])", [userIds]);
       await database.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [userIds]);
     }
     await database.close();
@@ -75,7 +82,7 @@ suite("contact proposal publication gate", () => {
    */
   function seam(
     actions: ContactActionService,
-    overrides: Partial<Pick<VoiceContactActionDependencies, "publish" | "boundParticipantIdentity">> = {},
+    overrides: Partial<Pick<VoiceContactActionDependencies, "publish" | "boundParticipantIdentity" | "resolveAlias">> = {},
   ) {
     const delivered: Array<{ topic: string; destinationIdentities: string[]; reliable: boolean }> = [];
     const arbiter = createConfirmationArbiter({ isConfirmation, isCancellation, boundedWaitMs: 5 });
@@ -92,16 +99,13 @@ suite("contact proposal publication gate", () => {
         const open = await actions.readOpen(owner, conversation);
         return open ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion } : null;
       },
-      consume: async ({ userId, conversationId, proposalId, proposalVersion }) =>
-        (await database.withUserTransaction(userId, (client) =>
-          actions.consumeInTransaction(client, {
-            userId,
-            proposalId,
-            proposalVersion,
-            consumedByTool: "confirm_trusted_recipient_action",
-            consumedBySession: conversationId,
-          }),
-        )) !== null,
+      // The REAL application transaction (design flow (c)): the proposal CAS plus
+      // the contact mutation it describes, committed together. The mutation
+      // really writes the contact row, so a confirmation here cannot pass by
+      // consuming a proposal and saving nothing.
+      applyProposal: proposalApplicationSeam({
+        service: createProposalApplicationService(database),
+      }),
     });
     return { port, arbiter, delivered };
   }
@@ -198,9 +202,15 @@ suite("contact proposal publication gate", () => {
     const userId = await provisionUser();
     const conversationId = randomUUID();
     const actions = new ContactActionService(database);
-    const h = seam(actions);
+    // The version must carry an address to be confirmable at all: design flow (c)
+    // refuses a create whose review channel never completed with
+    // PROPUESTA_SIN_DIRECCION, because such a version can never produce a contact.
+    // The alias arm gives it one up front, which keeps this test about EVIDENCE
+    // rather than about a confirmation that would save nothing.
+    const h = seam(actions, { resolveAlias: async ({ snsName }) => ({ status: "resolved", snsName, address: ADDRESS, resolvedAt: new Date().toISOString(), resolver: "sns/solana-devnet/v3", reverseDomain: null, reverseDomainState: "none" }) });
 
-    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
+    expect(staged.status).toBe("staged");
     const window = h.arbiter.current()!;
     const persisted = await actions.read(userId, staged.proposalId!);
     expect(persisted!.publishedAt).not.toBeNull();

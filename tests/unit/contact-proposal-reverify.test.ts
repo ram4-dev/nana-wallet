@@ -56,7 +56,7 @@ function proposal(overrides: Partial<ContactActionProposal> = {}): ContactAction
   };
 }
 
-type ConsumeCall = Parameters<VoiceContactActionDependencies["consume"]>[0];
+type ApplicationCall = Parameters<VoiceContactActionDependencies["applyProposal"]>[0];
 
 function harness(
   input: {
@@ -72,7 +72,7 @@ function harness(
   } = {},
 ) {
   const order: string[] = [];
-  const consumed: ConsumeCall[] = [];
+  const consumed: ApplicationCall[] = [];
   const publishedVersions: number[] = [];
   const reverifyCalls: Array<{ userId: string; proposalId: string; proposalVersion: number }> = [];
   const arbiter = createConfirmationArbiter({ isConfirmation, isCancellation, boundedWaitMs: 0 });
@@ -122,10 +122,24 @@ function harness(
           },
         }
       : {}),
-    consume: async (call: ConsumeCall) => {
+    applyProposal: async (call: ApplicationCall) => {
       consumed.push(call);
-      order.push("consume");
-      return true;
+      order.push("applyProposal");
+      // The stub stands in for the whole transaction (consume + mutation): this
+      // suite is about the re-verification's PLACEMENT and outcome, and the rows
+      // the real transaction writes are asserted by the integration suites.
+      return {
+        status: "applied" as const,
+        action: "create" as const,
+        contactId: "44444444-4444-4444-8444-444444444444",
+        permission: {
+          state: "applied" as const,
+          desiredRevision: 1,
+          appliedRevision: 1,
+          retryable: false,
+        },
+        policyRevision: 1,
+      };
     },
   });
   return { port, arbiter, order, consumed, publishedVersions, reverifyCalls };
@@ -176,8 +190,10 @@ describe("the confirm-time re-verification (task 6.4)", () => {
 
     expect(result.status).toBe("consumed");
     // The placement, asserted as ORDER over one log: the card was published for
-    // the window, the name was re-checked, and only then was the row consumed.
-    expect(h.order).toEqual(["publish", "reverify", "consume"]);
+    // the window, the name was re-checked, and only THEN was the proposal applied
+    // — the re-verification is remote I/O and design S10 keeps it OUTSIDE the
+    // transaction `applyProposal` opens.
+    expect(h.order).toEqual(["publish", "reverify", "applyProposal"]);
     expect(h.consumed).toHaveLength(1);
   });
 

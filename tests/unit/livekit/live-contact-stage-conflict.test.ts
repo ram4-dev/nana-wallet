@@ -103,7 +103,8 @@ suite("a live open window over the real one-open index", () => {
         published.push(payload);
       },
       arbiter,
-      consume: async () => false,
+      // This unit is about the STAGE refusal, so no confirmation ever runs here.
+      applyProposal: async () => ({ status: "not_consumable" as const }),
     });
 
     // The retry for the same conversation: the shape that used to throw

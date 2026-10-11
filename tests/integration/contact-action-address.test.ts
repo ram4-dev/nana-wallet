@@ -23,6 +23,10 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import {
+  createProposalApplicationService,
+  proposalApplicationSeam,
+} from "./helpers/proposal-application-service.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.js";
 import { ContactActionService } from "../../src/wallet/policy/contact-actions.js";
 import { createConfirmationArbiter } from "../../src/conversations/confirmation-arbiter.js";
@@ -437,16 +441,13 @@ suite("contact action address endpoint (task 4.7)", () => {
           await publish();
         },
         arbiter,
-        consume: async ({ userId: owner, conversationId: id, proposalId, proposalVersion }) =>
-          (await database.withUserTransaction(owner, (client) =>
-            actions.consumeInTransaction(client, {
-              userId: owner,
-              proposalId,
-              proposalVersion,
-              consumedByTool: "confirm_trusted_recipient_action",
-              consumedBySession: id,
-            }),
-          )) !== null,
+        // The REAL application transaction (design flow (c)): the proposal CAS
+        // plus the contact mutation, in one committed transaction. A CAS-only
+        // double here would reproduce the defect this suite's neighbour exists to
+        // pin — a confirmation that saves nothing.
+        applyProposal: proposalApplicationSeam({
+          service: createProposalApplicationService(database),
+        }),
       });
 
     // First attempt: the delivery rejects (participant gone). The row stays, the

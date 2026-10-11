@@ -282,7 +282,11 @@ suite("the unpublished-orphan cleanup as production builds the voice seam", () =
     // precondition for the seam to be built at all, so a missing cleanup below is
     // a wiring gap and not a block that never executed.
     expect(seam.dependencies.boundParticipantIdentity).toBe(IDENTITY);
-    expect(typeof seam.dependencies.consume).toBe("function");
+    // The confirm seam is now the proposal APPLICATION (the CAS consume plus the
+    // contact mutation it describes, in one transaction). It replaced the bare
+    // CAS-only `consume` that consumed a proposal without saving anything — the
+    // assertion follows the port, which declares `applyProposal`.
+    expect(typeof seam.dependencies.applyProposal).toBe("function");
 
     expect(typeof seam.dependencies.supersedeUnpublished).toBe("function");
 

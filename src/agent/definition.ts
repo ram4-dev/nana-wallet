@@ -22,6 +22,7 @@ import {
 import type { ConversationRepository } from '../conversations/repository.js';
 import type { VoiceDecisionGate } from '../livekit/voice-decision-gate.js';
 import type { ConfirmationArbiter } from '../conversations/confirmation-arbiter.js';
+import type { ContactPermissionSnapshot } from '../wallet/policy/service.js';
 import {
   transactionResultSchema,
   transferPreviewSchema,
@@ -121,6 +122,23 @@ export type ContactActionPort = {
     message: string;
     currentProposalId?: string;
     currentProposalVersion?: number;
+    /**
+     * The typed code of a refusal (`code: ` on the seam's failures and on the
+     * proposal-shape refusals), so the model can tell "that contact moved" from
+     * "there is no address yet" instead of reading the sentence alone. `undefined`
+     * on success and on the stale/unknown handle refusal, which is not a
+     * mutation refusal at all.
+     */
+    code?: string;
+    /**
+     * Where the recipient's PERMISSION got to, read back from the recorded
+     * revision — never a promise. It exists so "habilitado" can never be said
+     * before a verified readback: `applied` is the only value that may be narrated
+     * as enabled, and it is only ever produced by `projectContactPermission` after
+     * a verified readback of the current desired revision. Absent when nothing was
+     * applied.
+     */
+    permission?: ContactPermissionSnapshot['state'];
   }>;
 };
 

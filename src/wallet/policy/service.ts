@@ -69,11 +69,16 @@ import {
   RecipientPolicyNotSerializedError,
   RecipientPolicyRemovalConflictError,
   RecipientPolicyRevisionConflictError,
+  RecipientPolicySeamError,
   RecipientPolicyValidationError,
   RecipientSelfAddressError,
   type RecipientPolicyValidationIssue,
 } from "./errors.js";
 import { mutationBodyHash } from "./request-hash.js";
+import {
+  ContactActionService,
+  type ContactActionProposal,
+} from "./contact-actions.js";
 import type { SnsResolution, SnsResolveFailure, SnsResolver } from "../sns/resolver.js";
 import { SNS_NETWORKS } from "../sns/resolver.js";
 import { ALIAS_NAME_MAX_LENGTH } from "../../contracts/http.js";
@@ -602,6 +607,23 @@ export type RecipientMutationOptions = {
   beforeCommit?: (client: Queryable) => Promise<void>;
   /** Immutable disclosure supplied by a proposal/UI preflight. */
   expectedRevokedGrantIds?: readonly string[];
+  /**
+   * An alias a PROPOSAL already froze (design flow (c), task 4.5).
+   *
+   * The confirm path is the only caller, and this is not a shortcut around "the
+   * server resolves the name": the address and its evidence were resolved when
+   * the name was STAGED and are persisted on the proposal row the user reviewed.
+   * Re-resolving here would (a) duplicate the remote call the confirm-time
+   * re-verification just made, and (b) contradict S11 — a registry that became
+   * unreachable between the two must not fail a confirmation the re-verification
+   * already decided to proceed with, against the address the user was shown.
+   *
+   * The body's `expectedAddress` is still compared against it, so a caller's value
+   * keeps its veto and may never choose. HTTP never supplies this field: the
+   * address comes from the row, and the confirm path is the only writer of that
+   * row (`ContactActionService.stage`, which validates the address it stores).
+   */
+  frozenAlias?: { address: string; provenance: RecipientAliasProvenance };
 };
 
 /**
@@ -784,6 +806,213 @@ type RemovalPlan = {
 // The service
 // ---------------------------------------------------------------------------
 
+/**
+ * The outcome of applying a CONFIRMED proposal (design flow (c), task 4.5).
+ *
+ *  * `applied` — the one transaction committed: the contact mutation, the desired
+ *    revision, its intent, the audit rows and the proposal's own consume. It
+ *    carries the FAIL-CLOSED permission projection of the revision this
+ *    transaction recorded, which is the only thing a caller may turn into
+ *    "enabled" (see `projectContactPermission`: an unverified or stale `applied`
+ *    row is reported as `pending`).
+ *  * `not_consumable` — the CAS matched zero rows, so the whole transaction was
+ *    abandoned: nothing was mutated and the evidence was never re-armed. A stale,
+ *    expired, superseded, already-consumed or foreign proposal is this answer,
+ *    and it is the ONLY answer that means "do not retry this tuple".
+ *  * `refused` — a typed refusal reached before or inside the transaction (a
+ *    version conflict, a composition refusal, a disclosure mismatch, a proposal
+ *    shape that cannot be applied). Nothing was consumed and nothing was mutated.
+ */
+export type ContactProposalApplication =
+  | {
+      status: "applied";
+      action: ContactActionProposal["action"];
+      contactId: string;
+      permission: ContactPermissionSnapshot;
+      policyRevision: number;
+    }
+  | { status: "not_consumable" }
+  | { status: "refused"; code: string };
+
+/**
+ * The proposal's own CAS matched no row (design flow (c)): the row is not `open`
+ * for this `(id, version, owner)` any more, or its window is over.
+ *
+ * It is thrown from the `beforeCommit` hook so it aborts the WHOLE mutation
+ * transaction — the contact write, the revision, the intent and the audits are
+ * rolled back with it. That is the exactly-once guarantee applied to the
+ * mutation, not just to the row: without the throw, a lost race would still leave
+ * a contact nobody confirmed.
+ *
+ * It is deliberately NOT a `RecipientPolicyConflictError`: that class makes
+ * `runMutation` record a durable `blocked_conflict` STOP, and a proposal this
+ * consumer simply lost is not a policy stop — the winner's transaction owns the
+ * state, and the loser must leave no trace of its own.
+ */
+export class ContactProposalNotConsumableError extends Error {
+  constructor() {
+    super(
+      "The proposal's consume matched no row, so the mutation transaction was abandoned: nothing was mutated and the evidence was not re-armed.",
+    );
+    this.name = "ContactProposalNotConsumableError";
+  }
+}
+
+/**
+ * A proposal that cannot be turned into a mutation at all, so nothing is applied
+ * and nothing is consumed.
+ *
+ * These are PROPOSAL-shape codes, not seam codes: they name a fact about the row
+ * the user is confirming (a create version with no address — the review channel
+ * had not supplied one yet — a create without a display name, or a versioned
+ * action with no contact). The caller composes the sentence; the code is what
+ * makes the refusal distinguishable.
+ */
+export type ContactProposalShapeCode =
+  | "PROPUESTA_SIN_DIRECCION"
+  | "PROPUESTA_SIN_NOMBRE"
+  | "PROPUESTA_SIN_CONTACTO";
+
+/** The alias a proposal froze, as the contact's provenance plus its address. */
+type ProposalFrozenAlias = {
+  address: string;
+  snsName: string;
+  provenance: RecipientAliasProvenance;
+};
+
+/**
+ * The alias evidence the PROPOSAL row carries, as the contact's durable
+ * provenance (design flow (c), task 4.5).
+ *
+ * Built from the persisted payload and the persisted address and from nothing
+ * else, so the claim is about the address the user reviewed. `reverify` is
+ * carried only when the row has one: the consume writes the confirm-time outcome
+ * into the same payload in the same statement, so a version that was never
+ * re-checked keeps an ABSENT key rather than an ambiguous agreement (S11).
+ *
+ * `null` means "this version carries no alias claim": `stage` writes `sns` only
+ * through its alias arm, and every key it writes there is written together.
+ */
+function proposalFrozenAlias(
+  proposal: ContactActionProposal,
+): ProposalFrozenAlias | null {
+  const payload = proposal.payload;
+  if (payload.addressSource !== "sns" || !proposal.address) return null;
+  if (!payload.snsName || !payload.resolvedAt || !payload.resolver) return null;
+  return {
+    address: proposal.address,
+    snsName: payload.snsName,
+    provenance: {
+      source: "sns",
+      name: payload.snsName,
+      resolvedAt: payload.resolvedAt,
+      resolver: payload.resolver,
+      ...(payload.reverseDomain !== undefined
+        ? { reverseDomain: payload.reverseDomain }
+        : {}),
+      ...(payload.reverseDomainState !== undefined
+        ? { reverseDomainState: payload.reverseDomainState }
+        : {}),
+      ...(payload.reverify !== undefined ? { reverify: payload.reverify } : {}),
+    },
+  };
+}
+
+/**
+ * The mutation a staged proposal DESCRIBES, as the body the HTTP contacts
+ * machinery already accepts (design §9.2).
+ *
+ * Every field comes from the row, never from a caller, so no model and no client
+ * can contribute an address, a version or a disclosure to the transaction. The
+ * `refused` arm is the honest answer for a row that cannot be applied: it is
+ * unreachable for a row `stage` wrote (that path requires a contact and a
+ * version for `edit`/`remove`), and it stays instead of silently applying a
+ * different mutation.
+ */
+type ProposalMutationBody =
+  | {
+      kind: "create";
+      body: Record<string, unknown>;
+      frozenAlias?: { address: string; provenance: RecipientAliasProvenance };
+    }
+  | { kind: "edit"; contactId: string; body: Record<string, unknown> }
+  | {
+      kind: "remove";
+      contactId: string;
+      expectedVersion: number;
+      revokedGrantIds: readonly string[];
+    }
+  | { kind: "refused"; code: ContactProposalShapeCode };
+
+function proposalMutationBody(
+  proposal: ContactActionProposal,
+): ProposalMutationBody {
+  if (proposal.action === "remove") {
+    if (!proposal.contactId || !proposal.contactVersion) {
+      return { kind: "refused", code: "PROPUESTA_SIN_CONTACTO" };
+    }
+    return {
+      kind: "remove",
+      contactId: proposal.contactId,
+      expectedVersion: proposal.contactVersion,
+      // The disclosure the card showed. `[]` and "absent" mean the same thing to
+      // the transaction (`verifyReplacementDisclosure`/`applyRemoval` normalize
+      // both), so a proposal that disclosed nothing keeps today's behaviour.
+      revokedGrantIds: proposal.revokedGrantIds,
+    };
+  }
+
+  if (proposal.action === "edit") {
+    if (!proposal.contactId || !proposal.contactVersion) {
+      return { kind: "refused", code: "PROPUESTA_SIN_CONTACTO" };
+    }
+    return {
+      kind: "edit",
+      contactId: proposal.contactId,
+      body: {
+        ...(proposal.payload.name !== undefined
+          ? { name: proposal.payload.name }
+          : {}),
+        ...(proposal.payload.description !== undefined
+          ? { description: proposal.payload.description }
+          : {}),
+        ...(proposal.address !== null ? { address: proposal.address } : {}),
+        // The version CAS the proposal froze: a contact that moved since the card
+        // was shown must refuse, not overwrite.
+        expectedVersion: proposal.contactVersion,
+      },
+    };
+  }
+
+  // A create with no address is a version the review channel never completed:
+  // applying it would mean inventing a destination, so it refuses instead.
+  if (!proposal.address) return { kind: "refused", code: "PROPUESTA_SIN_DIRECCION" };
+  if (!proposal.payload.name) return { kind: "refused", code: "PROPUESTA_SIN_NOMBRE" };
+  const alias = proposalFrozenAlias(proposal);
+  return {
+    kind: "create",
+    body: alias
+      ? {
+          name: proposal.payload.name,
+          description: proposal.payload.description ?? "",
+          source: "sns",
+          snsName: alias.snsName,
+          // The address the card displayed. It can only veto: the address that is
+          // written is the one the server froze on the row.
+          expectedAddress: alias.address,
+        }
+      : {
+          name: proposal.payload.name,
+          description: proposal.payload.description ?? "",
+          address: proposal.address,
+          source: proposal.payload.addressSource,
+        },
+    ...(alias
+      ? { frozenAlias: { address: alias.address, provenance: alias.provenance } }
+      : {}),
+  };
+}
+
 export type RecipientAliasProvenance = Record<string, unknown>;
 
 /**
@@ -895,6 +1124,14 @@ export class RecipientPolicyService {
    * composition root.
    */
   private readonly aliases: SnsResolver | null;
+  /**
+   * The proposal adapter (design flow (c), task 4.5): the ONE definition of the
+   * consume predicate this service applies, and of the row the mutation is built
+   * from. Constructed here rather than injected because a service that CONSUMES
+   * proposals cannot be built without it, and an optional seam production might
+   * forget to supply is exactly the defect this method exists to close.
+   */
+  private readonly proposals: ContactActionService;
 
   public constructor(dependencies: RecipientPolicyServiceDependencies) {
     this.database = dependencies.database;
@@ -903,6 +1140,7 @@ export class RecipientPolicyService {
     this.listActiveGrants = dependencies.listActiveGrants;
     this.provider = dependencies.provider;
     this.aliases = dependencies.aliases ?? null;
+    this.proposals = new ContactActionService(dependencies.database);
     this.leaseWaitBudgetMs =
       dependencies.policyLease?.waitBudgetMs ?? POLICY_LEASE_DEFAULT_WAIT_BUDGET_MS;
     this.leaseOwnerId = dependencies.policyLease?.ownerId ?? "backend";
@@ -951,14 +1189,29 @@ export class RecipientPolicyService {
     options: RecipientMutationOptions = {},
   ): Promise<RecipientMutationResult> {
     const input = parseStrict(recipientCreateInputSchema, body);
+    const frozen = options.frozenAlias;
     // Design §4.1 step 1: resolution is REMOTE I/O, so it happens BEFORE the
     // lease and BEFORE the mutation transaction — never inside it. A refusal
     // here has already been proven to stage nothing, because nothing has been
     // opened yet.
+    //
+    // `frozenAlias` (design flow (c), task 4.5) is the ONE caller that resolves
+    // nothing: the address was already resolved and persisted on the proposal row
+    // it came from, and re-resolving it here would contradict S11. See the
+    // option's declaration for the whole argument.
     const resolution =
-      input.snsName !== undefined
+      input.snsName !== undefined && !frozen
         ? await this.resolveAliasForCreate(input.snsName, input.expectedAddress!)
         : null;
+    if (
+      frozen &&
+      input.expectedAddress !== undefined &&
+      frozen.address !== input.expectedAddress
+    ) {
+      // The displayed address keeps its veto even when the server supplies the
+      // frozen resolution: the caller's value may refuse and may never choose.
+      throw new RecipientAliasDestinationChangedError();
+    }
     // The body binding (design §6.2): computed from the PARSED body, so a value
     // the schema rejected can never define a hash, and computed HERE — never
     // accepted from a caller — so no request can declare itself a replay.
@@ -966,12 +1219,21 @@ export class RecipientPolicyService {
     const contactInput: RecipientContactWriteInput = {
       name: input.name,
       description: input.description,
-      // The SERVER's resolved address on the alias arm; the client's on the paste
-      // arm. `expectedAddress` was compared above and is never read otherwise.
-      address: resolution ? resolution.address : input.address!,
+      // The SERVER's resolved address on the alias arm (freshly on the HTTP arm,
+      // frozen on the proposal arm); the client's on the paste arm.
+      // `expectedAddress` was compared above and is never read otherwise.
+      address: frozen
+        ? frozen.address
+        : resolution
+          ? resolution.address
+          : input.address!,
       // The derived scope, never the body's: the body may only agree with it.
       network: SOLANA_POLICY_NETWORK,
-      ...(resolution ? { provenance: aliasProvenance(resolution) } : {}),
+      ...(frozen
+        ? { provenance: frozen.provenance }
+        : resolution
+          ? { provenance: aliasProvenance(resolution) }
+          : {}),
     };
 
     const wallet = await this.repository.readReadySolanaWallet(userId);
@@ -992,8 +1254,17 @@ export class RecipientPolicyService {
       contactInput.address,
     );
     if (!wallet) {
-      const contact = await this.database.withUserTransaction(userId, (client) =>
-        this.contacts.create(userId, contactInput, client),
+      const contact = await this.database.withUserTransaction(
+        userId,
+        async (client) => {
+          const created = await this.contacts.create(userId, contactInput, client);
+          // A wallet-less mutation is STILL a mutation transaction, so a caller's
+          // hook belongs to it: without this the proposal CAS would be skipped
+          // for exactly the users who have no wallet, and a confirmation could
+          // then be applied more than once (the proposal would stay `open`).
+          await options.beforeCommit?.(client);
+          return created;
+        },
       );
       return {
         contact,
@@ -1286,8 +1557,15 @@ export class RecipientPolicyService {
       throw new RecipientSelfAddressError();
     }
     if (!wallet) {
-      const contact = await this.database.withUserTransaction(userId, (client) =>
-        this.contacts.update(userId, targetId, patch, client),
+      const contact = await this.database.withUserTransaction(
+        userId,
+        async (client) => {
+          const updated = await this.contacts.update(userId, targetId, patch, client);
+          // Parity with `create`: a wallet-less edit still consumes its proposal
+          // in the SAME transaction as the contact write.
+          await options.beforeCommit?.(client);
+          return updated;
+        },
       );
       return {
         contact,
@@ -1568,9 +1846,21 @@ export class RecipientPolicyService {
       // No ready permission: there is no wallet to serialize, so there is no
       // grant that could be revoked and no remote policy to update. The contact is
       // archived and reported saved-not-enabled (spec "Wallet without a ready
-      // permission stays saved and not enabled").
-      const contact = await this.database.withUserTransaction(userId, (client) =>
-        this.contacts.archive(userId, targetId, input.expectedVersion, client),
+      // permission stays saved and not enabled"). A caller's proposal CAS still
+      // belongs to THIS transaction, so the archive and the consume commit
+      // together or not at all.
+      const contact = await this.database.withUserTransaction(
+        userId,
+        async (client) => {
+          const archived = await this.contacts.archive(
+            userId,
+            targetId,
+            input.expectedVersion,
+            client,
+          );
+          await options.beforeCommit?.(client);
+          return archived;
+        },
       );
       return {
         contact,
@@ -2698,6 +2988,141 @@ export class RecipientPolicyService {
         appliedPolicyId: null,
       },
     });
+  }
+
+  // -------------------------------------------------------------------------
+  // Applying a confirmed proposal (design flow (c), task 4.5)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Applies the mutation a STAGED proposal describes, in ONE transaction whose
+   * `beforeCommit` hook is the proposal's own CAS consume.
+   *
+   * WHY THIS EXISTS
+   * ---------------
+   * The consume and the contact mutation used to be two separate transactions:
+   * the voice confirm called the bare CAS, so a confirmation marked the row
+   * `consumed`, answered "listo, ya registré tu confirmación" and persisted
+   * NOTHING — no contact, no desired revision, no intent. The row is one-use, so
+   * the user's confirmation was silently lost and could not be retried. Flow (c)
+   * of the design is explicit: the CAS, the contact mutation,
+   * `desired_revision + 1`, the intent and the audit share ONE transaction, and
+   * zero rows on the CAS means nothing is mutated and the evidence is never
+   * re-armed.
+   *
+   * WHAT IS DELIBERATELY NOT HERE
+   * -----------------------------
+   * No mutation logic. The mutation routes to the SAME `create` / `edit` /
+   * `remove` machinery the HTTP contacts routes use, so the composition, the lock
+   * chain (`W1 → tx{ W0 → L1..L5 }`), the consent baseline, the intent recording
+   * and the lease are the code that already exists — a second, parallel writer
+   * would diverge from the `L5` intent recording and the lock order the design
+   * pins. What this method adds is exactly two things: the body derived from the
+   * row, and the CAS as `beforeCommit`.
+   *
+   * THE READ IS OUTSIDE THE TRANSACTION ON PURPOSE. The mutation has to be built
+   * before `create`/`edit`/`remove` open their transaction (they encapsulate it).
+   * A row that moved in between is discarded by the CAS inside the transaction,
+   * never applied: the CAS matches `id AND version AND owner AND open AND
+   * unexpired`, so the read cannot authorize anything on its own.
+   *
+   * THE RE-VERIFICATION ITSELF IS NOT HERE either. Design S10 pins it AFTER the
+   * affirmative and IMMEDIATELY BEFORE the persisted consume, outside every
+   * transaction — the caller owns that placement, and this method must not move
+   * remote I/O inside the transaction.
+   */
+  public async consumeContactProposal(
+    userId: string,
+    input: {
+      proposalId: string;
+      proposalVersion: number;
+      /** The conversation the confirmation came from, recorded on the consume. */
+      consumedBySession: string;
+      /** The tool it came through, recorded on the consume (audit only). */
+      consumedByTool: string;
+      /** The surface that asked, recorded on the intent (design §2.2). */
+      origin: "screen" | "text" | "voice";
+      /** The confirm-time re-verification outcome (design §4.4/S11). */
+      reverify?: "verified" | "unavailable";
+    },
+  ): Promise<ContactProposalApplication> {
+    const proposal = await this.proposals.read(userId, input.proposalId);
+    // A version this read does not recognize is not consumable at all, and saying
+    // so here costs nothing: the CAS inside the transaction is still the authority
+    // for the version it was given.
+    if (
+      !proposal ||
+      proposal.proposalVersion !== input.proposalVersion ||
+      proposal.status !== "open"
+    ) {
+      return { status: "not_consumable" };
+    }
+
+    const mutation = proposalMutationBody(proposal);
+    if (mutation.kind === "refused") {
+      return { status: "refused", code: mutation.code };
+    }
+
+    const options: RecipientMutationOptions = {
+      origin: input.origin,
+      beforeCommit: async (client: Queryable): Promise<void> => {
+        const consumed = await this.proposals.consumeInTransaction(client, {
+          userId,
+          proposalId: proposal.proposalId,
+          proposalVersion: proposal.proposalVersion,
+          consumedByTool: input.consumedByTool,
+          consumedBySession: input.consumedBySession,
+          // Recorded in the SAME statement as the consume, so the row is never
+          // observable as open-with-an-outcome (design §4.4/S11).
+          ...(input.reverify ? { reverify: input.reverify } : {}),
+        });
+        // ZERO ROWS ⇒ THE WHOLE TRANSACTION ABORTS. This throw is what extends
+        // the exactly-once guarantee from the row to the mutation: the contact
+        // write, the desired revision, the intent and the audits are rolled back
+        // with it, and the evidence is not re-armed because nothing was consumed.
+        if (!consumed) throw new ContactProposalNotConsumableError();
+      },
+    };
+
+    try {
+      const result =
+        mutation.kind === "create"
+          ? await this.create(userId, mutation.body, {
+              ...options,
+              ...(mutation.frozenAlias ? { frozenAlias: mutation.frozenAlias } : {}),
+            })
+          : mutation.kind === "edit"
+            ? await this.edit(userId, mutation.contactId, mutation.body, options)
+            : await this.remove(userId, mutation.contactId, mutation.expectedVersion, null, {
+                ...options,
+                // The disclosure the card showed, so the transaction checks the
+                // set the user confirmed before it revokes anything.
+                expectedRevokedGrantIds: mutation.revokedGrantIds,
+              });
+      return {
+        status: "applied",
+        action: proposal.action,
+        contactId: result.contact.id,
+        permission: result.permission,
+        policyRevision: result.policyRevision,
+      };
+    } catch (error) {
+      // The lost race is an answer, not a failure: nothing was mutated and the
+      // winner owns the state.
+      if (error instanceof ContactProposalNotConsumableError) {
+        return { status: "not_consumable" };
+      }
+      // Every typed refusal the seam and the composer raise lands here as an
+      // honest refusal instead of a crash: the model is told nothing was saved,
+      // and the proposal is still open (it was not consumed).
+      if (error instanceof RecipientPolicySeamError) {
+        return { status: "refused", code: error.code };
+      }
+      if (error instanceof PolicyCompositionRefusalError) {
+        return { status: "refused", code: error.stopCode };
+      }
+      throw error;
+    }
   }
 }
 

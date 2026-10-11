@@ -28,6 +28,10 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildTestServer } from "../fixtures/test-server.js";
+import {
+  createProposalApplicationService,
+  proposalApplicationSeam,
+} from "./helpers/proposal-application-service.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.js";
 import { attachVoiceDecisionTranscripts } from "../../src/livekit/voice-decision-transcripts.js";
 import { createVoiceDecisionGate } from "../../src/livekit/voice-decision-gate.js";
@@ -36,6 +40,7 @@ import { isCancellation, isConfirmation } from "../../src/livekit/resolution-phr
 import {
   CONTACT_PROPOSAL_TOPIC,
   createVoiceContactActions,
+  type VoiceContactActionDependencies,
 } from "../../src/livekit/contact-proposal-publication.js";
 import { ContactActionService } from "../../src/wallet/policy/contact-actions.js";
 
@@ -118,6 +123,9 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
         "DELETE FROM contact_action_proposals WHERE user_id = ANY($1::uuid[])",
         [userIds],
       );
+      // Confirmations now really create contact rows (the fix this suite guards),
+      // so a user delete without them violates `recipients_user_id_users_fk`.
+      await database.query("DELETE FROM recipients WHERE user_id = ANY($1::uuid[])", [userIds]);
       await database.query("DELETE FROM users WHERE id = ANY($1::uuid[])", [userIds]);
     }
     await database.close();
@@ -157,6 +165,14 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
     actions: ContactActionService;
     arbiter: ReturnType<typeof createConfirmationArbiter>;
     boundParticipantIdentity?: string;
+    /**
+     * The stage-time alias resolver, wired exactly as the worker wires it. A
+     * create with no address source cannot be confirmed at all (design flow (c)
+     * refuses it with PROPUESTA_SIN_DIRECCION, because it could never produce a
+     * contact), so a suite that needs a CONFIRMABLE proposal either supplies this
+     * and stages with `snsName`, or completes the version through the paste path.
+     */
+    resolveAlias?: VoiceContactActionDependencies["resolveAlias"];
     publish?: (payload: {
       bytes: Uint8Array;
       reliable: true;
@@ -172,6 +188,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       ...(input.boundParticipantIdentity !== undefined
         ? { boundParticipantIdentity: input.boundParticipantIdentity }
         : {}),
+      ...(input.resolveAlias !== undefined ? { resolveAlias: input.resolveAlias } : {}),
       publish: async (payload) => {
         delivered.push({
           topic: payload.topic,
@@ -188,20 +205,13 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
         const open = await input.actions.readOpen(owner, conversation);
         return open ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion } : null;
       },
-      consume: async (consumeInput) => {
-        let consumed = false;
-        await database.withUserTransaction(consumeInput.userId, async (client) => {
-          consumed =
-            (await input.actions.consumeInTransaction(client, {
-              userId: consumeInput.userId,
-              proposalId: consumeInput.proposalId,
-              proposalVersion: consumeInput.proposalVersion,
-              consumedByTool: "confirm_trusted_recipient_action",
-              consumedBySession: consumeInput.conversationId,
-            })) !== null;
-        });
-        return consumed;
-      },
+      // The REAL application transaction (design flow (c)): the proposal CAS plus
+      // the contact mutation it describes, in ONE committed transaction. The CAS
+      // alone is what production used to run, and it consumed the proposal while
+      // saving nothing.
+      applyProposal: proposalApplicationSeam({
+        service: createProposalApplicationService(database),
+      }),
     });
     return { port, delivered };
   }
@@ -524,16 +534,34 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
     const conversationId = randomUUID();
     const { session, arbiter } = transferRig({ userId, conversationId });
     const actions = new ContactActionService(database);
-    const { port, delivered } = contactPort({ actions, arbiter, boundParticipantIdentity: "participant-1" });
+    const { port, delivered } = contactPort({
+      actions,
+      arbiter,
+      boundParticipantIdentity: "participant-1",
+      resolveAlias: async ({ snsName }: { snsName: string }) => ({
+        status: "resolved",
+        snsName,
+        address: PASTED_ADDRESS,
+        resolvedAt: new Date().toISOString(),
+        resolver: "sns/solana-devnet/v3",
+        reverseDomain: null,
+        reverseDomainState: "none",
+      }),
+    });
 
     // The proposal is staged, its card is delivered, and the window holds the
     // exact proposal version: the positive control for every refusal below.
+    // It is staged through the alias arm because design flow (c) refuses a create
+    // whose review channel never supplied an address — such a version can never
+    // produce a contact, so it is not confirmable at all. This test is about the
+    // LISTENER and its evidence gate, not about the address source.
     const staged = await port.stage({
       userId,
       conversationId,
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(staged.status).toBe("staged");
     expect(delivered).toEqual([
@@ -616,7 +644,20 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
     // The real session rig: real listener, real gate, real arbiter (task 4.8's gap).
     const { session, arbiter } = transferRig({ userId, conversationId });
     const actions = new ContactActionService(database);
-    const { port } = contactPort({ actions, arbiter, boundParticipantIdentity: "participant-1" });
+    const { port } = contactPort({
+      actions,
+      arbiter,
+      boundParticipantIdentity: "participant-1",
+      resolveAlias: async ({ snsName }: { snsName: string }) => ({
+        status: "resolved",
+        snsName,
+        address: PASTED_ADDRESS,
+        resolvedAt: new Date().toISOString(),
+        resolver: "sns/solana-devnet/v3",
+        reverseDomain: null,
+        reverseDomainState: "none",
+      }),
+    });
 
     // A spoken-only address: even when the caller passes one along, the seam has
     // no such input and nothing reaches the row.
@@ -726,7 +767,9 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
     ]);
 
     // Positive control: a fresh conversation stages and confirms from its own
-    // window and its own evidence.
+    // window and its own evidence. It stages through the alias arm, because a
+    // create with no address source is refused by design flow (c) — nothing to
+    // confirm, nothing to save.
     const freshConversationId = randomUUID();
     const fresh = await port.stage({
       userId,
@@ -734,6 +777,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       origin: "voice",
       action: "create",
       name: "Ana",
+      snsName: "ana.sns",
     });
     expect(fresh.status).toBe("staged");
     arbiter.recordEvidence({

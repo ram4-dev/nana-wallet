@@ -320,14 +320,14 @@ function harness(adapter: ReturnType<typeof adapterOver>) {
       },
       markPublished: async () => row(),
       read: async () => null,
-      consumeInTransaction: async () => null,
     } as never,
     boundParticipantIdentity: IDENTITY,
     resolveAlias: adapter,
     publish: async (payload) => {
       published.push(payload);
     },
-    consume: async () => true,
+    // This unit is about the STAGE alias arm, so no confirmation ever runs here.
+    applyProposal: async () => ({ status: "not_consumable" as const }),
   });
   return { port, stageCalls, published };
 }

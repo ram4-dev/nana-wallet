@@ -19,6 +19,11 @@ import { FinancialTaskRegistry } from "../conversations/financial-task-registry.
 import { createWalletConversationService } from "../conversations/service.js";
 import { getWalletAgentConfig } from "../agent/instructions.js";
 import { getConfiguredRecipientMemoryService } from "../memory/runtime.js";
+import {
+  createRecipientContactMutationPort,
+  type ContactEmbedder,
+} from "../memory/contact-policy-adapter.js";
+import { createContactsEmbedder } from "../api/contacts.js";
 import { createAgentSession } from "./create-agent-session.js";
 import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
@@ -27,7 +32,12 @@ import { ContactActionService } from "../wallet/policy/contact-actions.js";
 import { createAliasResolver, createAliasReverifier, createVoiceContactActions } from "./contact-proposal-publication.js";
 import { createSnsResolver, type SnsResolver } from "../wallet/sns/resolver.js";
 import { createSnsTransport, readSnsTransportConfig } from "../wallet/sns/transport.js";
-import { SOLANA_POLICY_NETWORK } from "../wallet/policy/service.js";
+import {
+  createRecipientPolicyService,
+  createUnavailablePolicyApplyPort,
+  SOLANA_POLICY_NETWORK,
+} from "../wallet/policy/service.js";
+import { RecipientPolicyRepository } from "../wallet/policy/repository.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
 import { attachVoiceDecisionTranscripts } from "./voice-decision-transcripts.js";
 import {
@@ -60,6 +70,67 @@ function createWorkerSnsResolver(): SnsResolver | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The embedder the proposal path writes recipients through.
+ *
+ * ONE instance per process, the same shape `src/memory/runtime.ts` uses for the
+ * memory service: `EmbeddingService` loads its pipeline lazily, so a per-session
+ * instance would load the model once per voice session. It is the SAME factory
+ * the HTTP contacts surface uses, so the recipient projection has one embedder
+ * definition rather than two.
+ */
+let proposalContactEmbedder: ContactEmbedder | undefined;
+function proposalEmbedder(): ContactEmbedder {
+  proposalContactEmbedder ??= createContactsEmbedder();
+  return proposalContactEmbedder;
+}
+
+/**
+ * The service that applies a confirmed proposal's contact mutation (design flow
+ * (c), task 4.5).
+ *
+ * Its collaborators are deliberately the HTTP contacts surface's, so a voice
+ * confirmation and a screen confirmation produce the same rows: the contact
+ * projection writes through the same adapter (over a repository and the shared
+ * embedder), and the active grants are read from the same ledger projection.
+ *
+ * The apply port is `unavailable` for the same reason `src/server.ts` wires it
+ * that way for `/v1/contacts`: this process records the desired revision and its
+ * intent, and the reconciler loop the worker already runs applies it. Wiring a
+ * second signed apply path into the voice construct would duplicate the
+ * sidecar/signer wiring and could apply a revision no other surface observed.
+ */
+function createWorkerProposalApplicationService(dependencies: {
+  database: WorkerDependencies["database"];
+  contacts: WorkerDependencies["contacts"];
+}) {
+  const repository = new RecipientPolicyRepository(dependencies.database);
+  return createRecipientPolicyService({
+    database: dependencies.database,
+    repository,
+    contacts: createRecipientContactMutationPort({
+      contacts: dependencies.contacts,
+      embedder: proposalEmbedder(),
+    }),
+    listActiveGrants: (walletId, userId, chain) =>
+      dependencies.database.withUserTransaction(userId, (transaction) =>
+        repository.listActiveLedgerGrants(
+          userId,
+          walletId,
+          chain,
+          transaction,
+        ),
+      ),
+    // No alias resolver: the ONLY mutation this service performs is the one a
+    // proposal describes, and that address was already resolved by the server and
+    // persisted on the row (the proposal's `frozenAlias`). A resolver here would
+    // be a second resolution path with no caller.
+    provider: createUnavailablePolicyApplyPort(
+      "provider_unavailable: the voice worker records the desired revision and its intent; the reconciler loop this same process runs applies it.",
+    ),
+  });
 }
 
 export function bindLiveKitWalletForUser(
@@ -203,6 +274,13 @@ async function runJob(
       });
       const memoryService = getConfiguredRecipientMemoryService();
       const contactActionService = new ContactActionService(dependencies.database);
+      // The contact mutation a confirmation runs (design flow (c), task 4.5),
+      // built per binding like every other user-scoped seam in this block and
+      // wired to the SAME collaborators the HTTP contacts surface uses.
+      const proposalApplicationService = createWorkerProposalApplicationService({
+        database: dependencies.database,
+        contacts: dependencies.contacts,
+      });
       // The same SNS seam the HTTP alias route uses, built once per session from
       // the transport's own reader (design §1.4): no second definition of the
       // endpoint's precedence. A transport that cannot be built yields `null`, and
@@ -266,29 +344,29 @@ async function runJob(
             ? { proposalId: open.proposalId, proposalVersion: open.proposalVersion }
             : null;
         },
-        // The persisted one-use consume. It runs as the single conditional
-        // UPDATE in its own transaction here; the review endpoint (task 4.7)
-        // runs the same call inside the contact mutation transaction's
-        // `beforeCommit` hook, which is the `L5` slot the design names. The
-        // guarantee is identical because the row update is the serialization
-        // point, not the transaction that surrounds it.
-        consume: async ({ userId, conversationId, proposalId, proposalVersion, reverify }) => {
-          const consumed = await dependencies.database.withUserTransaction(
-            userId,
-            (client) =>
-              contactActionService.consumeInTransaction(client, {
-                userId,
-                proposalId,
-                proposalVersion,
-                consumedByTool: "confirm_trusted_recipient_action",
-                consumedBySession: conversationId,
-                // Recorded in the SAME statement as the consume, so the row is never
-                // observable as open-with-an-outcome (design §4.4/S11).
-                ...(reverify ? { reverify } : {}),
-              }),
-          );
-          return consumed !== null;
-        },
+        // THE ONE TRANSACTION (design flow (c), task 4.5). The proposal's CAS
+        // consume and the contact mutation it describes commit together, or
+        // neither does: zero rows on the CAS rolls the whole transaction back, so
+        // a confirmation can never mark the row `consumed` and save nothing.
+        //
+        // It used to be the bare CAS in its own transaction here, and a comment
+        // claimed the mutation ran in `beforeCommit`. It did not, in this process
+        // or in any other: that is the defect this replaced.
+        //
+        // The confirm-time re-verification is NOT inside this transaction, and
+        // must not move here: design S10 pins it, outside every transaction,
+        // after the affirmative and immediately before this call.
+        applyProposal: ({ userId, conversationId, proposalId, proposalVersion, origin, tool, reverify }) =>
+          proposalApplicationService.consumeContactProposal(userId, {
+            proposalId,
+            proposalVersion,
+            consumedBySession: conversationId,
+            consumedByTool: tool,
+            origin,
+            // Recorded in the SAME statement as the consume, so the row is never
+            // observable as open-with-an-outcome (design §4.4/S11).
+            ...(reverify ? { reverify } : {}),
+          }),
       });
       const wallet = dependencies.walletForUser
         ? bindLiveKitWalletForUser(

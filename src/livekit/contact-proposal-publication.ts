@@ -4,6 +4,7 @@ import type {
   ContactActionProposal,
   ContactActionService,
 } from "../wallet/policy/contact-actions.js";
+import type { ContactProposalApplication } from "../wallet/policy/service.js";
 import { ContactActionProposalConflictError } from "../wallet/policy/repository.js";
 import type { ConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
 
@@ -132,6 +133,74 @@ export function aliasRefusalMessage(code: string, attemptedName?: string): strin
     default:
       return `No pude resolver ${quoted} (${code}). No voy a habilitar este destinatario.`;
   }
+}
+
+/**
+ * The sentence for a confirmation whose mutation LANDED (design flow (c)).
+ *
+ * The design's last line is the rule this exists for: an honest status (saved /
+ * pending / applied), never "habilitado" before a readback. The projection the
+ * service returns is already fail-closed (`projectContactPermission` collapses an
+ * `applied` row with no `verified_at`, or with an applied revision behind the
+ * desired one, to `pending`), so the enabled sentence below can only be reached
+ * through the verified readback of the revision THIS transaction recorded.
+ *
+ * `saved_not_configured` and the two blocked statuses get their own sentences on
+ * purpose: in all three the recipient IS saved and is NOT enabled, and a single
+ * "pendiente" sentence would describe the blocked arm as if it were still moving.
+ */
+function appliedProposalMessage(
+  application: Extract<ContactProposalApplication, { status: "applied" }>,
+): string {
+  const enabled = application.permission.state === "applied";
+  if (application.action === "remove") {
+    return enabled
+      ? "Listo: quité ese destinatario y la política ya refleja la baja."
+      : "Listo: quité ese destinatario. La baja todavía no está aplicada en la política.";
+  }
+  if (enabled) {
+    return "Listo: guardé el destinatario y la política ya quedó aplicada, así que está habilitado.";
+  }
+  if (application.permission.state === "saved_not_configured") {
+    return "Listo: guardé el destinatario, pero todavía no está habilitado para enviarle dinero porque esta billetera no está lista.";
+  }
+  if (
+    application.permission.state === "blocked_conflict" ||
+    application.permission.state === "blocked_configuration"
+  ) {
+    return "Listo: guardé el destinatario, pero la política quedó bloqueada, así que no está habilitado todavía.";
+  }
+  return "Listo: guardé el destinatario. Todavía no está habilitado: la política sigue pendiente de aplicarse.";
+}
+
+/**
+ * The sentence for a proposal whose mutation REFUSED, by code.
+ *
+ * The code is spoken verbatim — the same rule {@link aliasRefusalMessage}
+ * follows — because "no pude" alone is unactionable. Each entry says what the
+ * user can do next, and none of them may claim anything was enabled: a refusal
+ * consumes nothing and saves nothing.
+ */
+const PROPOSAL_REFUSAL_SENTENCE: Record<string, string> = {
+  PROPUESTA_SIN_DIRECCION:
+    "Esa tarjeta todavía no tiene una dirección: pegala en la pantalla y confirmámela. No habilité nada.",
+  PROPUESTA_SIN_NOMBRE:
+    "Esa tarjeta no tiene un nombre con el que pueda guardar el destinatario. Generala otra vez. No habilité nada.",
+  PROPUESTA_SIN_CONTACTO:
+    "Esa propuesta no apunta a ningún destinatario guardado. Generala otra vez. No habilité nada.",
+  VERSION_OBSOLETA:
+    "Ese destinatario cambió desde que viste la tarjeta, así que no toqué nada. Generá la propuesta otra vez.",
+  CONTACTO_NO_ENCONTRADO:
+    "Ese destinatario ya no existe, así que no toqué nada. Generá la propuesta otra vez.",
+  DIRECCION_PROPIA:
+    "Esa dirección es la de tu propia billetera: no puedo agregarla como destinatario. No habilité nada.",
+};
+
+function proposalRefusalMessage(code: string): string {
+  return (
+    PROPOSAL_REFUSAL_SENTENCE[code] ??
+    `No pude aplicar esa propuesta (${code}). No guardé ni habilité nada.`
+  );
 }
 
 /**
@@ -305,7 +374,13 @@ export function createAliasResolver(
 }
 
 export type VoiceContactActionDependencies = {
-  actions: Pick<ContactActionService, "stage" | "markPublished" | "read" | "consumeInTransaction">;
+  /**
+   * The proposal adapter for everything EXCEPT the confirmation: the window is
+   * persisted, delivered and stamped through it, and `read` is what the
+   * re-publication reads. The confirmation's consume is NOT here — it belongs to
+   * the mutation transaction, so it is reached only through `applyProposal`.
+   */
+  actions: Pick<ContactActionService, "stage" | "markPublished" | "read">;
   /**
    * Frees a conversation whose earlier proposal was never published (design
    * §8.2). Optional so a caller that owns no cleanup keeps the collision
@@ -383,17 +458,36 @@ export type VoiceContactActionDependencies = {
   /** The in-process window. Absent ⇒ no window ever opens and nothing is consumed. */
   arbiter?: ConfirmationArbiter;
   /**
-   * The persisted one-use consume, executed inside the caller's mutation
-   * transaction (design §7.2 `L5` slot). Returns `false` on zero rows.
+   * Applies the confirmed proposal: the contact mutation AND the one-use consume,
+   * in ONE transaction (design flow (c), task 4.5).
+   *
+   * It REPLACES the bare CAS this seam used to be. The bare CAS was the whole
+   * defect: a confirmation consumed the proposal, reported success and persisted
+   * nothing, because the mutation was never in the same transaction — or in any
+   * transaction at all. The guarantee is identical for the ROW (the conditional
+   * UPDATE is still the serialization point) and new for the MUTATION (zero rows
+   * rolls the contact, the revision and the intent back with it).
+   *
+   * It is `required` on purpose: a caller that cannot apply a proposal cannot
+   * confirm one, and an optional seam whose fail-closed branch production never
+   * supplies is the shape this change exists to remove.
    */
-  consume: (input: {
+  applyProposal: (input: {
     userId: string;
     conversationId: string;
     proposalId: string;
     proposalVersion: number;
+    /** The surface the confirmation came through, recorded on the intent. */
+    origin: "text" | "voice";
+    /**
+     * The tool the confirmation came through, recorded on the consume (audit
+     * only). It is the PORT's own tool name — the same one this file already
+     * passes to `waitAndConsume` — so the wire does not need to know it.
+     */
+    tool: string;
     /** The outcome the consume must record with the row, when it is an alias one. */
     reverify?: "verified" | "unavailable";
-  }) => Promise<boolean>;
+  }) => Promise<ContactProposalApplication>;
 };
 
 /**
@@ -674,20 +768,57 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
       // `unchanged` agreed; `unavailable` could not be reached and proceeds with
       // the DISPLAYED address, recorded as such (S11). `not_alias` has nothing to
       // record, because the version carries no alias claim at all.
-      const consumed = await dependencies.consume({
+      //
+      // THE ONE TRANSACTION (design flow (c), task 4.5). The mutation, its
+      // revision, its intent and this consume commit together, so the answer the
+      // model gets below is about a persisted fact — never about a consume that
+      // marked a row nobody used.
+      const application = await dependencies.applyProposal({
         userId: input.userId,
         conversationId: input.conversationId,
         proposalId: input.proposalId,
         proposalVersion: input.proposalVersion,
+        origin: input.source,
+        tool: "confirm_trusted_recipient_action",
         ...(recheck.status === "unchanged"
           ? { reverify: "verified" as const }
           : recheck.status === "unavailable"
             ? { reverify: "unavailable" as const }
             : {}),
       });
-      if (!consumed) return { status: "confirmation_required", message: "Esta propuesta ya no está disponible; generá una nueva." };
+
+      if (application.status === "not_consumable") {
+        // The CAS matched no row: this version was consumed, expired or superseded
+        // by someone else. Nothing was mutated, and this tuple can never work.
+        return {
+          status: "confirmation_required",
+          message: "Esta propuesta ya no está disponible; generá una nueva.",
+        };
+      }
+
+      if (application.status === "refused") {
+        // The mutation refused, so NOTHING was saved and NOTHING was consumed: the
+        // card is still open and the user can act on the sentence. This is a
+        // refusal rather than a failure, and it never claims anything was enabled.
+        return {
+          status: "confirmation_required",
+          message: proposalRefusalMessage(application.code),
+          code: application.code,
+          currentProposalId: input.proposalId,
+          currentProposalVersion: input.proposalVersion,
+        };
+      }
+
       arbiter.clear(input.proposalId);
-      return { status: "consumed", message: "Listo, ya registré tu confirmación." };
+      // THE HONEST STATUS (design, flow (c) last line). The mutation DID land —
+      // the sentence is chosen by the permission projection of the revision this
+      // transaction recorded, so "habilitado" is only ever said after a verified
+      // readback, and a pending apply says exactly that.
+      return {
+        status: "consumed",
+        message: appliedProposalMessage(application),
+        permission: application.permission.state,
+      };
     },
   };
 }

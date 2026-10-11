@@ -140,7 +140,9 @@ function harness(input: {
           },
         }
       : {}),
-    consume: async () => false,
+    // This unit is about the STAGE refusal, so no confirmation ever runs here. The
+    // seam is still supplied because production cannot confirm without it.
+    applyProposal: async () => ({ status: "not_consumable" as const }),
   });
   return {
     port,
