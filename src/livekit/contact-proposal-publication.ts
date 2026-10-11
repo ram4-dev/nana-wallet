@@ -102,19 +102,34 @@ export type AliasResolution =
  * non-existent name (spec: *Unresolvable, unsupported or unreachable alias
  * creates no permission*). The code is spoken verbatim so the distinction is
  * audible, not just typed.
+ *
+ * `attemptedName` is spoken too, and that is load-bearing on the voice surface
+ * rather than cosmetic. A spoken name reaches the model through STT, and the
+ * model has been observed re-spelling it the way it sounds in Spanish — a turn
+ * whose display name was "Sophie" staged `snsName: "sofi.sns"` for a domain
+ * registered as `sophie.sns`. Without the name in the sentence the user is told
+ * only that "ese nombre" was not found, which is unactionable: the system asked
+ * for a spelling the user never said, and nothing in the reply lets them notice.
+ * Naming it turns an unexplained refusal into a one-word correction.
  */
-export function aliasRefusalMessage(code: string): string {
+export function aliasRefusalMessage(code: string, attemptedName?: string): string {
+  const quoted = attemptedName?.trim() ? `"${attemptedName.trim()}"` : "ese nombre";
+  // Offered only where a different spelling could actually change the answer:
+  // a name the registry does not have, or one whose owner cannot be trusted.
+  // An unreachable registry is not a spelling problem and must not be narrated
+  // as one.
+  const spellItOut = " Si el nombre es difícil de entender, deletreámelo y lo vuelvo a intentar.";
   switch (code) {
     case "NOMBRE_NO_ENCONTRADO":
-      return "No encontré ese nombre (NOMBRE_NO_ENCONTRADO). No voy a habilitar este destinatario.";
+      return `No encontré ${quoted} (NOMBRE_NO_ENCONTRADO).${spellItOut} No voy a habilitar este destinatario.`;
     case "RESOLVEDOR_NO_DISPONIBLE":
-      return "No pude consultar la red para resolver ese nombre (RESOLVEDOR_NO_DISPONIBLE). No voy a habilitar este destinatario.";
+      return `No pude consultar la red para resolver ${quoted} (RESOLVEDOR_NO_DISPONIBLE). No voy a habilitar este destinatario.`;
     case "NOMBRE_NO_SOPORTADO":
-      return "Ese nombre no es un .sns que pueda usar (NOMBRE_NO_SOPORTADO). No voy a habilitar este destinatario.";
+      return `${quoted === "ese nombre" ? "Ese nombre" : quoted} no es un .sns que pueda usar (NOMBRE_NO_SOPORTADO). No voy a habilitar este destinatario.`;
     case "NOMBRE_AMBIGUO":
-      return "Ese nombre no me da una dirección confiable (NOMBRE_AMBIGUO). No voy a habilitar este destinatario.";
+      return `Ese nombre no me da una dirección confiable para ${quoted} (NOMBRE_AMBIGUO).${spellItOut} No voy a habilitar este destinatario.`;
     default:
-      return `No pude resolver ese nombre (${code}). No voy a habilitar este destinatario.`;
+      return `No pude resolver ${quoted} (${code}). No voy a habilitar este destinatario.`;
   }
 }
 
@@ -405,7 +420,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
           return {
             status: "alias_unresolved",
             code: resolution.code,
-            message: aliasRefusalMessage(resolution.code),
+            message: aliasRefusalMessage(resolution.code, input.snsName),
           };
         }
         alias = resolution;

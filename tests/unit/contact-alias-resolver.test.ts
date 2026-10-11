@@ -243,6 +243,38 @@ describe("the stage-time alias adapter (createAliasResolver)", () => {
     expect(aliasRefusalMessage(missingCode)).not.toContain("No pude consultar la red");
   });
 
+  // The voice defect this pins: a spoken name reaches the model through STT and
+  // the model has been observed re-spelling it the way it sounds in Spanish
+  // (a turn whose display name was "Sophie" staged `snsName: "sofi.sns"` for a
+  // domain registered as `sophie.sns`). With the name left out of the sentence,
+  // the user is told only that "ese nombre" was not found and has no way to
+  // notice the system asked for a spelling they never said.
+  describe("the refusal names the spelling it was given", () => {
+    it("speaks the attempted name, so an unregistered spelling is visible", () => {
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).toContain('"sofi.sns"');
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).not.toContain("ese nombre");
+    });
+
+    it("keeps the two causes distinguishable when a name is supplied", () => {
+      // An unreachable registry must still not be narrated as a missing name.
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).not.toContain("No pude consultar la red");
+      expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).not.toContain("No encontré");
+      expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).toContain('"sofi.sns"');
+    });
+
+    it("offers a spelling correction only where a spelling could change the answer", () => {
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).toContain("deletreámelo");
+      // An unreachable registry is not a spelling problem; do not imply one.
+      expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).not.toContain("deletreámelo");
+    });
+
+    it("falls back to the unnamed sentence when no name was supplied", () => {
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO")).toContain("ese nombre");
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO")).not.toContain('""');
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "   ")).toContain("ese nombre");
+    });
+  });
+
   it("resolves on every call instead of answering from a cache", async () => {
     let reads = 0;
     const adapter = adapterOver({
@@ -340,16 +372,39 @@ describe("the adapter as the port's alias arm", () => {
     expect(absent).toEqual({
       status: "alias_unresolved",
       code: "NOMBRE_NO_ENCONTRADO",
-      message: aliasRefusalMessage("NOMBRE_NO_ENCONTRADO"),
+      message: aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sophie.sns"),
     });
     expect(down).toEqual({
       status: "alias_unresolved",
       code: "RESOLVEDOR_NO_DISPONIBLE",
-      message: aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE"),
+      message: aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sophie.sns"),
     });
     for (const h of [missing, unreachable]) {
       expect(h.stageCalls, "a refused alias still persisted a proposal").toHaveLength(0);
       expect(h.published, "a refused alias still published a card").toHaveLength(0);
     }
+  });
+
+  it("tells the user which spelling it looked for, so a misheard name is correctable", async () => {
+    // The observed shape: the user said a name registered as `sophie.sns` and the
+    // model staged the Spanish-sounding respelling. The refusal must name the
+    // respelling, or the user cannot tell that the system asked for a name they
+    // never said.
+    const h = harness(adapterOver({ readNameRegistry: async () => null }));
+
+    const refused = await h.port.stage({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      origin: "voice",
+      action: "create",
+      name: "Sophie",
+      snsName: "sofi.sns",
+    });
+
+    expect(refused.status).toBe("alias_unresolved");
+    expect(refused.message).toContain('"sofi.sns"');
+    expect(refused.message).not.toContain("ese nombre");
+    expect(h.stageCalls, "a refused spelling still persisted a proposal").toHaveLength(0);
+    expect(h.published, "a refused spelling still published a card").toHaveLength(0);
   });
 });
