@@ -343,6 +343,12 @@ export interface RefreshSignerGrantProjectionInput {
 export interface ReadyPolicyWallet {
   walletId: string;
   chainFamily: string;
+  /**
+   * The wallet's OWN address, read from `user_wallets.address` (design §2.5).
+   * Carried so the self-address refusal compares the destination against the
+   * SERVER's own record and can never be driven by a client-supplied value.
+   */
+  address: string;
 }
 
 /**
@@ -1494,8 +1500,12 @@ export class RecipientPolicyRepository {
     client?: Queryable,
   ): Promise<ReadyPolicyWallet | null> {
     const run = async (query: Queryable) => {
-      const result = await query.query<{ id: string; chain_family: string }>(
-        `SELECT id, chain_family
+      const result = await query.query<{
+        id: string;
+        chain_family: string;
+        address: string;
+      }>(
+        `SELECT id, chain_family, address
            FROM user_wallets
           WHERE user_id = $1 AND chain_family = 'solana' AND state = 'ready'
           ORDER BY created_at DESC, id DESC
@@ -1503,7 +1513,13 @@ export class RecipientPolicyRepository {
         [userId],
       );
       const row = result.rows[0];
-      return row ? { walletId: row.id, chainFamily: row.chain_family } : null;
+      return row
+        ? {
+            walletId: row.id,
+            chainFamily: row.chain_family,
+            address: row.address,
+          }
+        : null;
     };
     return client ? run(client) : this.ownerTransaction(userId, run);
   }
@@ -1706,6 +1722,42 @@ export class RecipientPolicyRepository {
     client: Queryable,
   ): Promise<RemovalAliasRow[]> {
     return this.listAliases(userId, address, true, client);
+  }
+
+  /**
+   * D13's disclosed half (design §2.5): the ACTIVE contact that already holds
+   * this address, or `null` when the address is new.
+   *
+   * `status = 'active'` is the whole difference between "this address is already
+   * in your list" and "this address was in your list once": an archived contact
+   * grants nothing and composes no rule, so reporting it as a duplicate would
+   * assert a fact about authority that is not true. The scope is also
+   * `network = 'solana-devnet'`, exactly like `listComposerContacts`, so a legacy
+   * EVM row can never be disclosed as the Solana contact an add collides with.
+   *
+   * Ascending by id makes the answer deterministic when a list somehow holds the
+   * same address twice; the disclosure is informational, so it names one of them
+   * rather than inventing an aggregate.
+   */
+  public async findActiveContactByAddress(
+    userId: string,
+    address: string,
+    client?: Queryable,
+  ): Promise<{ contactId: string; name: string } | null> {
+    const run = async (query: Queryable) => {
+      const result = await query.query<{ id: string; name: string }>(
+        `SELECT id, name
+           FROM recipients
+          WHERE user_id = $1 AND status = 'active'
+            AND network = 'solana-devnet' AND address = $2
+          ORDER BY id ASC
+          LIMIT 1`,
+        [userId, address],
+      );
+      const row = result.rows[0];
+      return row ? { contactId: row.id, name: row.name } : null;
+    };
+    return client ? run(client) : this.ownerTransaction(userId, run);
   }
 
   private async listAliases(

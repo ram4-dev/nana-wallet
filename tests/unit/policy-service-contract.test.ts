@@ -151,7 +151,13 @@ function stubHarness(): StubHarness {
         operation: (client: unknown) => Promise<unknown>,
       ) => operation({}),
     },
-    repository: { readReadySolanaWallet: async () => null },
+    repository: {
+      readReadySolanaWallet: async () => null,
+      // D13's disclosed half (task 2.5) reads this before every create; the stub
+      // answers "no active contact holds this address" so the shape of every
+      // rejection below is unchanged.
+      findActiveContactByAddress: async () => null,
+    },
     contacts: contacts as unknown as RecipientContactMutationPort,
     listActiveGrants,
     provider: createUnavailablePolicyApplyPort("unwired in this suite"),

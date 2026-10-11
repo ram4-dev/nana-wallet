@@ -189,7 +189,12 @@ export type RecipientPolicySeamErrorCode =
   | "CONFLICTO_POLITICA"
   | "REVISION_POLITICA_OBSOLETA"
   | "VERSION_OBSOLETA"
-  | "CONTACTO_NO_ENCONTRADO";
+  | "CONTACTO_NO_ENCONTRADO"
+  /**
+   * D13's unconditional half (design §2.5). The destination is the wallet's own
+   * address, read from the server's own `user_wallets` record.
+   */
+  | "DIRECCION_PROPIA";
 
 /** One bounded validation issue: the path and the code, never the value. */
 export type RecipientPolicyValidationIssue = {
@@ -338,6 +343,33 @@ export class RecipientContactMissingError extends RecipientPolicySeamError {
     super({
       code: "CONTACTO_NO_ENCONTRADO",
       message: "The contact does not exist for this user.",
+    });
+  }
+}
+
+/**
+ * D13's unconditional half (design §2.5): the destination equals the wallet's
+ * OWN address, so it is not a recipient at all — it is the account the money
+ * would leave from.
+ *
+ * Two properties make this a refusal and not a warning:
+ *
+ *   * it is compared against the SERVER's own `user_wallets.address`, never
+ *     against anything a body supplied, so no request can move it;
+ *   * it is raised BEFORE any contact write, so the refusal persists nothing —
+ *     not a contact, not an intent, not a revision.
+ *
+ * It is deliberately its own typed code. Reporting it as a duplicate-contact
+ * conflict would name the wrong fact: a duplicate is a trusted address the user
+ * already has, and this is the address the user's own funds leave from, which no
+ * label can make payable.
+ */
+export class RecipientSelfAddressError extends RecipientPolicySeamError {
+  constructor() {
+    super({
+      code: "DIRECCION_PROPIA",
+      message:
+        "That address is this wallet's own; it cannot be added as a trusted recipient.",
     });
   }
 }

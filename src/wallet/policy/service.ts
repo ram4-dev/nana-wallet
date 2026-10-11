@@ -65,6 +65,7 @@ import {
   RecipientPolicyRemovalConflictError,
   RecipientPolicyRevisionConflictError,
   RecipientPolicyValidationError,
+  RecipientSelfAddressError,
   type RecipientPolicyValidationIssue,
 } from "./errors.js";
 import {
@@ -101,6 +102,7 @@ export {
   RecipientPolicyRevisionConflictError,
   RecipientPolicySeamError,
   RecipientPolicyValidationError,
+  RecipientSelfAddressError,
 } from "./errors.js";
 export type { PolicyCompositionRefusalReason } from "./errors.js";
 export type {
@@ -248,6 +250,30 @@ export type RecipientContactWriteInput = {
   description: string;
   address: string;
   network: typeof SOLANA_POLICY_NETWORK;
+  /**
+   * Durable per-contact provenance (design §2.2/§3.1), passed straight through
+   * `RecipientContactMutationPort.create` into `ContactWriteInput.provenance`.
+   *
+   * Optional on purpose: the paste/scan path sends nothing and the repository's
+   * own `{origin:'user'}` default applies. The alias arm is the ONLY caller that
+   * sets a non-default value, and it states `reverify` explicitly
+   * (`'verified' | 'unavailable'`) rather than leaving it absent, so an absence
+   * can never be read as an agreement that was never checked.
+   */
+  provenance?: Record<string, unknown>;
+};
+
+/**
+ * The bounded duplicate-address disclosure D13 carries on a create result
+ * (design §2.5): the ACTIVE contact that already holds the address being added.
+ *
+ * It is a disclosure and not a refusal — the add proceeds — so the object is
+ * deliberately the two fields a surface needs to say the sentence, and nothing
+ * about grants, policy or provenance.
+ */
+export type RecipientDuplicateDisclosure = {
+  contactId: string;
+  name: string;
 };
 
 /** The patch shape the port writes; `expectedVersion` is its compare-and-set. */
@@ -575,6 +601,17 @@ export type RecipientMutationResult = {
   permission: ContactPermissionSnapshot;
   /** The desired revision this mutation recorded; `0` when none was recorded. */
   policyRevision: number;
+  /**
+   * D13's disclosed half (design §2.5). Present on every create — an object when
+   * an active contact already holds that address, `null` when none does — so a
+   * surface renders the fact instead of guessing it from the returned address.
+   *
+   * Absent on the other mutations: the disclosure is about ADDING an address, and
+   * an address replacement already carries its own confirmed disclosure
+   * (`expectedRevokedGrantIds`). `null` and "absent" are therefore never the same
+   * statement, and the create path always states one of the two.
+   */
+  duplicateOf?: RecipientDuplicateDisclosure | null;
 };
 
 /**
@@ -729,6 +766,22 @@ export class RecipientPolicyService {
     };
 
     const wallet = await this.repository.readReadySolanaWallet(userId);
+    // D13's unconditional half (design §2.5). The comparison is against the
+    // SERVER's own `user_wallets.address` and runs BEFORE any write, so a refusal
+    // persists nothing at all. It is checked before the duplicate disclosure on
+    // purpose: the wallet's own address must be reported as itself, never as a
+    // duplicate of a contact that happens to hold it.
+    if (wallet && sameAddress(contactInput.address, wallet.address)) {
+      throw new RecipientSelfAddressError();
+    }
+    // D13's disclosed half (design §2.5). Read before the write and carried on
+    // the result; the add proceeds regardless. Unlocked and purely informational:
+    // no decision depends on it, so a contact appearing concurrently can only
+    // make the sentence stale, never a decision wrong.
+    const duplicateOf = await this.repository.findActiveContactByAddress(
+      userId,
+      contactInput.address,
+    );
     if (!wallet) {
       const contact = await this.database.withUserTransaction(userId, (client) =>
         this.contacts.create(userId, contactInput, client),
@@ -737,6 +790,7 @@ export class RecipientPolicyService {
         contact,
         permission: projectContactPermission(null),
         policyRevision: 0,
+        duplicateOf,
       };
     }
 
@@ -764,6 +818,7 @@ export class RecipientPolicyService {
         contact: outcome.contact,
         permission: await this.readContactPermission(userId, wallet.walletId),
         policyRevision: outcome.revision,
+        duplicateOf,
       };
     });
   }
@@ -800,6 +855,18 @@ export class RecipientPolicyService {
       input.expectedRevokedGrantIds ?? options.expectedRevokedGrantIds;
 
     const wallet = await this.repository.readReadySolanaWallet(userId);
+    // The same refusal as `create`, on the address-replacement surface (design
+    // §2.5): "every surface that creates or replaces a trusted recipient". A
+    // metadata-only edit carries no destination and is not compared at all, and
+    // the check runs before the lease, the plan and the transaction, so a refused
+    // replacement changes no contact, no grant and no revision.
+    if (
+      wallet &&
+      patch.address !== undefined &&
+      sameAddress(patch.address, wallet.address)
+    ) {
+      throw new RecipientSelfAddressError();
+    }
     if (!wallet) {
       const contact = await this.database.withUserTransaction(userId, (client) =>
         this.contacts.update(userId, targetId, patch, client),
@@ -2244,6 +2311,24 @@ function sameIdSet(left: readonly string[], right: readonly string[]): boolean {
   if (left.length !== right.length) return false;
   const seen = new Set(left);
   return right.every((id) => seen.has(id));
+}
+
+/**
+ * Whether a destination IS the wallet's own address (design §2.5).
+ *
+ * Exact, case-sensitive equality after trimming, because that is what base58 is:
+ * a different case is a different 32-byte key, so folding it would let a
+ * homoglyph-shaped string be mistaken for the wallet's own address. Both sides
+ * are trimmed because the contact write trims the address it stores, so a
+ * disagreement about surrounding whitespace would be the guard's own bug.
+ *
+ * A value that is not a canonical Solana address can never be equal to the
+ * wallet's own recorded address, and a body carrying one is refused by the
+ * strict create/edit schema long before this comparison — so an EVM-looking or
+ * malformed value is `DATOS_INVALIDOS` and never `DIRECCION_PROPIA`.
+ */
+function sameAddress(candidate: string, own: string): boolean {
+  return candidate.trim() === own.trim();
 }
 
 /**

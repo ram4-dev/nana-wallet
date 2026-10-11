@@ -338,3 +338,165 @@ Tasks 2.3, 2.4, 2.5 and 2.6 are untouched and still `- [ ]`:
 
 `request_hash` has no reader or writer yet (task 3.1). Both parent-owned rows in `tasks.md` are
 byte-for-byte unchanged.
+
+---
+
+# Apply progress: work unit U2 (second slice) — tasks 2.3, 2.4, 2.5 and 2.6
+
+Work unit: **U2 completed — the contact-write port field, the self-address refusal, the duplicate
+disclosure, and the `recipient_versions` decision** (tasks 2.3–2.6). One commit, one PR-sized review
+unit. Working root `/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`
+(branch `feat/solana-operational`); no push, no PR. Slice U3 (task 3.1) is **not** started.
+
+## Completed tasks
+
+| Task | What landed | Persisted checkbox |
+|---|---|---|
+| 2.3 | `RecipientContactWriteInput.provenance` (`src/wallet/policy/service.ts`), passed through `createRecipientContactMutationPort` into `ContactWriteInput.provenance`; `RecipientDuplicateDisclosure` type | `- [x]` |
+| 2.4 | `ReadyPolicyWallet.address` + `readReadySolanaWallet` selects `address`; `RecipientSelfAddressError` (`DIRECCION_PROPIA`) in `errors.ts`; the refusal in `create` and in the address-replacement arm of `edit`; the `sameAddress` helper | `- [x]` |
+| 2.5 | `RecipientPolicyRepository.findActiveContactByAddress`; `duplicateOf` on `RecipientMutationResult`, always stated on `create` (object or `null`) | `- [x]` |
+| 2.6 | Declined, with the residual recorded below — no code change. `recipient_versions` stays unchanged. | `- [x]` |
+
+## The `recipient_versions` decision (task 2.6) — **DECLINED**
+
+`recipient_versions` keeps snapshotting `name`, `description`, `address` and `network` and does **not**
+gain `provenance`. One line of justification: it is an `INSERT`-only, RLS-guarded history table outside
+this feature's scope, and the gap it leaves (after an address edit the history shows the old address
+without where it came from) is real but affects no authorization — nothing on the compose, transfer,
+preview or drift path reads `recipient_versions`, and §3.3's clear-on-address-edit already bounds the
+damage by making a stale alias claim impossible on the live row.
+
+Residual recorded against design §3.1: **nothing else in this change claims that the history preserves
+provenance.** Not asserted as preserved, and never narrated as preserved. The pre-existing suite pin
+(`tests/integration/contacts-provenance.test.ts`: an address edit snapshots the old address with no
+provenance) is left exactly as it was, so the decision is visible as an unchanged test rather than an
+oral tradition. No migration was written for it, and nothing in this change reads `recipient_versions`.
+
+## Files changed
+
+New: `tests/unit/policy-service-provenance.test.ts`,
+`tests/integration/recipient-self-address.test.ts`,
+`tests/integration/recipient-duplicate-disclosure.test.ts`, and this append.
+Modified: `src/wallet/policy/service.ts` (the port field, `duplicateOf`, the two refusals, `sameAddress`,
+the re-export and the value import of the new refusal), `src/wallet/policy/errors.ts` (the
+`DIRECCION_PROPIA` seam code and `RecipientSelfAddressError`), `src/wallet/policy/repository.ts`
+(`ReadyPolicyWallet.address` + the SELECT, `findActiveContactByAddress`),
+`tests/unit/policy-service-contract.test.ts` (the stub repository must answer the new read; the
+asserted create/edit bodies are unchanged), and the four checkbox lines in `tasks.md`.
+
+No migration, no contract file, no UI, no agent surface: `src/contracts/http.ts`, `apps/nana-wallet/**`,
+`src/agent/**` and `src/livekit/**` are untouched. The alias ARM that calls this plumbing is slice 5
+(5.2); the endpoint that renders the disclosure is 5.1/5.3; the contract mirror that publishes
+`DIRECCION_PROPIA` to clients is 4.1.
+
+## TDD cycle evidence
+
+RED is honest but was produced **by reversion, not before the code**: this run wrote the production
+change first and then removed each guard to observe the attributed failure, which is the same evidence
+the mutation table below records. Two expectations were corrected *after* seeing real output rather than
+weakened: the vacuous-comparison fixture first used `user_wallets.state = 'pending'`, which the real
+`user_wallets_state_check` rejects (corrected to `'provisioning'`), and the inactive-contact case first
+asserted the composed hash had *moved* after archiving, which was simply false — archiving a row
+directly does not recompose, so the composed hash is unchanged and the assertion was replaced by a
+positive control on the same address becoming active.
+
+| Cycle | RED | GREEN | TRIANGULATE | REFACTOR |
+|---|---|---|---|---|
+| 2.3 port field | adapter with the field dropped; paste path manufacturing an alias key | 3 tests green | adapter passthrough (identity, key set), the recorded `{origin:'user'}` body, the service's paste body | the adapter's two provenance assertions extracted from the two cases |
+| 2.4 self-address | the create guard removed; the replacement guard removed | 6 tests green | create, address replacement, the legacy-duplicate ordering, EVM + truncated values, no-ready-wallet ×2 | one `sameAddress` helper instead of two inline comparisons |
+| 2.5 disclosure | the active-holder predicate removed; the disclosure always `null` | 3 tests green | new vs. active-duplicate vs. inactive holder, composed hash and a real `delegated_grants` row, second add on the same address | `findActiveContactByAddress` on the policy repository instead of a new contact-port method |
+
+### Mutation evidence (each guard removed, failure observed **by name**, then restored)
+
+| Mutation | Failing tests it produced |
+|---|---|
+| M1 the adapter drops `provenance` before calling the repository | `hands the caller's provenance object to the repository unchanged` |
+| M2 `create` manufactures an alias provenance for every caller | `omits the alias keys entirely, leaving the repository default in charge` |
+| M3 the self-address check removed from `create` | `refuses the wallet's own address on create and persists nothing`; `never reports the refusal as a duplicate-contact conflict` |
+| M4 the self-address check removed from the address-replacement path | `refuses the wallet's own address on an address replacement and leaves the contact untouched` |
+| M5 `findActiveContactByAddress` stops requiring `status = 'active'` | `does not disclose an address held only by an INACTIVE contact` |
+| M6 `create` always answers `duplicateOf: null` | `stores a duplicate address, discloses the holder's name, and moves no authority`; `behaves identically for the same address added again by the paste path`; `does not disclose an address held only by an INACTIVE contact` |
+
+Every mutation failed by name; none was inert. M3's second failure is the ordering proof: with the
+self-address check gone, the legacy-duplicate fixture reports a duplicate-conflict shape instead, which
+is exactly the wrong answer the case exists to exclude. Restoration was an exact reverse string
+replacement (never a git command), verified by `git status`/`git diff --stat` matching the intended set
+of files.
+
+## Commands run (exact)
+
+```text
+npx vitest run tests/unit/policy-service-provenance.test.ts tests/unit/policy-service-contract.test.ts
+                                                                   # 2 files / 35 tests passed
+npx vitest run tests/integration/recipient-self-address.test.ts     # 6 tests passed (Docker DB, port 55470)
+npx vitest run tests/integration/recipient-duplicate-disclosure.test.ts  # 3 tests passed
+npm run lint                                                       # clean (eslint src tests --max-warnings=0)
+npm run typecheck                                                  # clean (tsc -p tsconfig.test.json --noEmit)
+npx vitest run tests/integration/recipient-policy-*.test.ts         # 9 files / 119 tests passed (separated run)
+npx vitest run tests/unit/policy-*.test.ts                          # 15 files / 177 tests passed (separated run)
+npx vitest run tests/unit/livekit/                                  # 7 files / 50 tests passed
+npx vitest run tests/integration/contacts-provenance.test.ts        # 6 tests passed (the 2.6 verify line)
+```
+
+The two policy runs were executed as **separate** invocations, as instructed: they serialize on one
+demo wallet's lease. No policy test regressed. `npm install` was **not** run: `package.json` and
+`package-lock.json` are byte-identical to `f9e6386`, `node_modules/@livekit/rtc-node` and
+`node_modules/pino` are still present, and `tests/unit/livekit/` is green.
+
+## Deviations from the design
+
+1. **The duplicate read is an unlocked pre-write read on the policy repository.** Design §2.5 says the
+   service "reads the active contacts holding the resolved address" before the create writes; it does
+   not say under which lock. The read is `RecipientPolicyRepository.findActiveContactByAddress`, taken
+   immediately before the write and outside the mutation transaction. That is deliberate: the
+   disclosure is purely informational (nothing about authority depends on it), so it needs no snapshot
+   consistency — a contact appearing concurrently can only make the sentence stale, never a decision
+   wrong. Putting it inside `runMutation` would have meant threading `duplicateOf` through
+   `MutationStepResult` and both `MutationOutcome` arms, including the removal path's, for no added
+   guarantee. The seam choice (policy repository rather than a new contact-port method) is also
+   deliberate: the removal path already reads `recipients` by address there (`listAliases`), and adding
+   a required method to `RecipientContactMutationPort` would have forced an edit to ten existing
+   in-test adapters for an informational read.
+2. **`duplicateOf` is optional on the shared result type, and always stated on `create`.** Making it a
+   required `{...} | null` on `RecipientMutationResult` would have forced `edit` and `remove` to write
+   `null`, which would in turn mean "no duplicate" and "not asked" collapse into one value on three
+   surfaces. It is present on every `create` (object or `null`) and absent elsewhere, and the type
+   documents that.
+3. **`RecipientPolicySeamErrorCode` gained `DIRECCION_PROPIA` here, ahead of task 4.1.** 4.1 adds the
+   code to `RECIPIENT_POLICY_ERROR_CODES` in `src/contracts/http.ts` for the client-visible mirror; the
+   service's own typed refusal vocabulary has to name the code now, or the refusal could not be typed at
+   all. The route mapper in `src/api/contacts.ts` already maps any non-`DATOS_INVALIDOS`,
+   non-`CONTACTO_NO_ENCONTRADO` seam code to HTTP 409, so the `409` half of the task is satisfied by
+   construction; no contract file was touched in this slice.
+4. **The alias arm does not exist yet, so 2.3 and 2.5 are proven on the create path.** There is exactly
+   one create arm in this slice, which is why "the alias path must not be stricter than the paste path"
+   is structural here rather than two parallel cases: the code the alias arm (5.2) will enter IS the
+   code both suites drive. The eleven-key provenance object from design §3.1 is asserted in the unit
+   suite as a passthrough fixture (including the explicit `reverify`), and the arm that BUILDS it is
+   5.2's, not this unit's.
+
+## Workload / PR boundary
+
+This slice is the commit that carries this append: three source files, three new suites, one existing
+unit suite's stub repository, and the four checkbox flips. Rollback is the removal of the port field,
+the refusal, the disclosure and the repository read — no call shape changed (every new field is
+optional, the new repository method has one caller, and no existing caller of `readReadySolanaWallet`
+consumed the new field), so nothing else in the repository can depend on this unit. The forecast's
+`size-exception` stands: no diff was shrunk to reach 400 lines.
+
+## Structured status consumed
+
+Launched by the parent with `openspec`-store artifacts and an explicit delivery decision
+(`size-exception`, no push/no PR, U2 = tasks 2.3–2.6). The Review Workload Gate's guard lines
+(`Decision needed before apply: Yes` / `Chained PRs recommended: Yes` / `400 line budget risk: High`)
+were resolved in the parent prompt before apply, so the gate did not block. `actionContext` carried one
+hard root (`/Users/ramiro/Desktop/projects/colloseum.feat-solana-operational`); every write stayed
+inside it, no forbidden git command was used (the mutation restores were reverse string replacements),
+and the user-owned untracked `compose.privy-local.ports.yaml` was neither touched nor committed. No
+migration was needed, so nothing was applied to the worktree database.
+
+## Remaining work
+
+Slice U2 is complete: tasks 2.1–2.6 are all `- [x]`. Task 3.1 (Slice U3) is untouched and still
+`- [ ]`; `request_hash` has no reader or writer yet. Both parent-owned rows in `tasks.md` are
+byte-for-byte unchanged.
