@@ -1077,3 +1077,138 @@ load-bearing on its own clause.
   the same three states over HTTP are `handlers.test.ts`'s evidence (task 4.1), not re-driven here.
 - No live resolution happens in this suite: the address is a fixture, so nothing here claims a devnet
   name was reached.
+
+---
+
+## Task 5.4 — The alias on the contact read (design §3.2 correction C3, §11 Q3)
+
+**Outcome: the surface LANDED.** The stop condition is satisfiable and satisfied: the mirrored
+`ContactAlias` type was already in `apps/nana-wallet/src/lib/api-types.ts:131` from task 4.1, and this
+unit wires it end to end in one commit. Nothing was dropped, so nothing else in this change has to
+route around a missing surface.
+
+### The WIP this run inherited, and its verdict
+
+The previous attempt was killed by the time cap after writing the work and before verifying or
+committing it. Its uncommitted state was:
+
+| Path | WIP content | Verdict |
+|---|---|---|
+| `src/api/contacts.ts` | `contactAlias()` reduction + the `alias:` key on the list projection and on `projectContact` | **in scope, complete** |
+| `apps/nana-wallet/.../AddTrustedRecipient.tsx` | the "Agregado por …" line, and the address span moved off `truncate` | **in scope, complete** |
+| `tests/integration/api-contacts-alias-field.test.ts` (new) | 2 cases | in scope, **negative controls too weak** — strengthened here |
+| `AddTrustedRecipient.test.tsx` | 1 case | in scope, honest |
+
+The one thing the inherited work was *not* honest about is stated under "what this run changed": its
+"no provenance" case passed for a reason it did not name. Everything else survived review unchanged.
+
+### The chain, verified end to end (one additive, mirrored change)
+
+`recipients.provenance` → `RECIPIENT_COLUMNS` (`contacts-repository.ts:94`) → `ContactRecord.provenance`
+(`:6-30`, landed in 2.2) → `contactAlias()` reduction in the route → `contactSchema.alias`
+(`src/contracts/http.ts:367`, `.strict().nullable()`, landed in 4.1) → the mirrored `ContactAlias` in
+`api-types.ts:131` → the list rendering in `AddTrustedRecipient.tsx`. Every link exists and is exercised
+by the two suites below; no link is stubbed.
+
+The reduction is deliberately narrow: `{name, resolvedAt}` only, so `nameAccount`, `observedOwner`,
+`slot` and `resolver` stay server-side, and `contactAliasSchema` is `.strict()` so a second address
+smuggled into an alias object is refused instead of stripped. The alias is a **label**; the sibling
+`address` remains the destination.
+
+### What this run changed on top of the WIP
+
+1. **The legacy-insert fixture is now a helper** (`insertLegacyContact(name, provenance)`) so more than
+   one pre-feature row can be placed without duplicating the 384-dimension embedding literal.
+2. **The negative controls were strengthened.** They now carry a positive control on the same read
+   (`address` equals the row's real address, and `"alias" in read` is true) — a `null` that passes
+   because the whole contact is missing is a false green, and this watchtower now fails in that case.
+3. **Two adversarial rows were added** to the "never read as an alias" case:
+   - `{origin:'user', name:'sophie.sns', resolvedAt:…}` — name-shaped but **not** marked
+     `source:'sns'`: an unmarked name is a different fact and must read `null`. This is the row that
+     makes the `source !== 'sns'` clause load-bearing instead of decorative.
+   - `{"source":"sns"}` — marked but with no usable pair: a malformed claim is not a claim.
+
+### The honest RED
+
+The implementation was written by the killed run, so RED was produced **by reversion**, not
+RED-first. Both reversions were applied, observed, and restored from a byte-identical backup
+(`diff` clean afterwards):
+
+| Reversion | Failure observed, by name |
+|---|---|
+| `alias: contactAlias(contact.provenance)` removed from the `/v1/contacts` list projection | *reports the alias of an alias-origin contact and null for the paste path* and *never reads a pre-feature contact as an alias* — both `expected undefined …` |
+| The `contact.alias ? … : null` block removed from the list rendering | *muestra de qué nombre vino el contacto, y no lo muestra cuando no vino de ninguno* — `Unable to find an element by: [data-testid="contact-alias-c-alias"]` |
+
+**Stated plainly: this is reversion-RED, which is weaker evidence than RED-first.** It proves the tests
+are coupled to the two surfacing sites and that both currently fail without them; it does not prove the
+tests were written before the implementation.
+
+The frontend RED by reversion also carried a live positive control: the same run reports
+`27 passed | 1 failed`, so the 27 pre-existing cases stayed green while exactly the new case failed.
+
+### Mutation evidence (each guard, restored immediately)
+
+| Mutation | Failure observed, by name | Restored |
+|---|---|---|
+| M4 — only the `provenance.source !== 'sns'` clause removed from `contactAlias` | *never reads a pre-feature contact as an alias* — `AssertionError: expected { name: 'sophie.sns', …(1) } to be null` (the name-shaped, unmarked row; the `{}` and pasted rows still passed, which is exactly why the clause needed a row of its own) | yes, `diff` clean |
+| M5 — the `typeof`/`length` pair removed (claim trusted as-is) | *never reads a pre-feature contact as an alias* — `AssertionError: expected 500 to be 200` on the malformed `{"source":"sns"}` row | yes, `diff` clean |
+| M6 — `truncate` re-added to the list address span | *muestra de qué nombre vino el contacto…* — `expected 'block truncate break-all text-xs text…' not to match /truncate/` | yes, `diff` clean |
+
+Honest reading of each: **M4** is a *wrong-value* failure and is the strongest of the three — without
+the marker check an unmarked provenance is served to the client as an alias. **M5** is a *loud-failure*
+result, not a wrong value: without the guards a malformed claim makes the whole read answer 500 instead
+of reporting `null`, so the guard's job is "do not let a malformed claim break the contact read", and it
+is load-bearing for that and only that. **M6** is enforced through a `className` proxy, not through
+computed layout (jsdom cannot measure clipping) — that limit is restated under "unproven" below.
+
+A first attempt at M5 dropped the `return` along with the guards and collapsed its failure mode into
+M1's (`expected undefined`); it was rewritten because it measured the wrong clause. Recorded here
+because the wrong mutation is the same defect as the wrong negative control.
+
+### Commands run (exact)
+
+```text
+npx vitest run tests/integration/api-contacts-alias-field.test.ts   # 2 passed
+npx vitest run tests/integration/recipient-policy-*.test.ts          # 9 files, 119 passed  (own run)
+npx vitest run tests/unit/policy-*.test.ts                           # 16 files, 185 passed (own run)
+npx vitest run tests/unit/livekit/                                   # 7 files, 50 passed
+npm run lint && npm run typecheck                                    # root, clean
+(cd apps/nana-wallet) npm run lint && npm run typecheck && npx vitest run  # 28 files, 201 passed
+```
+
+Frontend baseline: the suite reports **201 passed, 0 failed**. The figure this task was handed (193) was
+the count before this change's own frontend work; the suite did not drop — it grew by the alias case and
+by 5.3's cases, with zero failures and zero skipped.
+
+### Deviations
+
+1. **The list address span moved from `truncate` to `break-all`** (WIP change, kept). Task 5.4's own
+   test list requires "no address is truncated in the list", and `truncate` is what truncated it. This
+   is a modification to existing rendering, not only an addition, so it is recorded rather than
+   smuggled.
+2. **`contactSchema.alias` is `optional().nullable()`** (chosen in 4.1, kept). The task text says
+   `alias: {name, resolvedAt} | null`. The projection always sets the key on a contact read, so the
+   `undefined` arm is unreachable from this server; the optionality exists so a read that predates the
+   wiring cannot become a parse failure. The integration suite asserts the key is *present* on every
+   read it touches, rather than accepting its absence.
+3. The frontend copy renders `Agregado por juan.sns` (capitalised sentence, no backticks); the task's
+   "agregado por `juan.sns`" is read as the copy plus the code marker around the name.
+
+### Unproven, stated
+
+- **Truncation is asserted through a class, not through geometry.** `not.toMatch(/truncate/)` proves the
+  clipping utility is gone; it does not prove the rendered pixel width. Only a browser could.
+- **The resolver is a stub here.** `buildTestServer({ recipientAliases: stubResolver() })` proves the
+  read projects whatever provenance the row holds; the real devnet round trip stays 8.2's attempt.
+- **Only the contact-list surface is covered.** The proposal card's alias lines are 6.3's, and no drift
+  (7.1–7.3) or confirmation (6.4) behaviour is exercised or claimed here. Nothing in this unit makes
+  another slice's surface depend on it, which is what the stop condition required.
+- The `source !== 'sns'` marker is now load-bearing against an unmarked name-bearing provenance, but
+  **no writer in this change produces that row**; the test pins the read contract, not a reachable
+  writer.
+
+### Workload / boundary
+
+One work-unit commit: the backend projection, the mirrored type's consumer, the list rendering and
+their tests. `Review Workload Forecast: size-exception` (recorded at the top of `tasks.md`) — the change
+does not push and does not open a PR.

@@ -155,6 +155,29 @@ function idempotencyKey(request: FastifyRequest): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+/**
+ * Task 5.4 (design §3.2 correction C3): the alias a contact read may carry.
+ *
+ * It is the `recipients.provenance` object REDUCED to the two names a client
+ * needs — `{name, resolvedAt} | null` — so the rest of the evidence
+ * (`nameAccount`, `observedOwner`, `slot`, `resolver`) stays server-side. `null`
+ * is a contact with no alias claim, which is a fact and not a missing field, and
+ * a row written before this feature (`provenance = {}`) is `null` too: an absence
+ * is never read as an alias.
+ *
+ * The alias is a LABEL. The sibling `address` is the destination, and this
+ * function never returns an address.
+ */
+function contactAlias(
+  provenance: Record<string, unknown> | null | undefined,
+): { name: string; resolvedAt: string } | null {
+  if (!provenance || provenance.source !== "sns") return null;
+  const { name, resolvedAt } = provenance;
+  if (typeof name !== "string" || name.length === 0) return null;
+  if (typeof resolvedAt !== "string" || resolvedAt.length === 0) return null;
+  return { name, resolvedAt };
+}
+
 async function projectContact(
   dependencies: ContactsRouteDependencies,
   userId: string,
@@ -165,6 +188,7 @@ async function projectContact(
   if (!contact) throw new Error("policy mutation did not leave a contact projection");
   return contactSchema.parse({
     ...contact,
+    alias: contactAlias(contact.provenance),
     permission: contactPermissionSchema.parse(permission),
   });
 }
@@ -198,6 +222,7 @@ export async function registerContactsRoutes(
           data: contacts.map((contact) =>
             contactSchema.parse({
               ...contact,
+              alias: contactAlias(contact.provenance),
               permission: contactPermissionSchema.parse(permission),
             }),
           ),

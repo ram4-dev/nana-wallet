@@ -561,9 +561,31 @@ export function AddTrustedRecipient({
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-bold">{contact.name}</span>
                 <span className="block text-xs font-bold text-brand-ink">Solana devnet</span>
-                <span className="block truncate text-xs text-muted-foreground">
+                {/*
+                  Sin `truncate` (task 5.4): la dirección es lo que la persona
+                  tiene que poder leer y comparar entera. Una dirección cortada
+                  con puntos suspensivos no se puede verificar mirándola.
+                */}
+                <span
+                  className="block break-all text-xs text-muted-foreground"
+                  data-testid={`contact-address-${contact.id}`}
+                >
                   {contact.address}
                 </span>
+                {/*
+                  Task 5.4 (design §3.2 C3): el alias es EVIDENCIA de dónde salió
+                  la dirección, no la dirección. Sin alias no se dibuja nada: un
+                  contacto pegado a mano no tiene origen que mostrar, y un
+                  "sin alias" inventaría un hecho.
+                */}
+                {contact.alias ? (
+                  <span
+                    className="block break-all text-xs text-muted-foreground"
+                    data-testid={`contact-alias-${contact.id}`}
+                  >
+                    Agregado por {contact.alias.name}
+                  </span>
+                ) : null}
                 <span className="block text-xs text-muted-foreground">
                   {permissionLabel(contact.permission)}
                 </span>

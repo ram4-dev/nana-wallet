@@ -730,4 +730,40 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       expect(screen.queryByTestId("duplicate-disclosure")).not.toBeInTheDocument();
     });
   });
+
+  describe("AddTrustedRecipient — el alias en la lista (task 5.4)", () => {
+    it("muestra de qué nombre vino el contacto, y no lo muestra cuando no vino de ninguno", async () => {
+      mocks.getContacts.mockResolvedValue([
+        {
+          ...CONTACT,
+          id: "c-alias",
+          name: "Nieta",
+          alias: { name: "juan.sns", resolvedAt: "2026-10-10T18:04:11.482Z" },
+        },
+        CONTACT,
+      ]);
+      render(
+        <Wrapper>
+          <AddTrustedRecipient userId="u1" />
+        </Wrapper>,
+      );
+
+      // Positivo: el contacto con alias lo dice, con su sufijo y sin truncar.
+      const line = await screen.findByTestId("contact-alias-c-alias");
+      expect(line.textContent).toContain("juan.sns");
+      expect(line.className).not.toMatch(/truncate/);
+      // Negativo: el que se pegó a mano no inventa un origen.
+      expect(screen.queryByTestId("contact-alias-c1")).not.toBeInTheDocument();
+      // Y ninguna dirección se trunca en la lista (los dos contactos comparten
+      // dirección en este fixture, así que se miran TODAS).
+      const addresses = screen.getAllByText(CONTACT.address);
+      expect(addresses.length).toBe(2);
+      for (const node of addresses) {
+        expect(node.textContent).toBe(CONTACT.address);
+        // Y ninguna se corta con puntos suspensivos: una dirección truncada no se
+        // puede verificar mirándola.
+        expect(node.className).not.toMatch(/truncate/);
+      }
+    });
+  });
 });
