@@ -2062,3 +2062,138 @@ Nothing about 7.2 is blocked by what landed here: `POST /v1/contacts/:id/check-a
 returns the three states at HTTP 200, the `CONTACTO_SIN_ALIAS` refusal is on the shared error map, and
 `contactAliasCheckResponseSchema` (U4) already mirrors the response. The frontend needs the screen
 only.
+
+---
+
+## Task 7.2 — the drift surface: report, and keep / replace / remove (U7's last task)
+
+### What landed
+
+The user-facing half of drift. Two new frontend modules and the wiring into the existing contact list:
+
+| File | Role |
+|---|---|
+| `apps/nana-wallet/src/features/wallet/contact-alias-drift.ts` | The pure seam: `driftReport(check, aliasName, contactName)` → `{kind, sentence, consequence, observedAddress, isDrift, canReplace}`. Own module for the same reason `contact-action-proposal-alias.ts` is its own module: the component file exports components only (the `react-refresh/only-export-components` rule says so). |
+| `apps/nana-wallet/src/features/wallet/ContactAliasDrift.tsx` | The notice: an explicit "Chequear el nombre" button, the report, and the choices. Renders **nothing** for a contact with no alias. |
+| `apps/nana-wallet/src/features/wallet/ContactAliasDrift.test.tsx` | The colocated suite the task names: 12 tests. |
+| `apps/nana-wallet/src/features/wallet/AddTrustedRecipient.tsx` | +35 lines: the notice inside the alias-sourced row, plus `requestAliasReplacement`, which opens the **existing** `pendingAddressChange` path (preview + disclosure + confirmation). |
+
+### The three states, as a user reads them
+
+| Check outcome | Sentence (exact) |
+|---|---|
+| destination moved (`changed` + `observedAddress`) | `El nombre juan.sns de Nieta ahora apunta a otra dirección.` + the observed address, the stored address, and `Tu destinatario de confianza sigue siendo <stored> y no lo cambié.` |
+| name no longer exists (`changed` + `reason: name_no_longer_exists`) | `El nombre juan.sns de Nieta ya no existe.` — no destination is shown, because none was reported |
+| check unavailable (`unavailable`, any reason incl. `unreachable`, `resolver_unavailable`, `contact_changed`) | `No pudimos chequear juan.sns de Nieta en este momento.` + `Esto no quiere decir que el nombre haya cambiado: no sabemos cómo está ahora. …` |
+| unchanged (only the server's `unchanged`) | `El nombre juan.sns de Nieta sigue apuntando a la misma dirección.` — the **only** state allowed to say it |
+
+A fourth defensive kind (`changed_unknown`) exists for a `changed` whose reason this client does not recognize: it names no destination and borrows neither known wording, rather than guessing which of the two it is.
+
+### The three choices, and the authorization each one goes through
+
+- **keep** (`Dejar como está`) — local state only. No request is sent, nothing is persisted, and the notice returns on the next explicit check (design §5.4: keep silences nothing permanently). Asserted by the re-check test, which requires the API call count to be 2 and the moved sentence to be back.
+- **replace** (`Cambiar a la nueva dirección`) — `onReplace(contact, observedAddress)` → `requestAliasReplacement` → `api.getContactRemovalPreview(id, version, "address_change")` → **the same disclosure dialog the edit form shows** → only its "Confirmar cambio" calls `api.updateContact`. The body carries the observed address, `expectedVersion` and `expectedPolicyRevision`, and **no alias/provenance key**, so the server's C2 rule (task 2.2) clears the stale claim instead of leaving a name attached to an address the contact no longer has. Offered only when an observed address exists.
+- **remove** (`Quitar a <nombre>`) — `onRemove(contact)` → the row's existing `requestRemoval` → removal preview → confirmation dialog → `api.deleteContact`. Asserted in the same suite: `deleteContact` is never called before the confirmation.
+
+No third write path was introduced. The suite asserts, for each choice, that the mutation is **not** called until the existing confirmation is given.
+
+### Honest RED, and how it was obtained
+
+Two stages, both real, no reversion trick:
+
+1. **Suite-level.** `npx vitest run src/features/wallet/ContactAliasDrift.test.tsx` with the test file present and the module absent:
+   `Failed to resolve import "./ContactAliasDrift" from "src/features/wallet/ContactAliasDrift.test.tsx". Does the file exist?` → `Test Files 1 failed (1); Tests no tests`.
+2. **Behavioural.** With the component written but **deliberately not wired into the list**, the same command gave
+   `4 failed | 8 passed (12)`, every failure by name and for the same reason:
+   `TestingLibraryElementError: Unable to find an element by: [data-testid="alias-drift-check-c-alias"]`
+   (REPLACE, REMOVE, the no-payment test, and the unreachable-check test). Wiring the row turned them green.
+
+### TDD cycle evidence
+
+| Cycle | RED | GREEN | Refactor |
+|---|---|---|---|
+| 7.2 (whole task) | stages 1 and 2 above | `12 passed (12)` after the wiring; then the full frontend suite at `220 passed` | the pure seam split out of the `.tsx` after `eslint` flagged `react-refresh/only-export-components`; re-ran lint (clean, no warnings), typecheck and the whole suite |
+
+### Mutation evidence (each guard removed, observed by name, restored)
+
+`ContactAliasDrift.tsx` was copied, mutated, run, and restored four times (no `git checkout`/`restore` was used):
+
+| Mutation | Test that failed by name |
+|---|---|
+| `unavailable` branch removed (the state collapses into another) | `reports an UNAVAILABLE check as its own sentence and never as 'still fine'` |
+| the check runs on mount (viewing would write) | `reports a destination that MOVED, with both addresses and both names, untruncated` — on its `expect(mocks.checkContactAlias).not.toHaveBeenCalled()` clause |
+| REPLACE calls `api.updateContact` directly instead of opening the disclosure | `REPLACE goes through the existing disclosure, and only the confirmation calls the API` |
+| the no-alias gate removed (`if (!aliasName) return null`) | `offers the check for an alias-sourced contact and nothing at all without an alias` |
+
+Restored file: `12 passed (12)`. No mutation produced zero failures, so every guard above is reachable.
+
+### Commands run (this task)
+
+```text
+(cd apps/nana-wallet && npm run lint)                       → clean, 0 errors 0 warnings (eslint .)
+(cd apps/nana-wallet && npm run typecheck)                  → clean
+(cd apps/nana-wallet && npx vitest run)                     → 29 files, 220 passed  (baseline was 208 → +12)
+npm run lint                                                → clean (eslint src tests --max-warnings=0)
+npm run typecheck                                           → clean (tsc -p tsconfig.test.json --noEmit)
+npx vitest run tests/unit/sns-no-payment-path.test.ts       → 5 passed   (7.3's guard: still green, not weakened)
+npx vitest run tests/integration/recipient-policy-*.test.ts → 9 files, 119 passed
+npx vitest run tests/unit/policy-*.test.ts                  → 16 files, 185 passed
+npx vitest run tests/unit/livekit/ tests/unit/confirmation-arbiter.test.ts → 8 files, 61 passed
+```
+
+The four root runs were separated as the task asks and match the prior slice's recorded counts exactly. The
+pristine baseline failures live in suites not re-run here; none of them was touched (no root `src/` file was
+modified by this task).
+
+### The guarantee this task owes: no choice bypasses authorization, and viewing changes nothing
+
+- **Viewing:** rendering the row and the notice performs **zero** requests. `checkContactAlias` is called only
+  from the button's handler. The "MOVED" test asserts the call count is 0 before the click, and the
+  no-payment test asserts the only call the report ever made is the check itself.
+- **Keep** sends nothing at all.
+- **Replace** and **remove** each require the existing confirmation before their mutation.
+- **No payment is refused:** nothing on this surface gates a transfer, and the row keeps its frozen address
+  with `Editar` and `Quitar` still enabled after the notice renders. The domain half of this guarantee is
+  task 7.3's structural guard, re-run green above.
+
+### Deviations
+
+1. **The pure seam is a third file** (`contact-alias-drift.ts`), not part of `ContactAliasDrift.tsx` as the
+   task's file list implies. Required by the repo's own lint rule and precedented by
+   `contact-action-proposal-alias.ts`. The suite the task names is exactly the named file.
+2. **A `changed` state with an unrecognized reason gets its own fourth sentence** (`changed_unknown`) instead
+   of being folded into "moved" or "gone". Folding it would assert a fact the server did not send.
+3. **"Remove" is offered for every drift state, but "replace" only when an observed address exists** — there is
+   nothing to replace *with* when the name no longer leads anywhere. The task's "three actions" are all
+   present on the moved case, which is the case where all three are decidable.
+4. **`keep` is ephemeral local state**, deliberately not persisted anywhere: a persisted dismissal would be a
+   standing claim the user never made (design §5.4).
+
+### Remaining tasks (exact unchecked lines)
+
+```text
+- [ ] **8.1 Run the automated suites with a captured pre-existing-failure baseline.** …
+- [ ] **8.2 Attempt the live devnet alias evidence and record the exact blocker if it cannot run.** …
+- [ ] **8.3 Close each work unit with exactly one conventional work-unit commit, and hold the no-push/no-PR rule.** …
+```
+
+Plus the two `<!-- sdd-owner: parent -->` rows (bounded review over the frozen commit; the independent
+`sdd-verify` + archive), left byte-for-byte untouched.
+
+### Structured status consumed, and one discrepancy worth flagging
+
+`gentle-ai sdd-status sns-alias-recipients --cwd . --json` reports
+`artifactStore: openspec`, `applyState: blocked`, `nextRecommended: "spec"`, `dependencies.specs: "blocked"`,
+and **`blockedReasons: []`**. The block is derived, not stated: the dispatcher looks for
+`openspec/changes/sns-alias-recipients/specs/…`, while this change keeps its approved `spec.md` at the change
+root (364 lines) — the layout every prior slice of this change was applied under. Both required inputs
+(`spec.md`, `design.md`) and the tasks artifact exist and were read directly, and `blockedReasons` is empty,
+so this unit proceeded under the parent's explicit, bounded instruction; the discrepancy is reported rather
+than silently absorbed.
+
+### Workload / boundary
+
+One work-unit commit for task 7.2: two new frontend modules, the one wiring edit, the colocated suite, this
+entry and the `7.2` checkbox. No root `src/` file changed, so the HTTP contract, the migration chain and the
+composer are untouched. `Review Workload Forecast: size-exception` (standing note at the top of `tasks.md`):
+this worktree does not push and does not open a PR. Slice U8 is **not** started.

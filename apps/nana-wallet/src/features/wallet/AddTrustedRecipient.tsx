@@ -13,6 +13,8 @@ import type {
   ReverseDomainState,
 } from "@/lib/api-types";
 
+import { ContactAliasDrift } from "./ContactAliasDrift";
+
 type EditorState = { contact?: Contact } | null;
 type PendingRemoval = { contact: Contact; preview: ContactRemovalPreview } | null;
 type PendingAddressChange = {
@@ -307,6 +309,26 @@ export function AddTrustedRecipient({
     }
   }
 
+  /**
+   * Task 7.2 (design §5.4): "replace" on a drift notice is the ORDINARY address
+   * change, not a shortcut. It asks for the same removal preview the edit form
+   * asks for, so the same disclosure is shown and the same confirmation is
+   * required before anything is sent. The observed address only proposes.
+   */
+  async function requestAliasReplacement(contact: Contact, observedAddress: string) {
+    setError(null);
+    try {
+      setPendingAddressChange({
+        contact,
+        name: contact.name,
+        address: observedAddress,
+        preview: await api.getContactRemovalPreview(contact.id, contact.version, "address_change"),
+      });
+    } catch (replaceError) {
+      setError(getErrorMessage(replaceError));
+    }
+  }
+
   async function requestRemoval(contact: Contact) {
     setError(null);
     try {
@@ -589,6 +611,19 @@ export function AddTrustedRecipient({
                 <span className="block text-xs text-muted-foreground">
                   {permissionLabel(contact.permission)}
                 </span>
+                {/*
+                  Task 7.2 (design §5.4): el chequeo de drift es EXPLÍCITO y vive
+                  acá, al lado de la dirección que reporta. El aviso no bloquea
+                  nada: es una noticia sobre el nombre, y el destinatario sigue
+                  siendo la dirección congelada.
+                */}
+                <ContactAliasDrift
+                  contact={contact}
+                  onReplace={(target, observedAddress) =>
+                    void requestAliasReplacement(target, observedAddress)
+                  }
+                  onRemove={(target) => void requestRemoval(target)}
+                />
               </span>
               <span className="flex shrink-0 flex-col gap-1">
                 <Button
