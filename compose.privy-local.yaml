@@ -10,6 +10,14 @@ x-identity: &identity
   # value resolves an EVM wallet family and silently skips the Solana resolver.
   WDK_NETWORK: solana-devnet
   WDK_TOKEN: SOL
+  # Read by the SNS alias resolver in BOTH processes that build one —
+  # `server.ts` for the screen/API path and `livekit/worker.ts` for voice —
+  # through the same `environment.SNS_RPC_URL ?? SOLANA_DEVNET_RPC_URL`
+  # precedence. This entry is what makes that precedence reachable: without it
+  # the container never receives the variable and the resolver silently falls
+  # back to the compiled constant, so a dedicated/keyed endpoint configured in
+  # `.env` does not reach the deployment at all.
+  SNS_RPC_URL: ${SNS_RPC_URL:-https://api.devnet.solana.com}
   RECIPIENT_MEMORY_ENABLED: "true"
   LIVEKIT_URL: ws://livekit:7880
   LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?}
