@@ -17,11 +17,11 @@ const avatarForState: Record<AgenteEstado, { src: string; pose: string }> = {
 
 /** Lo que el lector de pantalla anuncia. La imagen interna es decorativa. */
 const labelForState: Record<AgenteEstado, string> = {
-  escuchando: "Nani te está escuchando",
-  pensando: "Nani está pensando",
-  esperando_confirmacion: "Nani espera que revises",
-  listo: "Nani está lista para ayudarte",
-  no_entendi: "Nani no te entendió bien",
+  escuchando: "Nani is listening to you",
+  pensando: "Nani is thinking",
+  esperando_confirmacion: "Nani is waiting for you to review",
+  listo: "Nani is ready to help you",
+  no_entendi: "Nani did not quite understand you",
 };
 
 type AgenteAvatarProps = {
@@ -34,16 +34,16 @@ type AgenteAvatarProps = {
 export function AgenteAvatar({ estado, livePhase, size = 256 }: AgenteAvatarProps) {
   const avatar = avatarForState[estado];
   const liveLabel = {
-    speaking: "Nani está hablando",
-    muted: "Micrófono pausado",
-    reconnecting: "Nani se está reconectando",
-    paused: "Sesión pausada",
-    thinking: "Nani está pensando",
-    request_waiting: "Tu solicitud está esperando",
-    connecting: "Nani se está conectando",
-    binding: "Nani está preparando la conversación",
-    failed: "La voz de Nani no está disponible",
-    listening: "Nani te está escuchando",
+    speaking: "Nani is speaking",
+    muted: "Microphone paused",
+    reconnecting: "Nani is reconnecting",
+    paused: "Session paused",
+    thinking: "Nani is thinking",
+    request_waiting: "Your request is waiting",
+    connecting: "Nani is connecting",
+    binding: "Nani is preparing the conversation",
+    failed: "Nani's voice is not available",
+    listening: "Nani is listening to you",
     idle: labelForState[estado],
   } satisfies Record<LiveVoiceState["phase"], string>;
 

@@ -24,7 +24,7 @@ describe("live voice reducer", () => {
       phase: "failed",
       reason: {
         code: "recovery_expired",
-        message: "La voz se desconectó. Podés seguir escribiéndome.",
+        message: "The voice disconnected. You can keep writing to me.",
       },
     });
   });

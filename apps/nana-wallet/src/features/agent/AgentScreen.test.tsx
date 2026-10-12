@@ -41,10 +41,10 @@ describe("AgentScreen financial projection", () => {
     );
 
     expect(screen.getByRole("textbox")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Confirmar" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Cancelar" })).toBeEnabled();
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onConfirm).toHaveBeenCalledOnce();
     expect(onCancel).toHaveBeenCalledOnce();
     expect(screen.getByText("10 USDT")).toBeInTheDocument();
@@ -102,7 +102,7 @@ describe("AgentScreen financial projection", () => {
       />,
     );
 
-    expect(screen.getByRole("status")).toHaveTextContent("Tu solicitud está esperando");
+    expect(screen.getByRole("status")).toHaveTextContent("Your request is waiting");
     expect(screen.getByRole("textbox")).toBeDisabled();
   });
 
@@ -128,12 +128,12 @@ describe("AgentScreen financial projection", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Terminar conversación" }));
-    expect(screen.getByRole("alertdialog")).toHaveTextContent("no cancela");
-    expect(screen.getByRole("button", { name: "Seguir hablando" })).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "End conversation" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("does not cancel");
+    expect(screen.getByRole("button", { name: "Keep talking" })).toHaveFocus();
     expect(onEndConversation).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Terminar voz" }));
+    fireEvent.click(screen.getByRole("button", { name: "End voice" }));
     expect(onEndConversation).toHaveBeenCalledWith(true);
   });
 
@@ -151,7 +151,7 @@ describe("AgentScreen financial projection", () => {
         onCancel={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Interrumpir a Nani" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Interrupt Nani" })).toHaveAttribute(
       "data-live-phase",
       "speaking",
     );
@@ -169,11 +169,11 @@ describe("AgentScreen financial projection", () => {
         onCancel={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Micrófono pausado" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Microphone paused" })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
-    expect(screen.getByRole("status")).toHaveTextContent("Micrófono pausado");
+    expect(screen.getByRole("status")).toHaveTextContent("Microphone paused");
   });
 
   it("keeps reduced-motion styling explicit for every live phase", async () => {

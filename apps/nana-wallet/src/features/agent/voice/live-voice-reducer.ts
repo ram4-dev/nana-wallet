@@ -88,7 +88,7 @@ export function reduceLiveVoice(state: LiveVoiceState, event: LiveVoiceEvent): L
       if (event.state === "failed") {
         return {
           phase: "failed",
-          reason: { code: "unknown", message: "La voz de Nani no está disponible." },
+          reason: { code: "unknown", message: "Nani's voice is not available." },
         };
       }
       if (event.state === "disconnected" || !isConnectedPhase(state)) return state;
@@ -120,7 +120,7 @@ export function reduceLiveVoice(state: LiveVoiceState, event: LiveVoiceEvent): L
             phase: "failed",
             reason: {
               code: "recovery_expired",
-              message: "La voz se desconectó. Podés seguir escribiéndome.",
+              message: "The voice disconnected. You can keep writing to me.",
             },
           }
         : state;

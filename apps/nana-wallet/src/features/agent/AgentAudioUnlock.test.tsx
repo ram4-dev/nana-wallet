@@ -7,7 +7,7 @@ describe("AgentAudioUnlock", () => {
   it("stays out of the way while the browser plays Nani's audio", () => {
     render(<AgentAudioUnlock blocked={false} intro="Hola, soy Nani." onUnlock={vi.fn()} />);
 
-    expect(screen.queryByRole("button", { name: "Escuchar a Nani" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Listen to Nani" })).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
@@ -23,7 +23,7 @@ describe("AgentAudioUnlock", () => {
 
     expect(screen.getByText("“Hola, soy Nani. Tenés 12 USDC disponibles.”")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Escuchar a Nani" }));
+    fireEvent.click(screen.getByRole("button", { name: "Listen to Nani" }));
     expect(onUnlock).toHaveBeenCalledOnce();
   });
 
@@ -31,8 +31,8 @@ describe("AgentAudioUnlock", () => {
     const onUnlock = vi.fn();
     render(<AgentAudioUnlock blocked intro={null} onUnlock={onUnlock} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("bloqueó el audio");
-    fireEvent.click(screen.getByRole("button", { name: "Escuchar a Nani" }));
+    expect(screen.getByRole("status")).toHaveTextContent("blocked Nani's audio");
+    fireEvent.click(screen.getByRole("button", { name: "Listen to Nani" }));
     expect(onUnlock).toHaveBeenCalledOnce();
   });
 });

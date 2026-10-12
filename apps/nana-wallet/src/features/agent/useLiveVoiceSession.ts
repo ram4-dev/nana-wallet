@@ -58,7 +58,7 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
       void client.setMicrophoneEnabled(state.phase === "listening").catch(() => {
         const reason: VoiceFailure = {
           code: "connection_lost",
-          message: "No pudimos recuperar el micrófono. Podés seguir escribiéndome.",
+          message: "We could not get the microphone back. You can keep writing to me.",
         };
         dispatch({ type: "FAILED", reason });
         notifyTypedFallback(reason);
@@ -74,7 +74,7 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
       if (stateRef.current.phase !== "reconnecting") return;
       const reason: VoiceFailure = {
         code: "recovery_expired",
-        message: "La voz se desconectó. Podés seguir escribiéndome.",
+        message: "The voice disconnected. You can keep writing to me.",
       };
       dispatch({ type: "RECOVERY_EXPIRED" });
       notifyTypedFallback(reason);
@@ -129,12 +129,12 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
         code: "voice_unavailable",
         message:
           detail === "microphone_permission_denied"
-            ? "Necesito permiso para usar el micrófono. Habilitalo en el navegador y probá de nuevo."
+            ? "I need permission to use the microphone. Allow it in the browser and try again."
             : detail === "microphone_not_found"
-              ? "No encontré un micrófono disponible. Revisá el dispositivo y probá de nuevo."
+              ? "I could not find a microphone. Check the device and try again."
               : detail === "microphone_in_use"
-                ? "Otra aplicación está usando el micrófono. Cerrala y probá de nuevo."
-                : "La voz no está disponible. Podés seguir escribiéndome.",
+                ? "Another app is using the microphone. Close it and try again."
+                : "The voice is not available. You can keep writing to me.",
       };
       dispatch({ type: "FAILED", reason });
       notifyTypedFallback(reason);
@@ -160,7 +160,7 @@ export function useLiveVoiceSession(client: VoiceClient, options: LiveVoiceOptio
     } catch {
       const reason: VoiceFailure = {
         code: "connection_lost",
-        message: "No pudimos controlar el micrófono. Podés seguir escribiéndome.",
+        message: "We could not control the microphone. You can keep writing to me.",
       };
       dispatch({ type: "FAILED", reason });
       notifyTypedFallback(reason);

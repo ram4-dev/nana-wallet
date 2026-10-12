@@ -34,27 +34,27 @@ export type AgentScreenProps = {
 function voiceLabel(state: LiveVoiceState): string {
   switch (state.phase) {
     case "listening":
-      return "Te estoy escuchando";
+      return "I am listening to you";
     case "muted":
-      return "Micrófono pausado";
+      return "Microphone paused";
     case "speaking":
-      return "Nani está hablando";
+      return "Nani is speaking";
     case "thinking":
-      return "Estoy resolviéndolo";
+      return "I am working on it";
     case "reconnecting":
-      return "Reconectando";
+      return "Reconnecting";
     case "paused":
-      return "Sesión pausada. Tocá para continuar";
+      return "Session paused. Tap to continue";
     case "connecting":
-      return "Conectando con Nani";
+      return "Connecting to Nani";
     case "binding":
-      return "Preparando la conversación";
+      return "Preparing the conversation";
     case "failed":
       return state.reason.message;
     case "request_waiting":
-      return "Tu solicitud está esperando";
+      return "Your request is waiting";
     default:
-      return "Nani está lista";
+      return "Nani is ready";
   }
 }
 
@@ -103,10 +103,10 @@ export function AgentScreen(props: AgentScreenProps) {
       );
   const buttonLabel = props.isNative
     ? props.isRecording
-      ? "Terminar de hablar con Nani"
-      : "Hablar con Nani"
+      ? "Stop talking to Nani"
+      : "Talk to Nani"
     : props.voiceState.phase === "speaking"
-      ? "Interrumpir a Nani"
+      ? "Interrupt Nani"
       : voiceLabel(props.voiceState);
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -116,8 +116,8 @@ export function AgentScreen(props: AgentScreenProps) {
   return (
     <main className="mx-auto flex h-dvh max-w-md flex-col items-center overflow-hidden px-4 !pt-[max(0.75rem,env(safe-area-inset-top))] !pb-[calc(7.25rem+env(safe-area-inset-bottom))] sm:px-6">
       <h1 className="shrink-0 text-center text-2xl leading-tight font-extrabold sm:text-3xl">
-        <span className="block">Hola, soy Nani.</span>
-        <span className="mt-1 block">Hablame.</span>
+        <span className="block">Hi, I'm Nani.</span>
+        <span className="mt-1 block">Talk to me.</span>
       </h1>
       <div className="relative mt-3 flex shrink-0 flex-col items-center">
         {/*
@@ -159,7 +159,7 @@ export function AgentScreen(props: AgentScreenProps) {
         <div className="mt-2 flex items-center gap-2">
           <span className="text-sm font-bold text-brand-ink" role="status" aria-live="polite">
             {props.isNative && props.isRecording
-              ? "Te estoy escuchando"
+              ? "I am listening to you"
               : voiceLabel(props.voiceState)}
           </span>
           {props.isNative && props.onToggleOutputMute ? (
@@ -167,7 +167,7 @@ export function AgentScreen(props: AgentScreenProps) {
               type="button"
               variant="ghost"
               className="press size-11 shrink-0 rounded-full text-muted-foreground"
-              aria-label={props.isMuted ? "Activar la voz de Nani" : "Silenciar la voz de Nani"}
+              aria-label={props.isMuted ? "Turn on Nani's voice" : "Mute Nani's voice"}
               aria-pressed={props.isMuted}
               onClick={props.onToggleOutputMute}
             >
@@ -186,7 +186,7 @@ export function AgentScreen(props: AgentScreenProps) {
             }}
             disabled={props.isEnding}
           >
-            Terminar conversación
+            End conversation
           </Button>
         ) : null}
       </div>
@@ -199,11 +199,11 @@ export function AgentScreen(props: AgentScreenProps) {
           aria-describedby="end-live-description"
         >
           <h2 id="end-live-title" className="font-extrabold">
-            Hay una acción financiera pendiente
+            There is a pending financial action
           </h2>
           <p id="end-live-description" className="mt-1 text-sm font-bold">
-            Terminar la voz no cancela la transferencia ni su verificación. Podés seguirla desde la
-            conversación escrita.
+            Ending the voice does not cancel the transfer or its verification. You can follow it
+            from the written conversation.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <Button
@@ -213,7 +213,7 @@ export function AgentScreen(props: AgentScreenProps) {
               onClick={() => setAcknowledgingEnd(false)}
               autoFocus
             >
-              Seguir hablando
+              Keep talking
             </Button>
             <Button
               type="button"
@@ -221,7 +221,7 @@ export function AgentScreen(props: AgentScreenProps) {
               onClick={() => props.onEndConversation?.(true)}
               disabled={props.isEnding}
             >
-              Terminar voz
+              End voice
             </Button>
           </div>
         </section>
@@ -243,7 +243,7 @@ export function AgentScreen(props: AgentScreenProps) {
         {progress ? (
           <section className="surface-card p-4" role="status">
             <p className="text-base font-extrabold">
-              {progress.label ?? "Estoy trabajando en tu solicitud."}
+              {progress.label ?? "I am working on your request."}
             </p>
           </section>
         ) : null}
@@ -251,7 +251,7 @@ export function AgentScreen(props: AgentScreenProps) {
         !props.liveMode &&
         props.turn?.status === "confirmation_required" ? (
           <div className="rounded-2xl bg-secondary px-4 py-3">
-            <p className="text-sm font-bold text-muted-foreground">Nani entendió:</p>
+            <p className="text-sm font-bold text-muted-foreground">Nani heard:</p>
             <p className="mt-0.5 text-base font-extrabold">“{props.lastTranscript}”</p>
           </div>
         ) : null}
@@ -260,35 +260,35 @@ export function AgentScreen(props: AgentScreenProps) {
             <p>{props.turn.message}</p>
             {props.turn.status === "confirmation_required" ? (
               <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
-                <dt className="font-bold">Monto</dt>
+                <dt className="font-bold">Amount</dt>
                 <dd className="text-right">
                   {props.turn.preview.amount} {props.turn.preview.token}
                 </dd>
-                <dt className="font-bold">Destino</dt>
+                <dt className="font-bold">Recipient</dt>
                 <dd className="truncate text-right">{props.turn.preview.recipient}</dd>
-                <dt className="font-bold">Red</dt>
+                <dt className="font-bold">Network</dt>
                 <dd className="text-right">{props.turn.preview.network}</dd>
-                <dt className="font-bold">Costo</dt>
+                <dt className="font-bold">Cost</dt>
                 <dd className="text-right">{props.turn.preview.estimatedFee}</dd>
               </dl>
             ) : null}
           </section>
         ) : null}
         {pending ? (
-          <section className="surface-card p-4" aria-label="Vista previa de transferencia">
-            <p className="text-base font-extrabold">Revisá esta transferencia</p>
+          <section className="surface-card p-4" aria-label="Transfer preview">
+            <p className="text-base font-extrabold">Review this transfer</p>
             <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
-              <dt className="font-bold">Monto</dt>
+              <dt className="font-bold">Amount</dt>
               <dd className="text-right">
                 {pending.amount} {pending.token}
               </dd>
-              <dt className="font-bold">Destino</dt>
+              <dt className="font-bold">Recipient</dt>
               <dd className="truncate text-right" title={pending.recipient}>
                 {pending.recipient}
               </dd>
-              <dt className="font-bold">Red</dt>
+              <dt className="font-bold">Network</dt>
               <dd className="text-right">{pending.network}</dd>
-              <dt className="font-bold">Costo</dt>
+              <dt className="font-bold">Cost</dt>
               <dd className="text-right">{pending.estimatedFee}</dd>
             </dl>
           </section>
@@ -301,20 +301,20 @@ export function AgentScreen(props: AgentScreenProps) {
               onClick={props.onCancel}
               disabled={props.isActionPending}
             >
-              Cancelar
+              Cancel
             </Button>
             <Button
               className="press min-h-12 whitespace-normal text-base font-extrabold"
               onClick={props.onConfirm}
               disabled={props.isActionPending}
             >
-              Confirmar
+              Confirm
             </Button>
           </div>
         ) : null}
         {transaction ? (
-          <section className="surface-card p-4" aria-label="Transferencia verificada" role="status">
-            <p className="text-base font-extrabold">Transferencia confirmada</p>
+          <section className="surface-card p-4" aria-label="Verified transfer" role="status">
+            <p className="text-base font-extrabold">Transfer confirmed</p>
             <a
               className="mt-2 block truncate text-sm font-bold text-primary underline"
               href={transaction.explorerUrl}
@@ -350,8 +350,8 @@ export function AgentScreen(props: AgentScreenProps) {
         <Input
           value={props.text}
           onChange={(event) => props.onTextChange(event.target.value)}
-          placeholder={textDisabled ? "La voz está activa" : "Escribime acá"}
-          aria-label="Mensaje para el agente"
+          placeholder={textDisabled ? "Voice is on" : "Write to me here"}
+          aria-label="Message for the agent"
           aria-disabled={textDisabled}
           disabled={textDisabled}
           className="h-10 min-w-0 flex-1 rounded-full border-0 bg-transparent px-4 py-2 text-base shadow-none focus-visible:ring-0 md:text-base"
@@ -360,7 +360,7 @@ export function AgentScreen(props: AgentScreenProps) {
           type="submit"
           size="icon"
           className="press size-10 shrink-0 rounded-full"
-          aria-label="Enviar mensaje"
+          aria-label="Send message"
           disabled={textDisabled || !props.text.trim()}
         >
           <Send className="size-5" strokeWidth={2.4} />
