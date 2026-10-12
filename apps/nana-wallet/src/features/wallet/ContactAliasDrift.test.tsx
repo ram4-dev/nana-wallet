@@ -135,7 +135,7 @@ describe("ContactAliasDrift — the three states read differently", () => {
 
     // Both names, in the sentence: the alias and the person.
     expect(within(notice).getByTestId("alias-drift-sentence-c-alias").textContent).toBe(
-      "El nombre juan.sns de Nieta ahora apunta a otra dirección.",
+      "The name juan.sns for Nieta now points to a different address.",
     );
     // Both addresses, each at full length: a truncated destination cannot be
     // compared by the person who is being asked to decide.
@@ -156,15 +156,13 @@ describe("ContactAliasDrift — the three states read differently", () => {
     const notice = await screen.findByTestId("alias-drift-notice-c-alias");
 
     expect(within(notice).getByTestId("alias-drift-sentence-c-alias").textContent).toBe(
-      "El nombre juan.sns de Nieta ya no existe.",
+      "The name juan.sns for Nieta no longer exists.",
     );
     // No destination was observed, so no destination may be shown.
     expect(within(notice).queryByTestId("alias-drift-observed-c-alias")).toBeNull();
     // And nothing to replace with: the choice is not offered.
-    expect(
-      within(notice).queryByRole("button", { name: "Cambiar a la nueva dirección" }),
-    ).toBeNull();
-    expect(within(notice).getByRole("button", { name: "Dejar como está" })).toBeTruthy();
+    expect(within(notice).queryByRole("button", { name: "Switch to the new address" })).toBeNull();
+    expect(within(notice).getByRole("button", { name: "Keep as it is" })).toBeTruthy();
   });
 
   it("reports an UNAVAILABLE check as its own sentence and never as 'still fine'", async () => {
@@ -175,17 +173,15 @@ describe("ContactAliasDrift — the three states read differently", () => {
     const notice = await screen.findByTestId("alias-drift-notice-c-alias");
 
     const sentence = within(notice).getByTestId("alias-drift-sentence-c-alias").textContent ?? "";
-    expect(sentence).toBe("No pudimos chequear juan.sns de Nieta en este momento.");
+    expect(sentence).toBe("We could not check juan.sns for Nieta right now.");
     // The failure mode this sentence exists to prevent: an unreachable resolver
     // reported as a fact about the chain.
-    expect(sentence).not.toMatch(/misma dirección/);
+    expect(sentence).not.toMatch(/same address/);
     expect(within(notice).getByTestId("alias-drift-consequence-c-alias").textContent).toMatch(
-      /no sabemos/i,
+      /we do not know/i,
     );
     // No decision to make, so no drift choices are offered.
-    expect(
-      within(notice).queryByRole("button", { name: "Cambiar a la nueva dirección" }),
-    ).toBeNull();
+    expect(within(notice).queryByRole("button", { name: "Switch to the new address" })).toBeNull();
   });
 
   it("reports an UNCHANGED name, and still writes nothing", async () => {
@@ -196,9 +192,9 @@ describe("ContactAliasDrift — the three states read differently", () => {
     const notice = await screen.findByTestId("alias-drift-notice-c-alias");
 
     expect(within(notice).getByTestId("alias-drift-sentence-c-alias").textContent).toBe(
-      "El nombre juan.sns de Nieta sigue apuntando a la misma dirección.",
+      "The name juan.sns for Nieta still points to the same address.",
     );
-    expect(within(notice).queryByRole("button", { name: "Dejar como está" })).toBeNull();
+    expect(within(notice).queryByRole("button", { name: "Keep as it is" })).toBeNull();
     expect(mocks.updateContact).not.toHaveBeenCalled();
     expect(mocks.deleteContact).not.toHaveBeenCalled();
   });
@@ -222,17 +218,17 @@ describe("ContactAliasDrift — the three states read differently", () => {
     );
 
     expect([moved.sentence, gone.sentence, unavailable.sentence, unchanged.sentence]).toEqual([
-      "El nombre juan.sns de Nieta ahora apunta a otra dirección.",
-      "El nombre juan.sns de Nieta ya no existe.",
-      "No pudimos chequear juan.sns de Nieta en este momento.",
-      "El nombre juan.sns de Nieta sigue apuntando a la misma dirección.",
+      "The name juan.sns for Nieta now points to a different address.",
+      "The name juan.sns for Nieta no longer exists.",
+      "We could not check juan.sns for Nieta right now.",
+      "The name juan.sns for Nieta still points to the same address.",
     ]);
     expect(new Set([moved.sentence, gone.sentence, unavailable.sentence]).size).toBe(3);
     expect(moved.observedAddress).toBe(OBSERVED);
     // The unchanged sentence is reachable ONLY from an `unchanged` state: the
     // other three can never be phrased as "no drift".
     for (const report of [moved, gone, unavailable]) {
-      expect(report.sentence).not.toMatch(/misma dirección/);
+      expect(report.sentence).not.toMatch(/same address/);
       expect(report.isDrift || report.kind === "unavailable").toBe(true);
     }
   });
@@ -246,7 +242,7 @@ describe("ContactAliasDrift — the three states read differently", () => {
     expect(report.kind).toBe("changed_unknown");
     expect(report.observedAddress).toBeNull();
     expect(report.sentence).not.toMatch(new RegExp(OBSERVED));
-    expect(report.sentence).not.toMatch(/misma dirección/);
+    expect(report.sentence).not.toMatch(/same address/);
   });
 });
 
@@ -258,7 +254,7 @@ describe("ContactAliasDrift — the three choices never bypass the authorization
     await user.click(screen.getByTestId("alias-drift-check-c-alias"));
     const notice = await screen.findByTestId("alias-drift-notice-c-alias");
 
-    await user.click(within(notice).getByRole("button", { name: "Dejar como está" }));
+    await user.click(within(notice).getByRole("button", { name: "Keep as it is" }));
 
     // Nothing was written and nothing was sent to the server by the choice.
     expect(mocks.updateContact).not.toHaveBeenCalled();
@@ -273,7 +269,7 @@ describe("ContactAliasDrift — the three choices never bypass the authorization
     expect(await screen.findByTestId("alias-drift-sentence-c-alias")).toBeTruthy();
     expect(mocks.checkContactAlias).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId("alias-drift-sentence-c-alias").textContent).toBe(
-      "El nombre juan.sns de Nieta ahora apunta a otra dirección.",
+      "The name juan.sns for Nieta now points to a different address.",
     );
   });
 
@@ -282,7 +278,7 @@ describe("ContactAliasDrift — the three choices never bypass the authorization
     renderSurface();
     await openNotice(user);
 
-    await user.click(screen.getByRole("button", { name: "Cambiar a la nueva dirección" }));
+    await user.click(screen.getByRole("button", { name: "Switch to the new address" }));
 
     // The choice opened the existing address-change path: a preview request,
     // never a mutation.
@@ -291,11 +287,11 @@ describe("ContactAliasDrift — the three choices never bypass the authorization
     );
     expect(mocks.updateContact).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog", {
-      name: "Confirmar cambio de dirección",
+      name: "Confirm address change",
     });
     expect(mocks.updateContact).not.toHaveBeenCalled();
 
-    await user.click(within(dialog).getByRole("button", { name: "Confirmar cambio" }));
+    await user.click(within(dialog).getByRole("button", { name: "Confirm change" }));
 
     await waitFor(() => expect(mocks.updateContact).toHaveBeenCalledTimes(1));
     const [contactId, body] = mocks.updateContact.mock.calls[0] ?? [];
@@ -313,17 +309,17 @@ describe("ContactAliasDrift — the three choices never bypass the authorization
     renderSurface();
     await openNotice(user);
 
-    await user.click(screen.getByRole("button", { name: "Quitar a Nieta" }));
+    await user.click(screen.getByRole("button", { name: "Remove Nieta" }));
 
     await waitFor(() =>
       expect(mocks.getContactRemovalPreview.mock.calls[0]).toEqual(["c-alias", 3]),
     );
     expect(mocks.deleteContact).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog", {
-      name: "Confirmar eliminación de destinatario",
+      name: "Confirm recipient removal",
     });
 
-    await user.click(within(dialog).getByRole("button", { name: "Quitar" }));
+    await user.click(within(dialog).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(mocks.deleteContact).toHaveBeenCalledTimes(1));
     expect(mocks.deleteContact.mock.calls[0]?.[1]).toMatchObject({ expectedVersion: 3 });
   });
@@ -342,8 +338,8 @@ describe("ContactAliasDrift — the three choices never bypass the authorization
     // The trusted recipient is still there, with the frozen address and every
     // list action still available: a moved name is a notice, not a lock.
     expect(screen.getByTestId("contact-address-c-alias").textContent).toBe(STORED);
-    expect(screen.getByRole("button", { name: "Editar" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Quitar" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Remove" })).toBeEnabled();
   });
 
   it("raises an unreachable check as its own refusal instead of an empty notice", async () => {

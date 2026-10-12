@@ -36,7 +36,7 @@ describe("PrivySignerEnrollment (TEE-compatible addSigners)", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /autorizar firmante/i }));
+    await user.click(screen.getByRole("button", { name: /authorize signer/i }));
 
     await waitFor(() => expect(addSigners).toHaveBeenCalledTimes(1));
     // TEE path: the key quorum is the server-side signer, carrying the
@@ -73,7 +73,7 @@ describe("PrivySignerEnrollment (TEE-compatible addSigners)", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /autorizar firmante/i }));
+    await user.click(screen.getByRole("button", { name: /authorize signer/i }));
 
     await waitFor(() => expect(onError).toHaveBeenCalledTimes(1));
     expect(onError).toHaveBeenCalledWith("User rejected the request");

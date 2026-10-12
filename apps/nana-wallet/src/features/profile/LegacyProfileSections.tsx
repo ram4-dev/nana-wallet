@@ -51,7 +51,7 @@ function getAgendaWindow() {
 }
 
 function formatAgendaDate(date: string) {
-  return new Intl.DateTimeFormat("es-AR", {
+  return new Intl.DateTimeFormat("en-US", {
     day: "numeric",
     month: "long",
     timeZone: "UTC",
@@ -141,13 +141,13 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
 
     try {
       await navigator.clipboard.writeText(address);
-      const message = `Copiaste la dirección de ${contact.name}`;
+      const message = `You copied the address of ${contact.name}`;
       setCopyStatus({ contactId: contact.id, message });
       toast.success(message);
     } catch {
       setCopyStatus({
         contactId: contact.id,
-        message: "El teléfono no pudo copiar la dirección. Probá de nuevo.",
+        message: "The phone could not copy the address. Try again.",
       });
     } finally {
       setCopyingContactId(null);
@@ -181,11 +181,11 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
     const description = formDescription.trim();
     const address = formAddress.trim();
     if (!name) {
-      setContactError("Poné un nombre.");
+      setContactError("Enter a name.");
       return;
     }
     if (!address) {
-      setContactError("Poné la dirección o el CBU.");
+      setContactError("Enter the address or the CBU.");
       return;
     }
     setContactError(null);
@@ -200,10 +200,10 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
           expectedVersion: contactForm.contact.version,
           expectedPolicyRevision: contactForm.contact.permission.desiredRevision,
         });
-        toast.success(`Actualizamos a ${name}.`);
+        toast.success(`We updated ${name}.`);
       } else {
         await api.createContact({ name, description, address });
-        toast.success(`Guardamos a ${name}.`);
+        toast.success(`We saved ${name}.`);
       }
       setContactForm(null);
       void contactsQuery.refetch();
@@ -223,7 +223,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
         expectedVersion: contact.version,
         expectedRevokedGrantIds: preview.revokedGrantIds,
       });
-      toast.success(`Sacamos a ${contact.name} de tu familia guardada.`);
+      toast.success(`We removed ${contact.name} from your saved family.`);
       void contactsQuery.refetch();
     } catch (error) {
       setContactError(getErrorMessage(error));
@@ -235,7 +235,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
   async function prepareBillPayment(bill: Bill) {
     const pesosAccount = walletQuery.data?.accounts.find((account) => account.kind === "pesos");
     if (!pesosAccount) {
-      setActionMessage("No encontramos tu cuenta en pesos. Probá de nuevo en un ratito.");
+      setActionMessage("We could not find your peso account. Try again in a little while.");
       return;
     }
     setPreparingId(bill.id);
@@ -331,7 +331,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
    */
   function closeAfterUnknownOutcome() {
     setActiveIntent(null);
-    setActionMessage("Fijate en tu saldo y en tus movimientos si la operación se hizo.");
+    setActionMessage("Check your balance and your movements to see if the operation went through.");
     refreshMoneyQueries();
   }
 
@@ -345,8 +345,8 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
       <WalletLifecycle userId={userId} />
 
       <h2 className="mt-10 flex items-center gap-2 text-xl font-extrabold">
-        <Users className="size-6 text-brand-ink" strokeWidth={2.4} aria-hidden="true" /> Mi familia
-        guardada
+        <Users className="size-6 text-brand-ink" strokeWidth={2.4} aria-hidden="true" /> My saved
+        family
       </h2>
       <Button
         type="button"
@@ -354,31 +354,31 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
         className="press mt-3 min-h-12 w-full text-base font-extrabold"
         onClick={openCreateContact}
       >
-        <Plus className="size-5" aria-hidden="true" /> Agregar una persona
+        <Plus className="size-5" aria-hidden="true" /> Add a person
       </Button>
 
       {contactForm ? (
         <form onSubmit={saveContact} className="surface-card mt-4 space-y-3 p-4">
           <h3 className="text-lg font-extrabold">
-            {contactForm.mode === "edit" ? "Editar persona" : "Agregar persona"}
+            {contactForm.mode === "edit" ? "Edit person" : "Add person"}
           </h3>
           <Input
             value={formName}
             onChange={(event) => setFormName(event.target.value)}
-            placeholder="Nombre"
-            aria-label="Nombre"
+            placeholder="Name"
+            aria-label="Name"
           />
           <Input
             value={formDescription}
             onChange={(event) => setFormDescription(event.target.value)}
-            placeholder="¿Quién es? (opcional)"
-            aria-label="Descripción"
+            placeholder="Who are they? (optional)"
+            aria-label="Description"
           />
           <Input
             value={formAddress}
             onChange={(event) => setFormAddress(event.target.value)}
-            placeholder="CBU o dirección"
-            aria-label="CBU o dirección"
+            placeholder="CBU or address"
+            aria-label="CBU or address"
           />
           {contactError ? (
             <p className="text-base font-bold text-destructive" role="alert">
@@ -392,7 +392,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
               className="press min-h-12 font-extrabold"
               onClick={closeContactForm}
             >
-              Cancelar
+              Cancel
             </Button>
             <Button
               type="submit"
@@ -402,18 +402,18 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
               }
             >
               {contactActionId === (contactForm.mode === "edit" ? contactForm.contact.id : "new")
-                ? "Guardando"
-                : "Guardar"}
+                ? "Saving"
+                : "Save"}
             </Button>
           </div>
         </form>
       ) : null}
 
       {!contactsQuery.data || contactsQuery.isPending ? (
-        <p className="mt-4 text-base text-muted-foreground">Buscando a tu gente…</p>
+        <p className="mt-4 text-base text-muted-foreground">Looking for your people…</p>
       ) : contacts.length === 0 ? (
         <EmptyState>
-          Todavía no tenés familiares guardados. Cuando agregues uno, va a aparecer acá.
+          You have no saved family yet. When you add one, they will show up here.
         </EmptyState>
       ) : (
         <ul className="mt-4 space-y-3">
@@ -435,7 +435,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
                   <button
                     type="button"
                     className="press rounded-xl bg-secondary p-4 text-secondary-foreground"
-                    aria-label={`Copiar dirección de ${contact.name}`}
+                    aria-label={`Copy address of ${contact.name}`}
                     onClick={() => void copyContactAddress(contact)}
                     disabled={copyingContactId === contact.id}
                   >
@@ -444,7 +444,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
                   <button
                     type="button"
                     className="press rounded-xl bg-secondary p-4 text-secondary-foreground"
-                    aria-label={`Editar a ${contact.name}`}
+                    aria-label={`Edit ${contact.name}`}
                     onClick={() => openEditContact(contact)}
                   >
                     <Pen className="size-6" strokeWidth={2.4} aria-hidden="true" />
@@ -452,7 +452,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
                   <button
                     type="button"
                     className="press rounded-xl bg-destructive-surface p-4 text-destructive-surface-foreground"
-                    aria-label={`Eliminar a ${contact.name}`}
+                    aria-label={`Remove ${contact.name}`}
                     onClick={() => void deleteContact(contact)}
                     disabled={contactActionId === contact.id}
                   >
@@ -473,14 +473,14 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
       <section className="mt-10 rounded-2xl border border-border bg-secondary p-5">
         <h2 className="flex items-center gap-2 text-xl font-extrabold">
           <CalendarHeart className="size-7 text-brand-ink" strokeWidth={2.4} aria-hidden="true" />{" "}
-          Mi agenda
+          Mi calendar
         </h2>
         <p className="mt-2 text-lg text-muted-foreground">
-          Cumpleaños, turnos y recordatorios importantes.
+          Birthdays, appointments and important reminders.
         </p>
         {events.length === 0 ? (
           <p className="mt-4 rounded-2xl bg-card p-5 text-lg text-muted-foreground">
-            No tenés fechas guardadas para los próximos días.
+            You have no saved dates for the coming days.
           </p>
         ) : (
           <ul className="mt-4 space-y-4">
@@ -506,7 +506,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
                       areSessionActionsLocked
                     }
                   >
-                    {sessionActionId === event.id ? "Preparando" : event.suggestedAction.label}
+                    {sessionActionId === event.id ? "Preparing" : event.suggestedAction.label}
                   </Button>
                 ) : null}
               </li>
@@ -522,13 +522,13 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
             <>
               <dl className="mt-3 space-y-1.5 text-sm sm:text-base">
                 <div className="flex justify-between gap-4">
-                  <dt className="font-bold">Monto</dt>
+                  <dt className="font-bold">Amount</dt>
                   <dd>
                     {agentTurn.preview.amount} {agentTurn.preview.token}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-4">
-                  <dt className="font-bold">Destino</dt>
+                  <dt className="font-bold">Recipient</dt>
                   <dd className="break-all text-right">{agentTurn.preview.recipient}</dd>
                 </div>
               </dl>
@@ -539,7 +539,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
                   onClick={() => sendAgentFollowup("cancel")}
                   disabled={isSessionActionPending || areSessionActionsLocked}
                 >
-                  Cancelar
+                  Cancel
                 </Button>
               </div>
             </>
@@ -549,11 +549,11 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
 
       <h2 className="mt-10 flex items-center gap-2 text-xl font-extrabold">
         <CalendarDays className="size-6 text-brand-ink" strokeWidth={2.4} aria-hidden="true" />
-        Facturas del mes
+        Bills for the month
       </h2>
       {bills.length === 0 ? (
         <EmptyState>
-          No tenés facturas para este mes. Cuando llegue una, la vas a ver acá.
+          You have no bills for this month. When one arrives, you will see it here.
         </EmptyState>
       ) : (
         <ul className="mt-4 space-y-3">
@@ -562,7 +562,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-lg font-bold">{bill.provider}</p>
-                  <p className="text-base text-muted-foreground">Vence {bill.dueDateHuman}</p>
+                  <p className="text-base text-muted-foreground">Due {bill.dueDateHuman}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-lg font-extrabold">{bill.amount.display}</p>
@@ -583,7 +583,7 @@ export function LegacyProfileSections({ userId }: { userId: string | undefined }
                   disabled={preparingId === bill.id}
                 >
                   <ReceiptText className="size-6" aria-hidden="true" />
-                  {preparingId === bill.id ? "Preparando" : "Pagar ahora"}
+                  {preparingId === bill.id ? "Preparing" : "Pay now"}
                 </Button>
               ) : null}
             </li>

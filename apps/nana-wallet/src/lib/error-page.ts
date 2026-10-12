@@ -1,9 +1,9 @@
 export function renderErrorPage(): string {
   return `<!doctype html>
-<html lang="es-AR">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Esta parte no cargó</title>
+    <title>This part did not load</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
       body { font: 18px/1.5 system-ui, sans-serif; background: #fafafa; color: #111; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 1.5rem; }
@@ -16,9 +16,9 @@ export function renderErrorPage(): string {
   </head>
   <body>
     <div class="card">
-      <h1>Esta parte no cargó</h1>
-      <p>No es culpa tuya. Algo falló de este lado y tu plata sigue segura.</p>
-      <a class="primary" href="/">Volver al inicio</a>
+      <h1>This part did not load</h1>
+      <p>It is not your fault. Something failed on our side and your money is still safe.</p>
+      <a class="primary" href="/">Back to the start</a>
     </div>
   </body>
 </html>`;

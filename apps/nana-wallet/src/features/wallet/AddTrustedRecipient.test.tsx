@@ -72,22 +72,22 @@ const READINESS_CASES: Array<{
       appliedRevision: 0,
       retryable: false,
     },
-    expected: "Guardado, sin permiso configurado",
+    expected: "Saved, with no permission set up",
   },
   {
     what: "pending",
     permission: { state: "pending", desiredRevision: 1, appliedRevision: 0, retryable: true },
-    expected: "Guardado, esperando verificación",
+    expected: "Saved, waiting for verification",
   },
   {
     what: "syncing",
     permission: { state: "syncing", desiredRevision: 2, appliedRevision: 1, retryable: true },
-    expected: "Verificando el permiso",
+    expected: "Checking the permission",
   },
   {
     what: "applied (the one verified readback)",
     permission: { state: "applied", desiredRevision: 1, appliedRevision: 1, retryable: false },
-    expected: "Habilitado tras la verificación",
+    expected: "Enabled after verification",
   },
   {
     what: "retryable_failure",
@@ -98,7 +98,7 @@ const READINESS_CASES: Array<{
       retryable: true,
       reason: "provider_unavailable",
     },
-    expected: "No pudimos verificar el permiso todavía",
+    expected: "We could not verify the permission yet",
   },
   {
     what: "blocked_conflict",
@@ -109,7 +109,7 @@ const READINESS_CASES: Array<{
       retryable: false,
       reason: "readback_mismatch",
     },
-    expected: "El permiso necesita revisión",
+    expected: "The permission needs review",
   },
   {
     what: "blocked_configuration",
@@ -120,7 +120,7 @@ const READINESS_CASES: Array<{
       retryable: false,
       reason: "ownership_drift",
     },
-    expected: "El permiso no está configurado",
+    expected: "The permission is not set up",
   },
   {
     what: "the frozen writer (design §13: `pending` carrying `policy_writer_frozen`)",
@@ -131,7 +131,7 @@ const READINESS_CASES: Array<{
       retryable: true,
       reason: "policy_writer_frozen",
     },
-    expected: "Guardado, con los pagos automáticos pausados",
+    expected: "Saved, with automatic payments paused",
   },
 ];
 
@@ -160,12 +160,12 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     );
 
     await userEvent.click(screen.getByTestId("add-recipient"));
-    await userEvent.type(screen.getByLabelText("Nombre"), "Lucas");
+    await userEvent.type(screen.getByLabelText("Name"), "Lucas");
     await userEvent.type(
-      screen.getByLabelText("Dirección"),
+      screen.getByLabelText("Address"),
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(mocks.createContact).toHaveBeenCalledWith({
@@ -180,7 +180,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     });
     // The form closes after a successful save.
     await waitFor(() => {
-      expect(screen.queryByLabelText("Nombre")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
     });
   });
 
@@ -195,12 +195,12 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     );
 
     await userEvent.click(screen.getByTestId("add-recipient"));
-    await userEvent.type(screen.getByLabelText("Nombre"), "Ana");
+    await userEvent.type(screen.getByLabelText("Name"), "Ana");
     await userEvent.type(
-      screen.getByLabelText("Dirección"),
+      screen.getByLabelText("Address"),
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(mocks.createContact).toHaveBeenCalledWith({
@@ -211,7 +211,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
       });
     });
     expect(await screen.findByText("Solana devnet")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Red de la dirección")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Address network")).not.toBeInTheDocument();
   });
 
   it("surfaces a recoverable error without losing the form", async () => {
@@ -223,16 +223,16 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     );
 
     await userEvent.click(screen.getByTestId("add-recipient"));
-    await userEvent.type(screen.getByLabelText("Nombre"), "Lucas");
+    await userEvent.type(screen.getByLabelText("Name"), "Lucas");
     await userEvent.type(
-      screen.getByLabelText("Dirección"),
+      screen.getByLabelText("Address"),
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Dirección inválida.");
-    expect(screen.getByLabelText("Nombre")).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeInTheDocument();
     expect(mocks.refetch).not.toHaveBeenCalled();
   });
 
@@ -244,9 +244,9 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
     );
 
     await userEvent.click(screen.getByTestId("add-recipient"));
-    await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(mocks.createContact).not.toHaveBeenCalled();
-    expect((await screen.findByRole("alert")).textContent).toContain("nombre");
+    expect((await screen.findByRole("alert")).textContent).toContain("name");
   });
 
   it("shows the automatic-payment revocation disclosure before deleting", async () => {
@@ -266,11 +266,11 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
         <AddTrustedRecipient userId="u1" />
       </Wrapper>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: "Quitar" }));
-    expect(await screen.findByText(/también se revocarán 1 pago automático/i)).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    expect(await screen.findByText(/also revoke 1 automatic payment/i)).toBeInTheDocument();
     expect(mocks.deleteContact).not.toHaveBeenCalled();
     await userEvent.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Quitar" }),
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }),
     );
     await waitFor(() =>
       expect(mocks.deleteContact).toHaveBeenCalledWith("c1", {
@@ -288,7 +288,7 @@ describe("AddTrustedRecipient (wallet-profile scope decision)", () => {
         <AddTrustedRecipient userId="u1" />
       </Wrapper>,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /reintentar verificación/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /retry verification/i }));
     await waitFor(() => expect(mocks.retryRecipientPolicy).toHaveBeenCalledTimes(1));
   });
 });
@@ -319,9 +319,9 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       // Positive control for the negative below: the ONE state whose readback was
       // verified is the one that may say it.
       if (permission.state === "applied" && permission.reason === undefined) {
-        expect(screen.getByText(expected).textContent).toMatch(/habilitad/i);
+        expect(screen.getByText(expected).textContent).toMatch(/enabled/i);
       } else {
-        expect(document.body.textContent ?? "").not.toMatch(/habilitad/i);
+        expect(document.body.textContent ?? "").not.toMatch(/enabled/i);
       }
     },
   );
@@ -344,8 +344,8 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       );
       // Wait for the list row first, so "no retry button" cannot pass on an
       // unrendered list.
-      await screen.findByText("Editar");
-      const button = screen.queryByRole("button", { name: /reintentar verificación/i });
+      await screen.findByText("Edit");
+      const button = screen.queryByRole("button", { name: /retry verification/i });
       expect(Boolean(button)).toBe(entry.retry);
       view.unmount();
     }
@@ -379,15 +379,15 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
     );
 
     await userEvent.click(screen.getByTestId("add-recipient"));
-    await userEvent.type(screen.getByLabelText("Nombre"), "Lucas");
+    await userEvent.type(screen.getByLabelText("Name"), "Lucas");
     await userEvent.type(
-      screen.getByLabelText("Dirección"),
+      screen.getByLabelText("Address"),
       "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText("No pudimos verificar el permiso todavía")).toBeInTheDocument();
-    expect(document.body.textContent ?? "").not.toMatch(/habilitad/i);
+    expect(await screen.findByText("We could not verify the permission yet")).toBeInTheDocument();
+    expect(document.body.textContent ?? "").not.toMatch(/enabled/i);
   });
 
   it("has no chain picker in the recipient form", async () => {
@@ -399,11 +399,11 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
     );
     await userEvent.click(screen.getByTestId("add-recipient"));
 
-    expect(screen.queryByLabelText("Red de la dirección")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Address network")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     // La frase cambió con la tarea 5.3 (el campo ahora acepta un nombre `.sns`),
     // pero lo que fija esta prueba sigue igual: una sola red, sin selector.
-    expect(screen.getByText(/pegá una dirección de solana devnet/i)).toBeInTheDocument();
+    expect(screen.getByText(/paste a solana devnet address/i)).toBeInTheDocument();
   });
 
   it("discloses the automatic-payment revocation before an address replacement", async () => {
@@ -422,21 +422,21 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       </Wrapper>,
     );
 
-    await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
-    const addressField = screen.getByLabelText("Dirección");
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const addressField = screen.getByLabelText("Address");
     await userEvent.clear(addressField);
     await userEvent.type(addressField, "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     // The pre-flight read is the address-change read, and nothing is submitted yet.
     await waitFor(() =>
       expect(mocks.getContactRemovalPreview).toHaveBeenCalledWith("c1", 1, "address_change"),
     );
     expect(mocks.updateContact).not.toHaveBeenCalled();
-    expect(await screen.findByText(/revocará 2 pagos automáticos/i)).toBeInTheDocument();
+    expect(await screen.findByText(/revoke 2 automatic payments/i)).toBeInTheDocument();
 
     await userEvent.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirmar cambio" }),
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm change" }),
     );
     await waitFor(() =>
       expect(mocks.updateContact).toHaveBeenCalledWith("c1", {
@@ -464,13 +464,15 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       </Wrapper>,
     );
 
-    await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
-    const addressField = screen.getByLabelText("Dirección");
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const addressField = screen.getByLabelText("Address");
     await userEvent.clear(addressField);
     await userEvent.type(addressField, "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
-    expect(await screen.findByText("No hay pagos automáticos que revocar.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("There are no automatic payments to revoke."),
+    ).toBeInTheDocument();
     expect(mocks.updateContact).not.toHaveBeenCalled();
   });
 
@@ -483,11 +485,11 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       </Wrapper>,
     );
 
-    await userEvent.click(await screen.findByRole("button", { name: "Editar" }));
-    const nameField = screen.getByLabelText("Nombre");
+    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const nameField = screen.getByLabelText("Name");
     await userEvent.clear(nameField);
     await userEvent.type(nameField, "Lucas M.");
-    await userEvent.click(screen.getByRole("button", { name: "Guardar cambios" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() =>
       expect(mocks.updateContact).toHaveBeenCalledWith("c1", {
@@ -544,8 +546,8 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       </Wrapper>,
     );
     await userEvent.click(screen.getByTestId("add-recipient"));
-    await userEvent.type(screen.getByLabelText("Nombre"), "Nieta");
-    await userEvent.type(screen.getByLabelText("Dirección"), name);
+    await userEvent.type(screen.getByLabelText("Name"), "Nieta");
+    await userEvent.type(screen.getByLabelText("Address"), name);
   }
 
   describe("AddTrustedRecipient — alta por alias (task 5.3)", () => {
@@ -554,7 +556,7 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       mocks.createContact.mockResolvedValue(CONTACT);
       await openCreateWithAlias();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Search" }));
 
       // La dirección se muestra verbatim: sin truncar y sin abreviar.
       const shown = await screen.findByText(ALIAS_ADDRESS);
@@ -562,7 +564,7 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       expect(shown.textContent).toBe(ALIAS_ADDRESS);
       expect(shown.className).not.toMatch(/truncate/);
 
-      await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+      await userEvent.click(screen.getByRole("button", { name: "Save" }));
 
       await waitFor(() =>
         expect(mocks.createContact).toHaveBeenCalledWith({
@@ -582,14 +584,14 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
 
       // Un nombre sin resolver no habilita el guardado: la confirmación es de la
       // dirección, y todavía no hay dirección.
-      expect(screen.getByRole("button", { name: "Guardar" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
       expect(mocks.resolveRecipientAlias).not.toHaveBeenCalled();
 
       // El camino de pegado no consulta ningún nombre: sigue siendo una dirección.
-      const addressField = screen.getByLabelText("Dirección");
+      const addressField = screen.getByLabelText("Address");
       await userEvent.clear(addressField);
       await userEvent.type(addressField, "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
-      expect(screen.queryByRole("button", { name: "Buscar" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
       expect(mocks.resolveRecipientAlias).not.toHaveBeenCalled();
     });
 
@@ -622,8 +624,8 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
           </Wrapper>,
         );
         await userEvent.click(screen.getByTestId("add-recipient"));
-        await userEvent.type(screen.getByLabelText("Dirección"), ALIAS_NAME);
-        await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+        await userEvent.type(screen.getByLabelText("Address"), ALIAS_NAME);
+        await userEvent.click(await screen.findByRole("button", { name: "Search" }));
 
         const alert = await screen.findByRole("alert");
         rendered.push(alert.textContent ?? "");
@@ -640,9 +642,9 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
         reverseDomain: string | null;
         expected: string;
       }> = [
-        { state: "present", reverseDomain: "juan.sns", expected: "El nombre principal" },
-        { state: "none", reverseDomain: null, expected: "no tiene un nombre principal" },
-        { state: "unknown", reverseDomain: null, expected: "No pudimos verificar" },
+        { state: "present", reverseDomain: "juan.sns", expected: "The primary name" },
+        { state: "none", reverseDomain: null, expected: "has no registered primary name" },
+        { state: "unknown", reverseDomain: null, expected: "We could not check" },
       ];
       const rendered = new Set<string>();
       for (const testCase of cases) {
@@ -659,8 +661,8 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
           </Wrapper>,
         );
         await userEvent.click(screen.getByTestId("add-recipient"));
-        await userEvent.type(screen.getByLabelText("Dirección"), ALIAS_NAME);
-        await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+        await userEvent.type(screen.getByLabelText("Address"), ALIAS_NAME);
+        await userEvent.click(await screen.findByRole("button", { name: "Search" }));
 
         const line = await screen.findByTestId("alias-reverse-domain");
         expect(line.textContent).toContain(testCase.expected);
@@ -676,22 +678,22 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       );
       await openCreateWithAlias();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Search" }));
       expect(await screen.findByText(ALIAS_ADDRESS)).toBeInTheDocument();
 
       mocks.resolveRecipientAlias.mockRejectedValue(
         apiError("RESOLVEDOR_NO_DISPONIBLE", "No pudimos consultar el nombre en este momento."),
       );
-      await userEvent.click(screen.getByRole("button", { name: "Buscar otra vez" }));
+      await userEvent.click(screen.getByRole("button", { name: "Search again" }));
 
       // La resolución anterior NO se borra: sigue a la vista, con su edad, para que
       // el usuario sepa qué dirección estaba confirmando.
       expect(await screen.findByText(ALIAS_ADDRESS)).toBeInTheDocument();
       const freshness = await screen.findByTestId("alias-freshness");
-      expect(freshness.textContent).toMatch(/hace \d+/);
+      expect(freshness.textContent).toMatch(/\d+ minutes? ago/);
 
       // Y el camino de pegado sigue usable sin haber resuelto nada.
-      const addressField = screen.getByLabelText("Dirección");
+      const addressField = screen.getByLabelText("Address");
       await userEvent.clear(addressField);
       await userEvent.type(addressField, "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM");
       expect(mocks.resolveRecipientAlias).toHaveBeenCalledTimes(2);
@@ -705,8 +707,8 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       });
       await openCreateWithAlias();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
-      await userEvent.click(await screen.findByRole("button", { name: "Guardar" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Search" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Save" }));
 
       const disclosure = await screen.findByTestId("duplicate-disclosure");
       expect(disclosure.textContent).toContain("Mamá");
@@ -722,8 +724,8 @@ describe("AddTrustedRecipient (readiness states as reported by the backend)", ()
       );
       await openCreateWithAlias();
 
-      await userEvent.click(await screen.findByRole("button", { name: "Buscar" }));
-      await userEvent.click(await screen.findByRole("button", { name: "Guardar" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Search" }));
+      await userEvent.click(await screen.findByRole("button", { name: "Save" }));
 
       const alert = await screen.findByRole("alert");
       expect(alert.textContent).toContain("propia billetera");

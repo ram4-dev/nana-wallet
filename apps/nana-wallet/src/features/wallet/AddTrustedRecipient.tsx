@@ -51,12 +51,12 @@ function reverseDomainLine(state: ReverseDomainState, domain: string | null): st
   switch (state) {
     case "present":
       return domain
-        ? `El nombre principal de esta dirección es ${domain}.`
-        : "El nombre principal de esta dirección es el que muestra la pantalla.";
+        ? `The primary name of this address is ${domain}.`
+        : "The primary name of this address is the one shown on screen.";
     case "none":
-      return "Esta dirección no tiene un nombre principal registrado.";
+      return "This address has no registered primary name.";
     case "unknown":
-      return "No pudimos verificar si esta dirección tiene un nombre principal.";
+      return "We could not check whether this address has a primary name.";
   }
 }
 
@@ -66,11 +66,11 @@ function reverseDomainLine(state: ReverseDomainState, domain: string | null): st
  */
 function freshnessLabel(resolvedAt: string, now: number = Date.now()): string {
   const age = now - new Date(resolvedAt).getTime();
-  if (!Number.isFinite(age) || age < 60_000) return "Resuelto hace instantes";
+  if (!Number.isFinite(age) || age < 60_000) return "Resolved moments ago";
   const minutes = Math.floor(age / 60_000);
-  if (minutes < 60) return `Resuelto hace ${minutes} minuto${minutes === 1 ? "" : "s"}`;
+  if (minutes < 60) return `Resolved ${minutes} minute${minutes === 1 ? "" : "s"} ago`;
   const hours = Math.floor(minutes / 60);
-  return `Resuelto hace ${hours} hora${hours === 1 ? "" : "s"}`;
+  return `Resolved ${hours} hour${hours === 1 ? "" : "s"} ago`;
 }
 
 /**
@@ -82,9 +82,7 @@ function freshnessLabel(resolvedAt: string, now: number = Date.now()): string {
 function aliasErrorMessage(error: unknown): string {
   const code = (error as { code?: string } | null)?.code;
   if (code === "RESOLVEDOR_NO_DISPONIBLE") {
-    return (
-      (error as Error).message || "No pudimos consultar el nombre en este momento. Probá de nuevo."
-    );
+    return (error as Error).message || "We could not look up the name right now. Try again.";
   }
   return getErrorMessage(error);
 }
@@ -102,23 +100,23 @@ function permissionLabel(permission: ContactPermission): string {
   // a frozen deployment records `pending` with this reason — so the reason is
   // read here and the wording never claims the recipient is on.
   if (permission.reason === POLICY_WRITER_FROZEN_REASON) {
-    return "Guardado, con los pagos automáticos pausados";
+    return "Saved, with automatic payments paused";
   }
   switch (permission.state) {
     case "saved_not_configured":
-      return "Guardado, sin permiso configurado";
+      return "Saved, with no permission set up";
     case "pending":
-      return "Guardado, esperando verificación";
+      return "Saved, waiting for verification";
     case "syncing":
-      return "Verificando el permiso";
+      return "Checking the permission";
     case "applied":
-      return "Habilitado tras la verificación";
+      return "Enabled after verification";
     case "retryable_failure":
-      return "No pudimos verificar el permiso todavía";
+      return "We could not verify the permission yet";
     case "blocked_conflict":
-      return "El permiso necesita revisión";
+      return "The permission needs review";
     case "blocked_configuration":
-      return "El permiso no está configurado";
+      return "The permission is not set up";
   }
 }
 
@@ -211,10 +209,10 @@ export function AddTrustedRecipient({
     event.preventDefault();
     const cleanName = name.trim();
     const cleanAddress = address.trim();
-    if (!cleanName) return setError("Poné el nombre de la persona de confianza.");
+    if (!cleanName) return setError("Enter the name of the trusted person.");
     const aliasArm = !editor?.contact && resolution !== null;
     if (!aliasArm && !isPlausibleSolanaAddress(cleanAddress))
-      return setError("Pegá una dirección válida de Solana.");
+      return setError("Paste a valid Solana address.");
     setIsSaving(true);
     setError(null);
     try {
@@ -373,10 +371,10 @@ export function AddTrustedRecipient({
   const contacts = contactsQuery.data ?? [];
   const retryable = contacts.some((contact) => contact.permission.retryable);
   return (
-    <section aria-label="Destinatarios de confianza">
+    <section aria-label="Trusted recipients">
       <div className="flex items-center justify-between gap-2">
         <p className="text-base font-bold text-muted-foreground">
-          Destinatarios de confianza ({contacts.length})
+          Trusted recipients ({contacts.length})
         </p>
         <Button
           type="button"
@@ -386,7 +384,7 @@ export function AddTrustedRecipient({
           data-testid="add-recipient"
         >
           <UserPlus className="size-5" aria-hidden="true" />
-          Agregar
+          Add
         </Button>
       </div>
       {editor ? (
@@ -397,8 +395,8 @@ export function AddTrustedRecipient({
           <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Nombre"
-            aria-label="Nombre"
+            placeholder="Name"
+            aria-label="Name"
           />
           <Input
             value={address}
@@ -408,8 +406,8 @@ export function AddTrustedRecipient({
               // guarda tiene que ser lo que el usuario está viendo ahora.
               setResolution(null);
             }}
-            placeholder="Dirección de Solana o nombre .sns"
-            aria-label="Dirección"
+            placeholder="Solana address or .sns name"
+            aria-label="Address"
           />
           {!editor.contact && isNameCandidate(address) ? (
             <div className="space-y-2">
@@ -420,12 +418,12 @@ export function AddTrustedRecipient({
                 onClick={() => void searchAlias()}
                 disabled={isResolving}
               >
-                {isResolving ? "Buscando" : resolution ? "Buscar otra vez" : "Buscar"}
+                {isResolving ? "Searching" : resolution ? "Search again" : "Search"}
               </Button>
               {resolution ? (
                 <div className="space-y-1 rounded-xl border border-border bg-muted/40 p-3">
                   <p className="text-xs font-bold text-muted-foreground">
-                    ¿La dirección que aparece acá es la correcta para {resolution.name}?
+                    Is the address shown here the right one for {resolution.name}?
                   </p>
                   {/*
                     Entera y sin truncar: es la dirección que el usuario confirma,
@@ -445,8 +443,8 @@ export function AddTrustedRecipient({
             </div>
           ) : null}
           <p className="text-sm text-muted-foreground">
-            Pegá una dirección de Solana devnet, o buscá un nombre .sns y confirmá la dirección que
-            resuelve.
+            Paste a Solana devnet address, or search a .sns name and confirm the address it resolves
+            to.
           </p>
 
           {error ? (
@@ -461,7 +459,7 @@ export function AddTrustedRecipient({
               className="press min-h-10 font-extrabold"
               onClick={resetEditor}
             >
-              Cancelar
+              Cancel
             </Button>
             <Button
               type="submit"
@@ -473,7 +471,7 @@ export function AddTrustedRecipient({
                 (!editor.contact && isNameCandidate(address) && resolution === null)
               }
             >
-              {isSaving ? "Guardando" : editor.contact ? "Guardar cambios" : "Guardar"}
+              {isSaving ? "Saving" : editor.contact ? "Save changes" : "Save"}
             </Button>
           </div>
         </form>
@@ -490,34 +488,32 @@ export function AddTrustedRecipient({
           className="mt-3 rounded-xl border border-border bg-muted/40 p-3 text-sm"
           data-testid="duplicate-disclosure"
         >
-          Esta dirección ya está en tu lista como {duplicateOf.name}: {duplicateOf.address} ya es de
-          confianza, así que esto no cambia a quién le podés pagar.
+          This address is already in your list as {duplicateOf.name}: {duplicateOf.address} is
+          already trusted, so this does not change who you can pay.
         </p>
       ) : null}
       {pendingRemoval ? (
         <div
           className="mt-3 rounded-2xl border border-destructive/40 bg-destructive-surface p-4"
           role="alertdialog"
-          aria-label="Confirmar eliminación de destinatario"
+          aria-label="Confirm recipient removal"
         >
           <p className="text-base font-extrabold">
-            ¿Querés quitar a {pendingRemoval.contact.name}?
+            Do you want to remove {pendingRemoval.contact.name}?
           </p>
           {pendingRemoval.preview.revokedGrantIds.length > 0 ? (
             <p className="mt-2 text-sm">
-              También se revocarán {pendingRemoval.preview.revokedGrantIds.length} pago
-              {pendingRemoval.preview.revokedGrantIds.length === 1
-                ? " automático"
-                : "s automáticos"}{" "}
-              asociado{pendingRemoval.preview.revokedGrantIds.length === 1 ? "" : "s"}. La
-              revocación queda pendiente hasta que Privy la verifique.
+              This will also revoke {pendingRemoval.preview.revokedGrantIds.length} automatic{" "}
+              {pendingRemoval.preview.revokedGrantIds.length === 1 ? "payment" : "payments"} linked
+              to {pendingRemoval.preview.revokedGrantIds.length === 1 ? "it" : "them"}. The
+              revocation stays pending until Privy verifies it.
             </p>
           ) : (
-            <p className="mt-2 text-sm">No hay pagos automáticos que revocar.</p>
+            <p className="mt-2 text-sm">There are no automatic payments to revoke.</p>
           )}
           <div className="mt-3 grid grid-cols-2 gap-2">
             <Button type="button" variant="outline" onClick={() => setPendingRemoval(null)}>
-              Cancelar
+              Cancel
             </Button>
             <Button
               type="button"
@@ -525,7 +521,7 @@ export function AddTrustedRecipient({
               onClick={() => void confirmRemoval()}
               disabled={isRemoving}
             >
-              {isRemoving ? "Quitando" : "Quitar"}
+              {isRemoving ? "Removing" : "Remove"}
             </Button>
           </div>
         </div>
@@ -534,26 +530,25 @@ export function AddTrustedRecipient({
         <div
           className="mt-3 rounded-2xl border border-destructive/40 bg-destructive-surface p-4"
           role="alertdialog"
-          aria-label="Confirmar cambio de dirección"
+          aria-label="Confirm address change"
         >
           <p className="text-base font-extrabold">
-            ¿Querés cambiar la dirección de {pendingAddressChange.contact.name}?
+            Do you want to change the address for {pendingAddressChange.contact.name}?
           </p>
           {pendingAddressChange.preview.revokedGrantIds.length > 0 ? (
             <p className="mt-2 text-sm">
-              Este cambio revocará {pendingAddressChange.preview.revokedGrantIds.length} pago
-              {pendingAddressChange.preview.revokedGrantIds.length === 1
-                ? " automático"
-                : "s automáticos"}{" "}
-              asociado{pendingAddressChange.preview.revokedGrantIds.length === 1 ? "" : "s"}. La
-              revocación queda pendiente hasta que Privy la verifique.
+              This change will revoke {pendingAddressChange.preview.revokedGrantIds.length}{" "}
+              automatic{" "}
+              {pendingAddressChange.preview.revokedGrantIds.length === 1 ? "payment" : "payments"}{" "}
+              linked to {pendingAddressChange.preview.revokedGrantIds.length === 1 ? "it" : "them"}.
+              The revocation stays pending until Privy verifies it.
             </p>
           ) : (
-            <p className="mt-2 text-sm">No hay pagos automáticos que revocar.</p>
+            <p className="mt-2 text-sm">There are no automatic payments to revoke.</p>
           )}
           <div className="mt-3 grid grid-cols-2 gap-2">
             <Button type="button" variant="outline" onClick={() => setPendingAddressChange(null)}>
-              Cancelar
+              Cancel
             </Button>
             <Button
               type="button"
@@ -561,14 +556,14 @@ export function AddTrustedRecipient({
               onClick={() => void confirmAddressChange()}
               disabled={isSaving}
             >
-              {isSaving ? "Guardando" : "Confirmar cambio"}
+              {isSaving ? "Saving" : "Confirm change"}
             </Button>
           </div>
         </div>
       ) : null}
       {contacts.length === 0 ? (
         <p className="mt-3 text-base text-muted-foreground">
-          Todavía no agregaste personas de confianza.
+          You have not added any trusted people yet.
         </p>
       ) : (
         <ul className="lg-row-list mt-3">
@@ -578,7 +573,7 @@ export function AddTrustedRecipient({
                 className="flex size-9 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-sm font-extrabold text-brand-ink"
                 aria-hidden="true"
               >
-                {contact.name.charAt(0).toLocaleUpperCase("es-AR")}
+                {contact.name.charAt(0).toLocaleUpperCase("en-US")}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-bold">{contact.name}</span>
@@ -605,7 +600,7 @@ export function AddTrustedRecipient({
                     className="block break-all text-xs text-muted-foreground"
                     data-testid={`contact-alias-${contact.id}`}
                   >
-                    Agregado por {contact.alias.name}
+                    Added from {contact.alias.name}
                   </span>
                 ) : null}
                 <span className="block text-xs text-muted-foreground">
@@ -633,7 +628,7 @@ export function AddTrustedRecipient({
                   onClick={() => openEdit(contact)}
                 >
                   <Pencil className="size-4" aria-hidden="true" />
-                  Editar
+                  Edit
                 </Button>
                 <Button
                   type="button"
@@ -641,7 +636,7 @@ export function AddTrustedRecipient({
                   className="press min-h-9 text-sm font-bold text-destructive"
                   onClick={() => void requestRemoval(contact)}
                 >
-                  Quitar
+                  Remove
                 </Button>
               </span>
             </li>
@@ -661,7 +656,7 @@ export function AddTrustedRecipient({
           ) : (
             <RotateCw className="size-5" aria-hidden="true" />
           )}
-          Reintentar verificación
+          Retry verification
         </Button>
       ) : null}
     </section>

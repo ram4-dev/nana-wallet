@@ -71,11 +71,7 @@ export function ContactAliasDrift({
         disabled={check.kind === "checking"}
         data-testid={`alias-drift-check-${contact.id}`}
       >
-        {check.kind === "checking"
-          ? "Chequeando"
-          : report
-            ? "Chequear otra vez"
-            : "Chequear el nombre"}
+        {check.kind === "checking" ? "Checking" : report ? "Check again" : "Check the name"}
       </Button>
       {check.kind === "failed" ? (
         <p className="text-sm font-bold text-destructive" role="alert">
@@ -113,7 +109,7 @@ export function ContactAliasDrift({
             {check.storedAddress}
           </p>
           {kept ? (
-            <p className="text-xs font-bold">Listo: no cambié nada.</p>
+            <p className="text-xs font-bold">Done: I changed nothing.</p>
           ) : report.isDrift ? (
             <div className="flex flex-col gap-1 pt-1">
               <Button
@@ -122,7 +118,7 @@ export function ContactAliasDrift({
                 className="press min-h-9 text-xs font-bold"
                 onClick={() => setKept(true)}
               >
-                Dejar como está
+                Keep as it is
               </Button>
               {report.canReplace && report.observedAddress ? (
                 <Button
@@ -131,7 +127,7 @@ export function ContactAliasDrift({
                   className="press min-h-9 text-xs font-bold"
                   onClick={() => onReplace(contact, report.observedAddress as string)}
                 >
-                  Cambiar a la nueva dirección
+                  Switch to the new address
                 </Button>
               ) : null}
               <Button
@@ -140,7 +136,7 @@ export function ContactAliasDrift({
                 className="press min-h-9 text-xs font-bold text-destructive"
                 onClick={() => onRemove(contact)}
               >
-                Quitar a {contact.name}
+                Remove {contact.name}
               </Button>
             </div>
           ) : null}

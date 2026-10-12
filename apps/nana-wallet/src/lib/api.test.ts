@@ -166,7 +166,7 @@ describe("Privy wallet data", () => {
     );
 
     const error = await api.getWalletSummary().catch((caught: unknown) => caught);
-    expect(getErrorMessage(error)).toContain("todavía se está preparando");
+    expect(getErrorMessage(error)).toContain("still getting ready");
     expect(JSON.stringify(error)).not.toContain('"balance":"0"');
   });
 });

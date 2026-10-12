@@ -38,20 +38,20 @@ type WalletStateTone = "neutral" | "ok" | "working" | "warn" | "danger";
 
 const WALLET_STATE_LABELS: Record<WalletReadinessState, { label: string; tone: WalletStateTone }> =
   {
-    unprovisioned: { label: "Billetera sin provisionar", tone: "neutral" },
-    provisioning: { label: "Provisionando billetera", tone: "working" },
-    ready: { label: "Billetera lista", tone: "ok" },
-    recovery_required: { label: "Necesita recuperación", tone: "warn" },
-    conflict: { label: "Conflicto de billetera", tone: "warn" },
-    unavailable: { label: "Billetera no disponible", tone: "danger" },
+    unprovisioned: { label: "Wallet not set up", tone: "neutral" },
+    provisioning: { label: "Setting up your wallet", tone: "working" },
+    ready: { label: "Wallet ready", tone: "ok" },
+    recovery_required: { label: "Needs recovery", tone: "warn" },
+    conflict: { label: "Wallet conflict", tone: "warn" },
+    unavailable: { label: "Wallet not available", tone: "danger" },
   };
 
 const PERMISSION_STATE_LABELS: Record<PermissionState, string> = {
-  pending: "Permiso de pagos pendiente",
-  active: "Permiso de pagos activo",
-  revoking: "Revocando el permiso…",
-  revoked: "Permiso de pagos revocado",
-  unavailable: "Permiso de pagos no disponible",
+  pending: "Payment permission pending",
+  active: "Payment permission active",
+  revoking: "Revoking the permission…",
+  revoked: "Payment permission revoked",
+  unavailable: "Payment permission not available",
 };
 
 /**
@@ -96,13 +96,13 @@ function hasBoundedLimits(permission: WalletPermissionResponse): boolean {
   );
 }
 
-/** "por hora" for 3600 s; otherwise a human window label for other windows. */
+/** "per hour" for 3600 s; otherwise a human window label for other windows. */
 function formatWindowLabel(seconds: number): string {
   if (seconds <= 0) return "";
-  if (seconds === 3600) return "por hora";
-  if (seconds % 3600 === 0) return `cada ${seconds / 3600} hora${seconds / 3600 === 1 ? "" : "s"}`;
-  if (seconds % 60 === 0) return `cada ${seconds / 60} min`;
-  return `cada ${seconds} s`;
+  if (seconds === 3600) return "per hour";
+  if (seconds % 3600 === 0) return `every ${seconds / 3600} hour${seconds / 3600 === 1 ? "" : "s"}`;
+  if (seconds % 60 === 0) return `every ${seconds / 60} min`;
+  return `every ${seconds} s`;
 }
 
 function shortenAddress(address: string): string {
@@ -127,7 +127,7 @@ function WalletStateBadge({ state }: { state: WalletReadinessState }) {
 }
 
 function RoutePendingInline() {
-  return <p className="mt-4 text-base text-muted-foreground">Preparando la autorización…</p>;
+  return <p className="mt-4 text-base text-muted-foreground">Preparing the authorization…</p>;
 }
 
 /**
@@ -200,7 +200,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
   if (!enabled || walletQuery.isPending || permissionQuery.isPending) {
     return (
       <section className="surface-card mt-10 p-5">
-        <p className="text-base text-muted-foreground">Estamos buscando tu billetera…</p>
+        <p className="text-base text-muted-foreground">We are looking for your wallet…</p>
       </section>
     );
   }
@@ -210,7 +210,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     return (
       <section className="surface-card mt-10 p-5" role="alert">
         <ShieldAlert className="size-7 text-destructive" aria-hidden="true" />
-        <h2 className="mt-2 text-xl font-extrabold">No pudimos leer tu billetera</h2>
+        <h2 className="mt-2 text-xl font-extrabold">We could not read your wallet</h2>
         <p className="mt-1 text-base text-muted-foreground">{getErrorMessage(walletError)}</p>
       </section>
     );
@@ -219,7 +219,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
   if (!walletQuery.data || !permissionQuery.data) {
     return (
       <section className="surface-card mt-10 p-5">
-        <p className="text-base text-muted-foreground">Estamos buscando tu billetera…</p>
+        <p className="text-base text-muted-foreground">We are looking for your wallet…</p>
       </section>
     );
   }
@@ -249,7 +249,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
         .map((contact) => contact.address);
       if (allowlist.length === 0) {
         setPermissionMessage(
-          "Agregá al menos un destinatario de confianza antes de activar el permiso.",
+          "Add at least one trusted recipient before turning on the permission.",
         );
         return;
       }
@@ -288,8 +288,8 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
       // observed evidence and leave the grant pending.
       setPermissionMessage(
         result.observed?.policyAttached === false
-          ? "Privy todavía no muestra el firmante con la política asignada. Volvé a intentar o revisá el permiso en Privy."
-          : "Privy no pudo confirmar que este permiso es tuyo. Volvé a intentar.",
+          ? "Privy does not show the signer with the assigned policy yet. Try again or review the permission in Privy."
+          : "Privy could not confirm that this permission is yours. Try again.",
       );
     } catch (error) {
       setPermissionMessage(getErrorMessage(error));
@@ -302,10 +302,10 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     try {
       const result = await api.revokeWalletPermission({ chain: chainTarget });
       if (result.remote === "revoked") {
-        toast.success("Revocaste el permiso de pagos.");
+        toast.success("You revoked the payment permission.");
       } else {
         setPermissionMessage(
-          "El permiso quedó marcado para revocar, pero el proveedor no lo pudo confirmar.",
+          "The permission is now marked for revocation, but the provider could not confirm it.",
         );
       }
       void queryClient.invalidateQueries({ queryKey: queryKeys.walletPermission(userId) });
@@ -313,7 +313,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
       // Provider-unavailable revoke: locally the grant stays 'revoking'; it must
       // NEVER be shown as remotely revoked. Fail closed.
       setPermissionMessage(
-        "No pudimos confirmar la revocación con el proveedor. No lo marques como hecho; seguimos revisando.",
+        "We could not confirm the revocation with the provider. Do not mark it as done; we keep checking.",
       );
       void queryClient.invalidateQueries({ queryKey: queryKeys.walletPermission(userId) });
     } finally {
@@ -327,7 +327,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
     (permission.state === "pending" || permission.state === "unavailable");
 
   return (
-    <section className="surface-card mt-10 p-5" aria-label="Tu billetera y el permiso de pagos">
+    <section className="surface-card mt-10 p-5" aria-label="Your wallet and the payment permission">
       {userId ? (
         <Suspense fallback={null}>
           <PrivyWalletSync userId={userId} />
@@ -335,17 +335,17 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
       ) : null}
       <div className="flex items-center gap-2">
         <Wallet className="size-7 text-brand-ink" strokeWidth={2.4} aria-hidden="true" />
-        <h2 className="text-xl font-extrabold">Tu billetera y el permiso de pagos</h2>
+        <h2 className="text-xl font-extrabold">Your wallet and the payment permission</h2>
       </div>
 
       <div className="mt-4">
-        <p className="text-base font-bold text-muted-foreground">Estado de la billetera</p>
+        <p className="text-base font-bold text-muted-foreground">Wallet status</p>
         <div className="mt-2">
           <WalletStateBadge state={wallet.state} />
         </div>
         {wallet.address ? (
           <p className="mt-2 break-all text-base text-muted-foreground">
-            Dirección: {shortenAddress(wallet.address)}
+            Address: {shortenAddress(wallet.address)}
           </p>
         ) : null}
         {userId ? (
@@ -373,8 +373,8 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
               <Wallet className="size-5" aria-hidden="true" />
             )}
             {wallet.state === "unprovisioned" || wallet.state === "conflict"
-              ? "Sincronizar billetera"
-              : "Reintentar"}
+              ? "Sync wallet"
+              : "Try again"}
           </Button>
         ) : null}
       </div>
@@ -382,7 +382,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
       <hr className="my-6 border-border" />
 
       <div>
-        <p className="text-base font-bold text-muted-foreground">Permiso de pagos</p>
+        <p className="text-base font-bold text-muted-foreground">Payment permission</p>
 
         {isActive ? (
           <>
@@ -393,14 +393,14 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
               </span>
             </div>
 
-            <p className="mt-3 text-lg font-extrabold">Indefinido y revocable</p>
+            <p className="mt-3 text-lg font-extrabold">No end date, and revocable</p>
             <p className="text-base text-muted-foreground">
-              Autorizaste pagos sin fecha de vencimiento. Podés revocarlo cuando quieras.
+              You allowed payments with no end date. You can revoke it whenever you want.
             </p>
 
             <dl className="mt-4 space-y-2 text-base">
               <div className="flex justify-between gap-4">
-                <dt className="font-bold">Por transferencia</dt>
+                <dt className="font-bold">Per transfer</dt>
                 <dd className="text-right font-extrabold">
                   {permission.perTransferSol !== ""
                     ? `${permission.perTransferSol} SOL`
@@ -408,29 +408,29 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="font-bold">Acumulado</dt>
+                <dt className="font-bold">Total up to now</dt>
                 <dd className="text-right font-extrabold">
                   {permission.perTransferSol !== ""
-                    ? "Pendiente en SOL"
+                    ? "Pending in SOL"
                     : `${permission.rollingTotalUsdc} USDC ${formatWindowLabel(permission.rollingWindowSeconds)}`}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="font-bold">Ventana</dt>
-                <dd className="text-right">rodante de {permission.rollingWindowSeconds} s</dd>
+                <dt className="font-bold">Window</dt>
+                <dd className="text-right">rolling, {permission.rollingWindowSeconds} s</dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="font-bold">Comisiones</dt>
+                <dt className="font-bold">Fees</dt>
                 <dd className="text-right">
-                  {permission.gasCeiling ? `hasta ${permission.gasCeiling}` : "se cobran aparte"}{" "}
-                  (no descuentan de los topes)
+                  {permission.gasCeiling ? `up to ${permission.gasCeiling}` : "charged separately"}{" "}
+                  (they do not count against the caps)
                 </dd>
               </div>
             </dl>
 
             {permission.recipients.length > 0 ? (
               <div className="mt-4">
-                <p className="text-base font-bold text-muted-foreground">Destinos autorizados</p>
+                <p className="text-base font-bold text-muted-foreground">Allowed destinations</p>
                 <ul className="mt-2 space-y-1">
                   {permission.recipients.map((recipient) => (
                     <li key={recipient} className="break-all text-base text-muted-foreground">
@@ -453,7 +453,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
               ) : (
                 <ShieldAlert className="size-5" aria-hidden="true" />
               )}
-              Revocar permiso
+              Revoke permission
             </Button>
           </>
         ) : (
@@ -467,12 +467,12 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
 
             {permission.state === "revoking" ? (
               <p className="mt-3 text-base text-muted-foreground">
-                Estamos revocando el permiso con el proveedor. Esto puede tardar un momento.
+                We are revoking the permission with the provider. This can take a moment.
               </p>
             ) : (
               <p className="mt-3 text-base text-muted-foreground">
-                No hay un permiso de pagos activo. Sin un permiso activo, no se pueden habilitar
-                pagos.
+                There is no active payment permission. Without an active permission, payments cannot
+                be turned on.
               </p>
             )}
 
@@ -482,7 +482,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
               // then the server read-back (complete) decides activation.
               <Suspense fallback={<RoutePendingInline />}>
                 <p className="mb-3 text-sm font-semibold" role="status">
-                  Tope máximo por transferencia:{" "}
+                  Maximum per transfer:{" "}
                   {preparation.perTransferSol !== ""
                     ? `${preparation.perTransferSol} SOL`
                     : `${preparation.perTransferUsdc} USDC`}
@@ -511,7 +511,7 @@ export function WalletLifecycle({ userId }: { userId: string | undefined }) {
                 ) : (
                   <ShieldCheck className="size-5" aria-hidden="true" />
                 )}
-                Activar permiso de pagos
+                Turn on payment permission
               </Button>
             ) : null}
           </>

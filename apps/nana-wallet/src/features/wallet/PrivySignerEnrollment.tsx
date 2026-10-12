@@ -46,11 +46,13 @@ export function PrivySignerEnrollment({
         address: walletAddress,
         signers: [{ signerId: quorumId, policyIds: [policyId] }],
       });
-      toast.success("Confirmaste la autorización en Privy.");
+      toast.success("You confirmed the authorization in Privy.");
       await onEnrolled();
     } catch (error) {
       onError(
-        error instanceof Error ? error.message : "No pudimos confirmar la autorización con Privy.",
+        error instanceof Error
+          ? error.message
+          : "We could not confirm the authorization with Privy.",
       );
     } finally {
       setConsenting(false);
@@ -69,7 +71,7 @@ export function PrivySignerEnrollment({
       ) : (
         <ShieldCheck className="size-5" aria-hidden="true" />
       )}
-      Autorizar firmante en Privy
+      Authorize signer in Privy
     </Button>
   );
 }

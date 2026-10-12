@@ -1,7 +1,7 @@
 export type ConversationActionLock = { current: boolean };
 
 export const UNKNOWN_CONVERSATION_OUTCOME_MESSAGE =
-  "No sabemos si la operación se hizo. Revisá tu saldo y tus movimientos antes de volver a intentar.";
+  "We do not know whether the operation went through. Check your balance and your movements before trying again.";
 
 /** Acquires the lock synchronously, before React has a chance to rerender. */
 export function runExclusiveConversationAction<T>(

@@ -115,7 +115,7 @@ describe("WalletLifecycle activation entry", () => {
     );
 
     const button = await screen.findByRole("button", {
-      name: /activar permiso de pagos/i,
+      name: /turn on payment permission/i,
     });
     expect(button).toBeEnabled();
   });
@@ -140,7 +140,7 @@ describe("WalletLifecycle activation entry", () => {
 
     const user = userEvent.setup();
     const button = await screen.findByRole("button", {
-      name: /activar permiso de pagos/i,
+      name: /turn on payment permission/i,
     });
     await user.click(button);
 
@@ -184,7 +184,7 @@ describe("WalletLifecycle activation entry", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /activar permiso de pagos/i }));
+    await user.click(await screen.findByRole("button", { name: /turn on payment permission/i }));
 
     await waitFor(() =>
       expect(mocks.prepareWalletPermission).toHaveBeenCalledWith({
@@ -213,9 +213,9 @@ describe("WalletLifecycle activation entry", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /activar permiso de pagos/i }));
+    await user.click(await screen.findByRole("button", { name: /turn on payment permission/i }));
 
-    expect(await screen.findByText(/al menos un destinatario de confianza/i)).toBeInTheDocument();
+    expect(await screen.findByText(/at least one trusted recipient/i)).toBeInTheDocument();
     expect(mocks.prepareWalletPermission).not.toHaveBeenCalled();
   });
 
@@ -230,11 +230,11 @@ describe("WalletLifecycle activation entry", () => {
 
     const user = userEvent.setup();
     const button = await screen.findByRole("button", {
-      name: /activar permiso de pagos/i,
+      name: /turn on payment permission/i,
     });
     await user.click(button);
 
-    expect(await screen.findByText(/al menos un destinatario de confianza/i)).toBeInTheDocument();
+    expect(await screen.findByText(/at least one trusted recipient/i)).toBeInTheDocument();
     expect(mocks.prepareWalletPermission).not.toHaveBeenCalled();
   });
 
@@ -247,7 +247,7 @@ describe("WalletLifecycle activation entry", () => {
       </Wrapper>,
     );
 
-    await screen.findByRole("button", { name: /activar permiso de pagos/i });
+    await screen.findByRole("button", { name: /turn on payment permission/i });
     expect(mocks.getCurrentWallet).toHaveBeenCalledWith({ chain: "solana" });
     expect(mocks.getCurrentWalletPermission).toHaveBeenCalledWith({ chain: "solana" });
   });
@@ -262,7 +262,9 @@ describe("WalletLifecycle activation entry", () => {
       </Wrapper>,
     );
 
-    expect(await screen.findByRole("button", { name: /activar permiso de pagos/i })).toBeEnabled();
+    expect(
+      await screen.findByRole("button", { name: /turn on payment permission/i }),
+    ).toBeEnabled();
   });
 
   it("completes Solana enrollment scoped to the solana chain", async () => {
@@ -292,7 +294,7 @@ describe("WalletLifecycle activation entry", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /activar permiso de pagos/i }));
+    await user.click(await screen.findByRole("button", { name: /turn on payment permission/i }));
     await user.click(await screen.findByTestId("signer-enrollment"));
 
     await waitFor(() =>
@@ -322,7 +324,7 @@ describe("WalletLifecycle activation entry", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /revocar permiso/i }));
+    await user.click(await screen.findByRole("button", { name: /revoke permission/i }));
 
     await waitFor(() =>
       expect(mocks.revokeWalletPermission).toHaveBeenCalledWith({ chain: "solana" }),

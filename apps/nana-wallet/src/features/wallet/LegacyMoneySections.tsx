@@ -33,7 +33,7 @@ export function LegacyMoneySections({ userId }: { userId: string | undefined }) 
 
   if (!summaryQuery.data || !movementsQuery.data) {
     return (
-      <EmptyState>No encontramos cuentas para mostrarte. Probá de nuevo en un ratito.</EmptyState>
+      <EmptyState>We could not find accounts to show you. Try again in a little while.</EmptyState>
     );
   }
 
@@ -48,14 +48,16 @@ export function LegacyMoneySections({ userId }: { userId: string | undefined }) 
           aria-hidden="true"
         />
         <div className="relative">
-          <p className="text-base font-bold text-background/70">Total en pesos</p>
+          <p className="text-base font-bold text-background/70">Total in pesos</p>
           <p className="mt-1 text-4xl font-extrabold tracking-tight">{summary.total.display}</p>
         </div>
       </section>
 
-      <h2 className="mt-10 text-xl font-extrabold">Dónde está tu plata</h2>
+      <h2 className="mt-10 text-xl font-extrabold">Where your money is</h2>
       {summary.accounts.length === 0 ? (
-        <EmptyState>No encontramos cuentas para mostrarte. Probá de nuevo en un ratito.</EmptyState>
+        <EmptyState>
+          We could not find accounts to show you. Try again in a little while.
+        </EmptyState>
       ) : (
         <ul className="mt-4 space-y-3">
           {summary.accounts.map((account) => (
@@ -73,10 +75,10 @@ export function LegacyMoneySections({ userId }: { userId: string | undefined }) 
         </ul>
       )}
 
-      <h2 className="mt-10 text-xl font-extrabold">Últimos movimientos</h2>
+      <h2 className="mt-10 text-xl font-extrabold">Latest movements</h2>
       {movements.length === 0 ? (
         <EmptyState>
-          Todavía no tenés movimientos para mostrar. Cuando entre o salga plata, va a aparecer acá.
+          You have no movements to show yet. When money comes in or goes out, it will show up here.
         </EmptyState>
       ) : (
         <ul className="mt-4 space-y-3">
@@ -101,7 +103,7 @@ export function LegacyMoneySections({ userId }: { userId: string | undefined }) 
                 <p className="text-base text-muted-foreground">{movement.subtitle}</p>
               </div>
               <p className="text-right text-base font-extrabold">
-                {movement.kind === "entrada" ? "Te entró " : "Pagaste "}
+                {movement.kind === "entrada" ? "You received " : "You paid "}
                 {compactMoney(movement.amount.display)}
               </p>
             </li>

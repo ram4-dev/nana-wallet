@@ -42,12 +42,12 @@ export function driftReport(
   aliasName: string,
   contactName: string,
 ): AliasDriftReport {
-  const name = `${aliasName} de ${contactName}`;
+  const name = `${aliasName} for ${contactName}`;
   if (check.state === "unchanged") {
     return {
       kind: "unchanged",
-      sentence: `El nombre ${name} sigue apuntando a la misma dirección.`,
-      consequence: "Tu destinatario de confianza está igual que siempre.",
+      sentence: `The name ${name} still points to the same address.`,
+      consequence: "Your trusted recipient is the same as always.",
       observedAddress: null,
       isDrift: false,
       canReplace: false,
@@ -56,9 +56,9 @@ export function driftReport(
   if (check.state === "unavailable") {
     return {
       kind: "unavailable",
-      sentence: `No pudimos chequear ${name} en este momento.`,
-      // Never "sigue bien": the check did not run, so its result is unknown.
-      consequence: `Esto no quiere decir que el nombre haya cambiado: no sabemos cómo está ahora. Tu destinatario sigue siendo ${check.storedAddress} y no lo cambié.`,
+      sentence: `We could not check ${name} right now.`,
+      // Never "still fine": the check did not run, so its result is unknown.
+      consequence: `This does not mean the name changed: we do not know how it is now. Your recipient is still ${check.storedAddress} and I did not change it.`,
       observedAddress: null,
       isDrift: false,
       canReplace: false,
@@ -70,8 +70,8 @@ export function driftReport(
   if (observedAddress) {
     return {
       kind: "moved",
-      sentence: `El nombre ${name} ahora apunta a otra dirección.`,
-      consequence: `Tu destinatario de confianza sigue siendo ${check.storedAddress} y no lo cambié.`,
+      sentence: `The name ${name} now points to a different address.`,
+      consequence: `Your trusted recipient is still ${check.storedAddress} and I did not change it.`,
       observedAddress,
       isDrift: true,
       canReplace: true,
@@ -80,8 +80,8 @@ export function driftReport(
   if (check.reason === "name_no_longer_exists") {
     return {
       kind: "gone",
-      sentence: `El nombre ${name} ya no existe.`,
-      consequence: `Tu destinatario de confianza sigue siendo ${check.storedAddress} y no lo cambié.`,
+      sentence: `The name ${name} no longer exists.`,
+      consequence: `Your trusted recipient is still ${check.storedAddress} and I did not change it.`,
       observedAddress: null,
       isDrift: true,
       canReplace: false,
@@ -92,8 +92,8 @@ export function driftReport(
   // reported.
   return {
     kind: "changed_unknown",
-    sentence: `El nombre ${name} ya no apunta a la dirección que guardaste.`,
-    consequence: `No sabemos a qué dirección apunta ahora. Tu destinatario de confianza sigue siendo ${check.storedAddress} y no lo cambié.`,
+    sentence: `The name ${name} no longer points to the address you saved.`,
+    consequence: `We do not know which address it points to now. Your trusted recipient is still ${check.storedAddress} and I did not change it.`,
     observedAddress: null,
     isDrift: true,
     canReplace: false,

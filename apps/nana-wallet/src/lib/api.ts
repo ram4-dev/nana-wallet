@@ -57,7 +57,7 @@ import type {
 } from "./api-types";
 import { beginRequest, finishRequest, isSessionCurrent } from "./session-isolation";
 
-export const FALLBACK_ERROR_MESSAGE = "Algo no salió bien. Probá de nuevo en un ratito.";
+export const FALLBACK_ERROR_MESSAGE = "Something did not go through. Try again in a little while.";
 
 /**
  * Único lugar donde se decide qué texto ve el usuario cuando algo falla.
@@ -67,13 +67,13 @@ export const FALLBACK_ERROR_MESSAGE = "Algo no salió bien. Probá de nuevo en u
 export function getErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === "wallet_not_ready") {
-      return "Tu billetera de Privy todavía se está preparando. Probá de nuevo en un momento.";
+      return "Your Privy wallet is still getting ready. Try again in a moment.";
     }
     if (error.code === "wallet_feature_unavailable") {
-      return "Esta información de tu billetera todavía no está disponible.";
+      return "This wallet information is not available yet.";
     }
     if (error.code === "wallet_config_error" || error.code === "wallet_unavailable") {
-      return "No pudimos consultar tu billetera de Privy. Probá de nuevo en un momento.";
+      return "We could not read your Privy wallet. Try again in a moment.";
     }
   }
   if (error instanceof Error && error.message) return error.message;
@@ -352,7 +352,7 @@ export const api = {
       accounts: [
         {
           id: balance.address,
-          name: "SOL en Solana devnet",
+          name: "SOL on Solana devnet",
           subtitle: balance.address,
           balance: money,
           kind: "sol",
@@ -375,7 +375,7 @@ export const api = {
       items: selected.map((transaction) => ({
         id: transaction.hash,
         kind: transaction.direction === "in" ? ("entrada" as const) : ("salida" as const),
-        title: transaction.direction === "in" ? "Recibiste SOL" : "Enviaste SOL",
+        title: transaction.direction === "in" ? "You received SOL" : "You sent SOL",
         subtitle: transaction.counterparty,
         amount: {
           amount: transaction.amount,
