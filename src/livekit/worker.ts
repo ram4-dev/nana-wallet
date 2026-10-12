@@ -206,6 +206,57 @@ export function bindLiveKitWalletForUser(
 export { readLiveKitWorkerConfig } from "../config/process.js";
 export type { LiveKitWorkerConfig } from "../config/process.js";
 
+/**
+ * How long the process may keep running AFTER its shutdown steps settled.
+ *
+ * The steps below are bounded, so this point is always reachable — but reaching it
+ * does not by itself end the process: a job that logged `job exiting` and
+ * `disconnected from room` went on handling audio, creating speech handles and
+ * running tool calls, and survived its own SIGTERM. Something kept the event loop
+ * alive, so the runtime's exit path never completed and the job stayed resident.
+ *
+ * A grace window is enough for anything legitimately still in flight, and an
+ * `unref`'d timer is the right instrument: it fires while the loop is alive (which
+ * is exactly the hung case) and never holds the loop open itself (so a clean exit
+ * is unaffected).
+ */
+const SHUTDOWN_EXIT_GRACE_MS = 2_000;
+
+/**
+ * Runs a teardown step, but never waits longer than `timeoutMs` for it.
+ *
+ * A shutdown step that hangs must not be able to keep a job process alive. Both
+ * callers used to `await` unbounded, and the cost was observed live: stale job
+ * processes accumulated at 127-886 MB each, competing for four cores, while the
+ * live session's speech stalled 2-7 s between deciding to answer and the first
+ * audio frame. The step is best-effort by contract — the money-safety drain that
+ * must be waited for is `financialTasks.drain`, which is bounded and runs first.
+ */
+async function boundedShutdownStep(
+  label: string,
+  timeoutMs: number,
+  work: () => Promise<void>,
+): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      work().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(
+            `[voice-worker] ${label} did not finish within ${timeoutMs}ms during shutdown; continuing.`,
+          );
+          resolve();
+        }, timeoutMs);
+        // Advisory only: it must not be the reason a process stays up.
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function createLiveKitWorkerRuntime(input?: {
   dependencies?: WorkerDependencies;
   shutdownTimeoutMs?: number;
@@ -225,7 +276,13 @@ export function createLiveKitWorkerRuntime(input?: {
       acceptingJobs = false;
       closePromise = (async () => {
         await financialTasks.drain({ timeoutMs: shutdownTimeoutMs });
-        await input?.dependencies?.close();
+        // Bounded like the drain above. An unbounded `close()` was the second way
+        // a job process could outlive its shutdown: the pool close is what releases
+        // the last handles, so if it hangs the event loop stays alive and the
+        // process is never reaped.
+        await boundedShutdownStep("dependency close", shutdownTimeoutMs, async () => {
+          await input?.dependencies?.close();
+        });
       })();
       return closePromise;
     },
@@ -555,8 +612,27 @@ async function runJob(
     agentParticipant.unregisterRpcMethod("bind_conversation");
     agentParticipant.unregisterRpcMethod("interrupt_agent");
     unsubscribeRevisions?.();
-    await session?.close();
-    await roomConversation.release();
+    // BOTH BOUNDED, and that is the fix for a real defect rather than tidiness.
+    // They were awaited unbounded, and a live session showed what that costs: the
+    // job logged `job exiting` and `disconnected from room`, then kept handling
+    // audio, creating new speech handles and running tool calls — the closing
+    // websocket never resolved, the process never exited, and the supervisor saw
+    // `job shutdown is taking too much time` followed by `job is unresponsive`.
+    // Stale job processes accumulated holding 127-886 MB each, competing for four
+    // cores, and the LIVE session's speech stalled 2-7 s between deciding to
+    // answer and the first audio frame. A shutdown step that does not finish must
+    // not be able to keep the process alive.
+    await boundedShutdownStep("session close", config.shutdownTimeoutMs, async () => {
+      await session?.close();
+    });
+    await boundedShutdownStep("conversation release", config.shutdownTimeoutMs, async () => {
+      await roomConversation.release();
+    });
+    // Last, and only after the steps above settled: everything money-related has
+    // already drained in `runtime.close`, so nothing else is pending on this
+    // process. See SHUTDOWN_EXIT_GRACE_MS for why the process needs to be told to
+    // end rather than left to the runtime's exit path.
+    setTimeout(() => process.exit(0), SHUTDOWN_EXIT_GRACE_MS).unref();
   });
   await sessionClosed;
 }
