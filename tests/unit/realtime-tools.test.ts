@@ -276,6 +276,7 @@ describe("createRealtimeTools", () => {
           description: "My nephew",
           version: 1,
           status: "active",
+          embeddingModelRevision: "test",
           evidence: "Sophie",
           score: 0.263,
         },
