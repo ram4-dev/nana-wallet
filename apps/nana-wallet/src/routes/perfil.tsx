@@ -30,21 +30,21 @@ const WalletLifecycle = lazy(() =>
 export const Route = createFileRoute("/perfil")({
   head: () => ({
     meta: [
-      { title: "Mi perfil | Nana Wallet" },
+      { title: "My profile | Nana Wallet" },
       {
         name: "description",
-        content: "Tus datos, en letra grande y sin vueltas.",
+        content: "Your details, in big letters and without beating around the bush.",
       },
-      { property: "og:title", content: "Mi perfil" },
+      { property: "og:title", content: "My profile" },
       {
         property: "og:description",
-        content: "Tu nombre, tal como lo conocemos, y la salida de sesión.",
+        content: "Your name, the way we know it, and the way out of the session.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  pendingComponent: () => <RoutePending label="Estamos buscando tu perfil" />,
+  pendingComponent: () => <RoutePending label="We are looking for your profile" />,
   errorComponent: ({ error, reset }) => <RouteError error={error} onRetry={reset} />,
   component: PerfilPage,
 });
@@ -78,7 +78,7 @@ function LogoutButton() {
       onClick={() => void handleLogout()}
     >
       <LogOut className="size-5" aria-hidden="true" />
-      Salir
+      Log out
     </Button>
   );
 }
@@ -88,7 +88,7 @@ function PerfilPage() {
   const meQuery = useQuery({ queryKey: queryKeys.me, queryFn: api.getMe });
   const [isRetrying, setIsRetrying] = useState(false);
 
-  if (meQuery.isPending) return <RoutePending label="Estamos buscando tu perfil" />;
+  if (meQuery.isPending) return <RoutePending label="We are looking for your profile" />;
   if (meQuery.isError) {
     async function retry() {
       setIsRetrying(true);
@@ -101,7 +101,7 @@ function PerfilPage() {
     return (
       <main className="mx-auto max-w-md px-6 pt-12 pb-40">
         <section className="surface-card p-5" role="alert">
-          <h1 className="text-xl font-extrabold">No pudimos leer tu perfil</h1>
+          <h1 className="text-xl font-extrabold">We could not read your profile</h1>
           <p className="mt-2 text-base text-muted-foreground">{getErrorMessage(meQuery.error)}</p>
           <Button
             type="button"
@@ -110,7 +110,7 @@ function PerfilPage() {
             onClick={() => void retry()}
             disabled={isRetrying}
           >
-            {isRetrying ? "Reintentando" : "Probar de nuevo"}
+            {isRetrying ? "Trying again" : "Try again"}
           </Button>
         </section>
       </main>
@@ -137,34 +137,34 @@ function PerfilPage() {
             className="mt-0.5 break-words text-base font-bold"
             {...(displayName ? {} : { "data-testid": "profile-name-absent" })}
           >
-            {displayName ?? "Todavía no tenemos tu nombre"}
+            {displayName ?? "We do not have your name yet"}
           </p>
           <span className="mt-1 inline-flex items-center gap-1 text-xs font-bold text-brand-ink">
             <Bell className="size-3" aria-hidden="true" />
-            Cuenta verificada
+            Verified account
           </span>
         </div>
         <LogoutButton />
       </section>
 
       <section className="mt-6">
-        <h2 className="lg-group-title">Cuenta</h2>
+        <h2 className="lg-group-title">Account</h2>
         <div className="lg-settings-list">
           <Link to="/mi-plata" className="lg-setting-row press">
-            <span>Billetera</span>
+            <span>Wallet</span>
             <ChevronRight aria-hidden="true" />
           </Link>
           <Link to="/notificaciones" className="lg-setting-row press">
-            <span>Notificaciones</span>
+            <span>Notifications</span>
             <ChevronRight aria-hidden="true" />
           </Link>
         </div>
       </section>
 
-      <section className="mt-7" aria-label="Permisos de pago">
-        <h2 className="text-base font-extrabold">Permisos de pago</h2>
+      <section className="mt-7" aria-label="Payment permissions">
+        <h2 className="text-base font-extrabold">Payment permissions</h2>
         <Suspense
-          fallback={<p className="mt-3 text-sm text-muted-foreground">Cargando permisos…</p>}
+          fallback={<p className="mt-3 text-sm text-muted-foreground">Loading permissions…</p>}
         >
           <WalletLifecycle userId={userId} />
         </Suspense>

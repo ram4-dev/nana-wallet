@@ -11,7 +11,7 @@ export function BottomNav() {
   const itemClass = "lg-nav-item press";
 
   return (
-    <nav className="lg-pill-nav" aria-label="Navegación principal">
+    <nav className="lg-pill-nav" aria-label="Main navigation">
       <Link
         to="/mi-plata"
         className={itemClass}
@@ -19,7 +19,7 @@ export function BottomNav() {
         aria-current={pathname === "/mi-plata" ? "page" : undefined}
       >
         <Wallet strokeWidth={2.4} aria-hidden="true" />
-        <span>Billetera</span>
+        <span>Wallet</span>
       </Link>
 
       <div className="lg-nav-voice-wrap">
@@ -31,7 +31,7 @@ export function BottomNav() {
         >
           <Sparkles className="size-8 text-primary" strokeWidth={2.2} aria-hidden="true" />
         </Link>
-        <span className="sr-only">Voz</span>
+        <span className="sr-only">Voice</span>
       </div>
 
       <Link
@@ -41,7 +41,7 @@ export function BottomNav() {
         aria-current={pathname === "/perfil" ? "page" : undefined}
       >
         <User strokeWidth={2.4} aria-hidden="true" />
-        <span>Perfil</span>
+        <span>Profile</span>
       </Link>
     </nav>
   );

@@ -29,12 +29,12 @@ function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="surface-card max-w-md p-7 text-center">
-        <h1 className="text-3xl font-extrabold text-foreground">Acá no hay nada para ver</h1>
+        <h1 className="text-3xl font-extrabold text-foreground">There is nothing to see here</h1>
         <p className="mt-4 text-lg leading-relaxed text-muted-foreground">
-          No hiciste nada mal. Puede ser que este lugar haya cambiado.
+          You did nothing wrong. It may be that this place has changed.
         </p>
         <Button asChild className="press mt-7 min-h-16 w-full text-lg font-extrabold">
-          <Link to="/">Volver al inicio</Link>
+          <Link to="/">Back to the start</Link>
         </Button>
       </div>
     </div>
@@ -51,13 +51,13 @@ function ErrorComponent({ error }: { error: Error; reset: () => void }) {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="surface-card max-w-md p-7 text-center">
         <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
-          Esta parte no cargó
+          This part did not load
         </h1>
         <p className="mt-4 text-lg leading-relaxed text-muted-foreground">
-          No es culpa tuya. Algo falló de este lado y tu plata sigue segura.
+          It is not your fault. Something failed on our side and your money is still safe.
         </p>
         <Button asChild className="press mt-7 min-h-16 w-full text-lg font-extrabold">
-          <a href="/">Volver al inicio</a>
+          <a href="/">Back to the start</a>
         </Button>
       </div>
     </div>
@@ -75,12 +75,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Nana Wallet" },
       {
         name: "description",
-        content: "Wallet agéntica y accesible para personas mayores y personas con discapacidad.",
+        content: "An agentic and accessible wallet for older people and people with disabilities.",
       },
       { property: "og:title", content: "Nana Wallet" },
       {
         property: "og:description",
-        content: "Pagar, transferir y organizar la vida financiera con ayuda de un agente.",
+        content:
+          "Paying, transferring and organising your financial life with the help of an agent.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -161,7 +162,7 @@ function PrivyAuthGate() {
     }
   }, [ready, user, pathname, navigate]);
 
-  if (!ready) return <RoutePending label="Estamos iniciando tu sesión" />;
+  if (!ready) return <RoutePending label="We are starting your session" />;
   if (!user && pathname !== "/login") return null;
   return <AppLayout />;
 }

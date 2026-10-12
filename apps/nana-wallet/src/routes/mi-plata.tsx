@@ -33,31 +33,32 @@ import { useNotificationsFeed } from "@/features/notifications/useNotificationsF
 export const Route = createFileRoute("/mi-plata")({
   head: () => ({
     meta: [
-      { title: "Billetera | Nana Wallet" },
+      { title: "Wallet | Nana Wallet" },
       {
         name: "description",
-        content: "Tu saldo de SOL en Solana devnet, en letra grande y con la fecha de la consulta.",
+        content:
+          "Your SOL balance on Solana devnet, in big letters and with the time of the check.",
       },
-      { property: "og:title", content: "Billetera" },
+      { property: "og:title", content: "Wallet" },
       {
         property: "og:description",
-        content: "Mirá tu saldo de SOL y actualizalo cuando quieras.",
+        content: "See your SOL balance and refresh it whenever you want.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  pendingComponent: () => <RoutePending label="Estamos buscando tu plata" />,
+  pendingComponent: () => <RoutePending label="We are looking for your money" />,
   errorComponent: ({ error, reset }) => <RouteError error={error} onRetry={reset} />,
   component: MiPlataPage,
 });
 
 const NOT_READY_LABELS: Record<string, string> = {
-  unprovisioned: "Tu billetera todavía no está preparada.",
-  provisioning: "Estamos preparando tu billetera.",
-  recovery_required: "Tu billetera necesita recuperación.",
-  conflict: "Detectamos un conflicto con tu billetera.",
-  unavailable: "Tu billetera no está disponible por ahora.",
+  unprovisioned: "Your wallet is not prepared yet.",
+  provisioning: "We are preparing your wallet.",
+  recovery_required: "Your wallet needs recovery.",
+  conflict: "We detected a conflict with your wallet.",
+  unavailable: "Your wallet is not available right now.",
 };
 
 function formatObservedAt(observedAt: string): string {
@@ -127,13 +128,13 @@ function MiPlataPage() {
   const [addressCopied, setAddressCopied] = useState(false);
 
   // WP-011: the identity error renders before any dependent load.
-  if (meQuery.isPending) return <RoutePending label="Estamos buscando tu plata" />;
+  if (meQuery.isPending) return <RoutePending label="We are looking for your money" />;
   if (meQuery.isError) {
     return <RouteError error={meQuery.error} onRetry={() => void meQuery.refetch()} />;
   }
 
   if (balancesQuery.isPending) {
-    return <RoutePending label="Estamos buscando tu saldo" />;
+    return <RoutePending label="We are looking for your balance" />;
   }
 
   if (balancesQuery.isError) {
@@ -141,9 +142,9 @@ function MiPlataPage() {
     // a failed refresh.
     return (
       <main className="mx-auto max-w-md px-6 pt-12 pb-40">
-        <h1 className="text-2xl font-extrabold">Billetera</h1>
+        <h1 className="text-2xl font-extrabold">Wallet</h1>
         <section className="surface-card mt-5 p-5" role="alert">
-          <h2 className="text-xl font-extrabold">No pudimos leer tu saldo</h2>
+          <h2 className="text-xl font-extrabold">We could not read your balance</h2>
           <p className="mt-2 text-base text-muted-foreground">
             {getErrorMessage(balancesQuery.error)}
           </p>
@@ -154,7 +155,7 @@ function MiPlataPage() {
             onClick={() => void balancesQuery.refetch()}
           >
             <RefreshCw className="size-5" aria-hidden="true" />
-            Actualizar saldo
+            Refresh balance
           </Button>
         </section>
       </main>
@@ -173,11 +174,11 @@ function MiPlataPage() {
         <Link
           to="/notificaciones"
           className="press inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm font-bold text-foreground"
-          aria-label={`Notificaciones${notifications.unreadCount ? `, ${notifications.unreadCount} sin leer` : ""}`}
+          aria-label={`Notifications${notifications.unreadCount ? `, ${notifications.unreadCount} unread` : ""}`}
           data-testid="notifications-shortcut"
         >
           <Bell className="size-4" aria-hidden="true" />
-          Notificaciones
+          Notifications
           {notifications.unreadCount > 0 ? (
             <span
               className="rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground"
@@ -189,11 +190,11 @@ function MiPlataPage() {
         </Link>
       </header>
 
-      <h1 className="mt-1 text-3xl font-extrabold tracking-tight">Mi cartera</h1>
+      <h1 className="mt-1 text-3xl font-extrabold tracking-tight">My wallet</h1>
 
       {balances.walletState === "ready" ? (
-        <section className="lg-balance-card" aria-label="Tu saldo">
-          <p className="text-sm text-muted-foreground">Tu saldo</p>
+        <section className="lg-balance-card" aria-label="Your balance">
+          <p className="text-sm text-muted-foreground">Your balance</p>
           {/* WP-010: exact string/BigInt format; es-AR separators. */}
           <p
             className="mt-1.5 mb-1.5 break-words text-4xl font-extrabold tracking-tight"
@@ -208,21 +209,21 @@ function MiPlataPage() {
           </p>
           {balances.source === "fixture" ? (
             <p className="mt-2 inline-flex rounded-full border border-border bg-card px-3 py-1 text-sm font-bold text-foreground">
-              Monto de demostración
+              Demo amount
             </p>
           ) : null}
           <p className="mt-2 text-sm text-muted-foreground">
-            Consultado: {formatObservedAt(balances.observedAt)}
+            Checked: {formatObservedAt(balances.observedAt)}
           </p>
         </section>
       ) : (
         <section className="surface-card mt-5 p-5" role="status" data-testid="wallet-not-ready">
           <div className="flex items-center gap-2">
             <Wallet className="size-6 text-brand-ink" aria-hidden="true" />
-            <h2 className="text-xl font-extrabold">Billetera</h2>
+            <h2 className="text-xl font-extrabold">Wallet</h2>
           </div>
           <p className="mt-2 text-lg text-muted-foreground">
-            {NOT_READY_LABELS[balances.walletState] ?? "Tu billetera no está lista todavía."}
+            {NOT_READY_LABELS[balances.walletState] ?? "Your wallet is not ready yet."}
           </p>
           <p className="mt-1 text-base text-muted-foreground">{balances.networkName}</p>
         </section>
@@ -236,7 +237,7 @@ function MiPlataPage() {
               className="press inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-primary bg-primary font-extrabold text-primary-foreground"
             >
               <Send className="size-4" aria-hidden="true" />
-              Enviar
+              Send
             </Link>
             <button
               type="button"
@@ -245,12 +246,12 @@ function MiPlataPage() {
               aria-expanded={addressVisible}
             >
               <ArrowDownLeft className="size-4" aria-hidden="true" />
-              Recibir
+              Receive
             </button>
           </div>
           {addressVisible ? (
             <div className="mt-3 rounded-2xl border border-border bg-card p-4">
-              <p className="text-sm font-bold">Tu dirección en {balances.networkName}</p>
+              <p className="text-sm font-bold">Your address on {balances.networkName}</p>
               <p className="mt-1.5 break-all font-mono text-xs text-muted-foreground">
                 {balances.address}
               </p>
@@ -268,7 +269,7 @@ function MiPlataPage() {
                 ) : (
                   <Copy className="size-4" aria-hidden="true" />
                 )}
-                {addressCopied ? "Copiada" : "Copiar dirección"}
+                {addressCopied ? "Copied" : "Copy address"}
               </button>
             </div>
           ) : null}
@@ -277,7 +278,7 @@ function MiPlataPage() {
 
       <section className="mt-7">
         <div className="flex items-center justify-between gap-2.5">
-          <h2 className="text-base font-extrabold">Tus activos</h2>
+          <h2 className="text-base font-extrabold">Your assets</h2>
           <span className="text-xs text-muted-foreground">{networkBalances.length || 1}</span>
         </div>
         <div className="lg-row-list mt-2">
@@ -327,10 +328,10 @@ function MiPlataPage() {
       </section>
 
       <section className="mt-6">
-        <h2 className="text-base font-extrabold">Actividad reciente</h2>
+        <h2 className="text-base font-extrabold">Recent activity</h2>
         {activity.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">
-            Todavía no tenés actividad de billetera.
+            You do not have any wallet activity yet.
           </p>
         ) : (
           <div className="lg-row-list mt-2">
@@ -355,8 +356,8 @@ function MiPlataPage() {
 
       <section className="mt-8 rounded-2xl border border-border bg-card p-4">
         <p className="text-sm text-muted-foreground">
-          Acá ves tu saldo en SOL sobre Solana devnet. No mostramos pesos, cotizaciones ni
-          movimientos simulados.
+          Here you see your SOL balance on Solana devnet. We do not show pesos, quotes or simulated
+          movements.
         </p>
       </section>
     </main>

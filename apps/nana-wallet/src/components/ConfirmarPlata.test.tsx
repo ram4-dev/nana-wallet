@@ -85,8 +85,8 @@ describe("ConfirmarPlata", () => {
     // Pasa de largo el vencimiento con la petición todavía viajando.
     await new Promise((resolve) => setTimeout(resolve, 1600));
 
-    expect(screen.queryByText(/hay que empezar de nuevo/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/nana está haciendo la operación/i)).toBeInTheDocument();
+    expect(screen.queryByText(/we need to start over/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/nana is doing the operation/i)).toBeInTheDocument();
     expect(props.onExpired).not.toHaveBeenCalled();
 
     resolveConfirm(receipt);
@@ -111,14 +111,14 @@ describe("ConfirmarPlata", () => {
     await user.click(screen.getByRole("button", { name: /sí, mandar/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/no sabemos si se hizo/i)).toBeInTheDocument();
+      expect(screen.getByText(/we do not know if it went through/i)).toBeInTheDocument();
     });
     // No puede ofrecer un "cancelar" que le mienta diciendo que no pasó nada.
     expect(screen.queryByRole("button", { name: "No, volver" })).not.toBeInTheDocument();
-    expect(screen.getByText(/no se va a duplicar/i)).toBeInTheDocument();
+    expect(screen.getByText(/it will not happen twice/i)).toBeInTheDocument();
     expect(props.onCancel).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: /reintentar operación/i }));
+    await user.click(screen.getByRole("button", { name: /try the operation again/i }));
 
     await waitFor(() => {
       expect(screen.getByText("Listo, le mandaste plata a Sofía")).toBeInTheDocument();
@@ -145,7 +145,7 @@ describe("ConfirmarPlata", () => {
     await waitFor(() => {
       expect(screen.getByText("No te alcanza la plata en pesos.")).toBeInTheDocument();
     });
-    expect(screen.queryByText(/no sabemos si se hizo/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/we do not know if it went through/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "No, volver" })).toBeEnabled();
   });
 });

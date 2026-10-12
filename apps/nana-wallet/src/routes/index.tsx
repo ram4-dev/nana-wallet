@@ -27,22 +27,22 @@ import { ContactActionProposalReview } from "@/features/wallet/ContactActionProp
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Agente | Nana Wallet" },
+      { title: "Agent | Nana Wallet" },
       {
         name: "description",
         content:
-          "Hablá con tu agente y resolvé pagos, transferencias y recordatorios sin complicaciones.",
+          "Talk to your agent and sort out payments, transfers and reminders without any complications.",
       },
-      { property: "og:title", content: "Agente | Nana Wallet" },
+      { property: "og:title", content: "Agent | Nana Wallet" },
       {
         property: "og:description",
-        content: "Tu asistente de confianza para pagar y transferir en pesos.",
+        content: "Your trusted assistant to pay and transfer in pesos.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  pendingComponent: () => <RoutePending label="Estamos preparando al agente" />,
+  pendingComponent: () => <RoutePending label="We are preparing the agent" />,
   errorComponent: ({ error, reset }) => <RouteError error={error} onRetry={reset} />,
   component: AgentePage,
 });
@@ -218,7 +218,7 @@ function AgentePage() {
     const submission = classifySessionSubmission(cleanText, confirmationPendingRef.current);
     if (submission.kind === "blocked") {
       setMessage(
-        "Hay una transferencia esperando tu decisión. Escribí “confirmar la transferencia” o “cancelar la transferencia”.",
+        "There is a transfer waiting for your decision. Write “confirmar la transferencia” or “cancelar la transferencia”.",
       );
       return;
     }
@@ -281,7 +281,7 @@ function AgentePage() {
     setIsEndingLive(false);
   }
 
-  if (meQuery.isPending) return <RoutePending label="Estamos preparando al agente" />;
+  if (meQuery.isPending) return <RoutePending label="We are preparing the agent" />;
   if (meQuery.isError) {
     return <RouteError error={meQuery.error} onRetry={() => void meQuery.refetch()} />;
   }
@@ -311,31 +311,31 @@ function AgentePage() {
                 : "listo";
   const agentStatus =
     livePhase === "connecting"
-      ? "Conectando con Nani"
+      ? "Connecting to Nani"
       : livePhase === "binding"
-        ? "Preparando la conversación"
+        ? "Preparing the conversation"
         : livePhase === "listening"
-          ? "Te estoy escuchando"
+          ? "I am listening to you"
           : livePhase === "muted"
-            ? "Micrófono pausado"
+            ? "Microphone paused"
             : livePhase === "speaking"
-              ? "Nani está hablando"
+              ? "Nani is speaking"
               : livePhase === "reconnecting"
-                ? "Reconectando"
+                ? "Reconnecting"
                 : livePhase === "paused"
-                  ? "Sesión pausada. Tocá para continuar"
+                  ? "Session paused. Tap to continue"
                   : livePhase === "request_waiting"
-                    ? "Tu solicitud está esperando"
+                    ? "Your request is waiting"
                     : livePhase === "failed"
                       ? liveVoice.state.reason.message
                       : isAgentWorking
-                        ? "Estoy resolviéndolo"
+                        ? "I am working on it"
                         : turn?.status === "confirmation_required"
-                          ? "Esperando que revises"
+                          ? "Nani is waiting for you to review"
                           : turn?.status === "error"
-                            ? "No te entendí bien"
+                            ? "Nani did not quite understand you"
                             : turn
-                              ? "Estoy listo para ayudarte"
+                              ? "Nani is ready to help you"
                               : null;
   const controls = getSessionControlState({
     isAgentWorking,
@@ -351,7 +351,7 @@ function AgentePage() {
         (canonicalPreview
           ? {
               status: "confirmation_required" as const,
-              message: "Revisá esta transferencia antes de confirmar.",
+              message: "Review this transfer before confirming.",
               preview: canonicalPreview,
             }
           : null));
@@ -359,8 +359,8 @@ function AgentePage() {
   return (
     <main className="mx-auto flex h-dvh max-w-md flex-col items-center overflow-hidden px-4 !pt-[max(0.75rem,env(safe-area-inset-top))] !pb-[calc(7.25rem+env(safe-area-inset-bottom))] sm:px-6">
       <h1 className="shrink-0 text-center text-2xl leading-tight font-extrabold sm:text-3xl">
-        <span className="block">Hola, soy Nani.</span>
-        <span className="mt-1 block">Hablame.</span>
+        <span className="block">Hi, I'm Nani.</span>
+        <span className="mt-1 block">Talk to me.</span>
       </h1>
 
       <div className="relative mt-2 flex shrink-0 flex-col items-center sm:mt-3">
@@ -370,9 +370,7 @@ function AgentePage() {
             livePhase === "listening" ? "listening" : ""
           }`}
           data-live-phase={livePhase}
-          aria-label={
-            livePhase === "speaking" ? "Interrumpir a Nani" : (agentStatus ?? "Hablar con Nani")
-          }
+          aria-label={livePhase === "speaking" ? "Interrupt Nani" : (agentStatus ?? "Talk to Nani")}
           aria-busy={["connecting", "binding", "thinking", "reconnecting"].includes(livePhase)}
           aria-pressed={livePhase === "listening"}
           onClick={() => void liveVoice.handleAvatarPress()}
@@ -402,7 +400,7 @@ function AgentePage() {
             onClick={() => void endLiveConversation()}
             disabled={isEndingLive}
           >
-            Terminar conversación
+            End conversation
           </Button>
         ) : null}
       </div>
@@ -421,10 +419,10 @@ function AgentePage() {
           aria-describedby="end-live-description"
         >
           <p id="end-live-title" className="font-extrabold">
-            Hay una acción financiera pendiente
+            There is a pending financial action
           </p>
           <p id="end-live-description" className="mt-1 text-sm font-bold">
-            Terminar la voz no cancela la transferencia ni su verificación.
+            Ending the voice does not cancel the transfer or its verification.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2">
             <Button
@@ -434,7 +432,7 @@ function AgentePage() {
               onClick={() => setShowEndLiveAcknowledgement(false)}
               autoFocus
             >
-              Seguir hablando
+              Keep talking
             </Button>
             <Button
               type="button"
@@ -442,7 +440,7 @@ function AgentePage() {
               onClick={() => void endLiveConversation(true)}
               disabled={isEndingLive}
             >
-              Terminar voz
+              End voice
             </Button>
           </div>
         </section>
@@ -455,7 +453,7 @@ function AgentePage() {
         {conversation.state?.progress ? (
           <section className="surface-card p-4" role="status">
             <p className="text-base font-extrabold">
-              {conversation.state.progress.label ?? "Estoy trabajando en tu solicitud."}
+              {conversation.state.progress.label ?? "I am working on your request."}
             </p>
           </section>
         ) : null}
@@ -470,24 +468,24 @@ function AgentePage() {
           <section className="surface-card p-4">
             {lastTranscript && !liveSessionActive && turn?.status === "confirmation_required" ? (
               <div className="mb-3 rounded-2xl bg-secondary px-4 py-3">
-                <p className="text-sm font-bold text-muted-foreground">Nani entendió:</p>
+                <p className="text-sm font-bold text-muted-foreground">Nani heard:</p>
                 <p className="mt-0.5 text-base font-extrabold">“{lastTranscript}”</p>
               </div>
             ) : null}
             <p className="text-base leading-snug">{displayedTurn.message}</p>
             {displayedTurn.status === "confirmation_required" ? (
               <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm sm:text-base">
-                <dt className="font-bold">Monto</dt>
+                <dt className="font-bold">Amount</dt>
                 <dd className="text-right">
                   {displayedTurn.preview.amount} {displayedTurn.preview.token}
                 </dd>
-                <dt className="font-bold">Destino</dt>
+                <dt className="font-bold">Recipient</dt>
                 <dd className="truncate text-right" title={displayedTurn.preview.recipient}>
                   {displayedTurn.preview.recipient}
                 </dd>
-                <dt className="font-bold">Red</dt>
+                <dt className="font-bold">Network</dt>
                 <dd className="text-right">{displayedTurn.preview.network}</dd>
-                <dt className="font-bold">Costo</dt>
+                <dt className="font-bold">Cost</dt>
                 <dd className="text-right">{displayedTurn.preview.estimatedFee}</dd>
               </dl>
             ) : null}
@@ -504,7 +502,7 @@ function AgentePage() {
                 isSessionActionPending || areSessionActionsLocked || conversation.isActionPending
               }
             >
-              Cancelar
+              Cancel
             </Button>
             <Button
               className="press mt-2 min-h-12 whitespace-normal text-base font-extrabold"
@@ -513,7 +511,7 @@ function AgentePage() {
                 isSessionActionPending || areSessionActionsLocked || conversation.isActionPending
               }
             >
-              Confirmar
+              Confirm
             </Button>
           </div>
         ) : null}
@@ -536,7 +534,7 @@ function AgentePage() {
         ) : null}
         {conversation.state?.transaction ? (
           <section className="surface-card p-4" role="status">
-            <p className="text-base font-extrabold">Transferencia confirmada</p>
+            <p className="text-base font-extrabold">Transfer confirmed</p>
             <a
               className="mt-2 block truncate text-sm font-bold text-primary underline"
               href={conversation.state.transaction.explorerUrl}
@@ -561,12 +559,12 @@ function AgentePage() {
           onChange={(event) => setText(event.target.value)}
           placeholder={
             liveSessionActive
-              ? "La voz está activa"
+              ? "Voice is on"
               : isConfirmationPending
-                ? "Confirmar o cancelar"
-                : "Escribime acá"
+                ? "Confirm or cancel"
+                : "Write to me here"
           }
-          aria-label="Mensaje para el agente"
+          aria-label="Message for the agent"
           disabled={textDisabled}
           className="h-10 min-w-0 flex-1 rounded-full border-0 bg-transparent px-4 py-2 text-base shadow-none focus-visible:ring-0 md:text-base"
         />
@@ -574,7 +572,7 @@ function AgentePage() {
           type="submit"
           size="icon"
           className="press size-10 shrink-0 rounded-full"
-          aria-label="Enviar mensaje"
+          aria-label="Send message"
           disabled={textDisabled || !text.trim()}
         >
           <Send className="size-5" strokeWidth={2.4} />

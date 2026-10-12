@@ -12,9 +12,12 @@ const phoneChannel: "sms" | "whatsapp" =
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Ingresar | Nana Wallet" },
-      { name: "description", content: "Entrá a tu Nana Wallet con tu correo o tu teléfono." },
-      { property: "og:title", content: "Ingresar | Nana Wallet" },
+      { title: "Sign in | Nana Wallet" },
+      {
+        name: "description",
+        content: "Sign in to your Nana Wallet with your email or your phone.",
+      },
+      { property: "og:title", content: "Sign in | Nana Wallet" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -31,23 +34,23 @@ function PrivyLoginContent() {
     },
   });
 
-  if (!ready) return <RoutePending label="Estamos preparando el acceso" />;
+  if (!ready) return <RoutePending label="We are preparing the sign-in" />;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center px-6 py-12 text-center">
       <section className="surface-card w-full max-w-sm p-7">
-        <h1 className="text-3xl font-extrabold">Entrá a tu Nana Wallet</h1>
+        <h1 className="text-3xl font-extrabold">Sign in to your Nana Wallet</h1>
         <p className="mt-4 text-lg leading-relaxed text-muted-foreground">
-          Te vamos a mandar un código a tu correo o a tu teléfono
-          {phoneChannel === "whatsapp" ? " por WhatsApp" : " por SMS"} para verificarte. Es rápido y
-          seguro.
+          We are going to send you a code to your email or to your phone
+          {phoneChannel === "whatsapp" ? " on WhatsApp" : " by SMS"} to verify you. It is fast and
+          safe.
         </p>
         <Button
           type="button"
           className="press mt-7 min-h-16 w-full text-lg font-extrabold"
           onClick={() => login()}
         >
-          Ingresar
+          Sign in
         </Button>
       </section>
     </main>

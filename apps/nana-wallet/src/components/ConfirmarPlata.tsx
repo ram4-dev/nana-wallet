@@ -61,7 +61,7 @@ export function ConfirmarPlata({
       const next = secondsUntil(intent.expiresAt);
       setSecondsLeft(next);
       if (next === 0) {
-        setExpiredMessage("Se terminó el tiempo para confirmar. Volvé a preparar la operación.");
+        setExpiredMessage("Time to confirm is up. Prepare the operation again.");
       }
     }, 1000);
     return () => window.clearTimeout(timer);
@@ -114,7 +114,7 @@ export function ConfirmarPlata({
                     {result.receipt.amountDisplay}
                   </p>
                   <p className="text-xl font-bold">{result.receipt.atHuman}</p>
-                  <p className="text-lg">Comprobante: {result.receipt.reference}</p>
+                  <p className="text-lg">Receipt: {result.receipt.reference}</p>
                   <p className="text-xl font-extrabold">{result.receipt.newBalanceDisplay}</p>
                 </div>
               </AlertDialogDescription>
@@ -122,7 +122,7 @@ export function ConfirmarPlata({
                 className="press mt-8 min-h-16 w-full text-lg font-extrabold"
                 onClick={() => onCloseReceipt(result)}
               >
-                Cerrar comprobante
+                Close receipt
               </Button>
             </div>
           ) : unknownMessage ? (
@@ -132,18 +132,18 @@ export function ConfirmarPlata({
             >
               <HelpCircle className="size-20 text-warning" aria-hidden="true" />
               <AlertDialogTitle className="mt-6 text-3xl font-extrabold">
-                No sabemos si se hizo
+                We do not know if it went through
               </AlertDialogTitle>
               <AlertDialogDescription asChild>
                 <div className="mt-4 space-y-4 text-lg leading-relaxed text-foreground">
                   <p>{unknownMessage}</p>
                   <p className="font-bold">
-                    Se cortó la comunicación justo cuando mandábamos la orden. Puede que se haya
-                    hecho y puede que no.
+                    The communication cut out right when we were sending the order. It may have gone
+                    through, and it may not have.
                   </p>
                   <p className="rounded-2xl bg-warning-surface text-warning-surface-foreground border border-border p-4 font-bold">
-                    Si tocás "Reintentar operación" no se va a duplicar. Es la misma operación, no
-                    una nueva.
+                    If you tap "Try the operation again" it will not happen twice. It is the same
+                    operation, not a new one.
                   </p>
                 </div>
               </AlertDialogDescription>
@@ -153,7 +153,7 @@ export function ConfirmarPlata({
                   onClick={() => void handleConfirm()}
                   disabled={isConfirming}
                 >
-                  Reintentar operación
+                  Try the operation again
                 </Button>
                 <Button
                   variant="outline"
@@ -161,7 +161,7 @@ export function ConfirmarPlata({
                   onClick={onUnknownOutcome}
                   disabled={isConfirming}
                 >
-                  Ver mi plata
+                  See my money
                 </Button>
               </div>
             </div>
@@ -172,10 +172,10 @@ export function ConfirmarPlata({
             >
               <Loader2 className="size-20 animate-spin text-brand-ink" aria-hidden="true" />
               <AlertDialogTitle className="mt-6 text-3xl font-extrabold">
-                Nana está haciendo la operación
+                Nana is doing the operation
               </AlertDialogTitle>
               <AlertDialogDescription className="mt-4 text-lg leading-relaxed text-foreground">
-                Esperá un momento. Te mostramos el comprobante apenas termine.
+                Wait a moment. We will show you the receipt as soon as it is done.
               </AlertDialogDescription>
             </div>
           ) : expiredMessage || secondsLeft <= 0 ? (
@@ -185,24 +185,23 @@ export function ConfirmarPlata({
             >
               <Clock3 className="size-20 text-warning" aria-hidden="true" />
               <AlertDialogTitle className="mt-6 text-3xl font-extrabold">
-                Hay que empezar de nuevo
+                We need to start over
               </AlertDialogTitle>
               <AlertDialogDescription className="mt-4 text-lg leading-relaxed text-foreground">
-                {expiredMessage ??
-                  "Se terminó el tiempo para confirmar. Volvé a preparar la operación."}
+                {expiredMessage ?? "Time to confirm is up. Prepare the operation again."}
               </AlertDialogDescription>
               <Button
                 className="press mt-8 min-h-16 w-full text-lg font-extrabold"
                 onClick={handleReturnAfterExpiry}
               >
-                Volver al comienzo
+                Back to the start
               </Button>
             </div>
           ) : (
             <>
               <header className="text-center">
                 <ShieldCheck className="mx-auto size-14 text-brand-ink" aria-hidden="true" />
-                <p className="mt-3 text-lg font-bold text-brand-ink">Revisá antes de confirmar</p>
+                <p className="mt-3 text-lg font-bold text-brand-ink">Review before confirming</p>
                 <AlertDialogTitle className="mt-2 text-3xl leading-tight font-extrabold">
                   {intent.confirmation.headline}
                 </AlertDialogTitle>
@@ -211,19 +210,19 @@ export function ConfirmarPlata({
               <AlertDialogDescription asChild>
                 <div className="surface-card mt-7 space-y-6 p-6 text-foreground">
                   <div>
-                    <p className="text-lg font-bold text-muted-foreground">A quién</p>
+                    <p className="text-lg font-bold text-muted-foreground">To whom</p>
                     <p className="mt-1 text-2xl font-extrabold">
                       {intent.confirmation.detailLines[0] ?? intent.confirmation.headline}
                     </p>
                   </div>
                   <div>
-                    <p className="text-lg font-bold text-muted-foreground">Cuánto</p>
+                    <p className="text-lg font-bold text-muted-foreground">How much</p>
                     <p className="mt-1 text-4xl font-extrabold tracking-tight">
                       {intent.confirmation.amountDisplay}
                     </p>
                   </div>
                   <div>
-                    <p className="text-lg font-bold text-muted-foreground">De qué cuenta</p>
+                    <p className="text-lg font-bold text-muted-foreground">From which account</p>
                     <p className="mt-1 text-2xl font-extrabold">
                       {intent.confirmation.fromAccountDisplay}
                     </p>
@@ -249,7 +248,7 @@ export function ConfirmarPlata({
                 aria-live="polite"
               >
                 <Clock3 className="size-6" aria-hidden="true" />
-                Tenés {formatCountdown(secondsLeft)} para decidir
+                You have {formatCountdown(secondsLeft)} to decide
               </p>
 
               {errorMessage ? (
