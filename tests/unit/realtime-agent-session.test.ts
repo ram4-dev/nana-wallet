@@ -165,14 +165,34 @@ describe("the voice session answers in the user's language", () => {
 
     expect(transcription.prompt).toContain("must be written with their original English spelling");
     expect(transcription.prompt).toContain(".sns suffix");
-    expect(transcription.prompt).toContain("Rioplatense Spanish");
+    // Bilingual by design: the product serves both, so the guidance names both
+    // rather than biasing the transcriber toward one of them.
+    expect(transcription.prompt).toContain("Spanish");
+    expect(transcription.prompt).toContain("English");
     // No Spanish instruction text survives anywhere in it.
     for (const spanish of ["ortografia", "pronunciacion espanola", "Transcribi", "El usuario dicta"]) {
       expect(transcription.prompt, spanish).not.toContain(spanish);
     }
-    // The transcription LANGUAGE is a separate, deliberately pinned setting and
-    // this change does not touch it: it is reported for its own change.
-    expect(transcription.language).toBe("es");
+    // NO single-language pin by default. This used to be pinned to `es`, which
+    // decoded an English speaker's audio as Spanish — wrong in both directions
+    // for a bilingual session, and the setting that made English testing
+    // unreliable. Unset leaves the provider's own detection in charge.
+    expect(transcription.language).toBeUndefined();
+  });
+
+  it("lets an operator pin one transcription language, and only then sends it", () => {
+    // The escape hatch for a single-language deployment. It is opt-in precisely
+    // because a pin is wrong for the bilingual default.
+    vi.stubEnv("OPENAI_TRANSCRIPTION_LANGUAGE", "en");
+    try {
+      createAgentSession({ tools: [], language: "en" });
+      const transcription = h.MockRealtimeModel.instances[0].options
+        .inputAudioTranscription as { language?: string };
+
+      expect(transcription.language).toBe("en");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("defaults to the language detector's own default when the caller names none", () => {

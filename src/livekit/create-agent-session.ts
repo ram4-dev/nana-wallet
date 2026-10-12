@@ -92,21 +92,43 @@ export type AgentSessionComposition = {
  * not rewrite phonetically, the remaining speech is Rioplatense Spanish) is
  * exactly the rule the Spanish text stated.
  *
- * `TRANSCRIPTION_LANGUAGE` below is a SEPARATE decision and is NOT part of that
- * translation: it still pins the transcriber to `es` (overridable through
- * `OPENAI_TRANSCRIPTION_LANGUAGE`), so an English speaker's audio is still
- * decoded as Spanish. That is a real, observed-adjacent defect of the same class
- * as the persona pin, but it changes live speech recognition rather than copy, so
- * it is reported for its own change instead of being smuggled in here.
+ * `TRANSCRIPTION_LANGUAGE` below was pinning the transcriber to `es`, which
+ * decoded an English speaker's audio as Spanish. The product now serves both
+ * languages, so a single pin is wrong in BOTH directions: it garbles English
+ * speech and it would garble Spanish speech if flipped. It is now OPTIONAL and
+ * unset by default, which leaves the provider's own language detection in
+ * charge — the only setting that is correct for a bilingual session. An operator
+ * who wants to pin one language for a single-language deployment can still set
+ * `OPENAI_TRANSCRIPTION_LANGUAGE`, and then it is sent as `language`.
  */
-const TRANSCRIPTION_LANGUAGE = process.env.OPENAI_TRANSCRIPTION_LANGUAGE ?? "es";
 const TRANSCRIPTION_PROMPT =
   process.env.OPENAI_TRANSCRIPTION_PROMPT ??
-  "The user dictates .sns domain names, for example 'juan.sns' or 'sophie.sns'. " +
-  "Those names are usually proper nouns or words in ENGLISH, and must be written " +
-  "with their original English spelling, NOT with their Spanish pronunciation. " +
-  "Transcribe the complete name, including the .sns suffix, without translating " +
-  "it or rewriting it phonetically. Other phrases are Rioplatense Spanish.";
+  "The user may speak Spanish (Rioplatense) or English; transcribe whichever " +
+  "language they actually spoke and never translate between them. They may also " +
+  "dictate a .sns domain name, for example 'juan.sns' or 'sophie.sns'. Those " +
+  "names are usually proper nouns or words in ENGLISH, and must be written with " +
+  "their original English spelling, NOT with a Spanish respelling of how they " +
+  "sound. Transcribe the complete name, including the .sns suffix, without " +
+  "translating it or rewriting it phonetically.";
+
+/**
+ * The transcriber's options, resolved per call rather than at module load.
+ *
+ * Per call on purpose: the language pin above is a deployment decision, and a
+ * value frozen at import time cannot be exercised in a test without reloading the
+ * module — which is how a wrong pin survived unnoticed in the first place.
+ */
+export function transcriptionOptions(
+  environment: NodeJS.ProcessEnv = process.env,
+): { model: string; language?: string; prompt: string } {
+  const language = environment.OPENAI_TRANSCRIPTION_LANGUAGE?.trim();
+  return {
+    model: environment.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe",
+    // Only sent when an operator pinned one; see TRANSCRIPTION_LANGUAGE above.
+    ...(language ? { language } : {}),
+    prompt: environment.OPENAI_TRANSCRIPTION_PROMPT ?? TRANSCRIPTION_PROMPT,
+  };
+}
 
 /**
  * Instruction for the session's opening turn, appended to
@@ -168,11 +190,9 @@ export function createAgentSession(options: {
     // The same transcription model the plugin defaults to, so nothing about the
     // transcription's latency changes — what changes is that it now knows what it
     // is listening for. See TRANSCRIPTION_PROMPT above.
-    inputAudioTranscription: {
-      model: process.env.OPENAI_TRANSCRIPTION_MODEL ?? "gpt-4o-mini-transcribe",
-      language: TRANSCRIPTION_LANGUAGE,
-      prompt: TRANSCRIPTION_PROMPT,
-    },
+    // See TRANSCRIPTION_LANGUAGE above: with no explicit pin the provider detects
+    // the language, which is what a bilingual session needs.
+    inputAudioTranscription: transcriptionOptions(),
   });
   const language: ConversationLanguage = options.language === "es" ? "es" : "en";
   const agent = new Agent({
