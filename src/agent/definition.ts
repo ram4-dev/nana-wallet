@@ -337,6 +337,51 @@ export type RealtimeVoiceToolResult = {
 };
 
 export const memorySearchSchema = z.object({ query: z.string().trim().min(1) });
+
+/**
+ * Model-facing `search_recipients` input.
+ *
+ * The `query` description is LOAD-BEARING, not documentation. The live
+ * regression was a user asking for a contact described as "my nephew", the audio
+ * model rendering that description as the phonetic proper name `MinaFi`, and the
+ * search then being asked for a stranger — so the tool answered `no_match` and
+ * the user was told their contact does not exist. A description IS a valid
+ * query, and the model has to be told so, because the field name alone reads
+ * like "proper name goes here" and the model will invent one to fill it.
+ */
+export const recipientSearchInputSchema = z.object({
+  query: z.string().trim().min(1).describe(
+    "The user's OWN words for the person: a contact name, or how the user "
+    + 'described them — a relationship or a role such as "my nephew" or "the '
+    + 'electrician". Descriptions are searched, so pass them through unchanged. '
+    + 'NEVER replace what the user said with a guessed proper name: inventing a '
+    + 'name searches for a stranger, returns nothing, and makes the user believe '
+    + 'their contact is gone.',
+  ),
+});
+
+/**
+ * The model-facing contract of `search_recipients`, shared by BOTH surfaces.
+ *
+ * Voice and text build their tools separately, so this text lives once here: two
+ * copies of a behavioural contract is how the two surfaces drift apart, and the
+ * drift is exactly what a caller silently loses.
+ *
+ * The last sentence is the incident. `no_match` used to arrive with an EMPTY
+ * contact list, so the model's honest options were "no such contact" or nothing
+ * at all. The result now carries the rows the store returned, and the model is
+ * required to read them back — name AND description, because the description is
+ * what lets the user recognise the person they described.
+ */
+export const SEARCH_RECIPIENTS_DESCRIPTION =
+  "Search the current user's contacts by NAME or DESCRIPTION. "
+  + "Pass the user's own words as `query`: a contact name, or how the user "
+  + 'described the person ("my nephew", "the electrician"). Never replace a '
+  + 'description with a guessed proper name. Results never include addresses. '
+  + 'When the result carries contacts, read their names AND their stored '
+  + 'descriptions back so the user can recognise the one they meant, and never '
+  + 'tell the user a contact does not exist while the result lists any.';
+
 export const memoryWriteSchema = z.object({ confirmationId: z.string().uuid() });
 export const memoryDraftSchema = z.object({
   kind: z.enum(['recipient', 'fact']),
@@ -961,8 +1006,8 @@ function createRecipientMemoryOperations(context: WalletAgentContext): AgentTool
     return [
       {
         name: 'search_recipients',
-        description: 'Search current-user recipient names and descriptions. Results never include addresses.',
-        inputSchema: memorySearchSchema,
+        description: SEARCH_RECIPIENTS_DESCRIPTION,
+        inputSchema: recipientSearchInputSchema,
         execute: async (input) => {
           const query = (input as { query: string }).query;
           return { query, count: 0, ambiguous: false, status: 'unavailable' as const, contacts: [] };
@@ -978,8 +1023,8 @@ function createRecipientMemoryOperations(context: WalletAgentContext): AgentTool
   return [
     {
       name: 'search_recipients',
-      description: 'Search current-user recipient names and descriptions. Results never include addresses.',
-      inputSchema: memorySearchSchema,
+      description: SEARCH_RECIPIENTS_DESCRIPTION,
+      inputSchema: recipientSearchInputSchema,
       execute: async (input) => {
         const rawResult = await raw.search_recipients(input);
         return toVoiceSearchResult((input as { query: string }).query, rawResult);

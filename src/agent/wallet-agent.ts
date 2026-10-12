@@ -13,6 +13,8 @@ import {
   createWalletAgentDefinition,
   memoryDraftSchema,
   memorySearchSchema,
+  recipientSearchInputSchema,
+  SEARCH_RECIPIENTS_DESCRIPTION,
   memoryWriteSchema,
   normalizeBroadcastResult,
   normalizeWalletToken as normalizeCanonicalWalletToken,
@@ -275,8 +277,8 @@ export function buildGuardedTools(
 function createMemoryAgentTools(raw: ReturnType<typeof createRecipientMemoryTools>): Record<string, Tool> {
   return {
     search_recipients: tool({
-      description: 'Search current-user recipient names and descriptions. Results never include addresses.',
-      inputSchema: memorySearchSchema,
+      description: SEARCH_RECIPIENTS_DESCRIPTION,
+      inputSchema: recipientSearchInputSchema,
       execute: (input) => raw.search_recipients(input),
     }),
     search_user_memory: tool({
