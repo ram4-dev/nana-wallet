@@ -1,6 +1,6 @@
 # Feature: contact-description-matching
 
-Status: in progress
+Status: done
 Branch: feat/solana-operational
 Owner: Ramiro
 Follows: `odd/tasks/contact-search-returns-evidence.md` (closed)
@@ -85,12 +85,59 @@ Out of scope (deliberately):
 
 ## Tasks
 
-- [ ] T6. Deterministic unique exact-description rule + red-first tests.
-- [ ] T7. The clarification question carries only plausible rows; `no_match` keeps the evidence.
-- [ ] T8. Verification: unit, integration, live proof against the deployed stack.
+- [x] T6. Deterministic unique exact-description rule + red-first tests.
+- [x] T7. The clarification question carries only plausible rows; `no_match` keeps the evidence.
+- [x] T8. Verification: unit, integration, live proof against the deployed stack.
 
 ## Evidence ledger
 
 | Task | Commit | Evidence |
 | ---- | ------ | -------- |
-|      |        |          |
+| T6 | `3acbdea` | Unit RED first (4 failures on the intentional rule). Integration proves it on a **total retrieval miss**: the stub sends an irrelevant vector, so the score is below the floor for every row and only the description rule can answer. |
+| T7 | `b7dc703` | Unit RED first (`['Sophie','Test1']` vs `['Sophie']`). |
+| T8 | this commit | See below. |
+
+### T8 — verification
+
+**Unit:** 1330 tests — **1326 passed**, 3 failed, all three documented baselines
+(`realtime-agent-session`, `realtime-tools`, `realtime-tool-binding`, all asserting Spanish preview
+copy replaced by the English translation).
+
+**Integration:** the six recipient/contact suites pass at 2 workers, 27/27.
+
+**Live, on the deployed stack.** Both containers recompile from the mounted `src`, so the VOICE
+path (`nana-privy-impl-voice-worker-1`) and the TEXT path (`nana-privy-impl-backend-1`) were each
+restarted and verified to have the new `dist` before probing. **Restarting only the worker leaves
+the text path on the old code** — a trap worth remembering.
+
+Real `search_recipients` tool, real recipient-memory service, real database:
+
+| query | before | after |
+| ----- | ------ | ----- |
+| `my nephew` | `clarification_required` | **`resolved`**, count=1, `Sophie("My nephew")` |
+| `mi sobrino` | `clarification_required`, count=**2** (Sophie + Test1) | `clarification_required`, count=**1**, only Sophie |
+| `nephew` | count=**2** | count=**1** |
+| `Sophie` | `resolved` | `resolved` |
+| `MinaFi` | `no_match`, count=2 | `no_match`, count=2 — testimony preserved |
+| `my grandson` | `no_match` | `no_match` |
+
+Real text path (`resolveTransferRecipient` with the real memory tools):
+
+```
+"send money to my nephew"       -> resolved                selected=8ccc3c14
+"Mandale plata a mi sobrino"    -> clarification_required  cands=[Sophie]
+"Mandale plata a Sophie"        -> resolved                selected=8ccc3c14
+"Mandale plata a Nadiequeexista" -> no_match               cands=[Test1,Sophie]
+```
+
+`resolved` selects the recipient through the same seam a name already used, so the flow becomes
+preview → spoken confirmation, with no new authority.
+
+## What this does NOT fix
+
+Cross-language and fuzzy descriptions stay on the score path by design: `mi sobrino` against the
+English `My nephew` scores 0.6045 and still asks (now about Sophie alone). Making THAT resolve
+would need the description to stop being diluted in the stored vector, i.e. a second
+`description_embedding` column plus a backfill that re-embeds every existing row. That is a
+larger change than the defect requires and is not done here.
+
