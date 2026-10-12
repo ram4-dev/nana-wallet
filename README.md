@@ -1,21 +1,21 @@
 # Nana Wallet
 
-## Demo rápida: Circle en Arc Testnet
+## Empezar
 
-Para Rama o su agente: seguir [el README de la demo](scripts/arc-demo/README.md).
-Incluye instalación, carga privada de credenciales, arranque local, comandos,
-prueba onchain y resolución de problemas. No requiere OpenAI, LiveKit ni Docker.
-Esta demo escrita es independiente del producto WDK documentado más abajo.
+Dos partes separadas: el **frontend** (`apps/nana-wallet/`, corre solo con MSW y
+no necesita el backend) y el **backend** (raíz; Fastify + PostgreSQL/pgvector).
 
 ```sh
-npm ci --ignore-scripts
-npm run demo:arc:configure
-npm run demo:arc
+# Frontend — no necesita backend
+cd apps/nana-wallet && npm ci && npm run dev -- --host 0.0.0.0 --port 8083
+
+# Backend — desde la raíz
+npm ci && docker compose up -d db && npm run db:migrate && npm run dev
 ```
 
-Abrir `http://127.0.0.1:8787`. Las credenciales se cargan localmente, no vienen
-en Git. No ejecutar provisioning ni registrar otro entity secret para usar las
-wallets existentes.
+El frontend queda en http://localhost:8083 y la API en http://localhost:3000.
+Detalle en [Ejecutar localmente](#ejecutar-localmente), el
+[runbook Docker](docs/local-docker-runbook.md) y [docs/api.md](docs/api.md).
 
 Wallet agéntica argentina diseñada para personas mayores y personas con discapacidad. Nana reduce la complejidad de una billetera tradicional: el usuario puede pedir una acción con lenguaje cotidiano, revisar claramente qué va a ocurrir y confirmar antes de mover dinero.
 
@@ -211,14 +211,35 @@ La confirmación conversacional es parte de la experiencia de la demo, no una fr
 
 ## Verificación antes de subir cambios
 
+Backend (raíz) y frontend (`apps/nana-wallet/`) se validan por separado. CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) corre exactamente esto y
+**un PR no se mergea con CI en rojo**.
+
 ```sh
+# Backend — desde la raíz. Con la base levantada: docker compose up -d db
+npm run lint
+npm run typecheck
+npm test
+npm run eval        # obligatorio si tocás el agente
+```
+
+```sh
+# Frontend
 cd apps/nana-wallet
 npm run lint
 npm run typecheck
 npm test
-npm run build
-npm run mobile:sync
 ```
+
+Notas:
+
+- `npm test` requiere `DATABASE_URL` para las suites de integración; sin base
+  esas suites **se saltean** (y en CI sí corren). Levantá la base con
+  `docker compose up -d db` antes de confiar en un verde local.
+- `npm run eval` corre Evalite sobre el agente. Los evals en modo real
+  (`EVAL_REAL=1`) no forman parte de CI.
+- Si tocás solo el frontend, alcanza con la suite del frontend; si el cambio toca
+  el contrato HTTP, corré también el backend completo.
 
 ## Alcance actual
 
@@ -288,6 +309,42 @@ mismos pasos que CI (roles + migraciones vía psql); el runbook los detalla. El
 worker de voz usa la misma imagen detrás del perfil `worker`. Este flujo es
 local: el deploy en Render/Supabase cloud y el APK Android son work units aparte.
 
+### Stack live (Solana devnet vía Privy)
+
+`compose.yaml` es el stack de desarrollo. El producto corre con
+[`compose.privy-local.yaml`](compose.privy-local.yaml), que levanta `db`,
+`livekit`, `backend`, `voice-worker`, los dos sidecars de firma y `frontend`.
+
+Los contenedores **recompilan desde el `src` montado al arrancar**
+(`npm run build && exec node dist/...`), así que un cambio de código necesita
+**reiniciar el contenedor**, no `docker compose build` — y `docker compose up -d`
+**no recrea nada** si la imagen no cambió.
+
+> ### El sidecar de firma queda huérfano si reiniciás a su consumidor
+>
+> El sidecar usa `network_mode: service:<consumidor>` y bindea **loopback**, así
+> que solo es alcanzable desde el namespace de red de ese consumidor. Recrear o
+> reiniciar el consumidor le da un namespace **nuevo** y deja al sidecar en el
+> viejo: sigue corriendo, sigue sano, y es inalcanzable en `127.0.0.1:8789`.
+>
+> Eso cae justo en el camino del dinero: una transferencia muere firmando su
+> autorización y se reporta como `broadcast_uncertain` — "no podemos saber si se
+> movió tu plata" — cuando **nada se transmitió**. Pasó en producción: los dos
+> sidecars quedaron huérfanos por reinicios de sus consumidores, el historial
+> onchain probó que no hubo envío, y al usuario se le informó un resultado
+> desconocido.
+>
+> **Regla: reiniciá el sidecar cada vez que reiniciás su consumidor,** y verificá
+> que compartan namespace:
+>
+> ```sh
+> docker exec nana-privy-impl-voice-worker-1        readlink /proc/self/ns/net
+> docker exec nana-privy-impl-voice-worker-signer-1 readlink /proc/self/ns/net
+> # los dos valores deben ser IGUALES
+> ```
+>
+> Un 401 prueba que el sidecar responde; `ECONNREFUSED` prueba la orfandad.
+
 For the RAG demo, set the following values in `.env` (the seed is demo data and
 contains no credential):
 
@@ -312,11 +369,21 @@ The first prefetch downloads the pinned embedding model into
 
 | User request | Safe result |
 | --- | --- |
-| `Mandale plata a Lucas` | Searches this demo user's recipient name and description. One exact Lucas may be selected. |
-| `Mandale plata a Lucas el electricista` | Uses hybrid lexical + vector retrieval over the current user's names and descriptions; the response contains candidates, never addresses. |
-| `Send money to my grandson` | Reads confirmed relationship facts, then still resolves one recipient record before address lookup. |
-| Two plausible Lucas records | Asks a description-based question such as “Lucas (mi nieto) or Lucas (el electricista)?” No preview is created. |
-| No match, stale record, DB/model failure | Stops before address lookup and before any WDK preview. |
+| `Mandale plata a Lucas` | Busca por nombre y descripción del usuario. Un Lucas exacto puede quedar seleccionado (insensible a acentos: `Sofia` encuentra `Sofía`). |
+| `Mandale plata a mi sobrino` | El texto que dijo el usuario **es** la consulta. Si coincide literalmente con la descripción de **un** contacto activo, se resuelve de forma determinística — sin depender del score vectorial, que no puede alcanzarlo (ver más abajo). |
+| `Mandale plata a Lucas el electricista` | Regla léxica de nombre + calificador sobre los candidatos, antes que la vía vectorial. |
+| Dos contactos descritos igual (dos «mi sobrino») | Pregunta en vez de elegir. La pregunta ofrece **solo** filas plausibles, nunca ruido. |
+| Sin match | Devuelve `no_match` **con las filas que sí encontró** como evidencia, para poder decir qué hay en vez de afirmar que el contacto no existe. No hay dirección ni preview. |
+| Registro vencido, o falla de DB/modelo | Se detiene antes de la dirección y antes de cualquier preview WDK. |
+
+> **Por qué el match por descripción no puede depender del vector.** El embedding
+> guardado es **uno solo**, compuesto como `name: <nombre>\ndescription: <desc>`,
+> así que el nombre diluye la descripción: medido contra la stack, `my nephew`
+> contra ese vector da `0.5722` (umbral `0.78`) mientras que contra la
+> descripción sola da `0.8671`. Una consulta de descripción queda
+> estructuralmente por debajo del umbral, por eso un match **literal** se contesta
+> de forma literal con una regla determinística. La vía vectorial sigue
+> resolviendo lo difuso y lo cross-language.
 
 Once there is one stable `recipientId` and `version`, `get_selected_recipient_address`
 (takes no arguments) may obtain the current address internally. That exact string
@@ -345,11 +412,17 @@ separate login surface of its own.
 
 | Tool | Input | Result and boundary |
 | --- | --- | --- |
-| `search_recipients` | `{ query }` | Finds current-user candidates and may bind one ID/version to the session. Addresses are omitted. |
+| `search_recipients` | `{ query }` | Busca entre los contactos del usuario **por nombre o por descripción**, y puede ligar un ID/versión a la sesión. Un match literal de descripción resuelve de forma determinística; lo demás usa el score vectorial. En `no_match` **devuelve igual las filas encontradas** como evidencia, y la pregunta de clarificación solo ofrece filas por encima del floor. Nunca incluye direcciones. |
+| `list_contacts` | `{ limit? }` | Enumera los contactos activos (nombre, descripción, red, si tiene alias) con `total` y `truncated`. Para "¿qué contactos tengo?"; nunca devuelve direcciones. |
 | `search_user_memory` | `{ query }` | Returns current-user relationship evidence only. |
 | `get_selected_recipient_address` | *(no arguments)* | Returns the exact address for the recipient already selected and version-bound in this session. |
 | `stage_user_memory` | Recipient draft or relationship fact | Stages exact user-provided content for five minutes; no data is yet written. |
 | `write_user_memory` | `{ confirmationId }` | Consumes a single-use, unexpired confirmation and writes atomically. |
+
+Una **descripción** es una consulta válida: el usuario describe a la persona
+("mi sobrino") y ese texto es lo que se busca. El nombre que el usuario no dijo
+**no se inventa nunca** — inventarlo busca a un desconocido, no encuentra nada y
+le hace creer que su contacto desapareció.
 
 The session inspection endpoint never exposes a staged address or confirmation
 ID. The tool may show an exact staged address to the user for confirmation, but
@@ -372,9 +445,27 @@ contain it.
 | `DATABASE_URL` | — | Application connection as `recipient_app`; required when memory is enabled. |
 | `DATABASE_ADMIN_URL` | — | Migration-only admin connection. Do not use it for the application runtime. |
 | `RECIPIENT_MEMORY_MODEL_CACHE` | `.cache/recipient-memory-model` | Reusable local Transformers.js cache. |
-| `RECIPIENT_MEMORY_SCORE_THRESHOLD` | `0.78` | Minimum semantic score for a non-exact candidate. |
+| `RECIPIENT_MEMORY_SCORE_FLOOR` | `0.55` | Relevance floor. Below it nothing is selectable, so the lookup answers `no_match` — but the rows found still travel back as evidence. Between the floor and the threshold the contact is plausible and unproven, so the caller asks. |
+| `RECIPIENT_MEMORY_SCORE_THRESHOLD` | `0.78` | Minimum semantic score for a non-exact candidate to resolve on its own. |
 | `RECIPIENT_MEMORY_SCORE_MARGIN` | `0.08` | Required lead over the runner-up; otherwise clarification is required. |
 | `RECIPIENT_MEMORY_SEED_FILE` | — | Confirmed-only JSON seed consumed by `npm run db:seed`. |
+
+### Voz (worker de LiveKit + OpenAI Realtime)
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OPENAI_REALTIME_MODEL` | `gpt-realtime-2.1-mini` | Modelo realtime de la sesión de voz. |
+| `OPENAI_REALTIME_VOICE` | `marin` | Voz TTS. |
+| `OPENAI_REALTIME_TURN_EAGERNESS` | `high` | Agresividad del detector de fin de turno (`semantic_vad`). `high` responde antes; `medium`/`low` esperan más. Un valor no reconocido cae a `high`. |
+| `OPENAI_REALTIME_NOISE_REDUCTION` | `far_field` | Reducción de ruido del micrófono (`far_field` para laptop/parlante, `near_field` para auricular). Desactivarla hace que el ruido de piso retrase el fin de turno. |
+| `OPENAI_TRANSCRIPTION_MODEL` | `gpt-4o-mini-transcribe` | Modelo de transcripción del audio de entrada. |
+| `OPENAI_TRANSCRIPTION_LANGUAGE` | *(sin fijar)* | Pin opcional del idioma de transcripción. **Sin fijar por defecto**: la app es bilingüe y un pin fijo hace que el audio del otro idioma se decodifique mal. |
+| `OPENAI_TRANSCRIPTION_PROMPT` | *(guía del producto)* | Contexto que se le da al transcriptor (nombres y dominios que la app usa). |
+
+El fin de turno es `semantic_vad`, no un umbral de silencio: la sesión es bilingüe
+y el usuario confirma transferencias hablando, así que el turno lo decide un
+modelo que entiende si la frase terminó. `EAGERNESS=high` es lo que evita la
+espera larga sin volver al criterio de silencio.
 
 `compose.yaml` arranca PostgreSQL/pgvector y persiste sus datos en el volumen
 `recipient_memory_postgres`. Con el perfil `dev` también levanta el backend API
