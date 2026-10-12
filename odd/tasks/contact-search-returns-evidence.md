@@ -148,6 +148,41 @@ Before this change the same call returned `{"status":"no_match","count":0,"conta
 the evidence the model needed to say "I found Sophie, saved as my nephew" was already destroyed
 by the time it arrived.
 
+## Appendix — the duplicate contact cleanup (operational, no code)
+
+The user authorised removing the older of two ACTIVE rows named `Sophie`. Both held the same
+address AND the same alias claim (`sophie.sns`):
+
+```
+0ac49a4d-…  2026-10-12 04:02  active  "Confirmen la creación de la destinataria…"   <- removed
+8ccc3c14-…  2026-10-12 15:44  active  "My nephew"                                  <- kept
+```
+
+Removed through the app's OWN screen path (`scripts/privy-recipient-live-screen.mjs` recipe:
+`buildServer` with `DemoIdentityProvider`, `removal-preview` then `DELETE /v1/contacts/:id` with
+the disclosed `expectedRevokedGrantIds`), **not** a raw `DELETE`, and only after the read-only
+preview proved the blast radius was nil:
+
+- `revokedGrantIds: []` — no grant revoked.
+- `lastAlias: false` — the alias claim survives through the kept row.
+- The address survives too (the kept row still holds it), so the composed allowlist is unchanged.
+
+The deployment's own reconciler applied revision 7 within 5 seconds
+(`desired=7 applied=7 status=applied`). `applied_recipients` still lists
+`3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2`, so nobody was locked out.
+
+Before / after, measured on the deployed stack with the real tool:
+
+| query        | before                                    | after                                                              |
+| ------------ | ----------------------------------------- | ------------------------------------------------------------------ |
+| `Sophie`     | `clarification_required` (0.767 vs 0.706) | **`resolved`** — count=1, `Sophie("My nephew")`                     |
+| `my nephew`  | `clarification_required`, Sophie first     | `clarification_required`, Sophie first                              |
+| `MinaFi`     | `no_match`, count=**0**                    | `no_match`, count=**2**, `Sophie("My nephew")` first                |
+| `mi sobrino` | —                                          | `clarification_required`, Sophie first                              |
+
+`list_contacts` reports `status=listed, total=2` and exposes only
+`name, description, network, hasAlias` — never an address.
+
 ## Consequence worth knowing
 
 The retrieval has `LIMIT 5` and no similarity cutoff, so a `no_match` now carries the top rows
