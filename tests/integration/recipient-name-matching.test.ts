@@ -157,12 +157,21 @@ suite("contact-name matching over the real recipients projection", () => {
     expect(result.candidates.map((entry) => entry.name)).toEqual(["Sofía"]);
   });
 
-  it("keeps a query that identifies nothing as a real miss", async () => {
+  it('reports an unselectable query as a miss while still returning the rows it found', async () => {
     const userId = await provisionUser();
     await addRecipient(userId, "Sofía", "mi vecina", ADDRESS_A);
     await addRecipient(userId, "Test1", "un contacto de prueba", ADDRESS_B);
 
-    await expect(service().searchRecipients(userId, "Nadie")).resolves.toEqual({ status: "no_match", candidates: [] });
+    // `Nadie` identifies nobody: nothing is selectable, and the status says so.
+    // The queries above are NOT the only thing that runs, though — the store DID
+    // return rows below the floor, and they travel with the miss so the surface
+    // can report what it found instead of telling the user they have no contacts.
+    const result = await service().searchRecipients(userId, "Nadie");
+
+    expect(result.status).toBe("no_match");
+    expect(result).not.toHaveProperty("recipient");
+    expect(result.candidates.map((entry) => entry.name)).toEqual(["Sofía", "Test1"]);
+    expect(result.candidates.map((entry) => entry.description)).toEqual(["mi vecina", "un contacto de prueba"]);
   });
 
   it("still asks when two genuinely different contacts answer to the same name", async () => {

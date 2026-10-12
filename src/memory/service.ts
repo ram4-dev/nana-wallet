@@ -84,7 +84,22 @@ export function classifyRecipientCandidates(
   if (prefixedRecipient) return resolvedOn(prefixedRecipient);
 
   const [first, second] = ranked;
-  if (!first || first.score < config.scoreFloor) return { status: 'no_match', candidates: [] };
+  // NO CANDIDATE IS SELECTABLE BELOW THE FLOOR — but the rows are still
+  // RETURNED, and the difference between those two facts is the whole point.
+  //
+  // `no_match` answers "can I hand you a recipient to act on?" and that answer is
+  // no. It is NOT a claim that the user has no contacts, so the retrieved rows
+  // travel with it. Destroying them here made a misheard query (a description the
+  // audio model rendered as the phonetic name `MinaFi`) come back as an empty
+  // list, and the surface then told the user their contact does not exist while
+  // the row — `Sophie`, described as "My nephew" — was there all along. A caller
+  // that receives evidence it cannot act on can still say what it found; a caller
+  // that receives nothing can only deny.
+  //
+  // The floor keeps gating ACTIONS, not DISCLOSURE: nothing below it yields a
+  // `recipient`, and a selection is only ever set from `resolved`, so a
+  // low-scoring row can be reported but never becomes a transfer target.
+  if (!first || first.score < config.scoreFloor) return { status: 'no_match', candidates: ranked };
   // Plausible but unproven: hand the candidates over so the caller can ask
   // "is this the contact you meant?" instead of reporting that nothing exists.
   if (first.score < config.scoreThreshold) return { status: 'clarification_required', candidates: ranked };

@@ -75,13 +75,21 @@ describe('recipient-memory ranking', () => {
       scoreMargin: 0.08,
     })).toMatchObject({ status: 'clarification_required', candidates: [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }] });
 
-    // Below the floor the candidate is noise: a real miss, and nothing is shipped
-    // to the caller, so `status` can never contradict the payload.
-    expect(classifyRecipientCandidates('my grandson', [candidate({ normalizedName: 'lucas', score: 0.42 })], {
+    // Below the floor the candidate is NOT selectable, so the status is
+    // `no_match` — but the row itself is still shipped, because `no_match` is a
+    // statement about SELECTION, never a claim that the user has no contacts.
+    // Destroying the row here is what let a misheard query be reported to the
+    // user as "that contact does not exist".
+    const belowFloor = classifyRecipientCandidates('my grandson', [candidate({ normalizedName: 'lucas', score: 0.42 })], {
       scoreThreshold: 0.78,
       scoreFloor: 0.55,
       scoreMargin: 0.08,
-    })).toEqual({ status: 'no_match', candidates: [] });
+    });
+    expect(belowFloor).toMatchObject({ status: 'no_match' });
+    expect(belowFloor.candidates.map((entry) => entry.name)).toEqual(['Lucas']);
+    // The floor still gates selection on BOTH sides: a below-floor result carries
+    // evidence but never a `recipient`, so nothing below the floor can be acted on.
+    expect(belowFloor).not.toHaveProperty('recipient');
 
     expect(classifyRecipientCandidates('my grandson', [candidate({ normalizedName: 'lucas', score: 0.88 }), candidate({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Mateo', normalizedName: 'mateo', score: 0.84 })], {
       scoreThreshold: 0.78,
@@ -264,7 +272,9 @@ describe('contact-name matching is diacritic-insensitive and bounded', () => {
   });
 
   it('keeps the prefix rule bounded: too short, or a non-meaningful function word, resolves nothing', () => {
-    expect(classifyRecipientCandidates('sof', [sofia], NAME_ONLY_RANKING)).toEqual({ status: 'no_match', candidates: [] });
+    expect(classifyRecipientCandidates('sof', [sofia], NAME_ONLY_RANKING)).toMatchObject({
+      status: 'no_match', candidates: [{ id: sofia.id }],
+    });
     const parana = candidate({
       id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
       name: 'Paraná',
@@ -272,7 +282,9 @@ describe('contact-name matching is diacritic-insensitive and bounded', () => {
       description: 'otro contacto',
       score: 0.9,
     });
-    expect(classifyRecipientCandidates('para', [parana], NAME_ONLY_RANKING)).toEqual({ status: 'no_match', candidates: [] });
+    expect(classifyRecipientCandidates('para', [parana], NAME_ONLY_RANKING)).toMatchObject({
+      status: 'no_match', candidates: [{ id: parana.id }],
+    });
   });
 
   it('folds the name-and-qualifier path too, so a qualified request is not defeated by an accent', () => {
@@ -291,12 +303,77 @@ describe('contact-name matching is diacritic-insensitive and bounded', () => {
 
   it('leaves an unrelated name on the retrieval path, which is still the honest answer for it', () => {
     // No name rule matches `Sofia` against `Lucas`, and the score cannot either:
-    // a genuine miss, reported as one.
-    expect(classifyRecipientCandidates('Sofia', [candidate()], NAME_ONLY_RANKING)).toEqual({ status: 'no_match', candidates: [] });
+    // nothing is selectable, reported as such — with the row still attached.
+    expect(classifyRecipientCandidates('Sofia', [candidate()], NAME_ONLY_RANKING)).toMatchObject({
+      status: 'no_match', candidates: [{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }],
+    });
     // With a usable score the SAME unrelated query still resolves through the
     // embedding fallback, so the fallback is intact rather than bypassed.
     expect(classifyRecipientCandidates('Sofia', [candidate({ score: 0.99 })], {
       scoreThreshold: 0.78, scoreFloor: 0.55, scoreMargin: 0.08,
     }).status).toBe('resolved');
+  });
+});
+
+/**
+ * The live regression this suite was opened for.
+ *
+ * A user asked the voice agent for "my nephew". The audio model rendered the
+ * description as the phonetic proper name `MinaFi`, and the agent told the user
+ * the contact does not exist. It did exist — stored as `Sophie`, with the
+ * description `"My nephew"` — and the repository had returned it on both
+ * queries. `no_match` shipped an EMPTY candidate list, so the surface had
+ * nothing to read back and a comprehension error became a false claim about the
+ * user's own data.
+ *
+ * The scores below are the ones measured against the deployed stack.
+ */
+describe('a below-floor result still reports the rows the store returned', () => {
+  const RANKING = { scoreThreshold: 0.78, scoreFloor: 0.55, scoreMargin: 0.08 };
+  const sophie = candidate({
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    name: 'Sophie',
+    normalizedName: 'sophie',
+    description: 'My nephew',
+  });
+  const test1 = candidate({
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    name: 'Test1',
+    normalizedName: 'test1',
+    description: '',
+  });
+
+  it('RED: a misheard query carries the right contact and its stored description', () => {
+    // `MinaFi` measured 0.263 for Sophie, 0.231 and 0.224 for the others: all
+    // below the 0.55 floor, so nothing is selectable.
+    const misheard = classifyRecipientCandidates('minafi', [
+      { ...sophie, score: 0.263 },
+      { ...test1, score: 0.231 },
+      { ...sophie, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', score: 0.224, description: 'otra fila' },
+    ], RANKING);
+
+    expect(misheard.status).toBe('no_match');
+    // The evidence must survive, ranked, so the surface can say "I found Sophie,
+    // saved as my nephew" instead of "that contact does not exist".
+    expect(misheard.candidates.map((entry) => entry.name)).toEqual(['Sophie', 'Test1', 'Sophie']);
+    expect(misheard.candidates[0]).toMatchObject({ name: 'Sophie', description: 'My nephew' });
+    expect(misheard.candidates[0]!.score).toBeCloseTo(0.263, 3);
+  });
+
+  it('the SAME query is still not selectable, so carrying the rows adds no way to act on them', () => {
+    const misheard = classifyRecipientCandidates('minafi', [{ ...sophie, score: 0.263 }], RANKING);
+
+    expect(misheard.status).toBe('no_match');
+    // `no_match` never yields a `recipient`, and the selection is only ever set
+    // from `resolved` (see `src/memory/tools.ts`), so a low-score row can be
+    // reported but never becomes a transfer target on its own.
+    expect(misheard).not.toHaveProperty('recipient');
+    expect(misheard.candidates.every((entry) => entry.status === 'active')).toBe(true);
+  });
+
+  it('a genuinely empty store still reports nothing, so the two cases stay distinguishable', () => {
+    // An empty retrieval and a below-floor retrieval are NOT the same fact, and
+    // after this change they are no longer the same payload either.
+    expect(classifyRecipientCandidates('minafi', [], RANKING)).toEqual({ status: 'no_match', candidates: [] });
   });
 });
