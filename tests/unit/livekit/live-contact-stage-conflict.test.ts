@@ -91,6 +91,19 @@ suite("a live open window over the real one-open index", () => {
     const port = createVoiceContactActions({
       actions: service,
       boundParticipantIdentity: IDENTITY,
+      // The port refuses a `create` with no address source, so the stage under
+      // test carries the `.sns` name that supplies one. The resolver is fixture
+      // plumbing — this suite is about the live one-open conflict — and it still
+      // resolves BEFORE the row exists, so the collision is unchanged.
+      resolveAlias: async (call: { userId: string; snsName: string }) => ({
+        status: "resolved" as const,
+        snsName: call.snsName,
+        address: "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2",
+        resolvedAt: "2026-01-01T00:00:00.000Z",
+        resolver: "sns/solana-devnet/v3",
+        reverseDomain: null,
+        reverseDomainState: "none" as const,
+      }),
       supersedeUnpublished: ({ userId: owner, conversationId: conversation }) =>
         service.supersedeUnpublished(owner, conversation),
       // The worker's own wiring, verbatim (src/livekit/worker.ts): the persisted
@@ -115,6 +128,7 @@ suite("a live open window over the real one-open index", () => {
       origin: "voice",
       action: "create",
       name: "Lucas",
+      snsName: "lucas.sns",
     });
 
     expect(refused).toEqual({

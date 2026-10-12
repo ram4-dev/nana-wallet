@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONTACT_PROPOSAL_TOPIC,
   contactProposalSummary,
+  CREATE_WITHOUT_ADDRESS_MESSAGE,
   createVoiceContactActions,
   REVIEW_CHANNEL_MESSAGE,
   type VoiceContactActionDependencies,
@@ -29,6 +30,25 @@ const PROPOSAL_ID = "33333333-3333-4333-8333-333333333333";
 const IDENTITY = "participant-1";
 /** The real devnet resolution of `sophie.sns`, recorded in the change's resources. */
 const ALIAS_ADDRESS = "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2";
+const CONTACT_ID = "55555555-5555-4555-8555-555555555555";
+
+/**
+ * The alias seam's answer, used by the default wiring below.
+ *
+ * The port now REFUSES a `create` that carries no address source at all, so every
+ * case in this suite that is about what happens AFTER a create is staged has to
+ * stage one that carries one. The default resolver below is what makes those cases
+ * express that requirement, instead of the fixture silently bypassing the gate.
+ */
+const RESOLVED_ALIAS = {
+  status: "resolved",
+  snsName: "sofia.sns",
+  address: ALIAS_ADDRESS,
+  resolvedAt: "2026-01-01T00:00:00.000Z",
+  resolver: "sns/solana-devnet/v3",
+  reverseDomain: null,
+  reverseDomainState: "none",
+} as const;
 
 function proposal(overrides: Partial<ContactActionProposal> = {}): ContactActionProposal {
   return {
@@ -85,6 +105,8 @@ function harness(input: {
   /** The honest outcome the seam must answer with, when the default `APPLIED` is not it. */
   outcome?: ContactProposalApplication;
   resolveAlias?: VoiceContactActionDependencies["resolveAlias"];
+  /** `true` reproduces a wiring with NO resolver at all (the alias fail-closed arm). */
+  noAliasResolver?: boolean;
   /** Stands in for the persisted row the card renders. */
   currentOpenProposal?: () => Promise<{ proposalId: string; proposalVersion: number } | null>;
 } = {}) {
@@ -119,14 +141,15 @@ function harness(input: {
   const port = createVoiceContactActions({
     actions: actions as never,
     ...(input.noBoundVisualClient ? {} : { boundParticipantIdentity: IDENTITY }),
-    ...(input.resolveAlias
-      ? {
+    ...(input.noAliasResolver
+      ? {}
+      : {
+          // Wired by DEFAULT: see `RESOLVED_ALIAS`.
           resolveAlias: async (call: { userId: string; snsName: string }) => {
             resolveCalls.push(call.snsName);
-            return input.resolveAlias!(call);
+            return input.resolveAlias ? input.resolveAlias(call) : { ...RESOLVED_ALIAS };
           },
-        }
-      : {}),
+        }),
     publish: async (payload) => {
       published.push(payload);
       await (input.publish?.(payload) ?? Promise.resolve());
@@ -163,7 +186,7 @@ function evidence(arbiter: ReturnType<typeof createConfirmationArbiter>, created
 describe("voice contact proposal publication", () => {
   it("stamps published_at and opens the window only after a reliable delivery to the bound participant", async () => {
     const h = harness();
-    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
     expect(staged).toMatchObject({ status: "staged", proposalId: PROPOSAL_ID, proposalVersion: 1 });
     expect(h.published).toHaveLength(1);
@@ -186,7 +209,7 @@ describe("voice contact proposal publication", () => {
 
   it("re-publishes nothing and opens no window when the publish rejects", async () => {
     const h = harness({ publish: async () => { throw new Error("participant gone"); } });
-    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
     expect(staged.status).toBe("proposal_not_published");
     expect(h.published).toHaveLength(1);
@@ -206,7 +229,7 @@ describe("voice contact proposal publication", () => {
 
   it("opens no window when the published_at stamp affects zero rows", async () => {
     const h = harness({ markPublished: async () => null });
-    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
     expect(staged.status).toBe("proposal_not_published");
     // The delivery happened (positive control) and was attempted exactly once,
@@ -219,7 +242,7 @@ describe("voice contact proposal publication", () => {
 
   it("treats publication as delivery evidence, never as proof of reading", async () => {
     const h = harness();
-    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     expect(h.arbiter.current()).toBeDefined();
 
     // A published card with no spoken evidence authorizes nothing.
@@ -237,7 +260,7 @@ describe("voice contact proposal publication", () => {
 
   it("applies once through the injected L5 application, and refuses when the CAS is lost", async () => {
     const h = harness();
-    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     const window = h.arbiter.current()!;
     evidence(h.arbiter, window.createdAt + 1);
 
@@ -264,7 +287,7 @@ describe("voice contact proposal publication", () => {
     expect(h.arbiter.current()).toBeUndefined();
 
     const refusedHarness = harness({ consumed: false });
-    await refusedHarness.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    await refusedHarness.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     evidence(refusedHarness.arbiter, refusedHarness.arbiter.current()!.createdAt + 1);
     expect((await refusedHarness.port.confirm!({ userId: USER_ID, conversationId: CONVERSATION_ID, proposalId: PROPOSAL_ID, proposalVersion: 1, source: "voice" })).status)
       .toBe("confirmation_required");
@@ -277,7 +300,7 @@ describe("voice contact proposal publication", () => {
     const h = harness({
       currentOpenProposal: async () => ({ proposalId: CURRENT, proposalVersion: 2 }),
     });
-    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     const window = h.arbiter.current()!;
     evidence(h.arbiter, window.createdAt + 1);
 
@@ -298,7 +321,7 @@ describe("voice contact proposal publication", () => {
 
     // With no open proposal at all, the refusal says so and offers no handle.
     const missing = harness({ currentOpenProposal: async () => null });
-    await missing.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    await missing.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     evidence(missing.arbiter, missing.arbiter.current()!.createdAt + 1);
     const gone = await missing.port.confirm!({
       userId: USER_ID,
@@ -315,7 +338,10 @@ describe("voice contact proposal publication", () => {
 
   it("refuses permission creation and requests the review channel when no bound visual client exists", async () => {
     const h = harness({ noBoundVisualClient: true });
-    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    // The fixture carries an address source because a create WITHOUT one is
+    // refused earlier, by the address gate whose own cases assert it. This case is
+    // about the no-bound-client guard, so it has to reach that guard.
+    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
     expect(staged).toMatchObject({ status: "address_review_required", message: REVIEW_CHANNEL_MESSAGE });
     // Nothing was persisted, nothing was published, no window opened.
@@ -324,25 +350,29 @@ describe("voice contact proposal publication", () => {
     expect(h.arbiter.current()).toBeUndefined();
   });
 
-  it("never derives an address from the spoken name and never addresses the room at large", async () => {
+  it("never derives an address from the spoken label, and never addresses the room at large", async () => {
+    // PREMISE CHANGED. This case staged a create carrying only a label and
+    // asserted the absent address was not derivable from it. A create with no
+    // address source is now REFUSED outright (the dedicated cases below own that),
+    // so what is left to assert is the claim that still means something: the
+    // address a create carries comes from the RESOLVER, never from the label the
+    // model spoke — and the card still goes only to the bound participant.
     const h = harness();
-    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
-    // The card carries the persisted (still absent) address, and the address is
-    // not derivable from the label the model supplied.
-    expect(card(h.published[0]!).address).toBeNull();
+    // The service got the resolved address, not anything derived from the label.
+    expect(h.stageCalls[0]).toMatchObject({ name: "Sofía", address: ALIAS_ADDRESS });
+    expect(h.stageCalls[0]!.address).not.toContain("Sofía");
     expect(JSON.stringify(card(h.published[0]!))).not.toContain("Sofía1");
     // Exactly one destination: the bound participant, never the room.
     expect(h.published[0]!.destinationIdentities).toHaveLength(1);
     expect(h.published[0]!.destinationIdentities[0]).toBe(IDENTITY);
-    // The stage call the port made carries no address field at all.
-    expect(Object.keys(h.stageCalls[0]!)).not.toContain("address");
   });
 
   it("returns conflict_active_window without preempting the open window", async () => {
     const h = harness();
     h.arbiter.open({ kind: "transfer", actionId: "preview-1", userId: USER_ID, conversationId: CONVERSATION_ID, version: 0, createdAt: Date.now() });
-    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
     expect(staged.status).toBe("conflict_active_window");
     expect(h.arbiter.current()).toMatchObject({ kind: "transfer", actionId: "preview-1" });
@@ -417,7 +447,7 @@ describe("voice contact proposal publication", () => {
   });
 
   it("fails closed on an alias stage when no resolver is wired", async () => {
-    const h = harness();
+    const h = harness({ noAliasResolver: true });
     const staged = await h.port.stage({
       userId: USER_ID,
       conversationId: CONVERSATION_ID,
@@ -475,7 +505,7 @@ describe("the confirmation's permission sentence", () => {
 
   async function confirmWith(permission: AppliedOutcome["permission"], action: "create" | "remove" = "create") {
     const h = harness({ outcome: outcome(permission, action) });
-    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     evidence(h.arbiter, h.arbiter.current()!.createdAt + 1);
     return h.port.confirm!({ userId: USER_ID, conversationId: CONVERSATION_ID, proposalId: PROPOSAL_ID, proposalVersion: 1, source: "voice" });
   }
@@ -552,5 +582,87 @@ describe("the confirmation's permission sentence", () => {
 
     const removed = await confirmWith(ENABLED, "remove");
     expect(removed.message).toBe("Done: I removed that recipient and the policy already reflects the removal.");
+  });
+});
+
+/**
+ * The gate that keeps the removed paste form from leaving a dead end behind.
+ *
+ * The review card used to own the ONLY control that could give an address-less
+ * `create` an address. That control is gone, so a create that arrives with no
+ * address source — the model holds a LABEL, never a destination, so its only
+ * address source is a resolved `.sns` name — would be a card the user can neither
+ * finish nor confirm. It is refused before anything is written instead.
+ */
+describe("a create with no address source (the dead end this refuses to create)", () => {
+  const CREATE = {
+    userId: USER_ID,
+    conversationId: CONVERSATION_ID,
+    origin: "voice",
+    action: "create",
+    name: "Sofía",
+  } as const;
+
+  it("is refused before anything is written: no row, no card, no window", async () => {
+    const h = harness();
+    const refused = await h.port.stage(CREATE);
+
+    expect(refused).toEqual({
+      status: "address_review_required",
+      message: CREATE_WITHOUT_ADDRESS_MESSAGE,
+    });
+    // The point of refusing HERE rather than staging and apologizing later: the
+    // service is never called, so no row exists to be finished, no card is
+    // delivered for it, and no window can consume a confirmation for it.
+    expect(h.stageCalls).toHaveLength(0);
+    expect(h.published).toHaveLength(0);
+    expect(h.arbiter.current()).toBeUndefined();
+    // There is no name to resolve either, so the resolver is not asked.
+    expect(h.resolveCalls).toHaveLength(0);
+  });
+
+  it("names the wallet screen, and never the card's address field, which no longer exists", async () => {
+    const h = harness();
+    const refused = await h.port.stage(CREATE);
+
+    // The instruction has to name a place that EXISTS after this change.
+    expect(refused.message).toMatch(/wallet screen/iu);
+    // The card no longer has an address field, so asking the user to go paste one
+    // there is the exact lie this gate exists to stop telling.
+    expect(refused.message).not.toMatch(/card/iu);
+    // English, like the rest of the product copy.
+    expect(refused.message).not.toMatch(/dirección|pegues|tarjeta/iu);
+    // And it never claims anything was saved or enabled.
+    expect(refused.message).toMatch(/saved nothing/iu);
+    expect(refused.message).toMatch(/enabled nothing/iu);
+  });
+
+  it("still stages an edit and a removal, which need no address of their own", async () => {
+    const h = harness();
+    const edit = await h.port.stage({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      origin: "voice",
+      action: "edit",
+      contactId: CONTACT_ID,
+      expectedVersion: 2,
+    });
+    const remove = await h.port.stage({
+      userId: USER_ID,
+      conversationId: CONVERSATION_ID,
+      origin: "voice",
+      action: "remove",
+      contactId: CONTACT_ID,
+      expectedVersion: 2,
+    });
+
+    // The gate is scoped to `create` on purpose: an edit or a removal is about a
+    // recipient that already exists and carries no address of its own.
+    expect(edit).toMatchObject({ status: "staged", proposalId: PROPOSAL_ID });
+    expect(remove).toMatchObject({ status: "staged", proposalId: PROPOSAL_ID });
+    expect(h.stageCalls).toHaveLength(2);
+    for (const call of h.stageCalls) {
+      expect(Object.keys(call)).not.toContain("address");
+    }
   });
 });

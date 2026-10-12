@@ -52,6 +52,14 @@ const USER_INPUT_TRANSCRIBED = "user_input_transcribed";
 
 /** A canonical Solana public key. */
 const PASTED_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
+/**
+ * The address the suite's default alias arm resolves to.
+ *
+ * Every `create` this file stages through the port carries an `.sns` source (the
+ * port refuses one that does not), so the harness below answers it with a value
+ * the suite owns instead of reaching the registry.
+ */
+const DEFAULT_ALIAS_ADDRESS = "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2";
 
 type TranscriptEvent = {
   transcript: string;
@@ -188,7 +196,23 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       ...(input.boundParticipantIdentity !== undefined
         ? { boundParticipantIdentity: input.boundParticipantIdentity }
         : {}),
-      ...(input.resolveAlias !== undefined ? { resolveAlias: input.resolveAlias } : {}),
+      // The alias arm is wired by DEFAULT now, and that is a fixture change with a
+      // reason: the port REFUSES a `create` that carries no address source at all
+      // (such a card could never be finished, because the card no longer has an
+      // address field), so every `create` staged below names its `.sns` source and
+      // something has to answer it. A case that needs a specific resolution, or a
+      // refusal, still overrides this.
+      resolveAlias:
+        input.resolveAlias ??
+        (async ({ snsName }: { snsName: string }) => ({
+          status: "resolved" as const,
+          snsName,
+          address: DEFAULT_ALIAS_ADDRESS,
+          resolvedAt: "2026-01-01T00:00:00.000Z",
+          resolver: "sns/solana-devnet/v3",
+          reverseDomain: null,
+          reverseDomainState: "none" as const,
+        })),
       publish: async (payload) => {
         delivered.push({
           topic: payload.topic,
@@ -381,6 +405,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(refused.status).toBe("conflict_active_window");
 
@@ -393,6 +418,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       origin: "voice",
       action: "create",
       name: "Ana",
+      snsName: "ana.sns",
     });
     expect(accepted.status).toBe("staged");
   });
@@ -410,6 +436,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(staged.status).toBe("staged");
 
@@ -440,6 +467,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(refused.status).toBe("address_review_required");
     expect(delivered).toHaveLength(0);
@@ -460,6 +488,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
           origin: "voice",
           action: "create",
           name: "Sofía",
+          snsName: "sofia.sns",
         })
       ).status,
     ).toBe("staged");
@@ -486,6 +515,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(refused.status).toBe("proposal_not_published");
     expect(delivered).toHaveLength(1);
@@ -519,6 +549,7 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       origin: "voice",
       action: "create",
       name: "Ana",
+      snsName: "ana.sns",
     });
     expect(staged.status).toBe("staged");
     expect(sent).toEqual([
@@ -659,20 +690,46 @@ suite("LiveKit trusted-recipient session E2E (task 4.8)", () => {
       }),
     });
 
-    // A spoken-only address: even when the caller passes one along, the seam has
-    // no such input and nothing reaches the row.
-    const staged = await port.stage({
+    // PREMISE CHANGED. This case used to stage an address-less create THROUGH THE
+    // PORT and then complete it through the review channel's HTTP endpoint. The port
+    // now REFUSES a create with no address source at all — such a card can never be
+    // finished, because the card no longer has an address field — so the only writer
+    // that can still produce this row is the service itself, and the endpoint under
+    // test is unchanged by that.
+    //
+    // THE ASSERTION THAT WENT WITH THE OLD PREMISE: staging with a smuggled
+    // `address` next to a label (the port has no such input, so nothing reached the
+    // row). It is no longer reachable on a create without an address source, which
+    // this same gate refuses. What still holds is asserted where the port does stage:
+    // the address on the row is the RESOLVER's, and a client-supplied one has no key
+    // to travel on (`tests/unit/contact-proposal-publication.test.ts`, "never derives
+    // an address from the spoken label").
+    const staged = await actions.stage({
       userId,
       conversationId,
       origin: "voice",
       action: "create",
       name: "Sofía",
-      ...({ address: PASTED_ADDRESS } as unknown as Record<string, never>),
     });
-    expect(staged.status).toBe("staged");
+    expect(staged.address).toBeNull();
     expect(await rows(userId, conversationId)).toEqual([
       expect.objectContaining({ version: 1, status: "open", address: null }),
     ]);
+
+    // The two effects the PORT used to produce for this stage, reproduced here so
+    // the session's own listener still has a delivered window to speak against: the
+    // stamp, and the window bound to the version the row is on.
+    expect(
+      await actions.markPublished(userId, staged.proposalId, staged.proposalVersion),
+    ).not.toBeNull();
+    arbiter.open({
+      kind: "contact",
+      actionId: staged.proposalId,
+      userId,
+      conversationId,
+      version: staged.proposalVersion,
+      createdAt: Date.now(),
+    });
 
     // The review channel supplies the address through the real HTTP endpoint.
     const app = buildTestServer({ userId });

@@ -90,6 +90,19 @@ suite("contact proposal publication gate", () => {
       actions,
       boundParticipantIdentity: IDENTITY,
       ...overrides,
+      // The port REFUSES a `create` that carries no address source at all, so every
+      // stage below carries the `.sns` name that supplies one and this resolver
+      // answers it. `overrides.resolveAlias` still wins for the alias cases, and the
+      // real resolver is never reached: this suite is about persistence, not the RPC.
+      resolveAlias: async (call: { userId: string; snsName: string }) => ({
+        status: "resolved" as const,
+        snsName: call.snsName,
+        address: "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2",
+        resolvedAt: "2026-01-01T00:00:00.000Z",
+        resolver: "sns/solana-devnet/v3",
+        reverseDomain: null,
+        reverseDomainState: "none" as const,
+      }),
       publish: async (payload) => {
         delivered.push({ topic: payload.topic, destinationIdentities: payload.destinationIdentities, reliable: payload.reliable });
         await (overrides.publish?.(payload) ?? Promise.resolve());
@@ -125,7 +138,7 @@ suite("contact proposal publication gate", () => {
     const actions = new ContactActionService(database);
     const h = seam(actions);
 
-    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     expect(staged.status).toBe("staged");
 
     expect(h.delivered).toEqual([{ topic: CONTACT_PROPOSAL_TOPIC, destinationIdentities: [IDENTITY], reliable: true }]);
@@ -142,7 +155,7 @@ suite("contact proposal publication gate", () => {
     const actions = new ContactActionService(database);
     const h = seam(actions, { publish: async () => { throw new Error("participant gone"); } });
 
-    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
     expect(staged.status).toBe("proposal_not_published");
     // Positive control: the row was really persisted, so the NULL below is about
@@ -187,7 +200,7 @@ suite("contact proposal publication gate", () => {
       },
     });
 
-    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
 
     expect(staged.status).toBe("proposal_not_published");
     expect(h.delivered).toHaveLength(1);
@@ -237,7 +250,7 @@ suite("contact proposal publication gate", () => {
     const actions = new ContactActionService(database);
     const h = seam(actions);
 
-    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía" });
+    const staged = await h.port.stage({ userId, conversationId, origin: "voice", action: "create", name: "Sofía", snsName: "sofia.sns" });
     expect(staged.status).toBe("staged");
     const window = h.arbiter.current()!;
     expect(window).toMatchObject({ actionId: staged.proposalId, version: 1 });

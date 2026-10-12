@@ -390,14 +390,20 @@ suite("the confirm-time alias re-verification against the real table (task 6.4)"
     });
     void resolver;
 
-    const staged = await port.stage({
+    // PREMISE CHANGED. The seed row used to be staged through the PORT. The port now
+    // REFUSES a create with no address source at all — the card has no address field
+    // any more, so such a row could never be finished — and the SERVICE is the only
+    // writer left that can produce one. The row this case needs is still a version
+    // with no alias claim (`addressSource: 'review_required'`), and the port is still
+    // the surface under test for the confirmation below.
+    const staged = await actions.stage({
       userId,
       conversationId,
       origin: "voice",
       action: "create",
       name: "Sofía",
     });
-    expect(staged.status).toBe("staged");
+    expect(staged.address).toBeNull();
 
     // A create whose review channel never completed carries no address, and
     // design flow (c) refuses it with PROPUESTA_SIN_DIRECCION because it could

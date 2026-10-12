@@ -703,7 +703,7 @@ function createContactReadOperations(context: WalletAgentContext): AgentToolDefi
     total: 0,
     truncated: false,
     limit,
-    message: 'No puedo leer tus contactos en este momento.',
+    message: 'I cannot read your contacts right now.',
   });
   return [
     {
@@ -745,7 +745,17 @@ function createContactReadOperations(context: WalletAgentContext): AgentToolDefi
  * model tool argument or inferred from the supplied label.
  */
 function createContactActionOperations(context: WalletAgentContext): AgentToolDefinition<unknown, unknown>[] {
-  const unavailable = { status: 'address_review_required' as const, message: 'Necesito que revises y pegues la dirección en la tarjeta segura antes de guardar este destinatario.' };
+  /**
+   * The fail-closed answer when no proposal port is wired at all.
+   *
+   * English, and it names a place that EXISTS: the wallet screen's trusted-recipient
+   * form, which pastes or scans an address and saves it. The sentence it replaces
+   * ("Necesito que revises y pegues la dirección en la tarjeta segura...") pointed at
+   * the review card's own address field, and that field has been removed — an
+   * instruction to paste onto a form that no longer has an input is worse than no
+   * instruction, because the user follows it and finds nothing there.
+   */
+  const unavailable = { status: 'address_review_required' as const, message: 'I cannot add a trusted recipient without an address. Add it on the wallet screen: open your wallet, use Add under Trusted recipients, and paste or scan the address there. I saved nothing and enabled nothing.' };
   const stage = async (
     action: 'create' | 'edit' | 'remove',
     value: { contactId?: string; expectedVersion?: number; name?: string; description?: string; snsName?: string },
@@ -762,7 +772,7 @@ function createContactActionOperations(context: WalletAgentContext): AgentToolDe
   return [
     {
       name: 'stage_trusted_recipient',
-      description: 'Stage a new trusted recipient for the secure review card. Supply only their display name, an optional description, and — when the user gave one — the explicit .sns name they said (for example "juan.sns"); the server resolves that name and the resolved address is what the user reviews. Copy that .sns name exactly as the user gave it, character for character: never translate it, never re-spell it the way it sounds, and never invent a spelling. A spoken name arrives through transcription and may be written differently from how it is registered, so when the user says a name that is not Spanish or you heard more than one plausible spelling, ask them to spell it letter by letter BEFORE staging and stage the spelling they confirm. THEN, IF THIS TOOL ANSWERS `alias_unresolved`: stop. Do not call this tool again in that turn, do not try another spelling of the same name on your own, and do not rephrase it — you do not know which spelling is registered, so guessing again is how a name the user gave correctly never resolves. Speak the refusal sentence you were given, which names the exact spelling that failed, and ask the user to spell the name letter by letter or tell you the correct one; stage again only after they do. Never supply an address, a resolution, an inferred address, a network, policy, signer, cap, confirmation, timestamp, or turn count.',
+      description: 'Stage a new trusted recipient for the secure review card. Supply only their display name, an optional description, and — when the user gave one — the explicit .sns name they said (for example "juan.sns"); the server resolves that name and the resolved address is what the user reviews. A create with NO .sns name has no address source and is refused with `address_review_required`: the review card has no address field any more, so a recipient whose address the user wants to paste or scan is added on the wallet screen instead (open the wallet, use Add under Trusted recipients) — say so instead of retrying. Copy that .sns name exactly as the user gave it, character for character: never translate it, never re-spell it the way it sounds, and never invent a spelling. A spoken name arrives through transcription and may be written differently from how it is registered, so when the user says a name that is not Spanish or you heard more than one plausible spelling, ask them to spell it letter by letter BEFORE staging and stage the spelling they confirm. THEN, IF THIS TOOL ANSWERS `alias_unresolved`: stop. Do not call this tool again in that turn, do not try another spelling of the same name on your own, and do not rephrase it — you do not know which spelling is registered, so guessing again is how a name the user gave correctly never resolves. Speak the refusal sentence you were given, which names the exact spelling that failed, and ask the user to spell the name letter by letter or tell you the correct one; stage again only after they do. Never supply an address, a resolution, an inferred address, a network, policy, signer, cap, confirmation, timestamp, or turn count.',
       inputSchema: contactCreateInputSchema,
       execute: (input) => stage('create', input as z.infer<typeof contactCreateInputSchema>),
     },

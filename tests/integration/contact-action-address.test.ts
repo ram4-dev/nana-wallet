@@ -434,6 +434,18 @@ suite("contact action address endpoint (task 4.7)", () => {
       createVoiceContactActions({
         actions,
         boundParticipantIdentity: "participant-1",
+        // The port refuses a `create` that carries no address source at all, so both
+        // stages below name the `.sns` source that supplies one and this answers it.
+        // Fixture plumbing: this case is about the orphan cleanup, not the alias.
+        resolveAlias: async (call: { userId: string; snsName: string }) => ({
+          status: "resolved" as const,
+          snsName: call.snsName,
+          address: "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2",
+          resolvedAt: "2026-01-01T00:00:00.000Z",
+          resolver: "sns/solana-devnet/v3",
+          reverseDomain: null,
+          reverseDomainState: "none" as const,
+        }),
         supersedeUnpublished: async ({ userId: owner, conversationId: id }) =>
           actions.supersedeUnpublished(owner, id),
         publish: async (payload) => {
@@ -461,6 +473,7 @@ suite("contact action address endpoint (task 4.7)", () => {
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(failed.status).toBe("proposal_not_published");
     const orphan = await rows(userId, conversationId);
@@ -478,6 +491,7 @@ suite("contact action address endpoint (task 4.7)", () => {
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(staged.status).toBe("staged");
     expect(delivered).toEqual([CONTACT_PROPOSAL_TOPIC, CONTACT_PROPOSAL_TOPIC]);

@@ -324,7 +324,23 @@ suite("the unpublished-orphan cleanup as production builds the voice seam", () =
     // The port PRODUCTION's dependencies build: real service over the real
     // database, production's own `publish` (the fake agent participant) and the
     // production arbiter. Nothing here is hand-injected.
-    const port = createVoiceContactActions(seam.dependencies as never);
+    const port = createVoiceContactActions({
+      ...(seam.dependencies as Record<string, unknown>),
+      // The port refuses a `create` that carries no address source, so the stages
+      // below carry the `.sns` name AND the resolver that answers it. The transport
+      // mock above leaves the alias arms out of this session on purpose, which is
+      // exactly why this stub is supplied here: it is orthogonal to the orphan path
+      // this case is about, and it keeps the alias RPC out of the suite.
+      resolveAlias: async (call: { userId: string; snsName: string }) => ({
+        status: "resolved" as const,
+        snsName: call.snsName,
+        address: "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2",
+        resolvedAt: "2026-01-01T00:00:00.000Z",
+        resolver: "sns/solana-devnet/v3",
+        reverseDomain: null,
+        reverseDomainState: "none" as const,
+      }),
+    } as never);
 
     // First attempt: the card delivery rejects (participant gone). The row is
     // deliberately left behind and the window never opens.
@@ -335,6 +351,7 @@ suite("the unpublished-orphan cleanup as production builds the voice seam", () =
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(failed).toEqual({
       status: "proposal_not_published",
@@ -368,6 +385,7 @@ suite("the unpublished-orphan cleanup as production builds the voice seam", () =
       origin: "voice",
       action: "create",
       name: "Sofía",
+      snsName: "sofia.sns",
     });
     expect(staged.status).toBe("staged");
     expect(seam.publishData).toHaveBeenCalledTimes(2);

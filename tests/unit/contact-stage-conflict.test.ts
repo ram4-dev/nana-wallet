@@ -124,6 +124,19 @@ function harness(input: {
   const port = createVoiceContactActions({
     actions,
     boundParticipantIdentity: IDENTITY,
+    // The port refuses a `create` with no address source at all, so the stage
+    // under test carries the `.sns` name that supplies one. This resolver is
+    // fixture plumbing, not the subject: what this suite proves is the one-open
+    // conflict that the real service raises underneath.
+    resolveAlias: async (call: { userId: string; snsName: string }) => ({
+      status: "resolved" as const,
+      snsName: call.snsName,
+      address: "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2",
+      resolvedAt: "2026-01-01T00:00:00.000Z",
+      resolver: "sns/solana-devnet/v3",
+      reverseDomain: null,
+      reverseDomainState: "none" as const,
+    }),
     supersedeUnpublished: async (call) => {
       supersededUnpublished.push(call);
       return 0;
@@ -160,6 +173,8 @@ function stageCall(port: ReturnType<typeof createVoiceContactActions>) {
     origin: "voice",
     action: "create",
     name: "Lucas",
+    // The address source the port now demands of every `create`.
+    snsName: "lucas.sns",
   });
 }
 

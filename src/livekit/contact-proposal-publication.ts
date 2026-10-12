@@ -75,9 +75,54 @@ export function contactProposalSummary(action: ContactActionProposal["action"], 
   return `Agregar a ${who} como destinatario de confianza`;
 }
 
-/** The review-channel request used when no bound visual client can receive the card. */
+/**
+ * The review-channel request used when no bound visual client can receive the card.
+ *
+ * English, like the rest of the product copy, and — this is the part that had to
+ * change — it no longer tells the user to PASTE anything. It used to end with
+ * "...y pegues la dirección", which after the card's paste/scan form was removed
+ * would have been an instruction pointing at a field that no longer exists. Every
+ * path that still reaches this sentence (a `create` that already carries an
+ * address source, and `edit`/`remove`) is one where reviewing the card and saying
+ * yes is the whole job, so that is all it asks for.
+ */
 export const REVIEW_CHANNEL_MESSAGE =
-  "Para habilitar este destinatario necesito que revises la tarjeta en la pantalla y pegues la dirección. No puedo habilitarlo solo por voz.";
+  "I cannot enable this recipient by voice alone: I need you to review the card on the screen first. Look at it and confirm it to me.";
+
+/**
+ * The refusal for a `create` that arrives with NO address source at all.
+ *
+ * WHY THE PORT REFUSES IT INSTEAD OF STAGING IT
+ * ---------------------------------------------
+ * `create` is the only action that needs an address the proposal does not already
+ * have, and this PORT is the only place one can come from: the model holds a
+ * LABEL and never a destination, so a create either resolves an explicit `.sns`
+ * name or it has no address source whatsoever. Staging it anyway wrote a row with
+ * `address` NULL and `payload.addressSource: 'review_required'`, and the ONLY
+ * surface that could ever fill that address was the review card's paste/scan form.
+ *
+ * That form no longer exists. So a create that cannot name an address source is
+ * now a proposal nobody can finish: the card would render a `create` with no
+ * address, no input to supply one, and no way to confirm it — a dead end WE
+ * produced and then handed to the user, plus an instruction (from the refusal
+ * below and from the agent's own fail-closed copy) pointing at a field that is
+ * gone. It is therefore refused HERE, before `dependencies.actions.stage(...)`
+ * runs, exactly like the `boundParticipantIdentity` guard: no row, no card, no
+ * window, and nothing left over to clean up.
+ *
+ * SCOPED TO `create` ON PURPOSE. `edit` and `remove` are about a recipient that
+ * already exists: they carry their own `contactId` + `expectedVersion`, need no
+ * address of their own (`proposalMutationBody` refuses `PROPUESTA_SIN_DIRECCION`
+ * for `create` only), and rows prove they are staged without one. Gating them
+ * here would be a regression, not a safety win.
+ *
+ * The sentence names a place that EXISTS after this change — the wallet screen's
+ * trusted-recipient form, which still accepts a pasted or scanned address and
+ * saves it. It deliberately does not tell the user to go paste something on the
+ * card, which is the instruction this refusal exists to stop giving.
+ */
+export const CREATE_WITHOUT_ADDRESS_MESSAGE =
+  "I cannot add a trusted recipient without an address. Add it on the wallet screen: open your wallet, use Add under Trusted recipients, and paste or scan the address there. I saved nothing and enabled nothing.";
 
 /**
  * The outcome of resolving an explicit `.sns` name the user supplied (design
@@ -518,6 +563,17 @@ export type VoiceContactActionDependencies = {
 export function createVoiceContactActions(dependencies: VoiceContactActionDependencies): ContactActionPort {
   return {
     async stage(input) {
+      // A `create` with no address source is refused BEFORE anything is written.
+      //
+      // The refusal is deliberately the FIRST guard, ahead of the review-channel
+      // one below: the reason is the missing ADDRESS, not the missing screen, and
+      // on the no-bound-client path the old sentence asked the user to paste an
+      // address on a card whose address field no longer exists. Put first, this
+      // gate answers every create with the one instruction that is still true.
+      if (input.action === "create" && input.snsName === undefined) {
+        return { status: "address_review_required", message: CREATE_WITHOUT_ADDRESS_MESSAGE };
+      }
+
       if (!dependencies.boundParticipantIdentity) {
         // No bound visual client: refuse permission creation and ask for the
         // review channel. The contact may still be saved as not enabled.

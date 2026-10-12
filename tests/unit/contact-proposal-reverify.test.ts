@@ -94,6 +94,18 @@ function harness(
   const port = createVoiceContactActions({
     actions: actions as never,
     boundParticipantIdentity: IDENTITY,
+    // The port refuses a `create` with no address source at all, so the stage
+    // below carries the `.sns` name that supplies one. The fixture's `stage` stub
+    // still returns its own row, so nothing else about this rig changes.
+    resolveAlias: async (call: { userId: string; snsName: string }) => ({
+      status: "resolved" as const,
+      snsName: call.snsName,
+      address: "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2",
+      resolvedAt: "2026-01-01T00:00:00.000Z",
+      resolver: "sns/solana-devnet/v3",
+      reverseDomain: null,
+      reverseDomainState: "none" as const,
+    }),
     publish: async (payload) => {
       const card = JSON.parse(new TextDecoder().decode(payload.bytes)) as { proposalVersion: number };
       publishedVersions.push(card.proposalVersion);
@@ -153,6 +165,7 @@ async function stage(h: ReturnType<typeof harness>) {
     origin: "voice",
     action: "create",
     name: "Sofía",
+    snsName: "sofia.sns",
   });
   expect(staged.status).toBe("staged");
   return staged;
