@@ -105,11 +105,28 @@ export function classifyRecipientCandidates(
   // `recipient`, and a selection is only ever set from `resolved`, so a
   // low-scoring row can be reported but never becomes a transfer target.
   if (!first || first.score < config.scoreFloor) return { status: 'no_match', candidates: ranked };
+  // THE QUESTION IS NOT AN EVIDENCE LIST.
+  //
+  // The floor already separates "noise" from "plausible" for SELECTION, and it
+  // is the same boundary a QUESTION needs: a row below it is not something the
+  // user can meaningfully be asked to choose between. Handing the whole ranked
+  // list to `clarification_required` made the agent read an unrelated contact
+  // back as a candidate — measured live, `mi sobrino` returned Sophie (0.6045)
+  // AND Test1 (0.1689), so the user was asked whether they meant a contact that
+  // scored 0.17.
+  //
+  // That is deliberately NOT the same answer as `no_match`, which keeps every
+  // retrieved row: when nothing is selectable the list is the EVIDENCE of what
+  // the store holds (and destroying it is what once made a misheard name come
+  // back as "that contact does not exist"), while here the list is a QUESTION
+  // with two or three real options. Both bounds already existed; only which list
+  // each one bounds was wrong.
+  const plausible = ranked.filter((candidate) => candidate.score >= config.scoreFloor);
   // Plausible but unproven: hand the candidates over so the caller can ask
   // "is this the contact you meant?" instead of reporting that nothing exists.
-  if (first.score < config.scoreThreshold) return { status: 'clarification_required', candidates: ranked };
+  if (first.score < config.scoreThreshold) return { status: 'clarification_required', candidates: plausible };
   if (second && first.score - second.score < config.scoreMargin) {
-    return { status: 'clarification_required', candidates: ranked };
+    return { status: 'clarification_required', candidates: plausible };
   }
   return { status: 'resolved', candidates: ranked, recipient: first };
 }

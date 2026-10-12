@@ -433,6 +433,68 @@ describe('a description the user speaks identifies the contact it belongs to', (
   });
 });
 
+describe('the clarification question carries only the plausible rows', () => {
+  const RANKING = { scoreThreshold: 0.78, scoreFloor: 0.55, scoreMargin: 0.08 };
+  const nephew = candidate({
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    name: 'Sophie',
+    normalizedName: 'sophie',
+    description: 'My nephew',
+  });
+  const test1 = candidate({
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    name: 'Test1',
+    normalizedName: 'test1',
+    description: '',
+  });
+
+  it('RED: never asks the user to choose between a plausible row and a noise row', () => {
+    // Measured live: `mi sobrino` against the English `My nephew` scores 0.6045
+    // (above the 0.55 floor, below the 0.78 threshold) while Test1 scores
+    // 0.1689. The first is a real question — the second is noise the user must
+    // never be asked to choose between. `no_match` still keeps it as EVIDENCE;
+    // a QUESTION is not an evidence list.
+    const result = classifyRecipientCandidates('mi sobrino', [
+      { ...nephew, score: 0.6045 },
+      { ...test1, score: 0.1689 },
+    ], RANKING);
+
+    expect(result.status).toBe('clarification_required');
+    expect(result.candidates.map((entry) => entry.name)).toEqual(['Sophie']);
+  });
+
+  it('keeps every row that is genuinely plausible, so the margin question is preserved', () => {
+    const mateo = candidate({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      name: 'Mateo',
+      normalizedName: 'mateo',
+      description: 'My other nephew',
+    });
+
+    // Both are above the floor and within the margin: the user really does have
+    // to choose, so both must be offered.
+    const result = classifyRecipientCandidates('the uncle', [
+      { ...nephew, score: 0.80 },
+      { ...mateo, score: 0.75 },
+    ], RANKING);
+
+    expect(result.status).toBe('clarification_required');
+    expect(result.candidates.map((entry) => entry.name)).toEqual(['Sophie', 'Mateo']);
+  });
+
+  it('still reports the whole retrieved list as evidence when nothing is selectable', () => {
+    // The floor keeps gating SELECTION, and `no_match` keeps reporting every row:
+    // the two lists answer different questions and must not be merged.
+    const result = classifyRecipientCandidates('minafi', [
+      { ...nephew, score: 0.263 },
+      { ...test1, score: 0.231 },
+    ], RANKING);
+
+    expect(result.status).toBe('no_match');
+    expect(result.candidates.map((entry) => entry.name)).toEqual(['Sophie', 'Test1']);
+  });
+});
+
 /**
  * The live regression the previous work unit closed.
  *
