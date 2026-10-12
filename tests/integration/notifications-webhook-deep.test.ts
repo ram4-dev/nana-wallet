@@ -262,7 +262,7 @@ suite("provider webhook receipts + notifications feed (receipt-only)", () => {
     await database.withUserTransaction(userId, (client) =>
       client.query(
         `INSERT INTO wallet_notifications (user_id, wallet_id, category, status, dedupe_key, title, projection)
-             VALUES ($1, $2, 'wallet_event', 'deposit', $3, 'Depósito confirmado', '{}')`,
+             VALUES ($1, $2, 'wallet_event', 'deposit', $3, 'Deposit confirmed', '{}')`,
         [userId, walletId, `chain:test:${randomUUID()}`],
       ),
     );

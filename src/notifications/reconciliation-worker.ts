@@ -215,8 +215,8 @@ export async function reconcileWalletOnce(
             dedupeKey,
             category: "wallet_event",
             status: "deposit",
-            title: "Depósito confirmado",
-            explanation: "Detectamos un depósito confirmado en tu wallet.",
+            title: "Deposit confirmed",
+            explanation: "We detected a confirmed deposit in your wallet.",
             resolved: true,
             projection: { status: "deposit", network: wallet.network },
           });

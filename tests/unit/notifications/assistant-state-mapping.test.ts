@@ -45,7 +45,7 @@ describe("assistant attempt state to notification mapping", () => {
     expect(notification.resolved).toBe(false);
     expect(notification.status).toBe("uncertain");
     // The user must understand the outcome may still have succeeded.
-    expect(notification.explanation).toMatch(/desconocido|unknown/i);
+    expect(notification.explanation).toMatch(/unknown/i);
   });
 
   it("excludes not_dispatched from notification-worthy states", () => {

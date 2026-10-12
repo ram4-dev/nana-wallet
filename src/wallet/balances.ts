@@ -96,7 +96,7 @@ export class FixtureBalanceReader implements BalanceReader {
     const value = this.balances.get(address.toLowerCase());
     if (value === undefined) {
       throw balanceUnavailable(
-        "Todavía no tenemos un saldo de demostración para tu billetera.",
+        "We do not have a demo balance for your wallet yet.",
       );
     }
     return value;
@@ -154,10 +154,10 @@ export class RpcBalanceReader implements BalanceReader {
       payload = await response.json();
     } catch (error) {
       if (controller.signal.aborted) {
-        throw balanceUnavailable("La consulta del saldo tardó demasiado.");
+        throw balanceUnavailable("The balance request took too long.");
       }
       throw balanceUnavailable(
-        "No pudimos consultar el saldo en este momento.",
+        "We could not read the balance right now.",
       );
     }
     if (
@@ -166,11 +166,11 @@ export class RpcBalanceReader implements BalanceReader {
       (payload as JsonRpcResponse).jsonrpc !== "2.0" ||
       (payload as JsonRpcResponse).id !== id
     ) {
-      throw balanceUnavailable("La respuesta del nodo no es válida.");
+      throw balanceUnavailable("The node response is not valid.");
     }
     const rpcError = (payload as JsonRpcResponse).error;
     if (rpcError) {
-      throw balanceUnavailable("El nodo rechazó la consulta del saldo.");
+      throw balanceUnavailable("The node rejected the balance request.");
     }
     return (payload as JsonRpcResponse).result;
   }
@@ -197,7 +197,7 @@ export class RpcBalanceReader implements BalanceReader {
         value < 0
       ) {
         throw balanceUnavailable(
-          "La respuesta del nodo no tiene el formato esperado.",
+          "The node response does not have the expected format.",
         );
       }
       return BigInt(value).toString(10);
@@ -331,7 +331,7 @@ export class WalletBalancesService {
       !isValidSolanaAddress(wallet.address)
     ) {
       throw dataInvalid(
-        "Los datos de tu billetera no son válidos para consultar el saldo.",
+        "Your wallet data is not valid for reading the balance.",
       );
     }
 
@@ -345,7 +345,7 @@ export class WalletBalancesService {
       if (error instanceof WalletBalancesError) throw error;
       // Sanitized: never forward raw provider payloads or URLs.
       throw balanceUnavailable(
-        "No pudimos consultar el saldo en este momento.",
+        "We could not read the balance right now.",
       );
     }
 

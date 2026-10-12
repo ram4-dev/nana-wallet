@@ -66,7 +66,7 @@ type ContactActionReply = {
   code(status: number): { send(payload: ContactActionApiError): void };
 };
 
-const NOT_FOUND_MESSAGE = "No encontramos esta propuesta.";
+const NOT_FOUND_MESSAGE = "We could not find this proposal.";
 
 /**
  * The user-visible revocation effects of a proposal, derived from the persisted
@@ -79,8 +79,8 @@ export function contactActionRevocationDisclosure(
   const count = proposal.revokedGrantIds.length;
   if (count === 0) return null;
   return count === 1
-    ? "Esto también revoca el permiso automático que tenía este destinatario."
-    : `Esto también revoca ${count} permisos automáticos de este destinatario.`;
+    ? "This also revokes the automatic permission this recipient had."
+    : `This also revokes ${count} automatic permissions this recipient had.`;
 }
 
 /**

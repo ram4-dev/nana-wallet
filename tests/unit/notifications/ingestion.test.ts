@@ -14,7 +14,7 @@ function event(overrides: Partial<NotificationEvent> = {}): NotificationEvent {
     dedupeKey: "assistant-transfer:attempt-1:confirmed",
     category: "assistant_transfer",
     status: "confirmed",
-    title: "Transferencia confirmada",
+    title: "Transfer confirmed",
     projection: { status: "confirmed", amountLabel: "10 USDT" },
     ...overrides,
   };

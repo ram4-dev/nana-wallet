@@ -58,40 +58,40 @@ export function assistantStateToNotification(
     case "submitted":
       return {
         status,
-        title: "Transferencia enviada",
+        title: "Transfer sent",
         explanation:
-          "Tu transferencia fue enviada y está en proceso de confirmación.",
+          "Your transfer was sent and is being confirmed.",
         resolved: false,
       };
     case "uncertain":
       return {
         status,
-        title: "Transferencia con resultado desconocido",
+        title: "Transfer with unknown result",
         explanation:
-          "No pudimos confirmar si la transferencia se realizó. El resultado es desconocido; no se reintenta automáticamente. Revisá tu historial o consultanos.",
+          "We could not confirm whether the transfer went through. The outcome is unknown; there is no automatic retry. Check your history or ask us.",
         resolved: false,
       };
     case "confirmed":
       return {
         status,
-        title: "Transferencia confirmada",
-        explanation: "Tu transferencia fue confirmada por la red.",
+        title: "Transfer confirmed",
+        explanation: "Your transfer was confirmed by the network.",
         resolved: true,
       };
     case "reverted":
       return {
         status,
-        title: "Transferencia revertida",
+        title: "Transfer reverted",
         explanation:
-          "La transferencia fue revertida; los fondos volvieron a tu wallet.",
+          "The transfer was reverted; the funds went back to your wallet.",
         resolved: true,
       };
     case "receipt_invalid":
       return {
         status,
-        title: "Comprobante inválido",
+        title: "Invalid receipt",
         explanation:
-          "No pudimos validar el comprobante de la transferencia. Revisá tu historial antes de reintentar.",
+          "We could not validate the transfer receipt. Check your history before retrying.",
         resolved: true,
       };
   }

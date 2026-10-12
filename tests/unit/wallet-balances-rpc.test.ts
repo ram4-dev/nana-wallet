@@ -115,7 +115,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const reader = new RpcBalanceReader(url);
     await expect(
       reader.readSolAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/formato/);
+    ).rejects.toThrow(/format/);
   });
 
   it("rejects a non-integer or negative lamport count", async () => {
@@ -125,7 +125,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
       const reader = new RpcBalanceReader(url);
       await expect(
         reader.readSolAtomic(ADDRESS, new AbortController().signal),
-      ).rejects.toThrow(/formato/);
+      ).rejects.toThrow(/format/);
     }
   });
 
@@ -137,7 +137,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const reader = new RpcBalanceReader(url);
     await expect(
       reader.readSolAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/rechazó/);
+    ).rejects.toThrow(/rejected/);
   });
 
   it("rejects a mismatched correlation id", async () => {
@@ -160,7 +160,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const reader = new RpcBalanceReader(url);
     await expect(
       reader.readSolAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/no es válida/);
+    ).rejects.toThrow(/is not valid/);
   });
 
   it("rejects a result that is not a getBalance envelope", async () => {
@@ -169,14 +169,14 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const reader = new RpcBalanceReader(url);
     await expect(
       reader.readSolAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/formato/);
+    ).rejects.toThrow(/format/);
   });
 
   it("fails on an unreachable node", async () => {
     const reader = new RpcBalanceReader("http://127.0.0.1:1", fetch, 500);
     await expect(
       reader.readSolAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/No pudimos consultar el saldo/);
+    ).rejects.toThrow(/We could not read the balance/);
   });
 
   it("aborts the whole operation when the shared deadline expires", async () => {
@@ -194,7 +194,7 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const reader = new RpcBalanceReader(url, fetch, 50);
     await expect(
       reader.readSolAtomic(ADDRESS, new AbortController().signal),
-    ).rejects.toThrow(/tardó demasiado/);
+    ).rejects.toThrow(/took too long/);
   });
 
   it("honors an externally aborted signal", async () => {
@@ -211,6 +211,6 @@ describe("RpcBalanceReader (WP-006/WP-007)", () => {
     const controller = new AbortController();
     const pending = reader.readSolAtomic(ADDRESS, controller.signal);
     controller.abort();
-    await expect(pending).rejects.toThrow(/tardó demasiado/);
+    await expect(pending).rejects.toThrow(/took too long/);
   });
 });

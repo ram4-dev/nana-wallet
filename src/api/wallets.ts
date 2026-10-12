@@ -65,7 +65,7 @@ function chainFromQuery(query: unknown):
   if (!parsed.success) {
     return {
       ok: false,
-      message: "Cadena inválida: solo se acepta 'arc' o 'solana'.",
+      message: "Invalid chain: only 'arc' or 'solana' is accepted.",
     };
   }
   return { ok: true, chain: parsed.data };
@@ -378,7 +378,7 @@ export async function registerWalletsRoutes(
           ok: false,
           error: {
             code: "INVALID_QUERY",
-            message: "Esta consulta no acepta parámetros.",
+            message: "This request does not accept parameters.",
           },
         };
       }

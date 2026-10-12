@@ -44,8 +44,8 @@ suite("notification ingestion service (database-backed)", () => {
       category: "assistant_transfer",
       status: "confirmed",
       dedupeKey,
-      title: "Transferencia confirmada",
-      explanation: "Tu transferencia fue confirmada por la red.",
+      title: "Transfer confirmed",
+      explanation: "Your transfer was confirmed by the network.",
       resolved: true,
       projection: { status: "confirmed", amountLabel: "10 USDT" },
     };

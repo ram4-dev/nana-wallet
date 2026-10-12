@@ -1793,7 +1793,7 @@ function mapGrantSummary(
     aggregationReady: false,
     aggregateBlockReason: row.per_transfer_lamports == null
       ? AGGREGATION_BLOCK_REASON
-      : "El límite acumulado en SOL todavía no está activo. El máximo por transferencia es 0.01 SOL.",
+      : "The rolling SOL limit is not active yet. The maximum per transfer is 0.01 SOL.",
   };
 }
 
