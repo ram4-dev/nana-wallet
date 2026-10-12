@@ -1,5 +1,5 @@
 import { EMBEDDING_MODEL_ID, type Embedding, type RecipientCandidate, type RecipientInput, type RecipientRecord, type UserMemoryFact, type UserMemoryInput } from './types.js';
-import { factEmbeddingText, normalizeMemoryText, recipientEmbeddingText } from './embedding.js';
+import { comparisonTextKey, factEmbeddingText, normalizeMemoryText, recipientEmbeddingText } from './embedding.js';
 import { isValidRecipientAddress, resolveRecipientNetwork } from './address.js';
 import { factSupportsRelationshipReference, isRelationshipReference, relationshipFactIdentity } from './relationship.js';
 
@@ -56,16 +56,32 @@ export function classifyRecipientCandidates(
     right.score - left.score || left.normalizedName.localeCompare(right.normalizedName) || left.id.localeCompare(right.id),
   );
 
-  const normalizedQuery = normalizeMemoryText(query);
-  const exactMatches = ranked.filter((candidate) => candidate.normalizedName === normalizedQuery);
-  if (exactMatches.length === 1) {
-    return { status: 'resolved', candidates: ranked, recipient: exactMatches[0]! };
-  }
+  // NAME MATCHING HAPPENS ON THE FOLDED COMPARISON KEY, NEVER ON THE STORED
+  // NORMALIZATION. `recipients.normalized_name` keeps its diacritics (`Sofía` is
+  // stored as `sofía`), so comparing it directly made the user's own contact
+  // unfindable under the accent-less spelling of their own name: no exact match,
+  // and the answer then came from the retrieval score path, where a near-tie put
+  // an unrelated contact into the reply. See `comparisonTextKey` for why the fold
+  // lives at comparison time instead of in the stored value.
+  const queryKey = comparisonTextKey(query);
+
+  // 1. THE SAME NAME, diacritics ignored. Two rows one accent apart are ONE name,
+  //    not two: they stay ambiguous rather than being silently separated.
+  const exactMatches = ranked.filter((candidate) => comparisonTextKey(candidate.normalizedName) === queryKey);
+  if (exactMatches.length === 1) return resolvedOn(exactMatches[0]!);
   if (exactMatches.length > 1) return { status: 'clarification_required', candidates: ranked };
 
-  const qualifiedRecipient = resolveUniqueLexicallyQualifiedRecipient(normalizedQuery, ranked);
+  // 2. The name plus a description qualifier, which is the STRICTER lexical rule
+  //    and therefore runs before the loose one below.
+  const qualifiedRecipient = resolveUniqueLexicallyQualifiedRecipient(queryKey, ranked);
   if (qualifiedRecipient === 'ambiguous') return { status: 'clarification_required', candidates: ranked };
-  if (qualifiedRecipient) return { status: 'resolved', candidates: ranked, recipient: qualifiedRecipient };
+  if (qualifiedRecipient) return resolvedOn(qualifiedRecipient);
+
+  // 3. A spoken SHORT FORM of one name, bounded by
+  //    `resolveUniquePrefixedRecipient`.
+  const prefixedRecipient = resolveUniquePrefixedRecipient(queryKey, ranked);
+  if (prefixedRecipient === 'ambiguous') return { status: 'clarification_required', candidates: ranked };
+  if (prefixedRecipient) return resolvedOn(prefixedRecipient);
 
   const [first, second] = ranked;
   if (!first || first.score < config.scoreFloor) return { status: 'no_match', candidates: [] };
@@ -78,12 +94,78 @@ export function classifyRecipientCandidates(
   return { status: 'resolved', candidates: ranked, recipient: first };
 }
 
+/**
+ * The answer for a recipient a NAME RULE identified.
+ *
+ * The ranked list is deliberately NOT carried here, and that is part of the fix:
+ * a deterministic name match means the other rows the retrieval returned are
+ * irrelevant to what the user said, and handing them over presents a stranger as
+ * a plausible candidate for a name that already identified someone. The score
+ * path below still carries the whole list, because there the list IS the question
+ * ("is this the contact you meant?") and dropping candidates from it would hide
+ * the very evidence the caller is asking about.
+ */
+function resolvedOn(recipient: RecipientCandidate): RecipientSearchResult {
+  return { status: 'resolved', candidates: [recipient], recipient };
+}
+
 const NON_MEANINGFUL_DESCRIPTION_TERMS = new Set([
   'a', 'al', 'and', 'con', 'de', 'del', 'el', 'en', 'la', 'las', 'los', 'mi', 'my', 'of', 'para', 'the', 'to', 'un', 'una', 'y',
 ]);
 
+/**
+ * The shortest short form the prefix rule will act on.
+ *
+ * Three characters would make function words and initials start resolving names
+ * (`del` -> `Delia`, `mar` -> `Marcos`) off a single syllable nobody said as a
+ * name. Four is the shortest span that is a plausible abbreviation of a name
+ * (`sofi` -> `Sofía`, `luci` -> `Lucía`) and is what the spoken defect needs.
+ */
+const MIN_NAME_PREFIX_LENGTH = 4;
+
 function meaningfulTerms(value: string): Set<string> {
   return new Set((value.match(/[\p{L}\p{N}]+/gu) ?? []).filter((term) => !NON_MEANINGFUL_DESCRIPTION_TERMS.has(term)));
+}
+
+/**
+ * The ONE candidate a bounded name prefix identifies, `'ambiguous'` when more
+ * than one candidate starts with it, or `undefined` when there is none.
+ *
+ * WHY A PREFIX IS DEFENSIBLE HERE, AND WHERE IT IS BOUNDED
+ * -------------------------------------------------------
+ * A person refers to a contact by a short form of their name (`sofi` for
+ * `Sofía`), and a short form is by definition a PREFIX of the name — not an
+ * arbitrary fuzzy neighbour. Every bound below exists so this cannot become a
+ * loose match to a payee:
+ *
+ *   - the query must be a prefix of the WHOLE name (so `sofi` matches `Sofía`),
+ *     compared on the folded key, so an accent never defeats it;
+ *   - the folded query must be at least {@link MIN_NAME_PREFIX_LENGTH} long;
+ *   - the folded query must not be a non-meaningful function word (`para` is a
+ *     prefix of `Paraná` and is still not a name);
+ *   - MORE THAN ONE match is `'ambiguous'`, never a pick. The rule can therefore
+ *     only ever resolve a name that identifies exactly one contact, which is the
+ *     same guard exact matching already applies.
+ *
+ * Matching inside a word (`garcia` for `Ana García`) is deliberately NOT done
+ * here: that widens the lexical surface to any word of any name with no defect
+ * asking for it, and a surname a user only half-remembers is a question the
+ * retrieval fallback already answers — with evidence, and with the ambiguity
+ * guard the whole list preserves.
+ */
+function resolveUniquePrefixedRecipient(
+  queryKey: string,
+  candidates: RecipientCandidate[],
+): RecipientCandidate | 'ambiguous' | undefined {
+  if (queryKey.length < MIN_NAME_PREFIX_LENGTH) return undefined;
+  if (NON_MEANINGFUL_DESCRIPTION_TERMS.has(queryKey)) return undefined;
+  // `startsWith` includes equality, which the exact rule above already answered
+  // for: a query that EQUALS a folded name never reaches this point.
+  const prefixed = candidates.filter((candidate) =>
+    comparisonTextKey(candidate.normalizedName).startsWith(queryKey),
+  );
+  if (prefixed.length > 1) return 'ambiguous';
+  return prefixed[0];
 }
 
 /**
@@ -91,21 +173,27 @@ function meaningfulTerms(value: string): Set<string> {
  * embedding under-scores it. The name must identify exactly one candidate and
  * the remaining query must share a meaningful description term; name-only,
  * duplicate-name, and conflicting candidates stay on the normal safe path.
+ *
+ * Both sides are compared on the FOLDED key, so the same diacritic insensitivity
+ * the exact rule gets applies to the name and to the qualifier alike: `Sofia el
+ * electricista` is the same request as `Sofía el electricista`. The offsets come
+ * from the folded query, never from the stored name, so they agree with the text
+ * being sliced.
  */
 function resolveUniqueLexicallyQualifiedRecipient(
-  normalizedQuery: string,
+  queryKey: string,
   candidates: RecipientCandidate[],
 ): RecipientCandidate | 'ambiguous' | undefined {
   const named = candidates.filter((candidate) =>
-    normalizedQuery.startsWith(`${candidate.normalizedName} `),
+    queryKey.startsWith(`${comparisonTextKey(candidate.normalizedName)} `),
   );
   if (named.length > 1) return 'ambiguous';
   if (named.length === 0) return undefined;
   const candidate = named[0]!;
-  const qualifier = normalizedQuery.slice(candidate.normalizedName.length).trim();
+  const qualifier = queryKey.slice(comparisonTextKey(candidate.normalizedName).length).trim();
   if (!qualifier) return undefined;
   const qualifierTerms = meaningfulTerms(qualifier);
-  const descriptionTerms = meaningfulTerms(normalizeMemoryText(candidate.description));
+  const descriptionTerms = meaningfulTerms(comparisonTextKey(candidate.description));
   return [...qualifierTerms].some((term) => descriptionTerms.has(term)) ? candidate : undefined;
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  comparisonTextKey,
   EmbeddingService,
   factEmbeddingText,
   normalizeMemoryText,
@@ -18,6 +19,22 @@ describe('recipient memory embeddings', () => {
     expect(recipientEmbeddingText('Lucas', 'El electricista 0x1234567890abcdef1234567890abcdef12345678'))
       .not.toContain('0x1234567890abcdef1234567890abcdef12345678');
     expect(factEmbeddingText('Lucas es mi nieto')).toBe('fact: lucas es mi nieto');
+  });
+
+  it('RED: folds diacritics into a COMPARISON key while the stored and embedded normalization stays byte-identical', () => {
+    // The comparison key is what a contact name and a query are compared through:
+    // an accent must never be the difference between the user's own contact and
+    // the name they typed or said.
+    expect(comparisonTextKey('Sofía')).toBe('sofia');
+    expect(comparisonTextKey('Sofia')).toBe('sofia');
+    expect(comparisonTextKey(' Sofía Ríos ')).toBe('sofia rios');
+    expect(comparisonTextKey('Muñoz')).toBe('munoz');
+
+    // The key is a COMPARISON value only. `normalizeMemoryText` still returns the
+    // exact text that is stored in `recipients.normalized_name` and embedded, so
+    // no stored row changes meaning and no backfill is required.
+    expect(normalizeMemoryText('Sofía')).toBe('sofía');
+    expect(recipientEmbeddingText('Sofía', 'mi vecina')).toContain('name: sofía');
   });
 
   it('loads the pinned pipeline once and accepts only a 384-dimensional finite embedding', async () => {

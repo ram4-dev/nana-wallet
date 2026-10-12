@@ -189,3 +189,114 @@ describe('recipient-memory ranking', () => {
     await expect(memory.getRecipientForVersion(USER_A, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 1)).resolves.toBeUndefined();
   });
 });
+
+/**
+ * A ranking that makes the retrieval score path unable to resolve anything:
+ * every candidate is below the floor. A result that is not `no_match` can
+ * therefore only have come from a NAME rule, which is what these cases assert.
+ */
+const NAME_ONLY_RANKING = { scoreThreshold: 1, scoreFloor: 1, scoreMargin: 1 };
+
+describe('contact-name matching is diacritic-insensitive and bounded', () => {
+  const sofia = candidate({
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    name: 'Sofía',
+    normalizedName: 'sofía',
+    description: 'mi vecina',
+    score: 0.9,
+  });
+  const test1 = candidate({
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    name: 'Test1',
+    normalizedName: 'test1',
+    description: 'un contacto de prueba',
+    score: 0.9,
+  });
+
+  it('RED: resolves the accented contact for the accent-less spelling and never carries the unrelated one', () => {
+    // The live defect: `Sofía` is stored with normalized_name 'sofía', so the
+    // accent-less query found no exact match at all, fell to the retrieval score
+    // path, and the resulting near-tie put an unrelated contact in the answer.
+    const result = classifyRecipientCandidates('Sofia', [sofia, test1], NAME_ONLY_RANKING);
+
+    expect(result).toMatchObject({ status: 'resolved', recipient: { id: sofia.id, name: 'Sofía' } });
+    expect(result.candidates.map((entry) => entry.id)).toEqual([sofia.id]);
+  });
+
+  it('RED: resolves a spoken short form through a bounded name prefix', () => {
+    expect(classifyRecipientCandidates('sofi', [sofia], NAME_ONLY_RANKING)).toMatchObject({
+      status: 'resolved',
+      recipient: { id: sofia.id },
+    });
+  });
+
+  it('asks when a bounded prefix identifies more than one candidate', () => {
+    const sofina = candidate({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      name: 'Sofina',
+      normalizedName: 'sofina',
+      description: 'otro contacto',
+      score: 0.9,
+    });
+
+    // Both names start with what was said, so the short form does NOT identify a
+    // recipient: the ambiguity guard is unchanged by the prefix rule.
+    expect(classifyRecipientCandidates('sofi', [sofia, sofina], NAME_ONLY_RANKING).status).toBe('clarification_required');
+    // ...and its control: one candidate, same rule, resolves.
+    expect(classifyRecipientCandidates('sofi', [sofina], NAME_ONLY_RANKING)).toMatchObject({
+      status: 'resolved', recipient: { id: sofina.id },
+    });
+  });
+
+  it('treats two rows that differ only by a diacritic as the SAME name, so the query is ambiguous', () => {
+    const unaccented = candidate({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      name: 'Sofia',
+      normalizedName: 'sofia',
+      description: 'otra persona',
+      score: 0.9,
+    });
+
+    // Never one of the two: an accent-only difference is the same name, and two
+    // rows with the same name are exactly the case that must ask.
+    expect(classifyRecipientCandidates('Sofia', [sofia, unaccented], NAME_ONLY_RANKING).status).toBe('clarification_required');
+    expect(classifyRecipientCandidates('Sofía', [sofia, unaccented], NAME_ONLY_RANKING).status).toBe('clarification_required');
+  });
+
+  it('keeps the prefix rule bounded: too short, or a non-meaningful function word, resolves nothing', () => {
+    expect(classifyRecipientCandidates('sof', [sofia], NAME_ONLY_RANKING)).toEqual({ status: 'no_match', candidates: [] });
+    const parana = candidate({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      name: 'Paraná',
+      normalizedName: 'paraná',
+      description: 'otro contacto',
+      score: 0.9,
+    });
+    expect(classifyRecipientCandidates('para', [parana], NAME_ONLY_RANKING)).toEqual({ status: 'no_match', candidates: [] });
+  });
+
+  it('folds the name-and-qualifier path too, so a qualified request is not defeated by an accent', () => {
+    const electrician = candidate({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Sofía',
+      normalizedName: 'sofía',
+      description: 'el electricista',
+      score: 0.2,
+    });
+
+    expect(classifyRecipientCandidates('Sofia el electricista', [electrician], NAME_ONLY_RANKING)).toMatchObject({
+      status: 'resolved', recipient: { id: electrician.id },
+    });
+  });
+
+  it('leaves an unrelated name on the retrieval path, which is still the honest answer for it', () => {
+    // No name rule matches `Sofia` against `Lucas`, and the score cannot either:
+    // a genuine miss, reported as one.
+    expect(classifyRecipientCandidates('Sofia', [candidate()], NAME_ONLY_RANKING)).toEqual({ status: 'no_match', candidates: [] });
+    // With a usable score the SAME unrelated query still resolves through the
+    // embedding fallback, so the fallback is intact rather than bypassed.
+    expect(classifyRecipientCandidates('Sofia', [candidate({ score: 0.99 })], {
+      scoreThreshold: 0.78, scoreFloor: 0.55, scoreMargin: 0.08,
+    }).status).toBe('resolved');
+  });
+});
