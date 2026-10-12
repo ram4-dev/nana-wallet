@@ -80,15 +80,33 @@ export type AgentSessionComposition = {
  * NOT `keywords`: the provider documents that field as supported by
  * `gpt-transcribe`/`gpt-live-transcribe` only, so it is deliberately omitted
  * rather than sent to a model that does not read it.
+ *
+ * WHY THE PROMPT IS WRITTEN IN ENGLISH
+ * ------------------------------------
+ * It is an instruction to a model, and the rest of this file's instructions are
+ * English. It used to be Spanish, which was the one Spanish instruction left on
+ * the voice path that no language switch guarded: a second, quieter pin of the
+ * same kind the persona's opening line used to carry. The wording is a
+ * translation and nothing else — every rule it states (the `.sns` names are
+ * English proper nouns, keep their English spelling, transcribe the suffix, do
+ * not rewrite phonetically, the remaining speech is Rioplatense Spanish) is
+ * exactly the rule the Spanish text stated.
+ *
+ * `TRANSCRIPTION_LANGUAGE` below is a SEPARATE decision and is NOT part of that
+ * translation: it still pins the transcriber to `es` (overridable through
+ * `OPENAI_TRANSCRIPTION_LANGUAGE`), so an English speaker's audio is still
+ * decoded as Spanish. That is a real, observed-adjacent defect of the same class
+ * as the persona pin, but it changes live speech recognition rather than copy, so
+ * it is reported for its own change instead of being smuggled in here.
  */
 const TRANSCRIPTION_LANGUAGE = process.env.OPENAI_TRANSCRIPTION_LANGUAGE ?? "es";
 const TRANSCRIPTION_PROMPT =
   process.env.OPENAI_TRANSCRIPTION_PROMPT ??
-  "El usuario dicta nombres de dominio .sns, por ejemplo 'juan.sns' o 'sophie.sns'. " +
-  "Esos nombres suelen ser nombres propios o palabras en INGLES, y deben escribirse " +
-  "con su ortografia original en ingles, NO con la pronunciacion espanola. " +
-  "Transcribi el nombre completo, incluido el sufijo .sns, sin traducirlo ni " +
-  "reescribirlo foneticamente. Otras frases son espanol rioplatense.";
+  "The user dictates .sns domain names, for example 'juan.sns' or 'sophie.sns'. " +
+  "Those names are usually proper nouns or words in ENGLISH, and must be written " +
+  "with their original English spelling, NOT with their Spanish pronunciation. " +
+  "Transcribe the complete name, including the .sns suffix, without translating " +
+  "it or rewriting it phonetically. Other phrases are Rioplatense Spanish.";
 
 /**
  * Instruction for the session's opening turn, appended to

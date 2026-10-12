@@ -153,6 +153,28 @@ describe("the voice session answers in the user's language", () => {
     expect(persona).toMatch(/Respond in Spanish/iu);
   });
 
+  it("sends the transcriber its guidance in English, with the .sns rule intact", () => {
+    // The transcriber prompt was the one Spanish instruction left on the voice
+    // path that no language switch guarded: an instruction to a model, written
+    // in a language nobody had chosen for the session. It is English now, and
+    // the rule that fixed the observed `sofi.sns` / `sophie.sns` mishearing is
+    // exactly the same rule, translated.
+    createAgentSession({ tools: [], language: "en" });
+    const transcription = h.MockRealtimeModel.instances[0].options
+      .inputAudioTranscription as { language?: string; prompt?: string };
+
+    expect(transcription.prompt).toContain("must be written with their original English spelling");
+    expect(transcription.prompt).toContain(".sns suffix");
+    expect(transcription.prompt).toContain("Rioplatense Spanish");
+    // No Spanish instruction text survives anywhere in it.
+    for (const spanish of ["ortografia", "pronunciacion espanola", "Transcribi", "El usuario dicta"]) {
+      expect(transcription.prompt, spanish).not.toContain(spanish);
+    }
+    // The transcription LANGUAGE is a separate, deliberately pinned setting and
+    // this change does not touch it: it is reported for its own change.
+    expect(transcription.language).toBe("es");
+  });
+
   it("defaults to the language detector's own default when the caller names none", () => {
     createAgentSession({ tools: [] });
     const persona = String(h.MockAgent.instances[0].options.instructions);
