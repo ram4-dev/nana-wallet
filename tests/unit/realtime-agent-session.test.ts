@@ -468,4 +468,28 @@ describe("OpenAI realtime agent session composition", () => {
     expect(() => speakGreeting()).toThrow("AgentSession is not running");
     expect(speakGreeting()).toBe(false);
   });
+
+  it("RED: hands the turn-taking settings to the realtime model it builds", () => {
+    // The contract-level half of the turn-taking fix. The behaviour of the
+    // settings themselves is proven against the REAL vendor in
+    // `tests/unit/livekit/realtime-turn-detection.test.ts`; what this pins is
+    // that the production construction path, not just a helper, passes them.
+    process.env.OPENAI_API_KEY = "test-key";
+
+    createAgentSession({ tools: [] });
+
+    const options = h.MockRealtimeModel.instances[0].options;
+    expect(options.turnDetection).toEqual({ type: "semantic_vad", eagerness: "high" });
+    expect(options.inputAudioNoiseReduction).toEqual({ type: "far_field" });
+  });
+
+  it("still refuses to build a session without an API key", () => {
+    // The options object carries `apiKey`, so this guard is what keeps a missing
+    // key failing with its own error instead of the SDK's generic one.
+    delete process.env.OPENAI_API_KEY;
+
+    expect(() => createAgentSession({ tools: [] })).toThrow(
+      "OPENAI_API_KEY is required for the openai-realtime voice provider.",
+    );
+  });
 });

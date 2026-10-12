@@ -130,6 +130,64 @@ export function transcriptionOptions(
   };
 }
 
+const TURN_EAGERNESS = new Set(['auto', 'low', 'medium', 'high'] as const);
+const NOISE_REDUCTION = new Set(['near_field', 'far_field'] as const);
+
+/**
+ * The realtime model's options, resolved per call.
+ *
+ * WHY TURN-TAKING IS CONFIGURED HERE AT ALL
+ * ----------------------------------------
+ * It used to be left to the plugin, and the plugin's default is
+ * `{ type: 'semantic_vad', eagerness: 'medium' }` with
+ * `inputAudioNoiseReduction: undefined`. That combination is deterministic but
+ * SLOW: `semantic_vad` decides the end of a turn with a model rather than by
+ * measuring silence, and with no noise reduction the microphone's floor keeps
+ * the detector from concluding. Measured on the deployed stack, the agent sat
+ * silent through speech spans of 28.4s / 15.5s / 10.1s and through gaps of
+ * 8.5s / 6.8s / 5.4s between a tool finishing and the first audio. The user's
+ * report was literal: "se queda mucho tiempo esperando".
+ *
+ * The choice, made deliberately rather than inherited:
+ *   - `semantic_vad` is KEPT, because it understands that a pause mid-sentence
+ *     is not the end of a turn. `server_vad` would answer a silence threshold,
+ *     and on a wallet that confirms transfers by voice that means answering an
+ *     instruction the user had not finished speaking.
+ *   - `eagerness: 'high'` is what removes the waiting: the same model-decided
+ *     mechanism, no longer biased towards patience.
+ *   - noise reduction is ON because it is orthogonal help for both mechanisms.
+ *
+ * Both are operator-overridable, and an unrecognised value falls back to the
+ * deliberate default instead of silently disabling the setting — failing open to
+ * the plugin default is exactly what produced the defect.
+ */
+export function realtimeModelOptions(
+  environment: NodeJS.ProcessEnv = process.env,
+): Record<string, unknown> {
+  const requestedEagerness = environment.OPENAI_REALTIME_TURN_EAGERNESS?.trim();
+  const eagerness = TURN_EAGERNESS.has(requestedEagerness as 'high')
+    ? requestedEagerness
+    : 'high';
+  const requestedNoise = environment.OPENAI_REALTIME_NOISE_REDUCTION?.trim();
+  const noiseReduction = NOISE_REDUCTION.has(requestedNoise as 'far_field')
+    ? requestedNoise
+    : 'far_field';
+  return {
+    model: environment.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2.1-mini",
+    voice: environment.OPENAI_REALTIME_VOICE ?? "marin",
+    // Carried here so this is the COMPLETE option set: a caller builds the
+    // model from one object, and a test can hand the real vendor exactly what
+    // production hands it. `createAgentSession` still guards the boot, so a
+    // missing key fails with its own error before the SDK's generic one.
+    apiKey: environment.OPENAI_API_KEY,
+    // Keep the detector model-decided; stop it waiting like `medium` does.
+    turnDetection: { type: 'semantic_vad', eagerness },
+    // `far_field` is the laptop/phone-speaker case this web app runs in.
+    inputAudioNoiseReduction: { type: noiseReduction },
+    inputAudioTranscription: transcriptionOptions(environment),
+  };
+}
+
 /**
  * Instruction for the session's opening turn, appended to
  * `NANI_REALTIME_INSTRUCTIONS` for that turn only.
@@ -183,17 +241,11 @@ export function createAgentSession(options: {
       "OPENAI_API_KEY is required for the openai-realtime voice provider.",
     );
   }
-  const llm = new openai.realtime.RealtimeModel({
-    model: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2.1-mini",
-    voice: process.env.OPENAI_REALTIME_VOICE ?? "marin",
-    apiKey,
-    // The same transcription model the plugin defaults to, so nothing about the
-    // transcription's latency changes — what changes is that it now knows what it
-    // is listening for. See TRANSCRIPTION_PROMPT above.
-    // See TRANSCRIPTION_LANGUAGE above: with no explicit pin the provider detects
-    // the language, which is what a bilingual session needs.
-    inputAudioTranscription: transcriptionOptions(),
-  });
+  const llm = new openai.realtime.RealtimeModel(
+    // One definition of the model's options: the turn-taking settings are part
+    // of the contract, not a detail this call site may quietly drop.
+    realtimeModelOptions() as never,
+  );
   const language: ConversationLanguage = options.language === "es" ? "es" : "en";
   const agent = new Agent({
     instructions: composeRealtimeInstructions(language),
