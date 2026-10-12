@@ -579,6 +579,57 @@ describe('WalletConversationService', () => {
       });
     });
 
+    /**
+     * WHY THIS TEST EXISTS
+     * -------------------
+     * `src/agent/wallet-agent.ts` used to hold its OWN closed list of exact
+     * confirmation sentences (`CONFIRM_PHRASES`), a THIRD reader of "is this turn
+     * a decision" that was narrower than the other two: `service.ts` (every HTTP
+     * text turn) and the voice gate both classify compositionally through
+     * `livekit/resolution-phrases.ts`.
+     *
+     * The list is gone and this module now uses that classifier. That is a change
+     * in which turns the AGENT path authorizes, so it is justified by what the
+     * SERVICE already authorized: the turns below confirm over the real service
+     * path, with a real pending preview, exactly as "confirm the transfer" does.
+     * Nothing was widened — a narrower reader was removed and one rule now governs
+     * every surface.
+     */
+    it.each(['yes', 'go ahead', 'ok do it', 'sí', 'dale', 'adelante']) (
+      'opens the transfer over the service path on the plain agreement %s',
+      async (agreement) => {
+        const repository = repositoryFixture(undefined, 'es');
+        const wallet = walletFixture();
+        const service = createWalletConversationService({ conversations: repository, wallet });
+        await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+
+        const result = await service.handleTurn({ conversationId, userId, text: agreement });
+
+        expect(result.status).toBe('sent');
+      },
+    );
+
+    /**
+     * The service path's own half of the load-bearing guard: a decision-shaped
+     * turn that also carries a new instruction must never resolve the preview.
+     */
+    it('does not resolve the preview on a sentence that carries a new instruction', async () => {
+      const repository = repositoryFixture(undefined, 'es');
+      const wallet = walletFixture();
+      const service = createWalletConversationService({ conversations: repository, wallet });
+      await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+
+      const result = await service.handleTurn({
+        conversationId,
+        userId,
+        text: 'Sí, envíale uno a Lucas, confirmo.',
+      });
+
+      expect(result.status).not.toBe('sent');
+      const snapshot = await repository.get(userId, conversationId);
+      expect(snapshot?.pendingTransfer).toBeDefined();
+    });
+
     it.each(['es', 'en'] as const)(
       'separates a permanent refusal from a temporary outage with opposite guidance (%s)',
       async (language) => {

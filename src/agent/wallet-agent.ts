@@ -26,6 +26,10 @@ import {
   type SendTokenInput,
 } from './definition.js';
 import { getWdkTools } from './wdk-tools.js';
+// The SAME classifier the voice confirmation gate, the HTTP turn route and the
+// room's deferred-decision path use. There is one rule for "is this utterance a
+// decision", and this module is no longer allowed a second, narrower one.
+import { isCancellation, isConfirmation } from '../livekit/resolution-phrases.js';
 import type { WalletProvider } from '../wallet/provider.js';
 import {
   defaultTransactionReceiptWaiter,
@@ -63,47 +67,26 @@ const toolCallOptions = {
   abortSignal: new AbortController().signal,
 } as never;
 
-const CANCEL_PHRASES = new Set([
-  'cancel',
-  'cancel transfer',
-  'cancel the transfer',
-  'cancel it',
-  'no, cancel',
-  'cancelar',
-  'cancelo',
-  'cancelar transferencia',
-  'cancelar la transferencia',
-  'cancelo la transferencia',
-]);
-const CONFIRM_PHRASES = new Set([
-  'confirm',
-  'i confirm',
-  'yes confirm',
-  'yes, confirm',
-  'yes i confirm',
-  'yes, i confirm',
-  'confirm transfer',
-  'confirm the transfer',
-  'confirmar',
-  'confirmo',
-  'sí confirmo',
-  'sí, confirmo',
-  'si confirmo',
-  'si, confirmo',
-  'confirmar transferencia',
-  'confirmar la transferencia',
-  'confirmo la transferencia',
-]);
-
-function normalizeResolutionText(text: string): string {
-  return text
-    .trim()
-    .toLocaleLowerCase('es-AR')
-    .normalize('NFC')
-    .replace(/[.!]+$/u, '')
-    .trim()
-    .replace(/\s+/gu, ' ');
-}
+// The literal phrase lists that used to live here (`CONFIRM_PHRASES`,
+// `CANCEL_PHRASES`) are GONE, and their absence is the point.
+//
+// WHAT THEY WERE
+// --------------
+// Two closed sets of exact sentences, matched with `.has(normalized)`. Because
+// a set can only answer "did the user type one of my strings?", the same words
+// behaved differently depending on the surface: `service.ts` (text turns over
+// HTTP) and the voice gate classify compositionally through
+// `livekit/resolution-phrases.ts`, while a direct text turn through this module
+// was sent to a spelling test. "yes please", "go ahead", "ok do it" and a plain
+// "no" were read as NO DECISION here and as a decision everywhere else.
+//
+// `resolution-phrases.ts` documents why its list was removed: the relationship
+// that matters is not "matches a known sentence" but "carries a polarity word
+// and carries NOTHING ELSE". That rule reaches "go ahead" and "adelante" and
+// still refuses "Sí, envíale uno a Lucas, confirmo." — a new instruction that
+// happens to contain a confirmation word.
+//
+// So one rule now governs every surface, and this module holds no copy of it.
 
 type BalanceInput = z.infer<typeof balanceInputSchema>;
 
@@ -357,7 +340,11 @@ export async function handleMessage(
   userText: string,
   options: HandleMessageOptions = {},
 ): Promise<ConversationTurnResult> {
-  const normalized = normalizeResolutionText(userText);
+  // The decisions are computed from the RAW turn, exactly as every other
+  // surface does: the classifier owns its own normalization, so the two
+  // surfaces cannot drift apart by normalizing differently first.
+  const confirmation = isConfirmation(userText);
+  const cancellation = isCancellation(userText);
   appendMessage(session, { role: 'user', content: userText });
   // PMU-014: memory comes from the caller, which resolves it for the request's
   // authenticated user. There is no fixed-tenant default any more: a caller
@@ -380,17 +367,17 @@ export async function handleMessage(
     return { status: 'error', message, code: 'broadcast_in_progress' };
   }
 
-  if (session.pendingTransfer && CANCEL_PHRASES.has(normalized)) {
+  if (session.pendingTransfer && cancellation) {
     clearPendingTransfer(session);
     const message = 'Transfer cancelled.';
     appendMessage(session, { role: 'assistant', content: message });
     return { status: 'cancelled', message };
   }
 
-  if (!session.pendingTransfer && rawMemoryTools && session.recipientMemory?.pendingWrite && CONFIRM_PHRASES.has(normalized)) {
+  if (!session.pendingTransfer && rawMemoryTools && session.recipientMemory?.pendingWrite && confirmation) {
     const confirmationId = session.recipientMemory.pendingWrite.confirmationId;
-    const confirmation = confirmMemoryWrite(session, recipientMemory!.userId, confirmationId, Date.now());
-    if (confirmation.status !== 'confirmed') {
+    const memoryConfirmation = confirmMemoryWrite(session, recipientMemory!.userId, confirmationId, Date.now());
+    if (memoryConfirmation.status !== 'confirmed') {
       const message = 'That memory confirmation is no longer valid; please stage it again.';
       appendMessage(session, { role: 'assistant', content: message });
       return { status: 'answer', message };
@@ -403,13 +390,13 @@ export async function handleMessage(
     return { status: 'answer', message };
   }
 
-  if (!session.pendingTransfer && CONFIRM_PHRASES.has(normalized)) {
+  if (!session.pendingTransfer && confirmation) {
     const message = 'There is no pending transfer to confirm.';
     appendMessage(session, { role: 'assistant', content: message });
     return { status: 'error', message, code: 'no_pending_preview' };
   }
 
-  if (session.pendingTransfer && CONFIRM_PHRASES.has(normalized)) {
+  if (session.pendingTransfer && confirmation) {
     const claim = options.claimedTransfer
       ? { status: 'claimed' as const, transfer: options.claimedTransfer }
       : claimPendingTransfer(session);

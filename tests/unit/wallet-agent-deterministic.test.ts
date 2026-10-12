@@ -253,24 +253,93 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     },
   );
 
-  it('does not treat a generic yes as a confirmation', async () => {
+  /**
+   * THE SAFETY PROPERTY, over the REAL path.
+   *
+   * `resolution-phrases.ts` states the relationship the classifier preserves:
+   * a decision carries a polarity word and NOTHING ELSE. Its own header example
+   * is the one that matters — "Sí, envíale uno a Lucas, confirmo." is a NEW
+   * instruction (an amount and a recipient) that happens to contain a
+   * confirmation word, and authorizing a transfer from it would send money on
+   * the strength of a sentence nobody reviewed.
+   *
+   * `handleMessage` used to get that protection from a closed list of exact
+   * sentences instead. Replacing the list with the classifier had to keep it:
+   * this drives `handleMessage` itself, with a real pending transfer, and asserts
+   * both the refusal AND that the transfer is still pending afterwards.
+   */
+  it('never reads a confirmation out of a sentence that carries a new instruction', async () => {
     const session = createSession();
     await handleMessage(
       session,
       'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
     );
 
-    await expect(handleMessage(session, 'yes')).resolves.toMatchObject({
+    const result = await handleMessage(session, 'Sí, envíale uno a Lucas, confirmo.');
+
+    expect(result).toMatchObject({
       status: 'error',
       code: 'pending_confirmation',
     });
+    // Refused is not enough: the preview must still be the open decision, or the
+    // refusal would have consumed it and left the user with no way to confirm.
+    expect(session.pendingTransfer).toBeDefined();
   });
 
-  it('does not send an ambiguous instruction to the agent while confirmation is pending', async () => {
+  it('never reads a cancellation out of a sentence that carries a new instruction', async () => {
     const session = createSession();
     setPendingTransfer(session.id, pendingFixture);
 
-    const result = await handleMessage(session, 'sí');
+    const result = await handleMessage(session, 'no, cancelá y mandale 5 a Lucas');
+
+    expect(result).toMatchObject({ status: 'error', code: 'pending_confirmation' });
+    expect(session.pendingTransfer).toBeDefined();
+  });
+
+  /**
+   * THE BEHAVIOUR CHANGE, pinned.
+   *
+   * `CONFIRM_PHRASES` held 'confirm', 'confirmo', 'sí, confirmo' and 14 other
+   * exact sentences, so a plain "yes" WITH a pending transfer was read as no
+   * decision at all and the turn ended in `pending_confirmation`. The voice gate
+   * and `service.ts` — the two surfaces that serve the product — already confirm
+   * on it (`isConfirmation('yes')` is true, and `conversation-service.test.ts`
+   * proves the service path sends). This module was a third, NARROWER reader, and
+   * the same words behaved differently depending on which one saw them.
+   */
+  it.each(['yes', 'go ahead', 'ok', 'sí', 'dale', 'adelante', 'listo']) (
+    'confirms a pending transfer on the plain agreement %s, as the voice and service surfaces always did',
+    async (agreement) => {
+      const session = createSession();
+      await handleMessage(
+        session,
+        'Send 10 USDT to 0x1234000000000000000000000000000000abcd',
+      );
+
+      await expect(handleMessage(session, agreement)).resolves.toMatchObject({
+        status: 'sent',
+      });
+    },
+  );
+
+  it.each(['no', 'stop', 'dejalo', 'mejor no']) (
+    'cancels a pending transfer on the plain refusal %s',
+    async (refusal) => {
+      const session = createSession();
+      setPendingTransfer(session.id, pendingFixture);
+
+      await expect(handleMessage(session, refusal)).resolves.toEqual({
+        status: 'cancelled',
+        message: 'Transfer cancelled.',
+      });
+    },
+  );
+
+  it('refuses an instruction turn while a confirmation is pending, without sending it on', async () => {
+    const session = createSession();
+    setPendingTransfer(session.id, pendingFixture);
+
+    const result = await handleMessage(session, 'mandale 5 a Lucas');
 
     expect(result).toEqual({
       status: 'error',
