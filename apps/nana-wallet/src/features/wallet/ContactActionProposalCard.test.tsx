@@ -6,23 +6,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getContactAction: vi.fn(),
-  replaceContactActionAddress: vi.fn(),
-  canScanAddress: vi.fn(() => true),
-  scanAddressWithCapacitor: vi.fn(),
-}));
-
-vi.mock("./address-scanner", () => ({
-  canScanAddress: () => mocks.canScanAddress(),
-  scanAddressWithCapacitor: () => mocks.scanAddressWithCapacitor(),
 }));
 
 vi.mock("@/lib/api", () => ({
   api: {
     getContactAction: (proposalId: string) => mocks.getContactAction(proposalId),
-    replaceContactActionAddress: (
-      proposalId: string,
-      input: { address: string; expectedProposalVersion: number },
-    ) => mocks.replaceContactActionAddress(proposalId, input),
+    // `replaceContactActionAddress` is DELIBERATELY absent. The card may not write
+    // an address at all any more, so a card that still tried to would crash on
+    // `undefined` here rather than pass against a mock nobody needs.
   },
   queryKeys: {
     contactAction: (userId: string | undefined, proposalId: string) => [
@@ -31,7 +22,6 @@ vi.mock("@/lib/api", () => ({
       proposalId,
     ],
   },
-  getErrorMessage: (error: unknown) => (error as { message?: string })?.message ?? String(error),
 }));
 
 import type { ContactActionProposal, ContactActionProposalNotification } from "@/lib/api-types";
@@ -81,12 +71,47 @@ function renderCard(props: Partial<Parameters<typeof ContactActionProposalCard>[
   );
 }
 
+/**
+ * The card offers NO way to enter an address, by hand or by scan.
+ *
+ * Asserted as ONE bundle on purpose: "the input is gone" alone would still pass a
+ * card that left the submit button (or the scan button) behind, and a leftover
+ * control is exactly what the user would reach for. `input` is checked through the
+ * DOM rather than by label, so a renamed field cannot slip past this.
+ */
+function expectNoAddressEntry(container: HTMLElement) {
+  expect(screen.queryByTestId("proposal-address-form")).toBeNull();
+  expect(container.querySelector("form")).toBeNull();
+  expect(container.querySelector("input")).toBeNull();
+  expect(screen.queryByRole("button", { name: /use this address/i })).toBeNull();
+  expect(screen.queryByRole("button", { name: /scan/i })).toBeNull();
+}
+
+/*
+ * WHAT THIS SUITE NO LONGER COVERS, AND WHY (the removed paste/scan form)
+ * ----------------------------------------------------------------------
+ * The card used to own the only control that could give an address-less proposal
+ * an address, and six cases pinned that form's behaviour: the paste submit, the
+ * local base58 pre-check that refused an implausible value without calling the
+ * server, the `PROPUESTA_OBSOLETA` wording, the scan button that existed only
+ * inside a native shell, the scanned value used as a draft, and the empty draft
+ * left behind by a refused or cancelled scan. The form is gone, so those cases
+ * cannot assert anything true any more; deleting them without saying so is the
+ * coverage loss this repo has been bitten by, so here is the accounting, and the
+ * compensating assertions are the ABSENCE ones above and below.
+ *
+ * What replaces them: the card renders no address-entry control in either state
+ * (with an address and without one), and `@/lib/api` no longer even exposes
+ * `replaceContactActionAddress` to this module, so a card that tried to write an
+ * address would crash here instead of passing. The address a recipient gets is
+ * pasted or scanned on the WALLET screen (`AddTrustedRecipient`), which has its
+ * own tests, and on the voice path it arrives as a resolved `.sns` name that the
+ * port either has or refuses to stage without.
+ */
+
 describe("contact action proposal card (task 4.7)", () => {
   beforeEach(() => {
     mocks.getContactAction.mockReset();
-    mocks.replaceContactActionAddress.mockReset();
-    mocks.canScanAddress.mockReset().mockReturnValue(true);
-    mocks.scanAddressWithCapacitor.mockReset();
   });
 
   it("renders a loading state before the canonical row arrives", () => {
@@ -136,63 +161,39 @@ describe("contact action proposal card (task 4.7)", () => {
 
   it.each(STATUS_CASES)(
     "renders the $status row exactly as persisted",
-    async ({ status, label, confirmable }) => {
+    async ({ status, label }) => {
       mocks.getContactAction.mockResolvedValue(proposal({ status }));
-      renderCard();
+      const { container } = renderCard();
       expect(await screen.findByText(new RegExp(label))).toBeTruthy();
       expect(screen.getByText(/Version 1/)).toBeTruthy();
       expect(screen.getByTestId("proposal-expiry").textContent).toContain("Expires");
-      // Only an open row offers the address path: an expired or superseded version
-      // must not pretend it can still be corrected or confirmed.
-      const form = screen.queryByLabelText(/Paste or scan this recipient's address/);
-      expect(form === null).toBe(!confirmable);
+      // No state offers a way in: not the open row, not an expired or superseded
+      // one. The old assertion here was "the form exists only while open", which
+      // the removed form cannot satisfy in any state.
+      expectNoAddressEntry(container);
     },
   );
 
-  it("tells the user an open row has no address yet and accepts a pasted one", async () => {
+  it("says an open row has no address yet and offers no way to add one", async () => {
     mocks.getContactAction.mockResolvedValue(proposal());
-    mocks.replaceContactActionAddress.mockResolvedValue({
-      proposalId: PROPOSAL_ID,
-      proposalVersion: 2,
-      address: ADDRESS,
-    });
-    renderCard();
+    const { container } = renderCard();
 
+    // The plain sentence stays: it is still the honest thing to say about a row
+    // whose address is NULL.
     expect(await screen.findByText("This version has no address yet.")).toBeTruthy();
-    await userEvent.type(screen.getByLabelText(/Paste or scan this recipient's address/), ADDRESS);
-    await userEvent.click(screen.getByRole("button", { name: /use this address/i }));
-
-    // The version the user reviewed is what the request echoes back: the server
-    // refuses a stale one, so the card must never omit it.
-    await waitFor(() => {
-      expect(mocks.replaceContactActionAddress).toHaveBeenCalledWith(PROPOSAL_ID, {
-        address: ADDRESS,
-        expectedProposalVersion: 1,
-      });
-    });
-    expect(await screen.findByText(/We saved the address as a new version/)).toBeTruthy();
+    // And that is ALL: no input, no scan, no submit.
+    expectNoAddressEntry(container);
   });
 
-  it("renders the paste form only while the row has no address", async () => {
-    // A row that already carries an address has nothing to paste: the input, the
-    // scan button and the submit would all be dead weight on the screen where the
-    // user is verifying the destination.
+  it("offers no address-entry control for a row that already has one either", async () => {
+    // The other half of the same property, asserted separately because the removed
+    // form rendered in exactly one of these two states: a card that reintroduced
+    // it conditionally would still have to fail one of them.
     mocks.getContactAction.mockResolvedValue(proposal({ address: ADDRESS }));
-    const { unmount, container } = renderCard();
+    const { container } = renderCard();
     await screen.findByTestId("proposal-address");
-    expect(screen.queryByTestId("proposal-address-form")).toBeNull();
-    // No form survives in this state at all: not the input, not the scan button,
-    // not the submit.
-    expect(container.querySelector("form")).toBeNull();
-    expect(screen.queryByRole("button", { name: /use this address/i })).toBeNull();
-    unmount();
 
-    // Design flow (c): a voice proposal whose review channel never supplied an
-    // address still needs the paste path, so it stays for exactly that case.
-    mocks.getContactAction.mockResolvedValue(proposal());
-    renderCard();
-    await screen.findByTestId("proposal-no-address");
-    expect(screen.getByTestId("proposal-address-form")).toBeTruthy();
+    expectNoAddressEntry(container);
   });
 
   it("renders the persisted address, the previous one and the revocation effects", async () => {
@@ -229,103 +230,17 @@ describe("contact action proposal card (task 4.7)", () => {
     expect(await screen.findByText("This card revokes no automatic permission.")).toBeTruthy();
   });
 
-  it("refuses a locally implausible address without calling the server", async () => {
-    mocks.getContactAction.mockResolvedValue(proposal());
-    renderCard();
-    await userEvent.type(
-      await screen.findByLabelText(/Paste or scan this recipient's address/),
-      "0x0000000000000000000000000000000000000000",
-    );
-    await userEvent.click(screen.getByRole("button", { name: /use this address/i }));
-
-    expect(await screen.findByText("That does not look like a valid Solana address.")).toBeTruthy();
-    expect(mocks.replaceContactActionAddress).not.toHaveBeenCalled();
-  });
-
-  it("explains a stale proposal from the server instead of a raw failure", async () => {
-    mocks.getContactAction.mockResolvedValue(proposal());
-    mocks.replaceContactActionAddress.mockRejectedValue(
-      apiError("PROPUESTA_OBSOLETA", "This proposal changed."),
+  it("reports a generic read failure instead of the stale-proposal wording", async () => {
+    // This case used to drive the REPLACEMENT mutation. It now pins the same
+    // property on the only failure the card can still produce — the row read —
+    // because the wording the card chooses is still the card's own.
+    mocks.getContactAction.mockRejectedValueOnce(
+      apiError("ERROR_INTERNO", "No pudimos leer la tarjeta."),
     );
     renderCard();
-    await userEvent.type(
-      await screen.findByLabelText(/Paste or scan this recipient's address/),
-      ADDRESS,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /use this address/i }));
 
-    expect(
-      await screen.findByText("This proposal changed. Reload the card and try again."),
-    ).toBeTruthy();
-  });
-
-  it("offers the scan button only inside a native shell", async () => {
-    mocks.getContactAction.mockResolvedValue(proposal());
-    mocks.canScanAddress.mockReturnValue(false);
-    renderCard();
-    await screen.findByLabelText(/Paste or scan this recipient's address/);
-    expect(screen.queryByRole("button", { name: /scan/i })).toBeNull();
-
-    cleanup();
-    mocks.canScanAddress.mockReturnValue(true);
-    renderCard();
-    expect(await screen.findByRole("button", { name: /scan/i })).toBeTruthy();
-  });
-
-  it("uses a scanned value as a draft the user still has to review", async () => {
-    mocks.getContactAction.mockResolvedValue(proposal());
-    mocks.replaceContactActionAddress.mockResolvedValue({
-      proposalId: PROPOSAL_ID,
-      proposalVersion: 2,
-      address: ADDRESS,
-    });
-    mocks.scanAddressWithCapacitor.mockResolvedValue({ status: "scanned", address: ADDRESS });
-    renderCard();
-
-    const input = (await screen.findByLabelText(
-      /Paste or scan this recipient's address/,
-    )) as HTMLInputElement;
-    await userEvent.click(screen.getByRole("button", { name: /scan/i }));
-
-    expect(await screen.findByText("I read an address. Review it before using it.")).toBeTruthy();
-    expect(input.value).toBe(ADDRESS);
-    // A scan is a draft, never a submission: the server sees it only through the
-    // explicit submit that echoes the version under review.
-    expect(mocks.replaceContactActionAddress).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: /use this address/i }));
-    await waitFor(() => {
-      expect(mocks.replaceContactActionAddress).toHaveBeenCalledWith(PROPOSAL_ID, {
-        address: ADDRESS,
-        expectedProposalVersion: 1,
-      });
-    });
-  });
-
-  it("keeps the draft empty when the scan is refused or cancelled", async () => {
-    mocks.getContactAction.mockResolvedValue(proposal());
-    const scanAddress = vi.fn().mockResolvedValueOnce({ status: "unavailable" });
-    const { unmount } = renderCard({ scanAddress });
-    const input = (await screen.findByLabelText(
-      /Paste or scan this recipient's address/,
-    )) as HTMLInputElement;
-
-    // No native shell: the card says so and points at the paste path.
-    await userEvent.click(screen.getByRole("button", { name: /scan/i }));
-    expect(
-      await screen.findByText("Scanning is not available here. Paste the address manually."),
-    ).toBeTruthy();
-    expect(input.value).toBe("");
-    unmount();
-
-    // A cancelled scan changes nothing: no draft, and no request either.
-    scanAddress.mockResolvedValueOnce({ status: "cancelled" });
-    renderCard({ scanAddress });
-    await userEvent.click(await screen.findByRole("button", { name: /scan/i }));
-    expect(
-      await screen.findByText("I could not read any code. Try again or paste the address."),
-    ).toBeTruthy();
-    expect(mocks.replaceContactActionAddress).not.toHaveBeenCalled();
+    expect(await screen.findByText("We could not read the card.")).toBeTruthy();
+    expect(screen.queryByText("This proposal changed. Reload the card and try again.")).toBeNull();
   });
 
   it("reloads the row on a newer version wakeup and ignores the same or older one", async () => {
@@ -392,24 +307,6 @@ describe("contact action proposal card (task 4.7)", () => {
     unmount();
     expect(unsubscribe).toHaveBeenCalledTimes(subscriptions);
   });
-
-  it("reports a generic replacement failure instead of the stale-proposal wording", async () => {
-    mocks.getContactAction.mockResolvedValue(proposal());
-    mocks.replaceContactActionAddress.mockRejectedValue(
-      // The server's own message, passed through `getErrorMessage` untouched: the
-      // card translates its own sentences, never the backend's copy.
-      apiError("ERROR_INTERNO", "No pudimos guardar la dirección."),
-    );
-    renderCard();
-    await userEvent.type(
-      await screen.findByLabelText(/Paste or scan this recipient's address/),
-      ADDRESS,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /use this address/i }));
-
-    expect(await screen.findByText("No pudimos guardar la dirección.")).toBeTruthy();
-    expect(screen.queryByText("This proposal changed. Reload the card and try again.")).toBeNull();
-  });
 });
 
 /**
@@ -436,9 +333,6 @@ describe("contact action proposal card — the alias lines (task 6.3)", () => {
 
   beforeEach(() => {
     mocks.getContactAction.mockReset();
-    mocks.replaceContactActionAddress.mockReset();
-    mocks.canScanAddress.mockReset().mockReturnValue(true);
-    mocks.scanAddressWithCapacitor.mockReset();
   });
 
   it("renders the alias with its suffix and the resolved address untruncated", async () => {

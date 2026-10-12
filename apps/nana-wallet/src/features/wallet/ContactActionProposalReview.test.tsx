@@ -5,23 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getContactAction: vi.fn(),
-  replaceContactActionAddress: vi.fn(),
-  canScanAddress: vi.fn(() => true),
-  scanAddressWithCapacitor: vi.fn(),
-}));
-
-vi.mock("./address-scanner", () => ({
-  canScanAddress: () => mocks.canScanAddress(),
-  scanAddressWithCapacitor: () => mocks.scanAddressWithCapacitor(),
 }));
 
 vi.mock("@/lib/api", () => ({
   api: {
     getContactAction: (proposalId: string) => mocks.getContactAction(proposalId),
-    replaceContactActionAddress: (
-      proposalId: string,
-      input: { address: string; expectedProposalVersion: number },
-    ) => mocks.replaceContactActionAddress(proposalId, input),
+    // No address writer at all: the review surface may not put an address on the
+    // card, and a surface that tried to would crash here instead of passing.
   },
   queryKeys: {
     contactAction: (userId: string | undefined, proposalId: string) => [
@@ -30,7 +20,6 @@ vi.mock("@/lib/api", () => ({
       proposalId,
     ],
   },
-  getErrorMessage: (error: unknown) => (error as { message?: string })?.message ?? String(error),
 }));
 
 import type { ContactActionProposal, ContactActionProposalNotification } from "@/lib/api-types";
@@ -107,9 +96,6 @@ function renderReview(props: Partial<Parameters<typeof ContactActionProposalRevi
 describe("contact action proposal review surface (task 4.7 review channel)", () => {
   beforeEach(() => {
     mocks.getContactAction.mockReset();
-    mocks.replaceContactActionAddress.mockReset();
-    mocks.canScanAddress.mockReset().mockReturnValue(true);
-    mocks.scanAddressWithCapacitor.mockReset();
   });
 
   it("mounts nothing until a card is published to the bound conversation", async () => {
@@ -157,15 +143,28 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     expect(mocks.getContactAction).toHaveBeenCalledWith(PROPOSAL_ID);
   });
 
-  it("keeps the paste path available for the row the user is reviewing", async () => {
+  it("renders no address-entry control for the row the user is reviewing", async () => {
+    // PREMISE CHANGED, and this is the case whose premise died OUTRIGHT. It used to
+    // be "keeps the paste path available for the row the user is reviewing": the
+    // review card itself was how an address-less version got an address. That
+    // control is gone — the wallet screen owns it now, and the port refuses to
+    // stage a create without an address source at all — so the property that
+    // replaces it is the ABSENCE, asserted over the very row that used to show the
+    // form.
     mocks.getContactAction.mockResolvedValue(proposal({ address: null }));
     const bus = captureSubscription();
-    renderReview({ subscribe: bus.subscribe });
+    const { container } = renderReview({ subscribe: bus.subscribe });
 
     bus.deliver();
 
-    // The reviewed row can still receive a pasted (or scanned) address.
-    expect(await screen.findByLabelText(/Paste or scan this recipient's address/)).toBeTruthy();
+    // The honest sentence about a row with no address stays...
+    expect(await screen.findByTestId("proposal-no-address")).toBeTruthy();
+    // ...and the surface offers no way to give it one. `input` is read off the DOM
+    // rather than by label, so a renamed field cannot slip past this.
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.querySelector("input")).toBeNull();
+    expect(screen.queryByRole("button", { name: /use this address/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /scan/i })).toBeNull();
   });
 
   it("renders an expired version as expired and offers no way to confirm it", async () => {
