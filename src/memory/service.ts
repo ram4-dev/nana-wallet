@@ -83,6 +83,11 @@ export function classifyRecipientCandidates(
   if (prefixedRecipient === 'ambiguous') return { status: 'clarification_required', candidates: ranked };
   if (prefixedRecipient) return resolvedOn(prefixedRecipient);
 
+  // 4. The contact's own DESCRIPTION, matched literally.
+  const describedRecipient = resolveUniqueDescriptionMatch(queryKey, ranked);
+  if (describedRecipient === 'ambiguous') return { status: 'clarification_required', candidates: ranked };
+  if (describedRecipient) return resolvedOn(describedRecipient);
+
   const [first, second] = ranked;
   // NO CANDIDATE IS SELECTABLE BELOW THE FLOOR — but the rows are still
   // RETURNED, and the difference between those two facts is the whole point.
@@ -141,6 +146,74 @@ const MIN_NAME_PREFIX_LENGTH = 4;
 function meaningfulTerms(value: string): Set<string> {
   return new Set((value.match(/[\p{L}\p{N}]+/gu) ?? []).filter((term) => !NON_MEANINGFUL_DESCRIPTION_TERMS.has(term)));
 }
+
+/**
+ * The ONE candidate whose own DESCRIPTION is what the user said, `'ambiguous'`
+ * when more than one shares it, or `undefined` when none does.
+ *
+ * WHY A DESCRIPTION NEEDS A LEXICAL RULE AT ALL
+ * ------------------------------------------
+ * A user refers to a contact by how they described them ("my nephew"), and that
+ * is a LITERAL match against a value the user themselves typed. It was left
+ * entirely to the retrieval score, and the retrieval cannot answer it:
+ *
+ *   `recipientEmbeddingText(name, description)` embeds ONE vector from
+ *   `"name: <name>\ndescription: <description>"`, so the vector is a blend and
+ *   the NAME dilutes the description. Measured on the deployed stack, with the
+ *   model verified aligned (re-embedding the stored text gives cos 1.0000):
+ *
+ *     "my nephew" vs the stored blend        = 0.5722   (threshold 0.78)
+ *     "my nephew" vs a description-only vector = 0.8671
+ *     "my nephew" vs the bare text             = 1.0000
+ *
+ *   So a description query lands above the floor (0.55) and below the threshold
+ *   and is STRUCTURALLY INCAPABLE of resolving, however literal the match is.
+ *   Embedding the query field-aware does not rescue it either (`description: my
+ *   nephew` against the blend reaches 0.7088, still short).
+ *
+ * The fix is to answer a literal match literally instead of asking a score the
+ * composition makes unreachable. The score path keeps every FUZZY description
+ * case (`mi sobrino` against an English `My nephew` scores 0.6045 and still
+ * reaches the caller as evidence plus a question), which is what the retrieval
+ * is for.
+ *
+ * WHY IT IS SAFE TO RESOLVE ON IT
+ * -------------------------------
+ *   - The comparison is EQUALITY on the folded key, never a substring or a
+ *     fuzzy neighbour, so a half-remembered phrase resolves nothing.
+ *   - The query must be at least {@link MIN_DESCRIPTION_MATCH_LENGTH} characters
+ *     and must carry at least one meaningful term, so a function word ("mi") or
+ *     an initial cannot identify a payee.
+ *   - An EMPTY description never matches: a contact with no note can never be
+ *     reached through this rule.
+ *   - MORE THAN ONE match is `'ambiguous'`, never a pick, which is the same
+ *     guard the name rules apply. Two people described "my nephew" must ask.
+ *   - It runs AFTER every name rule, so a real name always wins over a note that
+ *     happens to contain it: identity is never overridden by a description.
+ */
+function resolveUniqueDescriptionMatch(
+  queryKey: string,
+  candidates: RecipientCandidate[],
+): RecipientCandidate | 'ambiguous' | undefined {
+  if (queryKey.length < MIN_DESCRIPTION_MATCH_LENGTH) return undefined;
+  if (meaningfulTerms(queryKey).size === 0) return undefined;
+  const described = candidates.filter((candidate) => {
+    const description = comparisonTextKey(candidate.description ?? '');
+    return description.length > 0 && description === queryKey;
+  });
+  if (described.length > 1) return 'ambiguous';
+  return described[0];
+}
+
+/**
+ * The shortest description the rule will act on.
+ *
+ * The same reasoning as {@link MIN_NAME_PREFIX_LENGTH}: a very short query is a
+ * syllable or a function word, not a description a user wrote to identify one
+ * person, and the equality bound above means a longer one can only ever match a
+ * description the user really did write.
+ */
+const MIN_DESCRIPTION_MATCH_LENGTH = 4;
 
 /**
  * The ONE candidate a bounded name prefix identifies, `'ambiguous'` when more

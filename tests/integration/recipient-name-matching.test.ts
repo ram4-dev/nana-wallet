@@ -50,7 +50,7 @@ const RELEVANT = axis(0);
 const IRRELEVANT = axis(1);
 
 /** Queries the stub sends an irrelevant vector for: their retrieval score is a real miss. */
-const LOW_RELEVANCE_QUERIES = new Set(["sofi", "nadie"]);
+const LOW_RELEVANCE_QUERIES = new Set(["sofi", "nadie", "my nephew"]);
 
 suite("contact-name matching over the real recipients projection", () => {
   let database: DatabaseClient;
@@ -172,6 +172,53 @@ suite("contact-name matching over the real recipients projection", () => {
     expect(result).not.toHaveProperty("recipient");
     expect(result.candidates.map((entry) => entry.name)).toEqual(["Sofía", "Test1"]);
     expect(result.candidates.map((entry) => entry.description)).toEqual(["mi vecina", "un contacto de prueba"]);
+  });
+
+  it("RED: resolves the contact whose DESCRIPTION is what the user said, on a total retrieval miss", async () => {
+    const userId = await provisionUser();
+    await addRecipient(userId, "Sophie", "My nephew", ADDRESS_A);
+    await addRecipient(userId, "Test1", "un contacto de prueba", ADDRESS_B);
+
+    // The stub sends an IRRELEVANT vector for this query, so the score is below
+    // the floor for every row: the description rule is the only thing that can
+    // answer, which is exactly the live defect. `my nephew` cannot reach the 0.78
+    // threshold through the vector, because the stored embedding blends the name
+    // into the description (measured live: 0.5722 against a 0.78 threshold).
+    const result = await service().searchRecipients(userId, "my nephew");
+
+    expect(result).toMatchObject({ status: "resolved", recipient: { name: "Sophie" } });
+    // A literal description identifies ONE contact, so the unrelated row is not
+    // offered as a candidate for it.
+    expect(result.candidates.map((entry) => entry.name)).toEqual(["Sophie"]);
+  });
+
+  it("folds the description, so the accent-less spelling of it still finds the contact", async () => {
+    const userId = await provisionUser();
+    await addRecipient(userId, "Sofia", "Mi nieta mayor", ADDRESS_A);
+
+    const result = await service().searchRecipients(userId, "mi nieta mayor");
+
+    expect(result).toMatchObject({ status: "resolved", recipient: { name: "Sofia" } });
+  });
+
+  it("asks when two contacts carry the same description instead of picking one", async () => {
+    const userId = await provisionUser();
+    await addRecipient(userId, "Sophie", "My nephew", ADDRESS_A);
+    await addRecipient(userId, "Mateo", "My nephew", ADDRESS_B);
+
+    await expect(service().searchRecipients(userId, "my nephew")).resolves.toMatchObject({
+      status: "clarification_required",
+    });
+  });
+
+  it("never resolves onto a contact that has no description", async () => {
+    const userId = await provisionUser();
+    await addRecipient(userId, "Test1", "", ADDRESS_B);
+
+    const result = await service().searchRecipients(userId, "my nephew");
+
+    expect(result.status).toBe("no_match");
+    expect(result).not.toHaveProperty("recipient");
   });
 
   it("still asks when two genuinely different contacts answer to the same name", async () => {

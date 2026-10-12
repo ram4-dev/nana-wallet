@@ -66,10 +66,15 @@ describe('recipient-memory ranking', () => {
   });
 
   it('RED: asks instead of denying when the only candidate is plausible but below the threshold', () => {
+    // The query deliberately does NOT equal any contact's description here, so
+    // what this exercises is the SCORE BAND and nothing else: a literal
+    // description match is a deterministic rule now (see the description suite)
+    // and would resolve before the score was ever consulted.
+    const QUERY = 'the neighbor';
     // A single candidate at 0.77 against a 0.78 threshold used to answer
     // `no_match`, so the agent denied a contact it had just been handed. That band
     // is now a question: the caller must ask whether it is the right contact.
-    expect(classifyRecipientCandidates('my grandson', [candidate({ normalizedName: 'lucas', score: 0.77 })], {
+    expect(classifyRecipientCandidates(QUERY, [candidate({ normalizedName: 'lucas', score: 0.77 })], {
       scoreThreshold: 0.78,
       scoreFloor: 0.55,
       scoreMargin: 0.08,
@@ -80,7 +85,7 @@ describe('recipient-memory ranking', () => {
     // statement about SELECTION, never a claim that the user has no contacts.
     // Destroying the row here is what let a misheard query be reported to the
     // user as "that contact does not exist".
-    const belowFloor = classifyRecipientCandidates('my grandson', [candidate({ normalizedName: 'lucas', score: 0.42 })], {
+    const belowFloor = classifyRecipientCandidates(QUERY, [candidate({ normalizedName: 'lucas', score: 0.42 })], {
       scoreThreshold: 0.78,
       scoreFloor: 0.55,
       scoreMargin: 0.08,
@@ -91,7 +96,7 @@ describe('recipient-memory ranking', () => {
     // evidence but never a `recipient`, so nothing below the floor can be acted on.
     expect(belowFloor).not.toHaveProperty('recipient');
 
-    expect(classifyRecipientCandidates('my grandson', [candidate({ normalizedName: 'lucas', score: 0.88 }), candidate({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Mateo', normalizedName: 'mateo', score: 0.84 })], {
+    expect(classifyRecipientCandidates(QUERY, [candidate({ normalizedName: 'lucas', score: 0.88 }), candidate({ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Mateo', normalizedName: 'mateo', score: 0.84 })], {
       scoreThreshold: 0.78,
       scoreFloor: 0.55,
       scoreMargin: 0.08,
@@ -317,6 +322,119 @@ describe('contact-name matching is diacritic-insensitive and bounded', () => {
 
 /**
  * The live regression this suite was opened for.
+ *
+ * A user asked the voice agent for "my nephew". The audio model rendered the
+ * description as the phonetic proper name `MinaFi`, and the agent told the user
+ * the contact does not exist. It did exist — stored as `Sophie`, with the
+ * description `"My nephew"` — and the repository had returned it on both
+ * queries. `no_match` shipped an EMPTY candidate list, so the surface had
+ * nothing to read back and a comprehension error became a false claim about the
+ * user's own data.
+ *
+ * The scores below are the ones measured against the deployed stack.
+ */
+describe('a description the user speaks identifies the contact it belongs to', () => {
+  const RANKING = { scoreThreshold: 0.78, scoreFloor: 0.55, scoreMargin: 0.08 };
+  const nephew = candidate({
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    name: 'Sophie',
+    normalizedName: 'sophie',
+    description: 'My nephew',
+  });
+  const test1 = candidate({
+    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    name: 'Test1',
+    normalizedName: 'test1',
+    description: '',
+  });
+
+  it('RED: resolves the contact whose description is exactly what the user said', () => {
+    // The measured live scores: the stored vector blends name and description, so
+    // the query lands at 0.263-0.57 and can NEVER reach the 0.78 threshold. The
+    // description itself is a literal match, so it is answered deterministically
+    // instead of being left to a score the composition makes unreachable.
+    const result = classifyRecipientCandidates('my nephew', [
+      { ...nephew, score: 0.5722 },
+      { ...test1, score: 0.1593 },
+    ], RANKING);
+
+    expect(result).toMatchObject({ status: 'resolved', recipient: { id: nephew.id, name: 'Sophie' } });
+    // A literal description identifies ONE contact, so the irrelevant row is not
+    // offered as a candidate for it.
+    expect(result.candidates.map((entry) => entry.id)).toEqual([nephew.id]);
+  });
+
+  it('resolves the description regardless of case and surrounding blanks', () => {
+    const result = classifyRecipientCandidates('  MY   NEPHEW ', [{ ...nephew, score: 0.2 }], RANKING);
+
+    expect(result).toMatchObject({ status: 'resolved', recipient: { id: nephew.id } });
+  });
+
+  it('folds diacritics on the description too, the same way the name rules do', () => {
+    const nieta = candidate({
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      name: 'Sofía',
+      normalizedName: 'sofía',
+      description: 'Mi nieta mayor',
+      score: 0.2,
+    });
+
+    expect(classifyRecipientCandidates('mi nieta mayor', [nieta], RANKING))
+      .toMatchObject({ status: 'resolved', recipient: { id: nieta.id } });
+  });
+
+  it('NEVER picks between two contacts that share the description', () => {
+    const other = candidate({
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      name: 'Mateo',
+      normalizedName: 'mateo',
+      description: 'My nephew',
+      score: 0.3,
+    });
+
+    // Two people described the same way is exactly the case that must ask.
+    expect(classifyRecipientCandidates('my nephew', [{ ...nephew, score: 0.5 }, other], RANKING).status)
+      .toBe('clarification_required');
+  });
+
+  it('does not resolve on a description that is only a function word or too short', () => {
+    const vague = candidate({
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      name: 'Sofía',
+      normalizedName: 'sofía',
+      description: 'mi',
+      score: 0.2,
+    });
+
+    expect(classifyRecipientCandidates('mi', [vague], RANKING).status).toBe('no_match');
+  });
+
+  it('leaves an empty description alone, so it can never identify anyone', () => {
+    // `Test1` has no description: no query may resolve onto it through this rule.
+    expect(classifyRecipientCandidates('my nephew', [{ ...test1, score: 0.2 }], RANKING).status)
+      .toBe('no_match');
+  });
+
+  it('a name still wins over a description, so identity is never overridden by a note', () => {
+    const noteHolder = candidate({
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      name: 'Warehouse',
+      normalizedName: 'warehouse',
+      description: 'sophie',
+      score: 0.9,
+    });
+
+    const result = classifyRecipientCandidates('sophie', [
+      { ...nephew, name: 'Sophie', normalizedName: 'sophie', score: 0.6 },
+      noteHolder,
+    ], RANKING);
+
+    expect(result).toMatchObject({ status: 'resolved', recipient: { name: 'Sophie' } });
+  });
+});
+
+/**
+ * The live regression the previous work unit closed.
  *
  * A user asked the voice agent for "my nephew". The audio model rendered the
  * description as the phonetic proper name `MinaFi`, and the agent told the user
