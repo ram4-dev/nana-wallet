@@ -174,7 +174,7 @@ describe("the stage-time alias adapter (createAliasResolver)", () => {
     // Every refusal names a code the spoken-sentence map covers, so the user
     // never hears the generic `default` sentence for a classified failure.
     expect(SPOKEN_CODES).toContain(expected);
-    expect(aliasRefusalMessage(expected)).not.toContain(`No pude resolver ese nombre (${expected})`);
+    expect(aliasRefusalMessage(expected)).not.toContain(`I could not resolve that name (${expected})`);
   });
 
   it("maps the real resolver's own taxonomy, one case per failure class", async () => {
@@ -239,39 +239,39 @@ describe("the stage-time alias adapter (createAliasResolver)", () => {
     expect(unreachableCode).not.toBe(missingCode);
     // The distinction is audible, not just typed.
     expect(aliasRefusalMessage(unreachableCode)).not.toBe(aliasRefusalMessage(missingCode));
-    expect(aliasRefusalMessage(unreachableCode)).not.toContain("No encontré ese nombre");
-    expect(aliasRefusalMessage(missingCode)).not.toContain("No pude consultar la red");
+    expect(aliasRefusalMessage(unreachableCode)).not.toContain("I could not find that name");
+    expect(aliasRefusalMessage(missingCode)).not.toContain("I could not reach the network");
   });
 
   // The voice defect this pins: a spoken name reaches the model through STT and
   // the model has been observed re-spelling it the way it sounds in Spanish
   // (a turn whose display name was "Sophie" staged `snsName: "sofi.sns"` for a
   // domain registered as `sophie.sns`). With the name left out of the sentence,
-  // the user is told only that "ese nombre" was not found and has no way to
+  // the user is told only that "that name" was not found and has no way to
   // notice the system asked for a spelling they never said.
   describe("the refusal names the spelling it was given", () => {
     it("speaks the attempted name, so an unregistered spelling is visible", () => {
       expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).toContain('"sofi.sns"');
-      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).not.toContain("ese nombre");
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).not.toContain("that name");
     });
 
     it("keeps the two causes distinguishable when a name is supplied", () => {
       // An unreachable registry must still not be narrated as a missing name.
-      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).not.toContain("No pude consultar la red");
-      expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).not.toContain("No encontré");
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).not.toContain("I could not reach the network");
+      expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).not.toContain("I could not find");
       expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).toContain('"sofi.sns"');
     });
 
     it("offers a spelling correction only where a spelling could change the answer", () => {
-      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).toContain("deletreámelo");
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "sofi.sns")).toContain("spell it");
       // An unreachable registry is not a spelling problem; do not imply one.
-      expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).not.toContain("deletreámelo");
+      expect(aliasRefusalMessage("RESOLVEDOR_NO_DISPONIBLE", "sofi.sns")).not.toContain("spell it");
     });
 
     it("falls back to the unnamed sentence when no name was supplied", () => {
-      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO")).toContain("ese nombre");
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO")).toContain("that name");
       expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO")).not.toContain('""');
-      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "   ")).toContain("ese nombre");
+      expect(aliasRefusalMessage("NOMBRE_NO_ENCONTRADO", "   ")).toContain("that name");
     });
   });
 
@@ -403,7 +403,7 @@ describe("the adapter as the port's alias arm", () => {
 
     expect(refused.status).toBe("alias_unresolved");
     expect(refused.message).toContain('"sofi.sns"');
-    expect(refused.message).not.toContain("ese nombre");
+    expect(refused.message).not.toContain("that name");
     expect(h.stageCalls, "a refused spelling still persisted a proposal").toHaveLength(0);
     expect(h.published, "a refused spelling still published a card").toHaveLength(0);
   });

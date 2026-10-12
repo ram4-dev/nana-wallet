@@ -69,10 +69,10 @@ export function contactProposalCard(proposal: ContactActionProposal, summary: st
 
 /** Server-owned summary: composed from the action and the display label only. */
 export function contactProposalSummary(action: ContactActionProposal["action"], label: string | undefined): string {
-  const who = label?.trim() && label.trim().length > 0 ? label.trim() : "este destinatario";
-  if (action === "remove") return `Quitar a ${who} de tus destinatarios de confianza`;
-  if (action === "edit") return `Editar a ${who} en tus destinatarios de confianza`;
-  return `Agregar a ${who} como destinatario de confianza`;
+  const who = label?.trim() && label.trim().length > 0 ? label.trim() : "this recipient";
+  if (action === "remove") return `Remove ${who} from your trusted recipients`;
+  if (action === "edit") return `Edit ${who} in your trusted recipients`;
+  return `Add ${who} as a trusted recipient`;
 }
 
 /**
@@ -155,28 +155,28 @@ export type AliasResolution =
  * model has been observed re-spelling it the way it sounds in Spanish — a turn
  * whose display name was "Sophie" staged `snsName: "sofi.sns"` for a domain
  * registered as `sophie.sns`. Without the name in the sentence the user is told
- * only that "ese nombre" was not found, which is unactionable: the system asked
+ * only that "that name" was not found, which is unactionable: the system asked
  * for a spelling the user never said, and nothing in the reply lets them notice.
  * Naming it turns an unexplained refusal into a one-word correction.
  */
 export function aliasRefusalMessage(code: string, attemptedName?: string): string {
-  const quoted = attemptedName?.trim() ? `"${attemptedName.trim()}"` : "ese nombre";
+  const quoted = attemptedName?.trim() ? `"${attemptedName.trim()}"` : "that name";
   // Offered only where a different spelling could actually change the answer:
   // a name the registry does not have, or one whose owner cannot be trusted.
   // An unreachable registry is not a spelling problem and must not be narrated
   // as one.
-  const spellItOut = " Si el nombre es difícil de entender, deletreámelo y lo vuelvo a intentar.";
+  const spellItOut = " If the name is hard to make out, spell it letter by letter and I will try again.";
   switch (code) {
     case "NOMBRE_NO_ENCONTRADO":
-      return `No encontré ${quoted} (NOMBRE_NO_ENCONTRADO).${spellItOut} No voy a habilitar este destinatario.`;
+      return `I could not find ${quoted} (NOMBRE_NO_ENCONTRADO).${spellItOut} I am not enabling this recipient.`;
     case "RESOLVEDOR_NO_DISPONIBLE":
-      return `No pude consultar la red para resolver ${quoted} (RESOLVEDOR_NO_DISPONIBLE). No voy a habilitar este destinatario.`;
+      return `I could not reach the network to resolve ${quoted} (RESOLVEDOR_NO_DISPONIBLE). I am not enabling this recipient.`;
     case "NOMBRE_NO_SOPORTADO":
-      return `${quoted === "ese nombre" ? "Ese nombre" : quoted} no es un .sns que pueda usar (NOMBRE_NO_SOPORTADO). No voy a habilitar este destinatario.`;
+      return `${quoted === "that name" ? "That name" : quoted} is not a .sns name I can use (NOMBRE_NO_SOPORTADO). I am not enabling this recipient.`;
     case "NOMBRE_AMBIGUO":
-      return `Ese nombre no me da una dirección confiable para ${quoted} (NOMBRE_AMBIGUO).${spellItOut} No voy a habilitar este destinatario.`;
+      return `That name does not give me a reliable address for ${quoted} (NOMBRE_AMBIGUO).${spellItOut} I am not enabling this recipient.`;
     default:
-      return `No pude resolver ${quoted} (${code}). No voy a habilitar este destinatario.`;
+      return `I could not resolve ${quoted} (${code}). I am not enabling this recipient.`;
   }
 }
 
@@ -668,7 +668,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
       } catch {
         // Publication failed (participant gone, transport error): the row stays
         // unpublished, no window opens, and nothing is re-published.
-        return { status: "proposal_not_published", message: "No pude mostrar la tarjeta de revisión; no voy a habilitar este destinatario todavía." };
+        return { status: "proposal_not_published", message: "I could not show the review card; I am not enabling this recipient yet." };
       }
 
       const published = await dependencies.actions.markPublished(input.userId, proposal.proposalId, proposal.proposalVersion);
@@ -676,7 +676,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         // Zero rows: the proposal was superseded, consumed or expired between the
         // write and the stamp. The window must not open for a card the user is not
         // reviewing any more.
-        return { status: "proposal_not_published", message: "No pude mostrar la tarjeta de revisión; no voy a habilitar este destinatario todavía." };
+        return { status: "proposal_not_published", message: "I could not show the review card; I am not enabling this recipient yet." };
       }
 
       const opened = dependencies.arbiter?.open({
@@ -688,13 +688,13 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         createdAt: Date.now(),
       });
       if (opened && opened.status === "conflict") {
-        return { status: "conflict_active_window", message: "Ya hay una acción esperando tu confirmación. Cancelala o confirmala antes de continuar." };
+        return { status: "conflict_active_window", message: "Another action is already waiting for your confirmation. Cancel it or confirm it before continuing." };
       }
       return {
         status: "staged",
         proposalId: published.proposalId,
         proposalVersion: published.proposalVersion,
-        message: "Revisá la dirección en la tarjeta y confirmá cuando esté lista.",
+        message: "Review the address on the card and confirm it when it is ready.",
       };
     },
 
@@ -922,12 +922,12 @@ function conflictActiveWindowRefusal(
     return {
       status: "conflict_active_window",
       message:
-        "Ya hay una propuesta esperando tu confirmación para esta conversación. Cancelala o confirmala antes de generar otra.",
+        "A proposal is already waiting for your confirmation in this conversation. Cancel it or confirm it before generating another one.",
     };
   }
   return {
     status: "conflict_active_window",
-    message: `Ya hay una propuesta esperando tu confirmación para esta conversación: la versión ${open.proposalVersion} (${open.proposalId}). Cancelala o confirmala antes de generar otra.`,
+    message: `A proposal is already waiting for your confirmation in this conversation: version ${open.proposalVersion} (${open.proposalId}). Cancel it or confirm it before generating another one.`,
     proposalId: open.proposalId,
     proposalVersion: open.proposalVersion,
   };
