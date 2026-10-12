@@ -99,6 +99,107 @@ vi.mock("@livekit/agents-plugin-openai", () => ({
 }));
 
 import { createAgentSession } from "../../src/livekit/create-agent-session.js";
+import {
+  detectConversationLanguage,
+  languageInstruction,
+} from "../../src/conversations/language.js";
+
+/**
+ * The defect this suite pins: the voice prompt PINNED Rioplatense Spanish
+ * ("You speak Rioplatense Spanish (voseo)"), so every softer "in the user's
+ * language" line lost to it and a user who opened the call speaking English was
+ * answered in Spanish. A pin is not a default; it is an order, and it has to be
+ * gone.
+ */
+describe("the voice session answers in the user's language", () => {
+  beforeEach(() => {
+    h.MockAgentSession.instances = [];
+    h.MockAgent.instances = [];
+    h.MockRealtimeModel.instances = [];
+    vi.clearAllMocks();
+    delete process.env.OPENAI_REALTIME_MODEL;
+    delete process.env.OPENAI_REALTIME_VOICE;
+    process.env.OPENAI_API_KEY = "test-key";
+  });
+
+  it("tells the model to follow the user's language and pins none of its own", () => {
+    createAgentSession({ tools: [], language: "en" });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    // The rule, said plainly and first.
+    expect(persona).toMatch(
+      /ALWAYS answer in the language the user is speaking, and switch with them the moment they switch/iu,
+    );
+    // Rioplatense survives as the STYLE for Spanish, never as a fixed language.
+    expect(persona).toMatch(/Rioplatense voseo — that is a style, not a fixed language/iu);
+    // The pin that caused the defect, named and forbidden.
+    expect(persona).not.toMatch(/You speak Rioplatense Spanish/iu);
+  });
+
+  it("names English for an English conversation", () => {
+    createAgentSession({ tools: [], language: "en" });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    expect(persona).toContain(languageInstruction("en"));
+    expect(persona).toMatch(/Respond in English/iu);
+    expect(persona).not.toMatch(/Respond in Spanish/iu);
+  });
+
+  it("names Spanish for a Spanish conversation", () => {
+    createAgentSession({ tools: [], language: "es" });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    expect(persona).toContain(languageInstruction("es"));
+    expect(persona).toMatch(/Respond in Spanish/iu);
+  });
+
+  it("defaults to the language detector's own default when the caller names none", () => {
+    createAgentSession({ tools: [] });
+    const persona = String(h.MockAgent.instances[0].options.instructions);
+
+    // Same fallback as `detectConversationLanguage` for a turn with no lexical
+    // evidence: a conversation nobody described is served in English.
+    expect(detectConversationLanguage("")).toBe("en");
+    expect(persona).toContain(languageInstruction("en"));
+  });
+
+  it("reads the language the user is ACTUALLY speaking, from their own words", () => {
+    // The voice path never detected a language; it now shares the text path's
+    // detector, so the one rule covers both surfaces instead of a Spanish pin
+    // covering the voice one.
+    expect(detectConversationLanguage("hello, can you send 5 SOL to Lucas?", "es")).toBe("en");
+    expect(detectConversationLanguage("hola, ¿me podés mandar el saldo?", "en")).toBe("es");
+  });
+
+  it("offers the greeting's next steps in the conversation's language", () => {
+    const english = createAgentSession({ tools: [], language: "en" });
+    expect(english.speakGreeting()).toBe(true);
+    const englishOpening = String(
+      h.MockAgentSession.instances[0].generateReplyCalls[0]!.instructions,
+    );
+
+    const spanish = createAgentSession({ tools: [], language: "es" });
+    expect(spanish.speakGreeting()).toBe(true);
+    const spanishOpening = String(
+      h.MockAgentSession.instances[1].generateReplyCalls[0]!.instructions,
+    );
+
+    // The menu the user is invited to say follows the language they are in, and
+    // the three options stay exactly three in both languages.
+    expect(englishOpening.match(/"[^"]+"/gu)).toEqual([
+      '"see my balance"',
+      '"make a transfer"',
+      '"see my recent activity"',
+    ]);
+    expect(spanishOpening.match(/"[^"]+"/gu)).toEqual([
+      '"ver mi saldo"',
+      '"hacer una transferencia"',
+      '"ver mis últimos movimientos"',
+    ]);
+    expect(englishOpening).not.toMatch(/ver mi saldo/iu);
+    expect(spanishOpening).not.toMatch(/see my balance/iu);
+  });
+});
 
 describe("OpenAI realtime agent session composition", () => {
   beforeEach(() => {
@@ -163,10 +264,10 @@ describe("OpenAI realtime agent session composition", () => {
     );
   });
 
-  it("opens the session with ONE proactive turn that reads the real balance in Rioplatense Spanish", () => {
+  it("opens the session with ONE proactive turn that reads the real balance in the conversation's language", () => {
     process.env.OPENAI_API_KEY = "test-key";
 
-    const { speakGreeting } = createAgentSession({ tools: [] });
+    const { speakGreeting } = createAgentSession({ tools: [], language: "es" });
     const composed = h.MockAgentSession.instances[0];
     expect(composed.generateReplyCalls).toHaveLength(0);
 
@@ -196,10 +297,11 @@ describe("OpenAI realtime agent session composition", () => {
     // Generated by the agent, never a fixed sentence: a fixed string could only
     // invent the balance the greeting is supposed to read.
     expect(composed.sayCalls).toHaveLength(0);
-    // The persona speaks the product's user-facing language...
-    const persona = String(h.MockAgent.instances[0].options.instructions);
-    expect(persona).toContain("Rioplatense Spanish");
+    // The greeting carries the conversation's language, through the ONE
+    // definition of that sentence.
+    expect(opening).toContain(languageInstruction("es"));
     // ...while the existing get_balance rules stay intact.
+    const persona = String(h.MockAgent.instances[0].options.instructions);
     expect(persona).toContain("get_balance: call it with NO arguments");
   });
 

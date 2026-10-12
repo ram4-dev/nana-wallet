@@ -39,6 +39,7 @@ import {
 } from "../wallet/policy/service.js";
 import { RecipientPolicyRepository } from "../wallet/policy/repository.js";
 import { isCancellation, isConfirmation } from "./resolution-phrases.js";
+import type { ConversationLanguage } from "../conversations/language.js";
 import { attachVoiceDecisionTranscripts } from "./voice-decision-transcripts.js";
 import {
   createBindingRpcHandler,
@@ -231,6 +232,44 @@ export function createLiveKitWorkerRuntime(input?: {
   };
 }
 
+/**
+ * The language a voice session starts in.
+ *
+ * WHY THE PERSISTED LANGUAGE AND NOT A DETECTED ONE
+ * ------------------------------------------------
+ * The greeting is the session's FIRST turn and it is generated before the user
+ * has said anything, so at this point there is no speech to detect a language
+ * from. The conversation's own persisted language is the only evidence that
+ * exists, and it is what `service.ts` already threads into every text turn
+ * (`HandleMessageOptions.language` -> `WalletAgentContext.language`). The voice
+ * session now starts from the same value.
+ *
+ * `'en'` is the fallback for the same reason `detectConversationLanguage`
+ * defaults to it, and a read that fails must not cost the user their session:
+ * the greeting, the read-back, the decision gate and the financial-task
+ * subscription all live behind this line. Once the user speaks, the session's own
+ * instructions order the model to follow the user's language, and the text path
+ * persists the language it detects for the next session.
+ */
+async function readVoiceSessionLanguage(
+  conversations: WorkerDependencies["conversations"],
+  binding: { conversationId: string; userId: string },
+): Promise<ConversationLanguage> {
+  try {
+    const snapshot = await conversations.get(
+      binding.userId,
+      binding.conversationId,
+    );
+    return snapshot?.language === "es" ? "es" : "en";
+  } catch (error) {
+    console.error(
+      "[live-voice] conversation language read failed:",
+      error instanceof Error ? error.message : error,
+    );
+    return "en";
+  }
+}
+
 async function runJob(
   ctx: JobContext,
   config: WorkerProcessConfig,
@@ -407,7 +446,17 @@ async function runJob(
         // enumerates exactly what `GET /v1/contacts` enumerates.
         contacts: dependencies.contacts,
       });
-      const created = createAgentSession({ tools });
+      // The language this session OPENS in: the conversation's persisted one,
+      // resolved before the greeting is dispatched (see
+      // `readVoiceSessionLanguage`).
+      const languageForSession = await readVoiceSessionLanguage(
+        dependencies.conversations,
+        binding,
+      );
+      const created = createAgentSession({
+        tools,
+        language: languageForSession,
+      });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (
           !event ||

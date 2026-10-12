@@ -1,9 +1,35 @@
 import { Agent, AgentSession } from "@livekit/agents";
 import * as openai from "@livekit/agents-plugin-openai";
 import type { ToolContextLike } from "@livekit/agents";
+import {
+  languageInstruction,
+  type ConversationLanguage,
+} from "../conversations/language.js";
 import { attachRealtimeLatencyLogging } from "./realtime-latency-logger.js";
 
-const NANI_REALTIME_INSTRUCTIONS = `You are Nani, the voice assistant of a crypto wallet. You speak Rioplatense Spanish (voseo), briefly, warmly and directly.
+/**
+ * Nani's persona and per-session language rule.
+ *
+ * WHY THE LANGUAGE IS NOT PINNED HERE
+ * -----------------------------------
+ * The first line used to say "You speak Rioplatense Spanish (voseo)". That is a
+ * pin, and a pin beats an order: every softer "in the user's language" line
+ * elsewhere in the prompt lost to it, so a user who opened the call speaking
+ * English was answered in Spanish and stayed in Spanish for the whole session.
+ *
+ * The language is now a RULE plus one concrete value:
+ *
+ *   - the rule is unmissable and comes first: always answer in the language the
+ *     user is speaking, and switch with them the moment they switch;
+ *   - the value is the conversation's own persisted language, appended by
+ *     `composeRealtimeInstructions` through `languageInstruction` — the same
+ *     sentence the text path uses, so there is one definition of it and not a
+ *     second copy pinned in a prompt;
+ *   - "Rioplatense voseo" survives as what it always was: the STYLE to use when
+ *     the language is Spanish, never a fixed language of its own.
+ */
+const NANI_REALTIME_INSTRUCTIONS = `You are Nani, the voice assistant of a crypto wallet. You are brief, warm and direct.
+Language: ALWAYS answer in the language the user is speaking, and switch with them the moment they switch. Never keep a language of your own across turns. When the language is Spanish, speak it in Rioplatense voseo — that is a style, not a fixed language. When it is English, speak plain English. The final line of these instructions names the conversation's language so far: it is a starting point, and the user's own speech always overrides it.
 Opening turn: the first turn of every session is yours — it is generated before the user speaks. Greet once per session and never repeat the introduction later.
 Financial tools:
 - get_balance: call it with NO arguments whenever the user asks about balances: it returns a JSON with every network's balance in one shot. NEVER ask the user which wallet or network they mean. From that result, read aloud ONLY the balance the user asked about (all of them only if the user asked for everything); if a network shows an error, mention it is temporarily unavailable. Always speak in the current language.
@@ -19,7 +45,7 @@ export type AgentSessionComposition = {
   agent: Agent;
   /**
    * Generates the session's opening greeting turn (see
-   * `NANI_GREETING_INSTRUCTIONS`), at most once per session.
+   * `greetingInstructions`), at most once per session.
    *
    * Call it right after `session.start()` resolved: the greeting must be the
    * first turn of the session, and `generateReply` refuses to run while the
@@ -72,15 +98,44 @@ const TRANSCRIPTION_PROMPT =
  * read the REAL balance, so the model must call `get_balance` itself. A hardcoded
  * string could only invent a figure.
  */
-const NANI_GREETING_INSTRUCTIONS = `Session opening turn: the user has NOT spoken yet and is waiting for you, so YOU speak first.
-Do it now, in Rioplatense Spanish (voseo), warm and brief, in this exact order:
+function greetingInstructions(language: ConversationLanguage): string {
+  // The offered menu is the product's own wording, so it follows the session
+  // language like the rest of the spoken copy.
+  const nextSteps =
+    language === "es"
+      ? '"ver mi saldo", "hacer una transferencia", "ver mis últimos movimientos"'
+      : '"see my balance", "make a transfer", "see my recent activity"';
+  return `Session opening turn: the user has NOT spoken yet and is waiting for you, so YOU speak first.
+Do it now, warm and brief, in the conversation's language named below, in this exact order:
 1. Introduce yourself: you are Nani, the assistant of the user's wallet.
 2. Call the get_balance tool with NO arguments and read aloud the available balance it returns, following the get_balance rules above. NEVER invent, estimate or round a figure, and never ask which wallet or network: if the tool or a network fails, say the balance is temporarily unavailable right now and keep going.
-3. Close by offering exactly these three next steps, in this order: "ver mi saldo", "hacer una transferencia", "ver mis últimos movimientos". Never offer a swap or any other action: those three are all you can do.
-Never mention tools, providers, networks or internal states. Say it once, then stop and listen.`;
+3. Close by offering exactly these three next steps, in this order: ${nextSteps}. Never offer a swap or any other action: those three are all you can do.
+Never mention tools, providers, networks or internal states. Say it once, then stop and listen.
+${languageInstruction(language)}`;
+}
+
+/**
+ * The persona plus the conversation's language, from the ONE definition of that
+ * sentence (`languageInstruction`). A second literal wording here is what the
+ * prompt used to have, and it is exactly what drifted: one line said Spanish for
+ * every turn while the model was told to follow the user.
+ */
+export function composeRealtimeInstructions(
+  language: ConversationLanguage,
+): string {
+  return `${NANI_REALTIME_INSTRUCTIONS}\n${languageInstruction(language)}`;
+}
 
 export function createAgentSession(options: {
   tools: ToolContextLike;
+  /**
+   * The conversation's persisted language, resolved by the caller before the
+   * session starts. The greeting runs BEFORE the user speaks, so nothing at this
+   * point can detect a language; this is the only evidence available for the
+   * session's first turn. Defaults to `'en'`, the same fallback
+   * `detectConversationLanguage` uses.
+   */
+  language?: ConversationLanguage;
 }): AgentSessionComposition {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
@@ -101,8 +156,9 @@ export function createAgentSession(options: {
       prompt: TRANSCRIPTION_PROMPT,
     },
   });
+  const language: ConversationLanguage = options.language === "es" ? "es" : "en";
   const agent = new Agent({
-    instructions: NANI_REALTIME_INSTRUCTIONS,
+    instructions: composeRealtimeInstructions(language),
     llm,
     tools: options.tools,
   });
@@ -118,7 +174,7 @@ export function createAgentSession(options: {
       if (greetingSpent) return false;
       greetingSpent = true;
       session.generateReply({
-        instructions: NANI_GREETING_INSTRUCTIONS,
+        instructions: greetingInstructions(language),
         allowInterruptions: true,
       });
       return true;
