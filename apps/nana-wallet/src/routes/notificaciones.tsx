@@ -12,7 +12,9 @@ export const Route = createFileRoute("/notificaciones")({
 });
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("es-AR", {
+  // `en-US`: English copy, and the locale is otherwise invisible to a grep — the
+  // formatter would render Spanish month names and a Spanish time meridian.
+  return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));

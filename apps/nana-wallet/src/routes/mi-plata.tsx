@@ -62,7 +62,10 @@ const NOT_READY_LABELS: Record<string, string> = {
 };
 
 function formatObservedAt(observedAt: string): string {
-  return new Intl.DateTimeFormat("es-AR", {
+  // `en-US`: the copy on this screen is English, and a Spanish locale renders
+  // Spanish from the formatter rather than from a string — "5 de enero" is not
+  // findable by grepping for Spanish copy, but it is plainly on screen.
+  return new Intl.DateTimeFormat("en-US", {
     day: "numeric",
     month: "long",
     hour: "2-digit",

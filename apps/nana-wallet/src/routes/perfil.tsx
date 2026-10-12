@@ -130,7 +130,7 @@ function PerfilPage() {
           className="flex size-13 shrink-0 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-xl font-extrabold text-brand-ink"
           aria-hidden="true"
         >
-          {displayName ? displayName.charAt(0).toLocaleUpperCase("es-AR") : "N"}
+          {displayName ? displayName.charAt(0).toLocaleUpperCase("en-US") : "N"}
         </div>
         <div className="min-w-0 flex-1">
           <p
