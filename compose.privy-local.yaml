@@ -139,6 +139,37 @@ services:
   # of a published port is the first line of defence and the loopback bind is
   # the second. The key is mounted HERE only, never into backend, voice-worker
   # or frontend.
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # RESTART THE SIDECAR WHENEVER ITS CONSUMER RESTARTS.
+  # ────────────────────────────────────────────────────────────────────────────
+  # `network_mode: service:<consumer>` joins the CONSUMER's network namespace at
+  # the moment the sidecar starts. Recreating or restarting the consumer gives it
+  # a NEW namespace, and the sidecar is left behind in the old one — still
+  # running, still healthy, and completely unreachable at `127.0.0.1:8789`.
+  #
+  # This is not theoretical and it fails LOUD in the worst place. A transfer then
+  # dies signing its authorization (ECONNREFUSED on the loopback URL) and the
+  # money path reports `broadcast_uncertain` — "we cannot tell whether your money
+  # moved" — when in fact nothing was ever dispatched. Observed in production on
+  # 2026-10-12: both sidecars were orphaned by consumer restarts, on-chain history
+  # proved no transfer was sent, and the user was told the outcome was unknown.
+  #
+  # So: after any `docker compose up -d <consumer>`, `docker compose restart
+  # <consumer>` or `--force-recreate`, restart the matching sidecar too, then
+  # confirm they share a namespace:
+  #
+  #   docker exec <consumer>        readlink /proc/self/ns/net
+  #   docker exec <consumer>-signer readlink /proc/self/ns/net   # must be equal
+  #
+  # And confirm the sidecar actually answers (it needs the Bearer token; an
+  # unauthenticated probe answering 401 still proves reachability, while
+  # ECONNREFUSED proves the orphan):
+  #
+  #   docker exec <consumer> node -e "const t=process.env.PRIVY_SIGNER_TOKEN??'';
+  #     fetch('http://127.0.0.1:8789/sign',{method:'POST',headers:{authorization:
+  #     'Bearer '+t,'content-type':'application/octet-stream'},body:Buffer.from('x')})
+  #     .then(async r=>console.log(r.status))"
   backend-signer:
     image: nana-privy-backend-dev:local
     restart: unless-stopped
