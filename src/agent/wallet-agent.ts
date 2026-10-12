@@ -307,11 +307,17 @@ const CLARIFICATION_COPY = {
     ask: (list: string) => `Which recipient do you mean: ${list}?`,
     confirm: (name: string) => `Did you mean ${name}?`,
     missing: 'I need to know which recipient you mean before preparing a transfer.',
+    // The BELOW-FLOOR miss. It is a statement about selection, never a claim
+    // that the user has no contacts, so it reports what was found and asks.
+    miss: (list: string) => `I could not match that name. What I have is: ${list}. Which one do you mean?`,
+    nothing: 'I could not match that name to any contact. Could you repeat the name?',
   },
   es: {
     ask: (list: string) => `¿A qué destinatario te referís: ${list}?`,
     confirm: (name: string) => `¿Te referís a ${name}?`,
     missing: 'Necesito saber a qué destinatario te referís antes de preparar la transferencia.',
+    miss: (list: string) => `No pude encontrar ese nombre. Lo que tengo es: ${list}. ¿A cuál te referís?`,
+    nothing: 'No pude encontrar ese nombre en tus contactos. ¿Me lo repetís?',
   },
 } as const;
 
@@ -329,6 +335,26 @@ function clarificationMessage(
   // A single plausible candidate is not a menu: ask whether it is the right one.
   if (candidates.length === 1) return copy.confirm(candidates[0]!.name);
   return copy.ask(candidates.map(describeCandidate).join(', '));
+}
+
+/**
+ * The answer for a name that matched nothing SELECTABLE.
+ *
+ * It is NOT `clarificationMessage`: that one asks which of several contacts the
+ * user meant, and this one has to say first that the name did not identify
+ * anyone. What the two share is the rule the old single line broke — the rows
+ * the store returned are reported, with their descriptions, so the user can hear
+ * "I found Sophie, saved as my nephew" instead of being told their contact does
+ * not exist. When the store genuinely returned nothing there is nothing to
+ * report, and the honest answer is to ask for the name again.
+ */
+function missMessage(
+  candidates: Array<{ name: string; description: string }>,
+  language: 'en' | 'es' = 'en',
+): string {
+  const copy = CLARIFICATION_COPY[language] ?? CLARIFICATION_COPY.en;
+  if (candidates.length === 0) return copy.nothing;
+  return copy.miss(candidates.map(describeCandidate).join(', '));
 }
 
 function mapAgentError(err: unknown): string {
@@ -476,9 +502,13 @@ export async function handleMessage(
       return { status: 'clarification_required', message, candidates: resolution.candidates };
     }
     if (resolution.status === 'no_match' || resolution.status === 'unavailable') {
+      // `no_match` now carries the rows the store returned, and they are the
+      // whole difference between "I could not match that name" and "that
+      // contact does not exist". The flat denial this used to return was the
+      // text half of the same live regression the voice half had.
       const message = resolution.status === 'unavailable'
         ? 'Recipient memory is unavailable, so I cannot prepare a transfer.'
-        : 'I could not find a safe recipient match, so I cannot prepare a transfer.';
+        : missMessage(resolution.candidates, options.language ?? 'en');
       appendMessage(session, { role: 'assistant', content: message });
       return { status: 'answer', message };
     }

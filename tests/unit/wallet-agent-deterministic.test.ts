@@ -130,6 +130,53 @@ describe('handleMessage deterministic paths (no LLM call)', () => {
     expect(session.pendingTransfer).toBeUndefined();
   });
 
+  it('RED: a no_match reports the contacts it found instead of denying they exist', async () => {
+    const session = createSession();
+    const memory = {
+      userId: '11111111-1111-4111-8111-111111111111',
+      service: {
+        // Measured live: the description query the user actually spoke scores
+        // below the floor, so nothing is selectable — but the row is real, and
+        // `Sophie` with `My nephew` is exactly who the user meant.
+        searchRecipients: vi.fn().mockResolvedValue({
+          status: 'no_match',
+          candidates: [
+            { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Sophie', description: 'My nephew', version: 1, evidence: 'Sophie', score: 0.263 },
+            { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'Test1', description: '', version: 1, evidence: 'Test1', score: 0.231 },
+          ],
+        }),
+      },
+    } as never;
+
+    const result = await handleMessage(session, 'Mandale plata a mi sobrino', { recipientMemory: memory });
+
+    expect(result.status).toBe('answer');
+    const message = (result as { message: string }).message;
+    // The name AND the stored description are what let the user recognise the
+    // contact: "encontré a Sophie como my nephew".
+    expect(message).toContain('Sophie');
+    expect(message).toContain('My nephew');
+    // A genuine miss must not read as "you have no contacts".
+    expect(message).not.toContain('do not have');
+    expect(session.pendingTransfer).toBeUndefined();
+    expect(session.recipientMemory?.selectedRecipient).toBeUndefined();
+  });
+
+  it('a no_match with nothing retrieved still asks for the name', async () => {
+    const session = createSession();
+    const memory = {
+      userId: '11111111-1111-4111-8111-111111111111',
+      service: { searchRecipients: vi.fn().mockResolvedValue({ status: 'no_match', candidates: [] }) },
+    } as never;
+
+    const result = await handleMessage(session, 'Mandale plata a Nadie', { recipientMemory: memory });
+
+    expect(result.status).toBe('answer');
+    const message = (result as { message: string }).message;
+    expect(message).not.toContain('safe recipient match');
+    expect(message.length).toBeGreaterThan(0);
+  });
+
   it('previews a fixture transfer from text without calling an LLM', async () => {
     const session = createSession();
     const result = await handleMessage(
