@@ -117,13 +117,13 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     const bus = captureSubscription();
     renderReview({ subscribe: bus.subscribe });
 
-    expect(screen.queryByLabelText("Tarjeta de revisión")).toBeNull();
+    expect(screen.queryByLabelText("Review card")).toBeNull();
     expect(mocks.getContactAction).not.toHaveBeenCalled();
 
     bus.deliver();
 
-    expect(await screen.findByLabelText("Tarjeta de revisión")).toBeTruthy();
-    expect(await screen.findByText(/Versión 1/)).toBeTruthy();
+    expect(await screen.findByLabelText("Review card")).toBeTruthy();
+    expect(await screen.findByText(/Version 1/)).toBeTruthy();
   });
 
   it("ignores a card published to a different conversation", async () => {
@@ -134,11 +134,11 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     // A packet for another conversation is not this participant's review.
     bus.deliver({ conversationId: "1c0f0f5c-0000-4000-8000-0000000000ff" });
     await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(screen.queryByLabelText("Tarjeta de revisión")).toBeNull();
+    expect(screen.queryByLabelText("Review card")).toBeNull();
     expect(mocks.getContactAction).not.toHaveBeenCalled();
 
     bus.deliver();
-    expect(await screen.findByLabelText("Tarjeta de revisión")).toBeTruthy();
+    expect(await screen.findByLabelText("Review card")).toBeTruthy();
   });
 
   it("renders the persisted row and never a value carried by the packet", async () => {
@@ -153,7 +153,7 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     expect((await screen.findByTestId("proposal-address")).textContent).toBeTruthy();
     // The packet's own address never reaches the DOM, and neither does its version.
     expect(screen.queryByText(new RegExp(PACKET_ADDRESS))).toBeNull();
-    expect(screen.queryByText(/Versión 7/)).toBeNull();
+    expect(screen.queryByText(/Version 7/)).toBeNull();
     expect(mocks.getContactAction).toHaveBeenCalledWith(PROPOSAL_ID);
   });
 
@@ -165,9 +165,7 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     bus.deliver();
 
     // The reviewed row can still receive a pasted (or scanned) address.
-    expect(
-      await screen.findByLabelText(/Pegá o escaneá la dirección de este destinatario/),
-    ).toBeTruthy();
+    expect(await screen.findByLabelText(/Paste or scan this recipient's address/)).toBeTruthy();
   });
 
   it("renders an expired version as expired and offers no way to confirm it", async () => {
@@ -177,9 +175,9 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
 
     bus.deliver();
 
-    expect(await screen.findByText(/Vencida/)).toBeTruthy();
-    expect(screen.queryByLabelText(/Pegá o escaneá la dirección/)).toBeNull();
-    expect(screen.queryByRole("button", { name: /usar esta dirección/i })).toBeNull();
+    expect(await screen.findByText(/Expired/)).toBeTruthy();
+    expect(screen.queryByLabelText(/Paste or scan this recipient's address/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /use this address/i })).toBeNull();
   });
 
   it("follows the newest announcement in the same conversation", async () => {
@@ -188,7 +186,7 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     renderReview({ subscribe: bus.subscribe });
 
     bus.deliver();
-    expect(await screen.findByText(/Versión 1/)).toBeTruthy();
+    expect(await screen.findByText(/Version 1/)).toBeTruthy();
 
     // A second action in the same conversation is a new immutable proposal. The
     // surface must move to it, or the user would be stuck on a superseded row.
@@ -202,8 +200,8 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     );
     bus.deliver({ proposalId: OTHER_PROPOSAL_ID, proposalVersion: 1 });
 
-    expect(await screen.findByText("Quitar a un destinatario de confianza")).toBeTruthy();
-    expect(await screen.findByText(/Reemplazada por una versión más nueva/)).toBeTruthy();
+    expect(await screen.findByText("Remove a trusted recipient")).toBeTruthy();
+    expect(await screen.findByText(/Replaced by a newer version/)).toBeTruthy();
     await waitFor(() => {
       expect(mocks.getContactAction).toHaveBeenCalledWith(OTHER_PROPOSAL_ID);
     });
@@ -217,7 +215,7 @@ describe("contact action proposal review surface (task 4.7 review channel)", () 
     bus.deliver();
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    expect(screen.queryByLabelText("Tarjeta de revisión")).toBeNull();
+    expect(screen.queryByLabelText("Review card")).toBeNull();
     expect(mocks.getContactAction).not.toHaveBeenCalled();
   });
 

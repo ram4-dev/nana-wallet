@@ -9,7 +9,10 @@ import type { ContactActionProposalAlias } from "@/lib/api-types";
 export function formatInstant(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("es-AR", {
+  // `en-US`: this card's copy is English, and a Spanish locale leaks Spanish
+  // into a timestamp the user is meant to read (`12:05 a. m.`). The shape stays
+  // the same — day/month, hour, minute, UTC.
+  return date.toLocaleString("en-US", {
     day: "2-digit",
     month: "2-digit",
     hour: "2-digit",
@@ -31,13 +34,13 @@ export function aliasAgeLabel(resolvedAt: string, now: Date): string | null {
   const date = new Date(resolvedAt);
   if (Number.isNaN(date.getTime())) return null;
   const seconds = Math.max(0, Math.round((now.getTime() - date.getTime()) / 1000));
-  if (seconds < 60) return "hace unos segundos";
+  if (seconds < 60) return "a few seconds ago";
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return minutes === 1 ? "hace 1 minuto" : `hace ${minutes} minutos`;
+  if (minutes < 60) return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return hours === 1 ? "hace 1 hora" : `hace ${hours} horas`;
+  if (hours < 24) return hours === 1 ? "1 hour ago" : `${hours} hours ago`;
   const days = Math.floor(hours / 24);
-  return days === 1 ? "hace 1 día" : `hace ${days} días`;
+  return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
 /**
@@ -48,10 +51,10 @@ export function aliasAgeLabel(resolvedAt: string, now: Date): string | null {
 export function reverseDomainSentence(alias: ContactActionProposalAlias): string {
   switch (alias.reverseDomainState) {
     case "present":
-      return `El nombre principal de esta dirección es ${alias.reverseDomain}.`;
+      return `The primary name of this address is ${alias.reverseDomain}.`;
     case "none":
-      return "Esta dirección no tiene un nombre principal registrado.";
+      return "This address has no registered primary name.";
     case "unknown":
-      return "No pude verificar si esta dirección tiene un nombre principal.";
+      return "I could not check whether this address has a primary name.";
   }
 }

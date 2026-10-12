@@ -53,11 +53,11 @@ export type ContactActionProposalCardProps = {
 function actionLabel(action: ContactActionProposal["action"]): string {
   switch (action) {
     case "create":
-      return "Agregar a un destinatario de confianza";
+      return "Add a trusted recipient";
     case "edit":
-      return "Editar un destinatario de confianza";
+      return "Edit a trusted recipient";
     case "remove":
-      return "Quitar a un destinatario de confianza";
+      return "Remove a trusted recipient";
   }
 }
 
@@ -69,15 +69,15 @@ function actionLabel(action: ContactActionProposal["action"]): string {
 function statusLabel(status: ContactActionProposal["status"]): string {
   switch (status) {
     case "open":
-      return "Esperando tu revisión";
+      return "Waiting for your review";
     case "consumed":
-      return "Ya confirmada";
+      return "Already confirmed";
     case "superseded":
-      return "Reemplazada por una versión más nueva";
+      return "Replaced by a newer version";
     case "expired":
-      return "Vencida";
+      return "Expired";
     case "cancelled":
-      return "Cancelada";
+      return "Cancelled";
   }
 }
 
@@ -105,7 +105,7 @@ export function ContactActionProposalCard({
     mutationFn: (input: { address: string; expectedProposalVersion: number }) =>
       api.replaceContactActionAddress(proposalId, input),
     onSuccess: async () => {
-      setNotice("Guardamos la dirección como una versión nueva de la tarjeta.");
+      setNotice("We saved the address as a new version of the card.");
       setDraft("");
       await queryClient.invalidateQueries({
         queryKey: queryKeys.contactAction(userId, proposalId),
@@ -125,10 +125,12 @@ export function ContactActionProposalCard({
     });
   }, [proposal, proposalId, queryClient, subscribe, userId]);
 
+  // The loading and failure states are the same card in another state, so they
+  // wear the same surface as the reviewed one instead of a bare section.
   if (query.isPending) {
     return (
-      <section aria-label="Tarjeta de revisión">
-        <p>Cargando la tarjeta…</p>
+      <section className="surface-card p-4" aria-label="Review card">
+        <p>Loading the card…</p>
       </section>
     );
   }
@@ -136,15 +138,15 @@ export function ContactActionProposalCard({
   if (query.isError) {
     const missing = errorCode(query.error) === "NO_ENCONTRADO";
     return (
-      <section aria-label="Tarjeta de revisión">
+      <section className="surface-card p-4" aria-label="Review card">
         <p role="alert">
           {missing
-            ? "No encontramos esta tarjeta. Puede haber vencido o haberse reemplazado."
-            : "No pudimos leer la tarjeta."}
+            ? "We could not find this card. It may have expired or been replaced."
+            : "We could not read the card."}
         </p>
         {!missing && (
           <Button type="button" variant="outline" onClick={() => void query.refetch()}>
-            <RotateCw aria-hidden size={16} /> Reintentar
+            <RotateCw aria-hidden size={16} /> Retry
           </Button>
         )}
       </section>
@@ -170,15 +172,15 @@ export function ContactActionProposalCard({
       (): AddressScanResult => ({ status: "unavailable" }),
     );
     if (result.status === "unavailable") {
-      setNotice("Escanear no está disponible acá. Pegá la dirección a mano.");
+      setNotice("Scanning is not available here. Paste the address manually.");
       return;
     }
     if (result.status === "cancelled") {
-      setNotice("No leí ningún código. Probá de nuevo o pegá la dirección.");
+      setNotice("I could not read any code. Try again or paste the address.");
       return;
     }
     setDraft(result.address);
-    setNotice("Leí una dirección. Revisala antes de usarla.");
+    setNotice("I read an address. Review it before using it.");
   }
 
   function submitAddress(event: FormEvent<HTMLFormElement>) {
@@ -187,7 +189,7 @@ export function ContactActionProposalCard({
     // A pre-check only: the server re-validates the canonical base58 form, and a
     // scanned value is untrusted input either way.
     if (!solanaAddressPattern.test(candidate)) {
-      setNotice("Esa no parece una dirección Solana válida.");
+      setNotice("That does not look like a valid Solana address.");
       return;
     }
     setNotice(null);
@@ -200,8 +202,14 @@ export function ContactActionProposalCard({
   const replacementError = replacement.isError ? replacement.error : null;
 
   return (
-    <section aria-label="Tarjeta de revisión">
-      <h2>{actionLabel(proposal.action)}</h2>
+    /*
+     * The visual language is the transaction preview card's (AgentScreen.tsx:278
+     * — `surface-card p-4`, a `text-base font-extrabold` title and the
+     * `auto / 1fr` definition grid), so the screen the user verifies a
+     * destination on reads like the screen they already approve a payment on.
+     */
+    <section className="surface-card p-4" aria-label="Review card">
+      <h2 className="text-base font-extrabold">{actionLabel(proposal.action)}</h2>
 
       {/*
        * The card shows the two facts the user is being asked to approve, in the
@@ -213,26 +221,30 @@ export function ContactActionProposalCard({
        * them would delete coverage rather than reduce noise.
        */}
       <p className="sr-only">
-        Versión {proposal.proposalVersion} · <span>{statusLabel(proposal.status)}</span>
+        Version {proposal.proposalVersion} · <span>{statusLabel(proposal.status)}</span>
       </p>
       <p data-testid="proposal-expiry" className="sr-only">
-        Vence el {formatExpiry(proposal.expiresAt)}
+        Expires {formatExpiry(proposal.expiresAt)}
       </p>
 
-      <dl>
-        <dt>ALIAS</dt>
-        <dd data-testid="proposal-alias">
-          {proposal.alias?.name ?? <span data-testid="proposal-alias-none">Sin alias</span>}
+      <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+        <dt className="font-bold">Alias</dt>
+        <dd data-testid="proposal-alias" className="text-right">
+          {proposal.alias?.name ?? <span data-testid="proposal-alias-none">No alias</span>}
         </dd>
 
-        <dt>ADDRESS</dt>
-        <dd>
+        <dt className="font-bold">Address</dt>
+        {/*
+         * Deliberately NOT `truncate`: the address is the thing the user
+         * verifies, and an ellipsis hides exactly the characters they are
+         * looking for. It wraps instead (`break-all`, because a base58 address
+         * has no space to wrap on).
+         */}
+        <dd className="break-all text-right">
           {proposal.address ? (
             <code data-testid="proposal-address">{proposal.address}</code>
           ) : (
-            <span data-testid="proposal-no-address">
-              Todavía no hay una dirección en esta versión.
-            </span>
+            <span data-testid="proposal-no-address">This version has no address yet.</span>
           )}
         </dd>
       </dl>
@@ -244,12 +256,12 @@ export function ContactActionProposalCard({
        * never displace the alias/address pair above.
        */}
       <details>
-        <summary>Más detalle</summary>
+        <summary>More detail</summary>
         {proposal.alias && (
           <>
             <p data-testid="proposal-reverse-domain">{reverseDomainSentence(proposal.alias)}</p>
             <p data-testid="proposal-freshness">
-              {`Resolví este nombre el ${formatResolvedAt(proposal.alias.resolvedAt)}${
+              {`I resolved this name on ${formatResolvedAt(proposal.alias.resolvedAt)}${
                 aliasAgeLabel(proposal.alias.resolvedAt, new Date())
                   ? ` (${aliasAgeLabel(proposal.alias.resolvedAt, new Date())})`
                   : ""
@@ -257,25 +269,29 @@ export function ContactActionProposalCard({
             </p>
           </>
         )}
-        {proposal.previousAddress && <p>La versión anterior tenía {proposal.previousAddress}.</p>}
-        <p>
-          {proposal.revocationDisclosure ?? "Esta tarjeta no revoca ningún permiso automático."}
-        </p>
+        {proposal.previousAddress && <p>The previous version had {proposal.previousAddress}.</p>}
+        <p>{proposal.revocationDisclosure ?? "This card revokes no automatic permission."}</p>
       </details>
 
       {!readable && (
         <p role="status">
-          Esta versión ya no se puede confirmar: {statusLabel(proposal.status).toLowerCase()}.
+          This version can no longer be confirmed: {statusLabel(proposal.status).toLowerCase()}.
         </p>
       )}
 
-      {readable && (
-        <form onSubmit={submitAddress}>
-          <label htmlFor="contact-action-address">
-            {missingAddress
-              ? "Pegá o escaneá la dirección de este destinatario"
-              : "Corregir la dirección"}
-          </label>
+      {/*
+       * The paste path renders ONLY while the reviewed version has no address
+       * (`missingAddress` = an open row with a null address). Design flow (c)
+       * needs it: a proposal that came from a voice turn whose review channel
+       * never supplied an address still has to be finishable from the screen.
+       * It is NOT dead code that a row with an address could reuse — a resolved
+       * row shows the alias/address pair above, so an empty input plus "Use this
+       * address" would be a form with nothing to do. Do not reintroduce it as an
+       * always-on "correct the address" control.
+       */}
+      {missingAddress && (
+        <form data-testid="proposal-address-form" onSubmit={submitAddress}>
+          <label htmlFor="contact-action-address">Paste or scan this recipient's address</label>
           <Input
             id="contact-action-address"
             name="address"
@@ -286,11 +302,11 @@ export function ContactActionProposalCard({
           />
           {canScanAddress() && (
             <Button type="button" variant="outline" onClick={() => void handleScan()}>
-              <ScanLine aria-hidden size={16} /> Escanear
+              <ScanLine aria-hidden size={16} /> Scan
             </Button>
           )}
           <Button type="submit" disabled={replacement.isPending}>
-            <QrCode aria-hidden size={16} /> Usar esta dirección
+            <QrCode aria-hidden size={16} /> Use this address
           </Button>
         </form>
       )}
@@ -300,7 +316,7 @@ export function ContactActionProposalCard({
         <p role="alert">
           <AlertTriangle aria-hidden size={16} />{" "}
           {errorCode(replacementError) === "PROPUESTA_OBSOLETA"
-            ? "Esta propuesta cambió. Recargá la tarjeta y probá de nuevo."
+            ? "This proposal changed. Reload the card and try again."
             : getErrorMessage(replacementError)}
         </p>
       )}
