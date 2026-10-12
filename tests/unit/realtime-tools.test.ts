@@ -260,6 +260,47 @@ describe("createRealtimeTools", () => {
     );
   });
 
+  it("RED: a no_match still hands back the rows it found, with their descriptions", async () => {
+    // The live regression: the user asked for a contact described as "my nephew",
+    // the audio model rendered that as the phonetic name `MinaFi`, and the agent
+    // answered that the contact does not exist. The row came back from the store
+    // (Sophie, described as "My nephew") but the projection dropped it here, so
+    // the model had nothing to read back and could only deny.
+    const searchRecipients = vi.fn(async (): Promise<RecipientSearchResult> => ({
+      status: "no_match",
+      candidates: [
+        {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          name: "Sophie",
+          normalizedName: "sophie",
+          description: "My nephew",
+          version: 1,
+          status: "active",
+          evidence: "Sophie",
+          score: 0.263,
+        },
+      ],
+    }));
+    const searchContactsTool = byName(createRealtimeTools({
+      conversationId: "conv-1",
+      userId: "binding-sub-uuid",
+      wallet: walletStub() as never,
+      recipientMemory: { searchRecipients } as never,
+    }), "search_recipients");
+
+    const result = await (searchContactsTool.execute as SearchContactsExecute)({ query: "MinaFi" });
+
+    // Unselectable, and still reported: the name AND the stored description are
+    // what let the agent say "I found Sophie, saved as my nephew".
+    expect(result.status).toBe("no_match");
+    expect(result.count).toBe(1);
+    expect(result.contacts).toHaveLength(1);
+    expect(result.contacts[0]).toMatchObject({ name: "Sophie", description: "My nephew" });
+    // Reporting evidence must not widen the payload a model can act on:
+    // a search result NEVER carries an address.
+    expect(result.contacts[0]).not.toHaveProperty("address");
+  });
+
   it("search_contacts fails closed to unavailable without a memory service", async () => {
     const searchContactsTool = byName(createRealtimeTools({
       conversationId: "conv-1",

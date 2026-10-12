@@ -383,12 +383,25 @@ function toVoiceSearchResult(
   if (result.status === 'unavailable') {
     return { query, count: 0, ambiguous: false, status: 'unavailable', contacts: [] };
   }
-  const candidates = result.status === 'no_match' ? [] : (result.candidates ?? []) as RecipientCandidate[];
+  // EVERY row the store returned travels, `no_match` included. This projection
+  // used to drop the candidates on `no_match`, which is the SECOND place the live
+  // regression lost its evidence: the classifier had been fixed to hand the rows
+  // over, and the voice surface threw them away again on the way to the model.
+  // A model that receives the rows can say "I found Sophie, saved as my nephew";
+  // a model that receives nothing can only tell the user the contact does not
+  // exist. `no_match` still selects nothing, so this widens what can be REPORTED
+  // and never what can be ACTED ON.
+  const candidates = (result.candidates ?? []) as RecipientCandidate[];
   const contacts = candidates.map(stripContact);
   return {
     query,
     count: contacts.length,
-    ambiguous: result.status === 'clarification_required',
+    // `ambiguous` answers "must the user choose or confirm before anything is
+    // sent?". A `clarification_required` result always must; a `no_match` that
+    // still carries rows must too, because nothing was selected and the agent has
+    // to read the names back and ask instead of acting on a low-scoring row.
+    ambiguous: result.status === 'clarification_required'
+      || (result.status === 'no_match' && contacts.length > 0),
     status: result.status as RecipientSearchResult['status'],
     contacts,
   };
