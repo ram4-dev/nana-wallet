@@ -239,8 +239,9 @@ describe("the confirm-time re-verification (task 6.4)", () => {
     expect(result.status).toBe("consumed");
     expect(h.consumed).toHaveLength(1);
     expect(h.consumed[0]!.reverify).toBe("unavailable");
-    // And it is NEVER narrated as a change of destination.
-    expect(result.message).not.toMatch(/cambió|nueva/i);
+    // And it is NEVER narrated as a change of destination. The sentences of this
+    // tool are English now, so the guard matches the words it actually uses.
+    expect(result.message).not.toMatch(/changed|new/i);
   });
 
   it("supersedes, re-publishes and re-opens the window for the new version when the name moved", async () => {
@@ -310,7 +311,7 @@ describe("the confirm-time re-verification (task 6.4)", () => {
     // The distinction the taxonomy exists for: an ANSWER that the name is gone is
     // not the unreachable case, and not a change of destination either.
     expect(result.message).not.toContain("RESOLVEDOR_NO_DISPONIBLE");
-    expect(result.message).not.toMatch(/cambió a otra dirección/i);
+    expect(result.message).not.toMatch(/changed to another address/i);
   });
 
   it("proceeds for a version with no alias claim and records no re-verification", async () => {

@@ -432,3 +432,125 @@ describe("voice contact proposal publication", () => {
     expect(h.published).toHaveLength(0);
   });
 });
+
+/**
+ * The outcome a real transaction returns, with the permission projection a real
+ * state row produces. `applied` can only be reached through a verified read-back
+ * (`projectContactPermission`), which is the rule the sentences below must keep.
+ */
+function outcome(permission: AppliedOutcome["permission"], action: "create" | "remove" = "create"): ContactProposalApplication {
+  return {
+    status: "applied",
+    action,
+    contactId: "44444444-4444-4444-8444-444444444444",
+    permission,
+    policyRevision: permission.desiredRevision,
+  } as ContactProposalApplication;
+}
+
+/**
+ * True when the message asserts, in a clause of its own, that the recipient IS
+ * enabled — the one claim a state row that has not been read back can never
+ * support. A hedge in the same clause (`cannot confirm … until`, `should be … by
+ * then`) is not a claim: it is the honest report of an in-flight apply.
+ *
+ * The `detectorControl` cases below prove this detector is not vacuous, exactly
+ * the way the recipient-lifecycle eval's own detector is controlled.
+ */
+function assertsEnabled(message: string): boolean {
+  for (const match of message.matchAll(/\b(?:is|are)\s+enabled\b/giu)) {
+    const clause = message.slice(0, match.index ?? 0).split(/[.;:!?,—]/u).pop() ?? "";
+    if (!/\b(?:cannot|can't|not|no|unless|until|if|once|should|would|before)\b/iu.test(clause)) return true;
+  }
+  return false;
+}
+
+describe("the confirmation's permission sentence", () => {
+  const PENDING = { state: "pending", desiredRevision: 2, appliedRevision: 1, retryable: true } as const;
+  const SYNCING = { state: "syncing", desiredRevision: 2, appliedRevision: 1, retryable: true } as const;
+  const RETRYING = { state: "retryable_failure", desiredRevision: 2, appliedRevision: 1, retryable: true, reason: "provider_timeout" } as const;
+  const ENABLED = { state: "applied", desiredRevision: 2, appliedRevision: 2, retryable: false } as const;
+  const SAVED = { state: "saved_not_configured", desiredRevision: 0, appliedRevision: 0, retryable: false } as const;
+  const BLOCKED = { state: "blocked_conflict", desiredRevision: 2, appliedRevision: 1, retryable: false, reason: "conflict" } as const;
+
+  async function confirmWith(permission: AppliedOutcome["permission"], action: "create" | "remove" = "create") {
+    const h = harness({ outcome: outcome(permission, action) });
+    await h.port.stage({ userId: USER_ID, conversationId: CONVERSATION_ID, origin: "voice", action: "create", name: "Sofía" });
+    evidence(h.arbiter, h.arbiter.current()!.createdAt + 1);
+    return h.port.confirm!({ userId: USER_ID, conversationId: CONVERSATION_ID, proposalId: PROPOSAL_ID, proposalVersion: 1, source: "voice" });
+  }
+
+  it("RED: reports an in-flight apply as in progress, never as a settled 'not enabled'", async () => {
+    const consumed = await confirmWith(PENDING);
+
+    // The state the user was told about is unchanged and still honest: the row is
+    // not `applied`, so `permission` says `pending` (design §9.1).
+    expect(consumed).toMatchObject({ status: "consumed", permission: "pending" });
+    // What changed is the SENTENCE. The defect was a definitive negative —
+    // "todavía no está habilitado" — for a state the reconciler was four seconds
+    // from leaving, with nothing left to correct it.
+    expect(consumed.message).toBe(
+      "Done: I saved the recipient. Enabling it is being applied right now, so I cannot confirm it is enabled yet — and it has not been refused. Check the contact again in a moment.",
+    );
+    expect(consumed.message).not.toMatch(/\bnot enabled\b|\bisn'?t enabled\b|\bno longer enabled\b|\bhas not been enabled\b/iu);
+    expect(assertsEnabled(consumed.message)).toBe(false);
+  });
+
+  it("keeps the in-flight sentence honest for syncing and for a retried apply", async () => {
+    const syncing = await confirmWith(SYNCING);
+    expect(syncing.message).toBe(
+      "Done: I saved the recipient. Enabling it is being applied right now, so I cannot confirm it is enabled yet — and it has not been refused. Check the contact again in a moment.",
+    );
+
+    // A first attempt that did not go through is a different fact and gets its own
+    // sentence: the user is told the apply failed AND that it is being retried,
+    // which is what the row actually says.
+    const retrying = await confirmWith(RETRYING);
+    expect(retrying).toMatchObject({ status: "consumed", permission: "retryable_failure" });
+    expect(retrying.message).toBe(
+      "Done: I saved the recipient. The first attempt to apply it did not go through and it is being retried, so I cannot confirm it is enabled yet. It has not been refused.",
+    );
+    expect(retrying.message).not.toMatch(/\bnot enabled\b|\bisn'?t enabled\b/iu);
+    expect(assertsEnabled(retrying.message)).toBe(false);
+  });
+
+  it("fixes the in-flight sentence of a removal the same way", async () => {
+    const consumed = await confirmWith(PENDING, "remove");
+
+    expect(consumed.message).toBe(
+      "Done: I removed that recipient. The removal is being applied right now, so I cannot confirm the policy reflects it yet — and it has not been refused. Check the contact again in a moment.",
+    );
+    expect(consumed.message).not.toMatch(/\bnot applied\b|\bhas not been applied\b/iu);
+  });
+
+  it("still claims enabled ONLY for a verified read-back, and keeps every settled state settled", async () => {
+    // The one sentence that may say `enabled` is the one the already-fail-closed
+    // projection produced: `applied` here means a verified read-back at the current
+    // revision, so the claim is exactly what the evidence supports.
+    const enabled = await confirmWith(ENABLED);
+    expect(enabled).toMatchObject({ status: "consumed", permission: "applied" });
+    expect(enabled.message).toBe(
+      "Done: I saved the recipient and the policy is already applied, so it is enabled.",
+    );
+    expect(assertsEnabled(enabled.message)).toBe(true);
+
+    // Positive control for the detector above: it is not vacuously false.
+    expect(assertsEnabled("Done: the recipient is enabled.")).toBe(true);
+    expect(assertsEnabled("I cannot confirm it is enabled yet.")).toBe(false);
+
+    // Settled states stay settled, in English, and none of them claims enabled.
+    const saved = await confirmWith(SAVED);
+    expect(saved.message).toBe(
+      "Done: I saved the recipient, but it is not enabled for sending money because this wallet is not ready yet.",
+    );
+    const blocked = await confirmWith(BLOCKED);
+    expect(blocked.message).toBe(
+      "Done: I saved the recipient, but the policy is blocked, so it is not enabled yet.",
+    );
+    expect(assertsEnabled(saved.message)).toBe(false);
+    expect(assertsEnabled(blocked.message)).toBe(false);
+
+    const removed = await confirmWith(ENABLED, "remove");
+    expect(removed.message).toBe("Done: I removed that recipient and the policy already reflects the removal.");
+  });
+});

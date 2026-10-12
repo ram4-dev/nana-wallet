@@ -139,15 +139,33 @@ export function aliasRefusalMessage(code: string, attemptedName?: string): strin
  * The sentence for a confirmation whose mutation LANDED (design flow (c)).
  *
  * The design's last line is the rule this exists for: an honest status (saved /
- * pending / applied), never "habilitado" before a readback. The projection the
+ * pending / applied), never "enabled" before a readback. The projection the
  * service returns is already fail-closed (`projectContactPermission` collapses an
  * `applied` row with no `verified_at`, or with an applied revision behind the
  * desired one, to `pending`), so the enabled sentence below can only be reached
  * through the verified readback of the revision THIS transaction recorded.
  *
- * `saved_not_configured` and the two blocked statuses get their own sentences on
- * purpose: in all three the recipient IS saved and is NOT enabled, and a single
- * "pendiente" sentence would describe the blocked arm as if it were still moving.
+ * WHAT THE IN-FLIGHT ARMS MAY NOT SAY
+ * -----------------------------------
+ * An honest projection is not enough on its own. A `pending` read-back means the
+ * apply is IN FLIGHT — the reconciler applies the recorded revision seconds later
+ * (observed live: the confirmation at 23:53:23.645 and `applied` at 23:53:27.557),
+ * and the state row converged on its own with nothing left to correct the user —
+ * so a sentence that states a definitive negative ("it is not enabled") tells the
+ * user a settled fact that stops being true a few seconds later, and leaves them
+ * believing the recipient failed.
+ *
+ * The in-flight arms therefore report what IS true — the change is being applied,
+ * it has NOT been refused, and the enabled state is not something we have read
+ * back yet — and they never present "not enabled" as the end state. `applied`
+ * remains the only arm allowed to say enabled, and `retryable_failure` gets its
+ * own sentence because "the first attempt did not go through and it is being
+ * retried" is a different fact from "being applied right now".
+ *
+ * `saved_not_configured` and the two blocked statuses keep their settled
+ * negatives on purpose: in all three the recipient IS saved and is NOT enabled,
+ * that is not about to change by itself, and a single in-flight sentence would
+ * describe a blocked arm as if it were still moving.
  */
 function appliedProposalMessage(
   application: Extract<ContactProposalApplication, { status: "applied" }>,
@@ -155,22 +173,25 @@ function appliedProposalMessage(
   const enabled = application.permission.state === "applied";
   if (application.action === "remove") {
     return enabled
-      ? "Listo: quité ese destinatario y la política ya refleja la baja."
-      : "Listo: quité ese destinatario. La baja todavía no está aplicada en la política.";
+      ? "Done: I removed that recipient and the policy already reflects the removal."
+      : "Done: I removed that recipient. The removal is being applied right now, so I cannot confirm the policy reflects it yet — and it has not been refused. Check the contact again in a moment.";
   }
   if (enabled) {
-    return "Listo: guardé el destinatario y la política ya quedó aplicada, así que está habilitado.";
+    return "Done: I saved the recipient and the policy is already applied, so it is enabled.";
   }
   if (application.permission.state === "saved_not_configured") {
-    return "Listo: guardé el destinatario, pero todavía no está habilitado para enviarle dinero porque esta billetera no está lista.";
+    return "Done: I saved the recipient, but it is not enabled for sending money because this wallet is not ready yet.";
   }
   if (
     application.permission.state === "blocked_conflict" ||
     application.permission.state === "blocked_configuration"
   ) {
-    return "Listo: guardé el destinatario, pero la política quedó bloqueada, así que no está habilitado todavía.";
+    return "Done: I saved the recipient, but the policy is blocked, so it is not enabled yet.";
   }
-  return "Listo: guardé el destinatario. Todavía no está habilitado: la política sigue pendiente de aplicarse.";
+  if (application.permission.state === "retryable_failure") {
+    return "Done: I saved the recipient. The first attempt to apply it did not go through and it is being retried, so I cannot confirm it is enabled yet. It has not been refused.";
+  }
+  return "Done: I saved the recipient. Enabling it is being applied right now, so I cannot confirm it is enabled yet — and it has not been refused. Check the contact again in a moment.";
 }
 
 /**
@@ -183,23 +204,23 @@ function appliedProposalMessage(
  */
 const PROPOSAL_REFUSAL_SENTENCE: Record<string, string> = {
   PROPUESTA_SIN_DIRECCION:
-    "Esa tarjeta todavía no tiene una dirección: pegala en la pantalla y confirmámela. No habilité nada.",
+    "That card has no address yet: paste it on the screen and confirm it to me. I enabled nothing.",
   PROPUESTA_SIN_NOMBRE:
-    "Esa tarjeta no tiene un nombre con el que pueda guardar el destinatario. Generala otra vez. No habilité nada.",
+    "That card carries no name I can save the recipient under. Generate it again. I enabled nothing.",
   PROPUESTA_SIN_CONTACTO:
-    "Esa propuesta no apunta a ningún destinatario guardado. Generala otra vez. No habilité nada.",
+    "That proposal does not point to any saved recipient. Generate it again. I enabled nothing.",
   VERSION_OBSOLETA:
-    "Ese destinatario cambió desde que viste la tarjeta, así que no toqué nada. Generá la propuesta otra vez.",
+    "That recipient changed since you saw the card, so I touched nothing. Generate the proposal again.",
   CONTACTO_NO_ENCONTRADO:
-    "Ese destinatario ya no existe, así que no toqué nada. Generá la propuesta otra vez.",
+    "That recipient no longer exists, so I touched nothing. Generate the proposal again.",
   DIRECCION_PROPIA:
-    "Esa dirección es la de tu propia billetera: no puedo agregarla como destinatario. No habilité nada.",
+    "That address is your own wallet's, so I cannot add it as a recipient. I enabled nothing.",
 };
 
 function proposalRefusalMessage(code: string): string {
   return (
     PROPOSAL_REFUSAL_SENTENCE[code] ??
-    `No pude aplicar esa propuesta (${code}). No guardé ni habilité nada.`
+    `I could not apply that proposal (${code}). I saved nothing and enabled nothing.`
   );
 }
 
@@ -630,7 +651,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
       if (window && window.kind !== "contact") {
         return {
           status: "conflict_active_window",
-          message: "Ya hay otra acción esperando tu confirmación. Cancelala o confirmala antes de continuar.",
+          message: "Another action is already waiting for your confirmation. Cancel it or confirm it before continuing.",
         };
       }
 
@@ -658,18 +679,18 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         return current
           ? {
               status: "confirmation_required",
-              message: `Esta propuesta cambió: la abierta es la versión ${current.proposalVersion} (${current.proposalId}). Confirmá esa.`,
+              message: `This proposal changed: the open one is version ${current.proposalVersion} (${current.proposalId}). Confirm that one.`,
               currentProposalId: current.proposalId,
               currentProposalVersion: current.proposalVersion,
             }
           : {
               status: "confirmation_required",
-              message: "Esta propuesta ya no está disponible y no hay ninguna otra abierta para esta conversación; generá una nueva.",
+              message: "This proposal is no longer available and no other one is open for this conversation; generate a new one.",
             };
       }
 
       if (!arbiter) {
-        return { status: "confirmation_required", message: "No hay ninguna tarjeta esperando confirmación." };
+        return { status: "confirmation_required", message: "There is no card waiting for confirmation." };
       }
 
       // The requested handle IS the current open proposal, so the in-process
@@ -703,7 +724,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
       if (decision.status !== "consumed") {
         return {
           status: "confirmation_required",
-          message: "Todavía no tengo tu confirmación para esta tarjeta.",
+          message: "I do not have your confirmation for this card yet.",
           currentProposalId: input.proposalId,
           currentProposalVersion: input.proposalVersion,
         };
@@ -744,8 +765,8 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         return {
           status: "confirmation_required",
           message: republished
-            ? `La dirección de ese nombre cambió: la tarjeta muestra la dirección nueva (versión ${recheck.supersededProposalVersion}). Mirala y confirmame otra vez.`
-            : "La dirección de ese nombre cambió y no pude mostrarte la tarjeta nueva. Generá la propuesta otra vez.",
+            ? `That name's address changed: the card shows the new address (version ${recheck.supersededProposalVersion}). Look at it and confirm again.`
+            : "That name's address changed and I could not show you the new card. Generate the proposal again.",
           // The handle that IS open: the new row's id, never the superseded one.
           currentProposalId: recheck.supersededProposalId,
           currentProposalVersion: recheck.supersededProposalVersion,
@@ -759,7 +780,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         // unreachable case either (`reverifyRefusalCode` names it).
         return {
           status: "confirmation_required",
-          message: `No pude confirmar ese nombre: ya no resuelve a la dirección de la tarjeta (${recheck.code}). Generá la propuesta otra vez.`,
+          message: `I could not confirm that name: it no longer resolves to the card's address (${recheck.code}). Generate the proposal again.`,
           currentProposalId: input.proposalId,
           currentProposalVersion: input.proposalVersion,
         };
@@ -792,7 +813,7 @@ export function createVoiceContactActions(dependencies: VoiceContactActionDepend
         // by someone else. Nothing was mutated, and this tuple can never work.
         return {
           status: "confirmation_required",
-          message: "Esta propuesta ya no está disponible; generá una nueva.",
+          message: "This proposal is no longer available; generate a new one.",
         };
       }
 
