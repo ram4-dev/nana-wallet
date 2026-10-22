@@ -496,7 +496,8 @@ pgvector cambia solo las URLs de arriba.
 >    Nana Landing is a separate waitlist project; do not use it as a migration
 >    target or copy its data. The deployed `DATABASE_URL` must be provisioned
 >    through platform/Vault (runtime connectivity not verified here) and never
->    committed. `.env.example` keeps the local stand-in URL; local `.env` and tests must never point at
+>    committed. `.env.example` keeps the local stand-in URL; local `.env` and
+>    tests must never point at
 >    the remote project.
 > 2. `npx supabase start` — **disposable development stand-in**: local
 >    Supabase, PostgreSQL 17 on `127.0.0.1:54322` (+ Studio, Inbucket). Apply
