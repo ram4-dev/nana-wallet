@@ -8,6 +8,7 @@ import { APIError, PrivyClient, type AuthorizationContext } from "@privy-io/node
 import type { TransferPreview } from "../contracts/http.js";
 import { DEFAULT_PRIVY_API_BASE_URL } from "../config/privy-server.js";
 import {
+  PayloadSignerError,
   SIGNER_TOKEN_ENV,
   SIGNER_URL_ENV,
   createWorkerPayloadSigner,
@@ -437,12 +438,20 @@ export class SolanaDevnetProvider implements WalletProvider {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if ((error as { definitive?: boolean }).definitive === true) {
-        // `definitive` is set only by asDispatchFailure/isPolicyDenial: a
-        // policy refusal that never left our process.
+        // `definitive` is set by asDispatchFailure/isPolicyDenial (a policy
+        // refusal) and by the payload signer port (D-A): the authorization
+        // payload is signed while the request is built, before any network
+        // send, so a typed signer failure proves nothing left our process.
+        const cause =
+          error instanceof PayloadSignerError
+            ? error.code === "signer_rejected"
+              ? "invalid_request"
+              : "provider_unavailable"
+            : "policy_rejected";
         return {
           kind: "not_dispatched",
           reason: message,
-          cause: "policy_rejected",
+          cause,
         };
       }
       // Outcome unknown after leaving our process: never re-sign or re-send;

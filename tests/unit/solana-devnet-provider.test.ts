@@ -29,6 +29,7 @@ import {
 import { explorerUrlFor } from "../../src/wallet/provider.js";
 import { signerAuthorizationContext } from "../../src/wallet/signer/authorization-context.js";
 import { createKeyPayloadSigner } from "../../src/wallet/signer/key-signer.js";
+import { PayloadSignerError } from "../../src/wallet/signer/port.js";
 
 const WALLET_ID = "wallet-1";
 const CONTEXT = { wallet: WALLET_ID, network: SOLANA_DEVNET_NETWORK };
@@ -244,6 +245,44 @@ describe("SolanaDevnetProvider", () => {
     expect(outcome.kind).toBe("uncertain");
     if (outcome.kind === "uncertain")
       expect(outcome.reason).toMatch(/reference/i);
+  });
+
+  it("treats a typed signer-port failure as a definitive pre-dispatch rejection (D-A)", async () => {
+    // The authorization payload is signed while the request is BUILT, before
+    // any network send (one request, no retries), so a typed signer failure
+    // proves nothing left our process: not_dispatched, never uncertain.
+    const rejected = provider(
+      rpcDouble(),
+      signerDouble({
+        signAndSend: vi
+          .fn()
+          .mockRejectedValue(
+            new PayloadSignerError(
+              "signer_rejected",
+              "sidecar refused the authorization payload",
+            ),
+          ),
+      }),
+    );
+    await expect(rejected.broadcastTransfer(REQUEST)).resolves.toMatchObject({
+      kind: "not_dispatched",
+      cause: "invalid_request",
+    });
+
+    const unavailable = provider(
+      rpcDouble(),
+      signerDouble({
+        signAndSend: vi
+          .fn()
+          .mockRejectedValue(
+            new PayloadSignerError("signer_unavailable", "sidecar unreachable"),
+          ),
+      }),
+    );
+    await expect(unavailable.broadcastTransfer(REQUEST)).resolves.toMatchObject({
+      kind: "not_dispatched",
+      cause: "provider_unavailable",
+    });
   });
 
   it("reconciliation never re-dispatches: single dispatch, stable reference, stays uncertain", async () => {
