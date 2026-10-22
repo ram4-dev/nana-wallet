@@ -52,11 +52,11 @@ started with `record: false`.
 
 The session is bound to one conversation through the worker's `bind_conversation`
 gate. The worker builds a per-binding `WalletConversationService` so the voice
-path's memory runtime scopes to the binding user (`binding.sub`), never the demo
-tenant. This is the REVIEW FIX V3 wiring: the worker feeds the memory runtime into
+path's memory runtime scopes to the binding user (`binding.sub`), never a
+shared tenant. This is the REVIEW FIX V3 wiring: the worker feeds the memory runtime into
 the conversation service dependencies so `isClaimedRecipientValid` can revalidate
 versioned recipients instead of always returning false. The voice path therefore
-never reuses the demo-tenant text service.
+never reuses a shared, tenant-less text service.
 
 ### Realtime function tools
 
@@ -103,19 +103,25 @@ Confirm/Cancel card arbitrate on the same database claim.
 ## Recipient address memory boundary
 
 Recipient references are durable application data in Supabase PostgreSQL 17 + pgvector,
-not model context. `recipients` stores a versioned exact address payload with a
+not model context. **Supabase local is the primary development database**:
+`npx supabase start` (PostgreSQL 17 on `127.0.0.1:54322`), with the Supabase
+migration chain `supabase/migrations/` applied by `npx supabase db reset`. The
+compose PostgreSQL 16 on `127.0.0.1:5432` (service `db`) is only the
+docker-stack/CI database; CI applies the same Supabase chain to it with psql.
+The `src/db/migrations/` chain is the local-runner mirror used by
+`npm run db:migrate`. `recipients` stores a versioned exact address payload with a
 384D embedding of normalized name + description only; `user_memories` stores
 confirmed relationship facts with a 384D fact embedding. The pinned local
 model is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` via
 Transformers.js, so retrieval needs no hosted embedding credential.
 
-Every repository transaction applies the server-owned demo tenant UUID and
-sets PostgreSQL RLS context under the restricted `recipient_app` role. Search
-uses tenant-filtered lexical name boost plus cosine similarity and returns only
-candidate metadata. A score threshold/margin or duplicate exact name produces
-clarification, never an inferred address. The fixed `DEMO_USER_ID` is only a
-hackathon identity seam; production must replace it with an authenticated
-principal.
+Every repository transaction applies the authenticated user id resolved from the
+Privy access token on each request and sets PostgreSQL RLS context under the
+restricted `recipient_app` role. Search uses tenant-filtered lexical name boost
+plus cosine similarity and returns only candidate metadata. A score
+threshold/margin or duplicate exact name produces clarification, never an
+inferred address. There is no fixed demo tenant: identity is the Privy user
+resolved per request (PMU-020).
 
 ```mermaid
 sequenceDiagram
