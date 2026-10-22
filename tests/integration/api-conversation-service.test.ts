@@ -1,15 +1,16 @@
-import { vi, afterEach, describe, expect, it } from "vitest";
+import { vi, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 
 // CI-load headroom: server-injection cases can exceed Vitest's 5s default under
 // full-suite parallel load (documented pattern in api-voice).
 vi.setConfig({ testTimeout: 15_000 });
 
-import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 
 const databaseUrl = process.env.DATABASE_URL;
-// The shared fixture identity: every server-based suite in a shared database
-// agrees on one user id (idempotent under concurrency).
-const userId = TEST_USER_ID;
+// Per-suite identity: unique so parallel suites never share per-user rows.
+const userId = randomUUID();
 const recipient = "0x1234567890123456789012345678901234567890";
 
 describe("typed conversation service with fixture wallet", () => {
@@ -17,6 +18,12 @@ describe("typed conversation service with fixture wallet", () => {
     enabled: process.env.RECIPIENT_MEMORY_ENABLED,
     runtime: process.env.AGENT_RUNTIME,
   };
+
+  beforeAll(async () => {
+    // The suite writes conversations for the fixture identity before any other
+    // row exists; on a fresh database the `users` row must come first (FK).
+    await provisionTestUser(userId);
+  });
 
   afterEach(() => {
     for (const [key, value] of Object.entries({

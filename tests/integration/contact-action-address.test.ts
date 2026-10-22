@@ -22,7 +22,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 import {
   createProposalApplicationService,
   proposalApplicationSeam,

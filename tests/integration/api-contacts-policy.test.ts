@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -9,7 +10,7 @@ import {
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 
-const USER_A = TEST_USER_ID;
+const USER_A = randomUUID();
 const ADDRESS_1 = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const ADDRESS_2 = "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq";
 
@@ -74,12 +75,32 @@ suite("/v1/contacts + /v1/recipient-policy routes (task 3.2)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
+    await provisionTestUser(USER_A);
+    // Fixture seed: this suite's flows need a ENROLLED wallet for ITS OWN user.
+    // Every mutation below takes the policy branch (lease, idempotent replay,
+    // revision guard, disclosure guard, revocation) only when
+    // `user_wallets` holds a ready Solana row for the acting user; without it
+    // the routes take the wallet-less branch, which stores no intent, keeps no
+    // idempotency record and has no revision to grow stale — exactly the five
+    // failures this seed exists to prevent. The address is random so it is
+    // never a contact's own address (D13), and `recipient_policy_state` is NOT
+    // seeded: the first mutation creates it (`lockPolicyState`), pristine at
+    // revision 0, which is the starting point the revision tests assume.
+    await database.query(
+      `INSERT INTO user_wallets
+         (user_id, provider, provider_wallet_id, chain_family, address, state, verified_at)
+       VALUES ($1, 'fixture', $2, 'solana', $3, 'ready', now())
+       ON CONFLICT DO NOTHING`,
+      [USER_A, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
+    );
     // Fixture hygiene: the shared demo wallet is reused by every policy suite
     // in this repo, and some of them REWIND its `desired_revision`. The unique
     // `(wallet_id, desired_revision)` intent index still holds the historical
     // rows, so a rewound counter makes the next mutation collide with a
     // superseded intent of an earlier run. Align the counter to the historical
-    // maximum so this suite's revisions are always new.
+    // maximum so this suite's revisions are always new. For this suite's fresh
+    // wallet the subquery is empty and the update is a no-op — it stays for the
+    // case where a reused wallet does carry history.
     await database.query(
       `UPDATE recipient_policy_state s
           SET desired_revision = GREATEST(

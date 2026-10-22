@@ -96,7 +96,11 @@ suite("the resolve endpoint is a read with no side effects (task 5.1)", () => {
     await database.close();
   });
 
-  /** Every table a resolution could plausibly write. */
+  /**
+   * Every table a resolution could plausibly write — scoped to THIS suite's
+   * own identity (the shared default user) so rows any parallel suite writes
+   * under its own user never enter the snapshot.
+   */
   async function counts(): Promise<Record<string, number>> {
     const result = await database.query<{
       recipients: string;
@@ -105,10 +109,11 @@ suite("the resolve endpoint is a read with no side effects (task 5.1)", () => {
       intents: string;
     }>(
       `SELECT
-         (SELECT count(*) FROM recipients)::text AS recipients,
-         (SELECT count(*) FROM contact_action_proposals)::text AS proposals,
-         (SELECT count(*) FROM recipient_policy_audit)::text AS audits,
-         (SELECT count(*) FROM recipient_policy_sync_intent)::text AS intents`,
+         (SELECT count(*) FROM recipients WHERE user_id = '${TEST_USER_ID}')::text AS recipients,
+         (SELECT count(*) FROM contact_action_proposals WHERE user_id = '${TEST_USER_ID}')::text AS proposals,
+         (SELECT count(*) FROM recipient_policy_audit WHERE user_id = '${TEST_USER_ID}')::text AS audits,
+         (SELECT count(*) FROM recipient_policy_sync_intent
+            WHERE wallet_id IN (SELECT id FROM user_wallets WHERE user_id = '${TEST_USER_ID}'))::text AS intents`,
     );
     const row = result.rows[0]!;
     return {
