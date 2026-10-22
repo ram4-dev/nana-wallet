@@ -7,8 +7,9 @@ Supabase cloud) acá: eso es otra work unit.
 
 La imagen es la misma para la API y para el worker de voz (`api` y `worker`),
 y queda lista para producción cuando se le pasan las variables obligatorias
-(`NODE_ENV=production` + `DATABASE_URL` + `DEMO_USER_ID` +
-`LIVE_VOICE_BINDING_PRIVATE_KEY`). El perfil de desarrollo local NO setea
+(`NODE_ENV=production` + `DATABASE_URL` + `PRIVY_APP_ID` +
+`PRIVY_VERIFICATION_KEY` + `LIVE_VOICE_BINDING_PRIVATE_KEY`). El perfil de
+desarrollo local NO setea
 `NODE_ENV=production`, así que arranca sin ese gate.
 
 ## Requisitos
@@ -40,7 +41,7 @@ La API queda en `http://localhost:3000` y el healthcheck en
 > ```
 >
 > `npm run memory:prefetch` corre sin credenciales (no requiere
-> `DATABASE_URL`/`DEMO_USER_ID`), así que se puede bakear.
+> `DATABASE_URL`), así que se puede bakear.
 
 ## Voz live contra el LiveKit self-hosted (default local)
 
@@ -96,18 +97,21 @@ done
 > repitas sobre un esquema ya aplicado: si las corriste una vez, no hace falta
 > volver a aplicarlas (o reseteá con `docker compose down -v` para recrear el
 > volumen). Es obligatorio para que las rutas de conversación (que dependen de
-> `DATABASE_URL` + `DEMO_USER_ID` con `RECIPIENT_MEMORY_ENABLED=true`) puedan
+> `DATABASE_URL` con `RECIPIENT_MEMORY_ENABLED=true`) puedan
 > escribir en la base. Si el esquema no está aplicado, la API arranca pero los
 > turns fallan al tocar la base.
 
 ### Sembrar datos demo de recipient memory
 
-Para que el agente resuelva destinatarios por nombre ("Lucas"), sembrá los
-datos demo (usan el `DEMO_USER_ID` del compose, sin credenciales):
+Para que el agente resuelva destinatarios por nombre ("Lucas"), seed the demo
+recipient-memory data for one user (no provider credentials needed):
 
 ```bash
-docker compose exec -T backend node dist/memory/seed.js
+docker compose exec -T backend node dist/memory/seed.js <userId>
 ```
+
+`<userId>` is the Privy user id the data is scoped to; the seed fails without
+the argument. There is no fixed demo tenant any more.
 
 La primera ejecución descarga el modelo de embeddings (~120MB) al cache del
 contenedor; con `EMBED_MODEL_PREFETCH=1` en el build ya viene horneado.
@@ -119,7 +123,6 @@ contenedor; con `EMBED_MODEL_PREFETCH=1` en el build ya viene horneado.
 | `HOST` | `0.0.0.0` | Bind de la API dentro del contenedor. |
 | `PORT` | `3000` | Puerto HTTP. |
 | `DATABASE_URL` | `postgresql://postgres@db:5432/wdk_agent` | Conexión a Postgres del compose. |
-| `DEMO_USER_ID` | `00000000-0000-4000-8000-000000000001` | Tenant demo fijo (mismo que CI). |
 | `WDK_TOOLS_SOURCE` | `fixture` | Modo seguro sin wallet; `live` requiere el proceso WDK. |
 | `RECIPIENT_MEMORY_ENABLED` | `true` | Habilita recipient memory (necesita esquema aplicado + modelo). |
 | `AGENT_RUNTIME` | `llm` (si no se setea) | `llm` usa el agente conversacional (requiere `OPENCODE_GO_API_KEY`); `deterministic` es parser-only sin proveedor de modelo. |
@@ -233,7 +236,8 @@ docker compose down -v
   son work units aparte.
 - La imagen no lleva `NODE_ENV=production` de fábrica: el gate de producción se
   activa solo cuando un deploy provee `NODE_ENV=production` + `DATABASE_URL` +
-  `DEMO_USER_ID` + `LIVE_VOICE_BINDING_PRIVATE_KEY`.
+  `PRIVY_APP_ID` + `PRIVY_VERIFICATION_KEY` +
+  `LIVE_VOICE_BINDING_PRIVATE_KEY`.
 
 ## Voz live con la wallet real (todo en Docker)
 

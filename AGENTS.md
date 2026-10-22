@@ -58,6 +58,31 @@ El front se comunica con el back solo por HTTP (`apps/nana-wallet/src/lib/api.ts
 
 Todo PR debe llegar con esta validación ejecutada y en verde. **GitHub Actions (`.github/workflows/ci.yml`) la verifica por PR**: job de backend (lint, typecheck, tests y evals contra una base Postgres con pgvector levantada con el mismo `compose.yaml` local) y job de frontend (lint, typecheck, tests). El PR no se puede mergear con CI en rojo.
 
+GitHub Actions aplica la cadena de migraciones de Supabase (`supabase/roles.sql`
++ `supabase/migrations/*.sql`) a ese PostgreSQL 16 de compose con psql, igual
+que el flujo docker local. Roles de las tres bases: LA base primaria es el
+proyecto remoto Supabase `nana_wallet_landing` (ref `aitxhgxmiwfazynmcchs`,
+región `us-east-1`, PostgreSQL 17, host `db.aitxhgxmiwfazynmcchs.supabase.co`):
+ahí corre la app desplegada y ahí aplica la cadena la Supabase CLI con
+`supabase link --project-ref aitxhgxmiwfazynmcchs` + `supabase db push` — con
+el bootstrap único de `supabase/roles.sql` (grants de roles) vía psql antes del
+primer `db push`. Esa primera aplicación remota **todavía está pendiente**: el
+proyecto está pausado y un admin tiene que restaurarlo desde
+`https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs` (los proyectos
+free de Supabase se pausan por inactividad; hasta entonces `supabase link`
+falla con `LegacyProjectPausedError`). La `DATABASE_URL` desplegada se
+provisiona desde el entorno de la plataforma/vault (Render, Secret Vault) y
+nunca se commitea. Supabase local (`npx supabase start`, PostgreSQL 17,
+`127.0.0.1:54322`, esquema vía `npx supabase db reset`) es un stand-in
+descartable para desarrollo: ni el `.env` local ni los tests apuntan nunca a la
+remota. El Postgres de compose (PG16, `127.0.0.1:5432`, servicio `db`) es solo
+la base del stack docker y de CI. Las dos cadenas están
+espejadas: `supabase/migrations/` es la cadena de Supabase (remota vía
+`db push`, Supabase local vía `db reset` y CI), y `src/db/migrations/` es el
+espejo que aplica `npm run db:migrate` — que
+falla sobre una base ya migrada por la cadena de Supabase (`relation
+"conversations" already exists`); eso es esperado, no un bug.
+
 Backend (raíz):
 
 ```bash
@@ -86,6 +111,7 @@ Reglas:
 ## Convenciones
 
 - Comandos del backend: `npm run dev`, `npm test`, `npm run test:simulation`, `npm run db:migrate`, `npm run eval`.
+- Database: la base primaria es el proyecto remoto Supabase `nana_wallet_landing` (ref `aitxhgxmiwfazynmcchs`); la Supabase local (`npx supabase start` + `npx supabase db reset`) es el stand-in descartable de desarrollo y ni el `.env` local ni los tests apuntan nunca a la remota. Para aplicar la cadena al remoto usá `supabase link --project-ref aitxhgxmiwfazynmcchs` + `supabase db push` (el bootstrap único de `supabase/roles.sql` está pendiente: el proyecto está pausado y hay que restaurarlo desde el dashboard). `npm run db:migrate` aplica solo la cadena espejo `src/db/migrations/`; falla sobre una base ya migrada por la cadena de Supabase (esperado) — en ese caso usá `npx supabase db reset`. `npm run db:seed` requiere el id de usuario destino: `npm run db:seed -- <userId>`.
 - Comandos del front: `npm run dev`, `npm test`, `npm run mobile:sync` (en `apps/nana-wallet/`).
 - Los comentarios y UI del front están en español rioplatense; seguí esa convención en cada parte.
 - Tests: backend en `tests/{unit,integration,simulation,e2e}`, evals en `evals/`; front colocaliza tests junto al código.

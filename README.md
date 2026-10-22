@@ -9,8 +9,8 @@ no necesita el backend) y el **backend** (raíz; Fastify + PostgreSQL/pgvector).
 # Frontend — no necesita backend
 cd apps/nana-wallet && npm ci && npm run dev -- --host 0.0.0.0 --port 8083
 
-# Backend — desde la raíz
-npm ci && docker compose up -d db && npm run db:migrate && npm run dev
+# Backend — from the repo root (local Supabase: disposable dev stand-in for the remote primary DB)
+npm ci && npx supabase start && npx supabase db reset && npm run dev
 ```
 
 El frontend queda en http://localhost:8083 y la API en http://localhost:3000.
@@ -80,7 +80,7 @@ Son dos partes bien separadas: el backend vive en la raíz (`src/`) y el fronten
 
 ```text
 .
-├── src/                        # Backend — Node 22, Fastify, LiveKit Agents, WDK/MCP, Supabase
+├── src/                        # Backend — Node 22, Fastify, LiveKit Agents, WDK/MCP
 │   ├── agent/                  # Definición del agente, herramientas, instrucciones (LLM/determinístico)
 │   ├── api/                    # Rutas HTTP (health, wallet, conversaciones, voz)
 │   ├── wdk/                    # Cliente MCP WDK, receipt de transacción y lecturas directas
@@ -92,7 +92,7 @@ Son dos partes bien separadas: el backend vive en la raíz (`src/`) y el fronten
 │   ├── observability/          # Observabilidad implementada (métricas, traces redactados)
 │   ├── config/                 # Lectura de env/process/livekit/privacy
 │   ├── contracts/              # Contratos HTTP (zod) — fuente de verdad de la API
-│   ├── db/                     # Cliente de base y migraciones (Supabase Postgres)
+│   ├── db/                     # DB client + mirror chain `src/db/migrations`
 │   └── runtime/                # Dependencias compartidas del runtime
 ├── apps/
 │   └── nana-wallet/           # Frontend web y proyectos Capacitor
@@ -234,8 +234,12 @@ npm test
 Notas:
 
 - `npm test` requiere `DATABASE_URL` para las suites de integración; sin base
-  esas suites **se saltean** (y en CI sí corren). Levantá la base con
-  `docker compose up -d db` antes de confiar en un verde local.
+  esas suites **se saltean** (y en CI sí corren). Before trusting a local green,
+  bring up a database: Supabase local (`npx supabase start` +
+  `npx supabase db reset`), or, to mirror CI exactly,
+  `docker compose up -d db` with the schema applied via psql. Local runs and
+  test suites always use one of these local databases — never the remote
+  primary.
 - `npm run eval` corre Evalite sobre el agente. Los evals en modo real
   (`EVAL_REAL=1`) no forman parte de CI.
 - Si tocás solo el frontend, alcanza con la suite del frontend; si el cambio toca
@@ -345,25 +349,28 @@ Los contenedores **recompilan desde el `src` montado al arrancar**
 >
 > Un 401 prueba que el sidecar responde; `ECONNREFUSED` prueba la orfandad.
 
-For the RAG demo, set the following values in `.env` (the seed is demo data and
-contains no credential):
+For the RAG demo, set the following values in `.env`. They match `.env.example`
+and target the local development stand-in, Supabase local (PostgreSQL 17 on
+`127.0.0.1:54322`) — never the remote primary; the seed is demo data and
+contains no credential:
 
 ```dotenv
 RECIPIENT_MEMORY_ENABLED=true
-DATABASE_URL=postgresql://recipient_app@127.0.0.1:5432/wdk_agent
-DATABASE_ADMIN_URL=postgresql://postgres@127.0.0.1:5432/wdk_agent
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions
 RECIPIENT_MEMORY_SEED_FILE=examples/recipient-memory.seed.json
 ```
 
 ```bash
-npm run db:migrate
+npx supabase db reset
 npm run memory:prefetch
-npm run db:seed
+npm run db:seed -- <userId>
 npm run dev
 ```
 
-The first prefetch downloads the pinned embedding model into
-`.cache/recipient-memory-model`; later starts reuse it.
+`npx supabase db reset` applies the Supabase chain (`supabase/migrations/`).
+`npm run db:seed -- <userId>` requires the target `<userId>` — the Privy user
+id the seed is scoped to — and fails without it. The first prefetch downloads the pinned
+embedding model into `.cache/recipient-memory-model`; later starts reuse it.
 
 ## What happens to a recipient reference
 
@@ -393,7 +400,10 @@ foreign record clears the selection and approval.
 
 ## RAG memory model
 
-PostgreSQL 16 + pgvector holds the durable data. The local multilingual model
+Supabase PostgreSQL 17 + pgvector holds the durable data: the remote project
+(`aitxhgxmiwfazynmcchs`) is the primary store, local Supabase is a disposable
+development stand-in, and the compose PostgreSQL 16 is only the docker/CI
+database. The local multilingual model
 is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` through
 `@huggingface/transformers@4.2.0`, with 384-dimensional normalized embeddings.
 No embedding API key is needed.
@@ -442,13 +452,12 @@ contain it.
 | `AGENT_RUNTIME` | `llm` | `llm` uses the conversational `ToolLoopAgent`; `deterministic` uses the parser-only path. |
 | `PORT` | `3000` | Fastify HTTP port. |
 | `RECIPIENT_MEMORY_ENABLED` | `false` | Feature flag. When false, no DB/model/memory tools are initialized and explicit-address transfers remain available. |
-| `DATABASE_URL` | — | Application connection as `recipient_app`; required when memory is enabled. |
-| `DATABASE_ADMIN_URL` | — | Migration-only admin connection. Do not use it for the application runtime. |
+| `DATABASE_URL` | — | Application login connection. Locally use the stand-in URL `postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions`. The deployed value points at the remote primary and is provisioned from platform/vault environment (Render env, Secret Vault) — it must never be committed, and local `.env`/test suites must never point at the remote. Required when memory is enabled. Each transaction then runs under the restricted `recipient_app` role with `app.user_id` set. |
 | `RECIPIENT_MEMORY_MODEL_CACHE` | `.cache/recipient-memory-model` | Reusable local Transformers.js cache. |
 | `RECIPIENT_MEMORY_SCORE_FLOOR` | `0.55` | Relevance floor. Below it nothing is selectable, so the lookup answers `no_match` — but the rows found still travel back as evidence. Between the floor and the threshold the contact is plausible and unproven, so the caller asks. |
 | `RECIPIENT_MEMORY_SCORE_THRESHOLD` | `0.78` | Minimum semantic score for a non-exact candidate to resolve on its own. |
 | `RECIPIENT_MEMORY_SCORE_MARGIN` | `0.08` | Required lead over the runner-up; otherwise clarification is required. |
-| `RECIPIENT_MEMORY_SEED_FILE` | — | Confirmed-only JSON seed consumed by `npm run db:seed`. |
+| `RECIPIENT_MEMORY_SEED_FILE` | — | Confirmed-only JSON seed consumed by `npm run db:seed -- <userId>`; the argument is the Privy user id the seed is scoped to. |
 
 ### Voz (worker de LiveKit + OpenAI Realtime)
 
@@ -473,11 +482,41 @@ espera larga sin volver al criterio de silencio.
 [runbook Docker](docs/local-docker-runbook.md). Un Postgres compatible con
 pgvector cambia solo las URLs de arriba.
 
-> **Dos setups locales de base de datos.** Existen dos formas de levantar Postgres:
+> **Database hierarchy — three Postgres setups, three distinct roles:**
 >
-> 1. `docker compose up -d db` — `pgvector/pgvector:0.8.1-pg16` en `127.0.0.1:5432`. Es el quick-start de CI y de los tests de integración del backend.
-> 2. `npx supabase start` — stack local completo de Supabase (Postgres 17 en `127.0.0.1:54322` + Studio, Inbucket). Es el que usan los runbooks de demo/live.
-> Ambos son válidos según lo que necesites; no los confundas ni asumas que uno reemplaza al otro.
+> 1. **Remote Supabase project — THE primary database.** `nana_wallet_landing`
+>    (ref `aitxhgxmiwfazynmcchs`, region us-east-1, PostgreSQL 17, host
+>    `db.aitxhgxmiwfazynmcchs.supabase.co`). The deployed app connects here,
+>    and this is the migration target: apply the versioned chain
+>    `supabase/migrations/` with `supabase link --project-ref aitxhgxmiwfazynmcchs`
+>    then `supabase db push` (bookkept in `supabase_migrations`). One-time
+>    remote bootstrap: apply `supabase/roles.sql` (role grants) via psql before
+>    the first `db push` — **this first remote application is still pending**:
+>    the project is currently paused, so `supabase link` fails with
+>    `LegacyProjectPausedError` until an admin restores it from
+>    `https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs` (Supabase
+>    free projects pause on inactivity). The deployed `DATABASE_URL` is
+>    provisioned from platform/vault environment (Render env, Secret Vault) and
+>    must never be committed; `.env.example` carries only the local stand-in
+>    URL. Local `.env` files and test suites must never point at the remote
+>    project. See the note in [the local live runbook](docs/local-live-runbook.md).
+> 2. `npx supabase start` — **disposable development stand-in**: local
+>    Supabase, PostgreSQL 17 on `127.0.0.1:54322` (+ Studio, Inbucket). Apply
+>    its schema with `npx supabase db reset`. The demo, live, and E2E runbooks
+>    use it for local work.
+> 3. `docker compose up -d db` — `pgvector/pgvector:0.8.1-pg16` on
+>    `127.0.0.1:5432` (service `db` in `compose.yaml`): the docker-stack and CI
+>    database only. CI applies the same Supabase chain to it with psql
+>    (`.github/workflows/ci.yml`).
+>
+> **Migration chains.** Two mirrored chains exist:
+> `supabase/migrations/` is the Supabase chain (applied to the remote primary
+> by `supabase db push`, locally by `npx supabase db reset`, and in CI by psql
+> on the compose Postgres);
+> `src/db/migrations/` is the local-runner mirror applied by
+> `npm run db:migrate`. Running `npm run db:migrate` against a database already
+> migrated by the Supabase chain fails with `relation "conversations" already
+> exists` — that is expected; use `npx supabase db reset` there.
 
 La red por defecto del repositorio es Solana devnet con el token nativo `SOL`
 (ver `.env.example`); no hay un modo fixture ni live que elegir.
@@ -516,8 +555,12 @@ For the full recipient-memory rehearsal, follow
 
 Other useful commands:
 
-- `npm run db:migrate` — applies each migration exactly once.
-- `npm run db:seed` — embeds and inserts only explicitly confirmed seed data.
+- `npm run db:migrate` — applies the local-runner mirror chain
+  (`src/db/migrations/`) exactly once. On a database already migrated by the
+  Supabase chain it fails with `relation "conversations" already exists`; that
+  is expected — use `npx supabase db reset` there instead.
+- `npm run db:seed -- <userId>` — embeds and inserts only explicitly confirmed
+  seed data for the given Privy user id; it fails without the argument.
 - `npm run memory:prefetch` — downloads/validates the local embedding model.
 - `npm run test:wdk-manual` — opt-in manual live read/preview harness; broadcast
   remains separately gated and is not a CI command.

@@ -39,8 +39,7 @@ LIVE_VOICE_ENABLED=true
 LIVE_VOICE_BINDING_PRIVATE_KEY=...    # Ed25519 PEM, \n-escaped single line
 LIVE_VOICE_BINDING_PUBLIC_KEY=...
 LIVEKIT_AGENT_NAME=nani-agent         # must match the frontend VITE_LIVEKIT_AGENT_NAME
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
-DEMO_USER_ID=11111111-1111-4111-8111-111111111111
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions
 RECIPIENT_MEMORY_ENABLED=true         # real contacts search; without it
                                       # search_recipients fails closed (unavailable)
 ```
@@ -52,7 +51,6 @@ VITE_API_URL=https://nani-api.localhost
 VITE_AGENT_BACKEND=1
 VITE_LIVEKIT_TOKEN_SERVER_ID=<livekit-cloud-sandbox-token-server-id>
 VITE_LIVEKIT_AGENT_NAME=nani-agent
-VITE_LIVEKIT_PARTICIPANT_IDENTITY=11111111-1111-4111-8111-111111111111
 ```
 
 ## Wallet mode

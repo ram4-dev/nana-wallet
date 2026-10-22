@@ -52,11 +52,11 @@ started with `record: false`.
 
 The session is bound to one conversation through the worker's `bind_conversation`
 gate. The worker builds a per-binding `WalletConversationService` so the voice
-path's memory runtime scopes to the binding user (`binding.sub`), never the demo
-tenant. This is the REVIEW FIX V3 wiring: the worker feeds the memory runtime into
+path's memory runtime scopes to the binding user (`binding.sub`), never a
+shared tenant. This is the REVIEW FIX V3 wiring: the worker feeds the memory runtime into
 the conversation service dependencies so `isClaimedRecipientValid` can revalidate
 versioned recipients instead of always returning false. The voice path therefore
-never reuses the demo-tenant text service.
+never reuses a shared, tenant-less text service.
 
 ### Realtime function tools
 
@@ -103,19 +103,38 @@ Confirm/Cancel card arbitrate on the same database claim.
 ## Recipient address memory boundary
 
 Recipient references are durable application data in Supabase PostgreSQL 17 + pgvector,
-not model context. `recipients` stores a versioned exact address payload with a
+not model context. **The primary database is the remote Supabase project
+`nana_wallet_landing` (ref `aitxhgxmiwfazynmcchs`, region us-east-1,
+PostgreSQL 17, host `db.aitxhgxmiwfazynmcchs.supabase.co`)**: the deployed app
+connects there, and the Supabase migration chain `supabase/migrations/` is
+applied to it with `supabase link --project-ref aitxhgxmiwfazynmcchs` then
+`supabase db push` (bookkept in `supabase_migrations`). That first remote
+application — including the one-time `supabase/roles.sql` role-grant bootstrap
+via psql — is still pending: the project is currently paused, and an admin must
+restore it from
+`https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs` (Supabase free
+projects pause on inactivity) before `link` succeeds. The deployed
+`DATABASE_URL` is provisioned from platform/vault environment and never
+committed. Local Supabase (`npx supabase start`, PostgreSQL 17 on
+`127.0.0.1:54322`, schema applied by `npx supabase db reset`) is a disposable
+development stand-in for it; local `.env` files and test suites never point at
+the remote. The compose PostgreSQL 16 on `127.0.0.1:5432` (service `db`) is
+only the
+docker-stack/CI database; CI applies the same Supabase chain to it with psql.
+The `src/db/migrations/` chain is the local-runner mirror used by
+`npm run db:migrate`. `recipients` stores a versioned exact address payload with a
 384D embedding of normalized name + description only; `user_memories` stores
 confirmed relationship facts with a 384D fact embedding. The pinned local
 model is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` via
 Transformers.js, so retrieval needs no hosted embedding credential.
 
-Every repository transaction applies the server-owned demo tenant UUID and
-sets PostgreSQL RLS context under the restricted `recipient_app` role. Search
-uses tenant-filtered lexical name boost plus cosine similarity and returns only
-candidate metadata. A score threshold/margin or duplicate exact name produces
-clarification, never an inferred address. The fixed `DEMO_USER_ID` is only a
-hackathon identity seam; production must replace it with an authenticated
-principal.
+Every repository transaction applies the authenticated user id resolved from the
+Privy access token on each request and sets PostgreSQL RLS context under the
+restricted `recipient_app` role. Search uses tenant-filtered lexical name boost
+plus cosine similarity and returns only candidate metadata. A score
+threshold/margin or duplicate exact name produces clarification, never an
+inferred address. There is no fixed demo tenant: identity is the Privy user
+resolved per request (PMU-020).
 
 ```mermaid
 sequenceDiagram
