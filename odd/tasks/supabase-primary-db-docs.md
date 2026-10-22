@@ -27,7 +27,29 @@
 - [x] T7 `Dockerfile`: remove the dead `DEMO_USER_ID` references **only after** grepping `compose*.yaml`, `src/`, `scripts/` to confirm nothing interpolates them; keep if referenced. Confirmed zero references outside the two comments; production-gate comment also updated to the real requirements (`DATABASE_URL`, `PRIVY_APP_ID` + `PRIVY_VERIFICATION_KEY`, `LIVE_VOICE_BINDING_PRIVATE_KEY` per `src/config/process.ts:148-162`).
 - [x] T8 Verify: greps show zero stale refs in live docs (`DEMO_USER_ID` outside archives, `demo:arc`, `db:seed` without arg); relative links resolve; code fences balanced; lint/typecheck NOT applicable (docs-only, no TypeScript touched, no install in the worktree).
 - [ ] T9 Re-frame every surface written in T1–T6 from "Supabase local is THE primary" to "remote project `nana_wallet_landing` (`aitxhgxmiwfazynmcchs`) is THE primary; local Supabase = disposable dev stand-in; compose PG16 = docker/CI stand-in". Include: migration workflow to remote (`supabase link --project-ref aitxhgxmiwfazynmcchs` → `supabase db push`), one-time `supabase/roles.sql` bootstrap (phrase as pending-first-application, do not overclaim), deployed `DATABASE_URL` provisioned from platform/vault env and NEVER committed, tests must never point at the remote, and a runbook note that Supabase free projects pause and must be restored from the dashboard. **Status: partial — README, architecture, local-live-runbook, AGENTS and this doc re-framed; `.env.example` NOT re-framed yet (the edit tool's safety policy blocks writes to that path — exact replacement text handed back to the orchestrator for an explicit decision).**
-- [ ] T10 Live verification of the remote workflow (blocked on human restore): `supabase link` succeeds, `supabase db push` applies the chain, roles bootstrap, connection string reaches the vault — record evidence here.
+  - **DECISION (Ramiro, 2026-10-21): leave `.env.example` as-is for now. Do NOT bypass the safety policy — no sed/heredoc via bash, no workaround routes.** The exact replacement below is recorded for **Rama** to apply verbatim, or to explicitly authorize someone to apply:
+
+    ```dotenv
+    # Required for the conversation, grant, and recipient-memory storage.
+    # Primary database: the REMOTE Supabase project `nana_wallet_landing`
+    # (ref aitxhgxmiwfazynmcchs, us-east-1, PostgreSQL 17, host
+    # db.aitxhgxmiwfazynmcchs.supabase.co). The deployed DATABASE_URL points there
+    # and is provisioned from platform/vault environment (Render env, Secret
+    # Vault) - it must NEVER be committed. This file carries only the local
+    # stand-in below: Supabase local - PostgreSQL 17 on
+    # 127.0.0.1:54322 (`npx supabase start`; schema applied by `npx supabase db reset`).
+    # Local .env files and test suites must NEVER point at the remote project.
+    # Two mirrored migration chains: `supabase/migrations/` is the Supabase chain
+    # (remote via `supabase link --project-ref aitxhgxmiwfazynmcchs` +
+    # `supabase db push` - first application still pending, project is paused -
+    # local via `npx supabase db reset`, AND CI, which applies it via psql on the
+    # compose Postgres); `src/db/migrations/` is the mirror applied by
+    # `npm run db:migrate`, which fails on an already Supabase-migrated database -
+    # that is expected.
+    ```
+
+    (Replaces the lines 91–95 comment block; keep the `DATABASE_URL=…` value and the compose comment below unchanged.)
+- [ ] T10 Live verification of the remote workflow — **BLOCKED on Rama: restore of the paused project** (human restore): `supabase link` succeeds, `supabase db push` applies the chain, roles bootstrap, connection string reaches the vault — record evidence here.
 
 ## Receipts
 
