@@ -5,29 +5,9 @@ import {
   languageInstruction,
   type ConversationLanguage,
 } from "../conversations/language.js";
+import { sanitizeDisplayName } from "./greeting-context.js";
 import { attachRealtimeLatencyLogging } from "./realtime-latency-logger.js";
 
-/**
- * Nani's persona and per-session language rule.
- *
- * WHY THE LANGUAGE IS NOT PINNED HERE
- * -----------------------------------
- * The first line used to say "You speak Rioplatense Spanish (voseo)". That is a
- * pin, and a pin beats an order: every softer "in the user's language" line
- * elsewhere in the prompt lost to it, so a user who opened the call speaking
- * English was answered in Spanish and stayed in Spanish for the whole session.
- *
- * The language is now a RULE plus one concrete value:
- *
- *   - the rule is unmissable and comes first: always answer in the language the
- *     user is speaking, and switch with them the moment they switch;
- *   - the value is the conversation's own persisted language, appended by
- *     `composeRealtimeInstructions` through `languageInstruction` — the same
- *     sentence the text path uses, so there is one definition of it and not a
- *     second copy pinned in a prompt;
- *   - "Rioplatense voseo" survives as what it always was: the STYLE to use when
- *     the language is Spanish, never a fixed language of its own.
- */
 const NANI_REALTIME_INSTRUCTIONS = `You are Nani, the voice assistant of a crypto wallet. You are brief, warm and direct.
 Language: ALWAYS answer in the language the user is speaking, and switch with them the moment they switch. Never keep a language of your own across turns. When the language is Spanish, speak it in Rioplatense voseo — that is a style, not a fixed language. When it is English, speak plain English. The final line of these instructions names the conversation's language so far: it is a starting point, and the user's own speech always overrides it.
 Opening turn: the first turn of every session is yours — it is generated before the user speaks. Greet once per session and never repeat the introduction later.
@@ -39,6 +19,9 @@ Financial tools:
 - cancel_transfer: call it when the user declines the pending transfer, including a plain "no".
 Golden rules: a transfer confirmation goes EXCLUSIVELY through confirm_transfer. Never confirm in text and never invent an address.
 How to speak: never mention tools, codes, servers, systems, networks, providers or internal states, and never read a raw number like a fee aloud. Say what happened to the transfer and what the user can do next, in one short sentence, in the user's language. If a tool fails, say it briefly and offer the next step; never explain the machinery.`;
+
+/** The greeting turn has a safety timeout so it cannot leave the microphone closed. */
+export const GREETING_INPUT_TIMEOUT_MS = 12_000;
 
 export type AgentSessionComposition = {
   session: AgentSession;
@@ -59,6 +42,38 @@ export type AgentSessionComposition = {
    */
   speakGreeting: () => boolean;
 };
+
+/** The named variant of this bullet is built by {@link buildGreetingInstructions}. */
+const GREETING_FIRST_BULLET_NO_NAME =
+  '1. Introduce yourself: say this sentence, verbatim: \u00abHola, soy Nani, tu asistente financiera.\u00bb Do not reword it, shorten it or add a greeting before it.';
+
+/** The same bullet when a name is known: the placeholder is never spoken. */
+function greetingFirstBulletWithName(userName: string): string {
+  return `1. Introduce yourself: say this sentence, verbatim: \u00abHola NOMBRE, soy Nani, tu asistente financiera.\u00bb Say the user's real name ("${userName}") in place of NOMBRE and never say the word NOMBRE. Do not reword the sentence, shorten it or add a greeting before it.`;
+}
+
+/**
+ * The verbatim closing sentence of the welcome.
+ *
+ * The offered actions used to be a bare quoted list, and the model read them
+ * out exactly that way — "ver mi saldo, hacer una transferencia, ver mis últimos
+ * movimientos" — with no lead-in at all. Read live, that sounded like an
+ * unfinished list rather than an offer. Fixed as a sentence, the same treatment
+ * that finally made the introduction land verbatim, the lead-in stops depending
+ * on how the model decides to introduce a list.
+ *
+ * The pronouns are the user's ("ver tu saldo"), because Nani is the one
+ * speaking: the list is what SHE can do for the user, not what the user does
+ * for herself.
+ */
+export const GREETING_OFFERS_SENTENCE =
+  "Te puedo ayudar con: ver tu saldo, hacer una transferencia o ver tus últimos movimientos. ¿Qué querés hacer?";
+
+/**
+ * Bullet 2 of the opening turn: the closing offer, said as one verbatim sentence.
+ */
+const GREETING_CLOSING_BULLET =
+  `2. Close by saying this sentence, verbatim: \u00ab${GREETING_OFFERS_SENTENCE}\u00bb Your sentence STARTS with these exact words: 'Te puedo ayudar con:'. Never paraphrase that opening: not 'Puedo ayudarte con', not 'Puedo ayudarte a', not 'Te puedo ayudar a', not 'Te ayudo con' and nothing similar. Say these three actions and no others: never offer a swap or any other action, those three are all you can do. Do not reword the sentence and do not add an action of your own.`;
 
 /**
  * Transcription guidance for the session's input audio.
@@ -193,48 +208,72 @@ export function realtimeModelOptions(
  * `NANI_REALTIME_INSTRUCTIONS` for that turn only.
  *
  * It is an instruction and not a fixed sentence on purpose: the greeting has to
- * read the REAL balance, so the model must call `get_balance` itself. A hardcoded
- * string could only invent a figure.
+ * address the user by the name the worker already read. It carries exactly two
+ * things — the verbatim introduction and the verbatim closing offer — and no
+ * balance: this turn never reports an amount. The turn makes NO tool call at all,
+ * because a tool call in the middle of this turn splits it into two generations
+ * and makes the user hear two greetings.
  */
 function greetingInstructions(language: ConversationLanguage): string {
-  // The offered menu is the product's own wording, so it follows the session
-  // language like the rest of the spoken copy.
-  const nextSteps =
-    language === "es"
-      ? '"ver mi saldo", "hacer una transferencia", "ver mis últimos movimientos"'
-      : '"see my balance", "make a transfer", "see my recent activity"';
-  return `Session opening turn: the user has NOT spoken yet and is waiting for you, so YOU speak first.
-Do it now, warm and brief, in the conversation's language named below, in this exact order:
-1. Introduce yourself: you are Nani, the assistant of the user's wallet.
-2. Call the get_balance tool with NO arguments and read aloud the available balance it returns, following the get_balance rules above. NEVER invent, estimate or round a figure, and never ask which wallet or network: if the tool or a network fails, say the balance is temporarily unavailable right now and keep going.
-3. Close by offering exactly these three next steps, in this order: ${nextSteps}. Never offer a swap or any other action: those three are all you can do.
-Never mention tools, providers, networks or internal states. Say it once, then stop and listen.
+  if (language === "en") {
+    return `<opening_turn>
+The user has NOT spoken yet and is waiting for you, so YOU speak first. Nobody asked you anything: this is one welcome, not an answer.
+Say this exact introduction first: «Hi, I'm Nani, your financial assistant.» Then say: «I can help you check your balance, make a transfer, or see your recent activity. What would you like to do?» Make NO tool calls, report no balance or amount, then stop and listen. Never add an action or greet again.
+</opening_turn>
+${languageInstruction(language)}`;
+  }
+  return `<turno_de_apertura>
+The user has NOT spoken yet and is waiting for you, so YOU speak first. Nobody asked you anything: this is a welcome, not an answer, and it is ONE single turn generated once.
+<primera_palabra>
+Your very first spoken word is the greeting itself. NEVER open with a filler, an acknowledgement or an announcement: not 'perfecto', 'dale', 'bueno', 'ok', 'listo', 'ahora', 'un momento', 'te cuento', 'dejame', not 'voy a', 'voy a revisar', 'voy a chequear'. NEVER say you are going to check, look up, search or ask for anything. Tool calls are silent, and this turn makes NO tool call at all.
+</primera_palabra>
+<orden_obligatorio>
+Now, in Rioplatense Spanish (voseo), warm and brief, cover BOTH parts in this exact order:
+${GREETING_FIRST_BULLET_NO_NAME}
+${GREETING_CLOSING_BULLET}
+</orden_obligatorio>
+<sin_herramientas>
+This turn makes NO tool call AT ALL and does NOT read a balance. Calling get_balance here is FORBIDDEN.
+</sin_herramientas>
+<continuidad>
+This is ONE single spoken generation, from your introduction to the last offered option.
+</continuidad>
+<una_sola_vez>
+You greet exactly once. After the introduction go straight to the closing offer.
+</una_sola_vez>
+<cierre>
+A welcome that stops without the closing offer is incomplete. Only after both parts, stop and listen.
+</cierre>
+<prohibiciones>
+Never mention tools, providers or internal states. Never mention balances, wallets, networks or amounts in this welcome.
+</prohibiciones>
+</turno_de_apertura>
 ${languageInstruction(language)}`;
 }
 
-/**
- * The persona plus the conversation's language, from the ONE definition of that
- * sentence (`languageInstruction`). A second literal wording here is what the
- * prompt used to have, and it is exactly what drifted: one line said Spanish for
- * every turn while the model was told to follow the user.
- */
-export function composeRealtimeInstructions(
-  language: ConversationLanguage,
-): string {
-  return `${NANI_REALTIME_INSTRUCTIONS}\n${languageInstruction(language)}`;
+/** Build the personalized opening instruction; absent or unsafe names are omitted. */
+export function buildGreetingInstructions(userName?: string, language: ConversationLanguage = "es"): string {
+  const base = greetingInstructions(language);
+  const safeName = sanitizeDisplayName(userName);
+  if (!safeName || language !== "es") return base;
+  const namedBullet = `1. Introduce yourself: say this sentence, verbatim: «Hola NOMBRE, soy Nani, tu asistente financiera.» Say the user's real name ("${safeName}") in place of NOMBRE and never say the word NOMBRE. Do not reword it, shorten it or add a greeting before it.`;
+  return base.replace(GREETING_FIRST_BULLET_NO_NAME, namedBullet);
 }
 
+/** Persona plus the persisted conversation language, shared with the text path. */
+export function composeRealtimeInstructions(language: ConversationLanguage): string {
+  return `${NANI_REALTIME_INSTRUCTIONS}\n${languageInstruction(language)}`;
+}
 export function createAgentSession(options: {
   tools: ToolContextLike;
-  /**
-   * The conversation's persisted language, resolved by the caller before the
-   * session starts. The greeting runs BEFORE the user speaks, so nothing at this
-   * point can detect a language; this is the only evidence available for the
-   * session's first turn. Defaults to `'en'`, the same fallback
-   * `detectConversationLanguage` uses.
-   */
+  /** Persisted conversation language, resolved before the user speaks. */
   language?: ConversationLanguage;
+  userName?: string;
 }): AgentSessionComposition {
+  // The name lands inside the model's instructions, so it is re-sanitized here
+  // even though the voice binding already sanitized it: a value that cannot be a
+  // name is dropped instead of being spoken to the model.
+  const userName = sanitizeDisplayName(options.userName);
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error(
@@ -263,10 +302,31 @@ export function createAgentSession(options: {
       // if the provider throws, so no caller can turn it into a retry loop.
       if (greetingSpent) return false;
       greetingSpent = true;
-      session.generateReply({
-        instructions: greetingInstructions(language),
-        allowInterruptions: true,
-      });
+      // Prevent the published microphone from cancelling the proactive greeting.
+      // Always release it when playout ends, fails, or exceeds the safety timeout.
+      session.input.setAudioEnabled(false);
+      let inputReleased = false;
+      const releaseInput = () => {
+        if (inputReleased) return;
+        inputReleased = true;
+        session.input.setAudioEnabled(true);
+      };
+      let handle: ReturnType<AgentSession["generateReply"]>;
+      try {
+        handle = session.generateReply({
+          instructions: buildGreetingInstructions(userName, language),
+          allowInterruptions: true,
+        });
+      } catch (error) {
+        releaseInput();
+        throw error;
+      }
+      const inputTimeout = setTimeout(releaseInput, GREETING_INPUT_TIMEOUT_MS);
+      const playoutSettled = () => {
+        clearTimeout(inputTimeout);
+        releaseInput();
+      };
+      handle.waitForPlayout().then(playoutSettled, playoutSettled);
       return true;
     },
   };

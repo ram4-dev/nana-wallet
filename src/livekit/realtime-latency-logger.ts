@@ -20,6 +20,16 @@ import {
  * from the emitted payload rather than guessed.
  */
 export function attachRealtimeLatencyLogging(session: AgentSession): void {
+  // Development-only prompt inspection.
+  //
+  // The worker logs never show what the model actually SAID, so prompt work on
+  // the opening turn was guesswork. With VOICE_PROMPT_DEBUG=1 the assistant's
+  // own text is printed as one structured line per turn. It prints assistant
+  // text only, never user speech, and it is off by default: an assistant turn
+  // can carry a balance or a name, so it must never be enabled in a shared
+  // environment. It is deliberately outside the retention trace pipeline (see
+  // `src/config/privacy.ts`).
+  const promptDebug = process.env.VOICE_PROMPT_DEBUG === "1";
   let turn:
     | {
         speechEndAt?: number;
@@ -48,6 +58,16 @@ export function attachRealtimeLatencyLogging(session: AgentSession): void {
   session.on(AgentSessionEventTypes.ConversationItemAdded, (ev) => {
     const item = ev.item;
     if (item.type !== "message" || item.role !== "assistant") return;
+    if (promptDebug) {
+      console.log(
+        JSON.stringify({
+          type: "voice_prompt_turn",
+          role: item.role,
+          text: item.textContent ?? "",
+          createdAt: item.createdAt,
+        }),
+      );
+    }
     const firstAudioAt = item.createdAt;
     if (typeof firstAudioAt !== "number") return;
     if (!turn || turn.speechEndAt === undefined) return;

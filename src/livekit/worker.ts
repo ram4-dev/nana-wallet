@@ -25,6 +25,7 @@ import {
 } from "../memory/contact-policy-adapter.js";
 import { createContactsEmbedder } from "../api/contacts.js";
 import { createAgentSession } from "./create-agent-session.js";
+import { prepareVoiceGreeting } from "./greeting-context.js";
 import { createRealtimeTools } from "./realtime-tools/index.js";
 import { createVoiceDecisionGate } from "./voice-decision-gate.js";
 import { createConfirmationArbiter } from "../conversations/confirmation-arbiter.js";
@@ -371,6 +372,10 @@ async function runJob(
           type: "voice_confirmation_gate", pid: process.pid, ...observation,
         })),
       });
+      const greeting = await prepareVoiceGreeting(dependencies, {
+        userId: binding.userId,
+        conversationId: binding.conversationId,
+      });
       const memoryService = getConfiguredRecipientMemoryService();
       const contactActionService = new ContactActionService(dependencies.database);
       // The contact mutation a confirmation runs (design flow (c), task 4.5),
@@ -473,6 +478,10 @@ async function runJob(
             binding.userId,
           )
         : dependencies.wallet;
+      // The welcome makes no tool call: a call in the middle of the opening turn
+      // splits it into two generations and the user hears two greetings. The turn is
+      // only the introduction and the closing offer, so there is nothing to read
+      // here before it is dispatched.
       // REVIEW FIX V3 (voice path): the voice service is built per binding so its
       // recipient memory runtime scopes to `binding.sub` — never the demo tenant.
       // It shares the repository, wallet, and financialTasks with the worker so all
@@ -516,6 +525,7 @@ async function runJob(
       const created = createAgentSession({
         tools,
         language: languageForSession,
+        ...(greeting.userName ? { userName: greeting.userName } : {}),
       });
       unsubscribeRevisions = dependencies.financialTasks.subscribe((event) => {
         if (
