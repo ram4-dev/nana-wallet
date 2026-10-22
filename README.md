@@ -365,8 +365,8 @@ npm run dev
 ```
 
 `npx supabase db reset` applies the Supabase chain (`supabase/migrations/`).
-`npm run db:seed` requires the target `<userId>` — the Privy user id the seed
-is scoped to — and fails without it. The first prefetch downloads the pinned
+`npm run db:seed -- <userId>` requires the target `<userId>` — the Privy user
+id the seed is scoped to — and fails without it. The first prefetch downloads the pinned
 embedding model into `.cache/recipient-memory-model`; later starts reuse it.
 
 ## What happens to a recipient reference
