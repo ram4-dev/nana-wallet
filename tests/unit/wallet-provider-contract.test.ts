@@ -95,6 +95,51 @@ describe('WalletProvider contract', () => {
     })).resolves.toMatchObject({ kind: 'not_dispatched', cause: 'provider_unavailable' });
   });
 
+  it('D-E: a broadcast on solana-devnet accepts a base58 signature and links the Solana explorer', async () => {
+    const signature = `5${'Z'.repeat(87)}`;
+    const provider = new WdkWalletProvider(async () => ({
+      send_token: { execute: async () => ({ success: true, txHash: signature }) },
+    } as never));
+
+    const outcome = await provider.broadcastTransfer({
+      wallet: WDK_IDENTITY.wallet, network: 'solana-devnet', token: WDK_IDENTITY.token, to: RECIPIENT, amount: '1',
+    });
+    expect(outcome).toMatchObject({
+      kind: 'submitted',
+      transaction: {
+        network: 'solana-devnet',
+        transactionHash: signature,
+        explorerUrl: `https://explorer.solana.com/tx/${signature}?cluster=devnet`,
+      },
+    });
+  });
+
+  it('D-E: an 0x-shaped hash can never pass as a Solana devnet signature (stays uncertain)', async () => {
+    const provider = new WdkWalletProvider(async () => ({
+      send_token: { execute: async () => ({ success: true, txHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }) },
+    } as never));
+
+    const outcome = await provider.broadcastTransfer({
+      wallet: WDK_IDENTITY.wallet, network: 'solana-devnet', token: WDK_IDENTITY.token, to: RECIPIENT, amount: '1',
+    });
+    expect(outcome.kind).toBe('uncertain');
+  });
+
+  it('D-E: the EVM branch keeps its sepolia hash validation and etherscan link', async () => {
+    const hash = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const provider = new WdkWalletProvider(async () => ({
+      send_token: { execute: async () => ({ success: true, txHash: hash }) },
+    } as never));
+
+    const outcome = await provider.broadcastTransfer({
+      wallet: WDK_IDENTITY.wallet, network: 'sepolia', token: WDK_IDENTITY.token, to: RECIPIENT, amount: '1',
+    });
+    expect(outcome).toMatchObject({
+      kind: 'submitted',
+      transaction: { explorerUrl: `https://sepolia.etherscan.io/tx/${hash}` },
+    });
+  });
+
   it('normalizes object-wrapped WDK network and token lists', async () => {
     const tools = {
       get_networks: { execute: async () => ({ networks: [{ name: 'sepolia', testnet: true }] }) },

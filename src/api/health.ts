@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { HealthResponse } from "../contracts/http.js";
 import {
-  verifyPolicySignerCapability,
-  type PolicySignerCapability,
-} from "../wallet/policy/probe.js";
+  probePayloadSigner,
+  type SignerCapability,
+} from "../wallet/signer/probe.js";
 import type { WalletProvider } from "../wallet/provider.js";
 
 // Solana devnet and privy-user are the only network and wallet name the product
@@ -34,11 +34,12 @@ export async function registerHealthRoutes(
     wallet: WalletProvider;
     /**
      * Design §6.4 layer 3. Defaults to the real capability probe over the
-     * current environment, which is the honest readiness answer: on a stack
-     * with no sidecar it reports `signer_unavailable`, never a fabricated
-     * `verified`.
+     * current environment — it SIGNS a fixed payload through the sidecar and
+     * verifies the answer, so it is never a config-presence check: on a stack
+     * with no reachable, correctly-keyed sidecar it reports an honest failure
+     * code, never a fabricated `verified`.
      */
-    policySigner?: () => Promise<PolicySignerCapability>;
+    policySigner?: () => Promise<SignerCapability>;
   },
 ): Promise<void> {
   app.get("/health", async (): Promise<HealthResponse> => {
@@ -72,7 +73,7 @@ export async function registerHealthRoutes(
       network: NETWORK(),
       provider: await providerHealth(dependencies.wallet),
       policySigner: await policySignerCapability(
-        dependencies.policySigner ?? (() => verifyPolicySignerCapability()),
+        dependencies.policySigner ?? (() => probePayloadSigner()),
       ),
     };
   });
@@ -100,8 +101,8 @@ async function providerHealth(
 // error inside it must still yield an honest unavailable envelope rather than a
 // 500 or a guessed `verified`.
 async function policySignerCapability(
-  probe: () => Promise<PolicySignerCapability>,
-): Promise<PolicySignerCapability> {
+  probe: () => Promise<SignerCapability>,
+): Promise<SignerCapability> {
   try {
     return await probe();
   } catch {

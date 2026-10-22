@@ -31,6 +31,15 @@ export type PayloadSignerErrorCode =
  * the HTTP status of the sidecar.
  */
 export class PayloadSignerError extends Error {
+  /**
+   * The authorization payload is signed while the request is BUILT, before
+   * any network send (the dispatch client makes exactly one request and never
+   * retries), so every typed signer failure proves the dispatch never left
+   * our process: callers may report it as a definitive not-dispatched
+   * outcome instead of `uncertain`.
+   */
+  public readonly definitive = true as const;
+
   public constructor(
     public readonly code: PayloadSignerErrorCode,
     message: string,
