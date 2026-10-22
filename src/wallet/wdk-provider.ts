@@ -14,6 +14,7 @@ import type {
   WalletToken,
   TransferRequest,
 } from './provider.js';
+import { explorerUrlFor } from './provider.js';
 
 type ToolSource = () => Promise<Record<string, Tool>>;
 
@@ -143,13 +144,23 @@ export class WdkWalletProvider implements WalletProvider {
         }
       }
       const rawHash = result.transactionHash ?? result.txHash ?? result.hash ?? evidence?.hash;
-      if (typeof rawHash !== 'string' || !/^0x[0-9a-f]{64}$/iu.test(rawHash)) {
+      // D-E: the hash must match the shape of the chain this request serves.
+      // A Solana devnet signature is base58 (64 bytes ≈ 64–110 characters,
+      // never `0x`-prefixed); an EVM transaction hash is `0x` + 64 hex digits.
+      // A shape that cannot belong to the requested chain keeps the honest
+      // `uncertain` outcome — this validation never loosens, only sharpens.
+      const hashShape = request.network === "solana-devnet"
+        ? /^[1-9A-HJ-NP-Za-km-z]{64,110}$/u
+        : /^0x[0-9a-f]{64}$/iu;
+      if (typeof rawHash !== 'string' || !hashShape.test(rawHash)) {
         return { kind: 'uncertain', reason: 'Wallet provider returned no trustworthy transaction hash.' };
       }
       const transaction: TransactionResult = {
         network: request.network,
         transactionHash: rawHash,
-        explorerUrl: `https://sepolia.etherscan.io/tx/${rawHash}`,
+        explorerUrl: request.network === "solana-devnet"
+          ? explorerUrlFor(request.network, rawHash)
+          : `https://sepolia.etherscan.io/tx/${rawHash}`,
       };
       return { kind: 'submitted', transaction };
     } catch (error) {
