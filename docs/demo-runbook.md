@@ -17,8 +17,7 @@ Set these values in `.env`:
 
 ```dotenv
 RECIPIENT_MEMORY_ENABLED=true
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
-DEMO_USER_ID=11111111-1111-4111-8111-111111111111
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions
 RECIPIENT_MEMORY_SEED_FILE=examples/recipient-memory.seed.json
 WDK_TOOLS_SOURCE=fixture
 ```
@@ -26,16 +25,20 @@ WDK_TOOLS_SOURCE=fixture
 `RECIPIENT_MEMORY_ENABLED=true` is required for the agent to search saved contacts:
 without it `search_recipients` fails closed to `unavailable` and the agent reports
 no saved contacts. `RECIPIENT_MEMORY_SEED_FILE` points at the confirmed demo data
-loaded by `npm run db:seed`.
+loaded by `npm run db:seed -- <userId>`; the seed is scoped to that user and
+fails without the argument.
 
 Then prepare the database, local model, and API:
 
 ```bash
 npx supabase db reset
 npm run memory:prefetch
-npm run db:seed
+npm run db:seed -- <userId>
 npm run dev
 ```
+
+Replace `<userId>` with the Privy user id the demo data is scoped to; there is
+no fixed demo tenant any more.
 
 For a frontend textual E2E (LLM + WDK fixtures, no live broadcast), configure
 and start the Nana wallet in another terminal. If `:3000` is taken, use

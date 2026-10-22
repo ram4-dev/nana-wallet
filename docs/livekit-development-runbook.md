@@ -1,9 +1,9 @@
 # LiveKit development runbook
 
 This runbook starts the web MVP as independent development processes. It is a
-single-demo-user setup, not an authentication design. `DEMO_USER_ID`,
-development LiveKit tokens, and development binding keys must not be used for
-multiuser or production wallet access.
+development setup, not a production hardening guide: development LiveKit
+tokens and development binding keys must not be used for multiuser or
+production wallet access.
 
 ## Privacy and retention contract
 
@@ -48,8 +48,7 @@ npx supabase db reset
 Put provider secrets in the root `.env`, never in a `VITE_*` variable:
 
 ```dotenv
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
-DEMO_USER_ID=11111111-1111-4111-8111-111111111111
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions
 WDK_TOOLS_SOURCE=fixture
 AGENT_RUNTIME=deterministic
 LIVE_VOICE_ENABLED=true
@@ -218,7 +217,7 @@ inside the Realtime model session.
 
 The worker builds a per-binding `WalletConversationService` after the
 `bind_conversation` gate succeeds. Its recipient-memory runtime scopes to the
-binding user (`binding.sub`), never the demo tenant — this is the REVIEW FIX V3
+binding user (`binding.sub`) — this is the REVIEW FIX V3
 wiring that makes `isClaimedRecipientValid` revalidate versioned recipients. The
 worker shares the repository, wallet, and `FinancialTaskRegistry` with that
 per-binding service, so the voice tools and the frontend Confirm/Cancel card
@@ -370,8 +369,8 @@ after every live window.
 
 ## Production gap
 
-Before multiuser production access, replace `DEMO_USER_ID` with a validated
-bearer identity provider, issue LiveKit tokens from Fastify, rotate binding
-keys with an overlap procedure, add authorization tests, rate limits, abuse
-controls, and a reviewed trace deletion workflow. Development credentials and
-this runbook do not provide those guarantees.
+Before multiuser production access, keep the per-request Privy identity as the
+only identity source, rotate binding keys with an overlap procedure, add
+authorization tests, rate limits, abuse controls, and a reviewed trace
+deletion workflow. Development credentials and this runbook do not provide
+those guarantees.

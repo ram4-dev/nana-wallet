@@ -33,8 +33,7 @@ npx supabase db reset
 Use the local Supabase connection from `.env.example`:
 
 ```dotenv
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
-DEMO_USER_ID=11111111-1111-4111-8111-111111111111
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions
 ```
 
 Do not add `DATABASE_ADMIN_URL` to the application. Administrative migration
