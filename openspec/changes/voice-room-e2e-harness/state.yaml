@@ -1,0 +1,24 @@
+schema: sdd-state/v1
+change: voice-room-e2e-harness
+artifact_store: openspec
+updated_at: 2026-10-10
+phases:
+  init: completed
+  explore: completed
+  propose: completed
+  spec: completed
+  design: completed
+  tasks: completed
+  apply: completed
+  verify: completed
+  archive: pending
+notes: |
+  Stage 1 design lives in .agent-workflow/tasks/voice-room-e2e/ (00-intake through
+  04-structure-outline, plus 90-verification). This openspec record was written on
+  completion so the change is discoverable where the repository keeps its changes.
+
+  Archive is pending on purpose: the work is on feat/voice-e2e-harness and has not
+  been merged.
+
+  Two items are deferred to an owner decision and are listed in tasks.md phase 8:
+  the product race in the decision gate, and wiring the suite into CI.

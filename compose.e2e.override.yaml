@@ -1,0 +1,73 @@
+# Isolated fixture stack for the voice e2e harness.
+#
+# Layered on top of compose.yaml:
+#
+#   docker compose -p nana-e2e \
+#     -f compose.yaml -f compose.e2e.override.yaml \
+#     --profile worker up -d
+#
+# Why an override instead of a new compose file: compose.yaml already defines
+# the fixture stack (db + livekit + voice-worker, WDK_TOOLS_SOURCE defaulting to
+# fixture). Only the host ports and the LiveKit config need to differ, and
+# Compose v5 supports `!override` for exactly that.
+#
+# Why the ports differ at all: on this machine the base ports are already
+# taken. TCP 5432 is squatted by an ssh tunnel, and `nana-real-livekit-1`
+# publishes UDP 7881-7891 plus TCP 7881. Remapping keeps every stack intact
+# instead of stopping someone else's.
+name: nana-e2e
+
+services:
+  db:
+    ports: !override
+      - "127.0.0.1:5433:5432"
+
+  livekit:
+    # The base config advertises udp 7881-7891; this stack owns 38881-38891.
+    # See docker/e2e-livekit.yaml for why the host range must match it.
+    command: --config /etc/livekit.e2e.yaml
+    volumes: !override
+      - ./docker/e2e-livekit.yaml:/etc/livekit.e2e.yaml:ro
+    ports: !override
+      # Host signaling. The base maps 127.0.0.1:7882:7880 because 7880 is taken
+      # by the ssh tunnel; the e2e harness connects to ws://127.0.0.1:7882.
+      - "127.0.0.1:7882:7880"
+      - "38881-38891:38881-38891/udp"
+      - "127.0.0.1:38881:38881/tcp"
+
+  voice-worker:
+    # NOTE: Privy inputs are deliberately NOT blanked here, and this is
+    # counter-intuitive, so it is worth writing down before someone "fixes" it.
+    #
+    # Blanking PRIVY_APP_ID/PRIVY_VERIFICATION_KEY makes `privyIdentityConfigured`
+    # false (src/runtime/dependencies.ts:111), so `walletForUser` is left
+    # undefined. That does not fall back to a fixture wallet: core.wallet is the
+    # fail-closed `createUnavailableWalletProvider` (src/runtime/dependencies.ts:161)
+    # because the worker calls `createCoreDependencies(environment)` with no
+    # injected provider, and every get_balance then dies with "No wallet provider
+    # was injected".
+    #
+    # With the Privy inputs present, the worker instead resolves the per-user
+    # Solana wallet (createSolanaWalletForUser), which needs exactly one `ready`
+    # row in `user_wallets` for (user_id, chain_family='solana'). That is a seed,
+    # not a credential problem — no Privy API call happens for a balance read.
+    #
+    # So the e2e fixture must opt into the worker's fixture wallet seam.
+    # Tracked in .agent-workflow/tasks/voice-room-e2e/02-research.md.
+    environment:
+      # Explicit opt-in, default off. Without it the worker keeps the fail-closed
+      # wallet it has always had. Never combine with WDK_TOOLS_SOURCE=live; the
+      # entrypoint throws on that pair rather than serving fixture balances.
+      VOICE_E2E_FIXTURE_WALLET: "1"
+    # The recipient-memory embedding model, shared with the host.
+    #
+    # The base image ships an empty /app/.cache/recipient-memory-model, so the
+    # worker downloads the sentence-transformers model on its first recipient
+    # lookup. That is a ~360 MB download inside the container, on a path the
+    # transfer scenarios need (search_recipients embeds the caller's phrasing),
+    # and it makes the first transfer run both slow and network-dependent.
+    # Binding the host cache makes the stack reproducible and offline-capable,
+    # and it is the same cache the host-side recipient fixture writes.
+    volumes:
+      - ./.cache/recipient-memory-model:/app/.cache/recipient-memory-model
+
