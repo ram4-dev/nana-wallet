@@ -178,8 +178,16 @@ describe('realtime tool binding — production execution against the fixture sta
     );
     expect(JSON.parse(preview.output)).toMatchObject({ status: 'confirmation_required' });
     expect(stack.broadcastCalls).toHaveLength(0);
+    // bafc63d anchors the decision window to the preview and d277ecc keeps the
+    // transcript bound to that window: evidence recorded under any other id is
+    // dropped, so the test must record against the previewId the service
+    // actually persisted (the old gate ignored the id entirely).
+    const persisted = await stack.repository.get(stack.userId, stack.conversationId);
+    const previewId = persisted?.pendingTransfer?.previewId;
+    expect(previewId).toBeDefined();
+    if (!previewId) throw new Error('send_token did not persist a preview');
     voiceDecisionGate.recordTranscript({
-      previewId: 'current-preview',
+      previewId,
       text: 'sí confirmo',
       isFinal: true,
       authenticatedSpeaker: true,
