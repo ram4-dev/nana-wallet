@@ -1,6 +1,9 @@
 import Fastify from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { generateP256KeyPair } from '@privy-io/node';
 import { registerHealthRoutes } from '../../src/api/health.js';
+import { createKeyPayloadSigner } from '../../src/wallet/signer/key-signer.js';
+import { probePayloadSigner } from '../../src/wallet/signer/probe.js';
 import type { WalletProvider } from '../../src/wallet/provider.js';
 
 // CAR-017: config values used to fake a live provider environment. The unhealthy
@@ -151,6 +154,57 @@ describe('GET /health privy-identity network default (Solana-only)', () => {
 
     expect(body.network).toBe('solana-devnet');
     expect(body.mode).toBe('live');
+  });
+});
+
+describe('GET /health policySigner readiness field (D-D capability probe)', () => {
+  const previousSignerEnv = new Map<string, string | undefined>([
+    ['PRIVY_SIGNER_URL', process.env.PRIVY_SIGNER_URL],
+    ['PRIVY_SIGNER_TOKEN', process.env.PRIVY_SIGNER_TOKEN],
+  ]);
+
+  afterEach(() => {
+    for (const [key, value] of previousSignerEnv) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  it('carries a REAL probe result (in-process key signer) as {capable, code} only', async () => {
+    const { privateKey, publicKey } = await generateP256KeyPair();
+    const app = Fastify();
+    registerHealthRoutes(app, {
+      wallet: fakeWalletProvider(async () => ({ status: 'healthy' })),
+      policySigner: () =>
+        probePayloadSigner({
+          signer: createKeyPayloadSigner(privateKey),
+          authorizationPublicKey: publicKey,
+        }),
+    });
+    try {
+      const response = await app.inject({ method: 'GET', url: '/health' });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.policySigner).toEqual({ capable: true, code: 'verified' });
+      expect(Object.keys(body.policySigner).sort()).toEqual(['capable', 'code']);
+      // The key material never reaches the response (CAR-017).
+      expect(response.body).not.toContain(publicKey.slice(0, 24));
+      expect(response.body).not.toContain(privateKey.slice(0, 24));
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('defaults to the real sidecar probe and reports an honest code, never a fabricated verified', async () => {
+    delete process.env.PRIVY_SIGNER_URL;
+    delete process.env.PRIVY_SIGNER_TOKEN;
+
+    const body = await healthBody(fakeWalletProvider(async () => ({ status: 'healthy' })));
+
+    expect(Object.keys(body.policySigner).sort()).toEqual(['capable', 'code']);
+    // No sidecar configured in this suite's environment: the probe must fail
+    // closed with the unavailable code instead of assuming a capability.
+    expect(body.policySigner).toEqual({ capable: false, code: 'signer_unavailable' });
   });
 });
 
