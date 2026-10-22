@@ -19,7 +19,8 @@ import type { SnsResolver } from "../../src/wallet/sns/resolver.js";
  * name this constant instead of an environment variable.
  *
  * The value is the shared-database singleton every server-based suite agrees
- * on (see the `demo` privy_did slot in the users migration).
+ * on. The `users` row for it is provisioned per suite via `provisionTestUser`
+ * (see `tests/fixtures/provision-user.ts`); no migration inserts it anymore.
  */
 export const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
 
