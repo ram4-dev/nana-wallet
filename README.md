@@ -401,7 +401,7 @@ foreign record clears the selection and approval.
 ## RAG memory model
 
 Supabase PostgreSQL 17 + pgvector holds the durable data: the remote project
-(`aitxhgxmiwfazynmcchs`) is the primary store, local Supabase is a disposable
+(`jnhemqouecznsziytzhm`) is the primary store, local Supabase is a disposable
 development stand-in, and the compose PostgreSQL 16 is only the docker/CI
 database. The local multilingual model
 is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` through
@@ -484,22 +484,18 @@ pgvector cambia solo las URLs de arriba.
 
 > **Database hierarchy — three Postgres setups, three distinct roles:**
 >
-> 1. **Remote Supabase project — THE primary database.** `nana_wallet_landing`
->    (ref `aitxhgxmiwfazynmcchs`, region us-east-1, PostgreSQL 17, host
->    `db.aitxhgxmiwfazynmcchs.supabase.co`). The deployed app connects here,
->    and this is the migration target: apply the versioned chain
->    `supabase/migrations/` with `supabase link --project-ref aitxhgxmiwfazynmcchs`
->    then `supabase db push` (bookkept in `supabase_migrations`). One-time
->    remote bootstrap: apply `supabase/roles.sql` (role grants) via psql before
->    the first `db push` — **this first remote application is still pending**:
->    the project is currently paused, so `supabase link` fails with
->    `LegacyProjectPausedError` until an admin restores it from
->    `https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs` (Supabase
->    free projects pause on inactivity). The deployed `DATABASE_URL` is
->    provisioned from platform/vault environment (Render env, Secret Vault) and
->    must never be committed; `.env.example` carries only the local stand-in
->    URL. Local `.env` files and test suites must never point at the remote
->    project. See the note in [the local live runbook](docs/local-live-runbook.md).
+> 1. **Remote Supabase project — the Nana Wallet primary database.** `nana_app`
+>    (ref `jnhemqouecznsziytzhm`, region us-east-1, PostgreSQL 17.11). The
+>    repository is linked here and all 18 versioned migrations plus the
+>    `recipient_app` role bootstrap have been applied. For future changes, use
+>    the official `supabase` CLI v2.113.0 or newer: inspect
+>    `supabase db push --dry-run`, then apply with `supabase db push`. The
+>    repo-pinned npm wrapper v2.80.0 fails parsing `per_transfer_atomic6`.
+>    Nana Landing is a separate waitlist project; do not use it as a migration
+>    target or copy its data. The deployed `DATABASE_URL` must be provisioned
+>    through platform/Vault (runtime connectivity not verified here) and never
+>    committed. `.env.example` keeps the local stand-in URL; local `.env` and tests must never point at
+>    the remote project.
 > 2. `npx supabase start` — **disposable development stand-in**: local
 >    Supabase, PostgreSQL 17 on `127.0.0.1:54322` (+ Studio, Inbucket). Apply
 >    its schema with `npx supabase db reset`. The demo, live, and E2E runbooks
