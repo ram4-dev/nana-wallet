@@ -22,13 +22,15 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 import { provisionTestUser } from "../fixtures/provision-user.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.js";
 import type { SnsResolver, SnsResolveFailure } from "../../src/wallet/sns/resolver.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
+// Per-suite identity: unique so parallel suites never share per-user rows.
+const USER_ID = randomUUID();
 
 const SOPHIE_NAME = "sophie.sns";
 const SOPHIE_ADDRESS = "3aHrqufW6h2hgmANwhXv6WnijdNiqjU7VbAWyLzGCUb2";
@@ -121,12 +123,27 @@ suite("the create alias arm (task 5.2)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
-    await provisionTestUser(TEST_USER_ID);
+    await provisionTestUser(USER_ID);
+    // Fixture seed: the alias arm's replay guarantees (a stored result for the
+    // same body, `IDEMPOTENCIA_CUERPO_DISTINTO` for a different one) are read
+    // from the wallet-bound intent, so this suite's own user needs a ready
+    // Solana wallet row for those routes to take the policy branch at all. With
+    // no wallet the create path stores no intent, and a repeated key silently
+    // creates a SECOND contact instead of replaying the first. The address is
+    // random so it can never collide with a resolved alias address (D13); the
+    // policy row is created by the first mutation itself.
+    await database.query(
+      `INSERT INTO user_wallets
+         (user_id, provider, provider_wallet_id, chain_family, address, state, verified_at)
+       VALUES ($1, 'fixture', $2, 'solana', $3, 'ready', now())
+       ON CONFLICT DO NOTHING`,
+      [USER_ID, `fixture-${randomUUID()}`, `${randomUUID()}.sol`],
+    );
     // This database is SHARED with every other suite, so cleanup is a DELTA: the
     // rows this suite could have created are the ones that appeared during it.
     const existing = await database.query<{ id: string }>(
       `SELECT id FROM recipients WHERE user_id = $1 AND provenance->>'source' = 'sns'`,
-      [TEST_USER_ID],
+      [USER_ID],
     );
     preexistingAliasIds = existing.rows.map((row) => row.id);
   });
@@ -146,19 +163,19 @@ suite("the create alias arm (task 5.2)", () => {
           SELECT id FROM recipients
            WHERE user_id = $1 AND provenance->>'source' = 'sns' AND NOT (id = ANY($2::uuid[]))
         )`,
-      [TEST_USER_ID, preexistingAliasIds],
+      [USER_ID, preexistingAliasIds],
     );
     await database.query(
       `DELETE FROM recipient_versions WHERE recipient_id IN (
          SELECT id FROM recipients
           WHERE user_id = $1 AND provenance->>'source' = 'sns' AND NOT (id = ANY($2::uuid[]))
        )`,
-      [TEST_USER_ID, preexistingAliasIds],
+      [USER_ID, preexistingAliasIds],
     );
     await database.query(
       `DELETE FROM recipients
         WHERE user_id = $1 AND provenance->>'source' = 'sns' AND NOT (id = ANY($2::uuid[]))`,
-      [TEST_USER_ID, preexistingAliasIds],
+      [USER_ID, preexistingAliasIds],
     );
     await database.close();
   });
@@ -173,7 +190,7 @@ suite("the create alias arm (task 5.2)", () => {
     }>(
       `SELECT id, address, provenance FROM recipients
         WHERE user_id = $1 AND status = 'active' AND provenance->>'source' = 'sns'`,
-      [TEST_USER_ID],
+      [USER_ID],
     );
     for (const row of result.rows) if (!createdContactIds.includes(row.id)) createdContactIds.push(row.id);
     return result.rows;
@@ -181,7 +198,7 @@ suite("the create alias arm (task 5.2)", () => {
 
   it("stores the resolved address with the alias as provenance (positive control)", async () => {
     const resolver = movingResolver();
-    const app = buildTestServer({ recipientAliases: resolver });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: resolver });
 
     const response = await createAlias(app, aliasBody());
 
@@ -211,7 +228,7 @@ suite("the create alias arm (task 5.2)", () => {
 
   it("refuses a moved name with 409 and writes nothing at all", async () => {
     const resolver = movingResolver();
-    const app = buildTestServer({ recipientAliases: resolver });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: resolver });
 
     const before = (await activeAliasContacts()).length;
     resolver.state = "b";
@@ -228,7 +245,7 @@ suite("the create alias arm (task 5.2)", () => {
       `SELECT id FROM recipients
         WHERE user_id = $1 AND address = $2
           AND provenance->>'source' = 'sns' AND provenance->>'name' = $3`,
-      [TEST_USER_ID, MOVED_ADDRESS, SOPHIE_NAME],
+      [USER_ID, MOVED_ADDRESS, SOPHIE_NAME],
     );
     expect(stored.rows).toEqual([]);
     await app.close();
@@ -237,7 +254,7 @@ suite("the create alias arm (task 5.2)", () => {
   it("refuses an unreachable resolver with 503, never as a missing name, and stages nothing", async () => {
     const resolver = movingResolver();
     resolver.state = "unreachable";
-    const app = buildTestServer({ recipientAliases: resolver });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: resolver });
 
     const before = (await activeAliasContacts()).length;
     const response = await createAlias(app, aliasBody());
@@ -251,7 +268,7 @@ suite("the create alias arm (task 5.2)", () => {
 
   it("answers a same-key same-body replay from the stored result", async () => {
     const resolver = movingResolver();
-    const app = buildTestServer({ recipientAliases: resolver });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: resolver });
     const key = `alias-replay-${randomUUID()}`;
 
     const first = await createAlias(app, aliasBody(), key);
@@ -270,7 +287,7 @@ suite("the create alias arm (task 5.2)", () => {
 
   it("refuses a same-key replay carrying a DIFFERENT name, and a replay after the name moved", async () => {
     const resolver = movingResolver();
-    const app = buildTestServer({ recipientAliases: resolver });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: resolver });
     const key = `alias-replay-${randomUUID()}`;
 
     const first = await createAlias(app, aliasBody(), key);
@@ -304,7 +321,7 @@ suite("the create alias arm (task 5.2)", () => {
 
   it("keeps the paste arm byte-identical: no alias key is written", async () => {
     const resolver = movingResolver();
-    const app = buildTestServer({ recipientAliases: resolver });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: resolver });
 
     const response = await createAlias(app, {
       name: "Mamá",
