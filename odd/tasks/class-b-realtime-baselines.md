@@ -35,6 +35,7 @@ CI on old main passed fully on 2026-10-08 (run 37782979335, `be4dbca`). These fi
 
 ## Receipts
 
+- **CI local reproduction (2026-10-22):** lint PASS, typecheck PASS, full suite fresh DB @`--maxWorkers=2` = **8 failed files / 21 failed tests / 1828 passed** — ALL cross-scope: the 7 class-A files (fixed only on sibling `test/self-provisioning-suites`) + `realtime-agent-session` (parked test). **The three files THIS branch fixes pass in full-suite context** (`realtime-tools`, `realtime-tool-binding`, `conversation-preview-claim-race` absent from the failing list). Zero new failures.
 - Commits: (to be recorded)
 - Diagnosis per file: (to be recorded)
 - Checks: (to be recorded)
