@@ -27,6 +27,8 @@ Track oficial: [WDK Track](https://hacki.crecimiento.build/h/aleph-hackathon-202
 
 Nana es una wallet agéntica para personas mayores y personas con discapacidad. El usuario puede pedir una transferencia en lenguaje cotidiano, revisar red, token, destinatario, importe y fee, y confirmar explícitamente antes de que el agente intente ejecutarla. El backend resuelve una wallet Solana devnet por usuario a través de Privy y firma mediante un sidecar local (`npm run signer:serve`); el proceso de la API y el del worker nunca leen una clave privada.
 
+Para iniciar el stack local con Privy y la Supabase remota de Nana Wallet, seguí [docs/local-stack.md](docs/local-stack.md).
+
 ### WDK usado
 
 Los paquetes WDK declarados en [`package.json`](https://github.com/theboyplunger0x/nana-wallet/blob/71509cc1957d90fedd95255f0a1241fddbf0ff0b/package.json#L30-L32) son:

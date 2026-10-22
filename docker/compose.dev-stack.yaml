@@ -1,0 +1,118 @@
+name: nana-dev-stack
+
+x-runtime: &runtime
+  image: nana-dev-stack-runtime:local
+  working_dir: /app
+
+x-identity: &identity
+  DATABASE_URL: ${DATABASE_URL:?}
+  PRIVY_APP_ID: ${PRIVY_APP_ID:?}
+  PRIVY_APP_SECRET: ${PRIVY_APP_SECRET:?}
+  PRIVY_VERIFICATION_KEY: ${PRIVY_VERIFICATION_KEY:?}
+  PRIVY_AUTHORIZATION_KEY_QUORUM_ID: ${PRIVY_AUTHORIZATION_KEY_QUORUM_ID:?}
+  PRIVY_AUTHORIZATION_PUBLIC_KEY: ${PRIVY_AUTHORIZATION_PUBLIC_KEY:?}
+  WDK_NETWORK: solana-devnet
+  WDK_TOKEN: SOL
+  RECIPIENT_MEMORY_ENABLED: "true"
+  LIVE_VOICE_ENABLED: "true"
+  LIVEKIT_URL: ws://livekit:7880
+  LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?}
+  LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?}
+  LIVEKIT_AGENT_NAME: nani-agent
+  LIVE_VOICE_BINDING_PUBLIC_KEY: ${LIVE_VOICE_BINDING_PUBLIC_KEY:?}
+  AGENT_RUNTIME: llm
+  LIVEKIT_AGENT_RUNTIME: native-livekit
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.6
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    volumes:
+      - ${NANA_LIVEKIT_CONFIG:?}:/etc/livekit.yaml:ro
+    ports:
+      - "127.0.0.1::7880"
+      - "127.0.0.1:${NANA_LIVEKIT_MEDIA_START:?}:${NANA_LIVEKIT_MEDIA_START:?}/tcp"
+      - "127.0.0.1:${NANA_LIVEKIT_MEDIA_START:?}-${NANA_LIVEKIT_MEDIA_END:?}:${NANA_LIVEKIT_MEDIA_START:?}-${NANA_LIVEKIT_MEDIA_END:?}/udp"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:7880/"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  backend:
+    <<: *runtime
+    build:
+      context: ${NANA_SOURCE_DIR:?}
+      dockerfile: docker/Dockerfile.dev-stack
+    command: ["node", "dist/server.js"]
+    environment:
+      <<: *identity
+      HOST: 0.0.0.0
+      PORT: "3000"
+      CORS_ORIGINS: https://nana-privy.localhost
+      LIVEKIT_BROWSER_URL: wss://nana-privy.localhost/livekit
+      LIVE_VOICE_BINDING_PRIVATE_KEY: ${LIVE_VOICE_BINDING_PRIVATE_KEY:?}
+      PRIVY_SIGNER_URL: http://127.0.0.1:8788/sign
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_TIMEOUT_MS: "5000"
+      OPENCODE_GO_API_KEY: ${OPENCODE_GO_API_KEY:?}
+    ports:
+      - "127.0.0.1::3000"
+    volumes:
+      - ${NANA_DATABASE_CA:?}:/run/certs/supabase-ca.crt:ro
+    depends_on:
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 15s
+      retries: 30
+
+  voice-worker:
+    <<: *runtime
+    command: ["node", "dist/livekit/worker.js", "dev"]
+    volumes:
+      - ${NANA_DATABASE_CA:?}:/run/certs/supabase-ca.crt:ro
+    environment:
+      <<: *identity
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?}
+      OPENCODE_GO_API_KEY: ${OPENCODE_GO_API_KEY:?}
+      PRIVY_SIGNER_URL: http://127.0.0.1:8789/sign
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_TIMEOUT_MS: "5000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  backend-signer:
+    <<: *runtime
+    command: ["node", "dist/wallet/signer/server.js"]
+    network_mode: service:backend
+    environment:
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_KEY_FILE: /run/secrets/privy-authorization-private-key
+      PRIVY_SIGNER_HOST: 127.0.0.1
+      PRIVY_SIGNER_PORT: "8788"
+    volumes:
+      - ${PRIVY_SIGNER_KEY_DIR:?}:/run/secrets:ro
+    depends_on:
+      backend:
+        condition: service_started
+
+  voice-worker-signer:
+    <<: *runtime
+    command: ["node", "dist/wallet/signer/server.js"]
+    network_mode: service:voice-worker
+    environment:
+      PRIVY_SIGNER_TOKEN: ${PRIVY_SIGNER_TOKEN:?}
+      PRIVY_SIGNER_KEY_FILE: /run/secrets/privy-authorization-private-key
+      PRIVY_SIGNER_HOST: 127.0.0.1
+      PRIVY_SIGNER_PORT: "8789"
+    volumes:
+      - ${PRIVY_SIGNER_KEY_DIR:?}:/run/secrets:ro
+    depends_on:
+      voice-worker:
+        condition: service_started

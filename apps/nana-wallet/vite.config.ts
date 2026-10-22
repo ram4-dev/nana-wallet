@@ -5,10 +5,12 @@
 //     React/TanStack dedupe, error logger plugins, and sandbox detection (port/host/strictPort).
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
+import { developmentProxies } from "./dev-proxy";
 
 const isMobileBuild = process.env["NANA_MOBILE_BUILD"] === "1";
 
 export default defineConfig({
+  vite: { server: { proxy: developmentProxies(process.env) } },
   // The web build keeps Lovable's Cloudflare/Nitro output. Capacitor needs
   // TanStack's static client output so the native bundle contains index.html.
   ...(isMobileBuild ? { nitro: false } : {}),

@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:stack": "node scripts/dev-stack.mjs",
+    "test:dev-stack": "node --test scripts/dev-stack.test.mjs",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "livekit:dev": "tsx src/livekit/worker.ts dev",

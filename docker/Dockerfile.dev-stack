@@ -1,0 +1,10 @@
+FROM node:22.18-bookworm
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+COPY examples ./examples
+# Compilar una vez evita cuatro compiladores simultáneos al iniciar el stack.
+RUN npm run build
+CMD ["node", "dist/server.js"]

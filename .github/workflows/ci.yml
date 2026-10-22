@@ -57,7 +57,7 @@ jobs:
           DATABASE_URL: postgres://postgres@localhost:5432/wdk_agent?options=-csearch_path%3Dpublic,extensions
 
       - name: Docker startup script tests
-        run: node --test scripts/docker-real-wallet.test.mjs
+        run: node --test scripts/docker-real-wallet.test.mjs scripts/dev-stack.test.mjs
 
       - name: Evals
         run: npm run eval
