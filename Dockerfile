@@ -22,7 +22,7 @@ RUN npm run build
 # self-contained and needs no network at runtime.
 #   `npm run memory:prefetch` (src/memory/prefetch.ts) runs WITHOUT credentials:
 #   readRecipientMemoryConfig() defaults RECIPIENT_MEMORY_ENABLED to false, so
-#   no DATABASE_URL / DEMO_USER_ID is required. It downloads the pinned model
+#   no DATABASE_URL is required. It downloads the pinned model
 #   into the default cache dir (.cache/recipient-memory-model).
 #   Gated by a build arg because it pulls ~120MB from HuggingFace at build time.
 ARG EMBED_MODEL_PREFETCH=0
@@ -36,8 +36,9 @@ FROM node:22.18-bookworm-slim AS runtime
 WORKDIR /app
 
 # NOTE: NODE_ENV is intentionally NOT set here. The API config
-# (src/config/process.ts) treats NODE_ENV=production as a hard gate that also
-# requires DATABASE_URL + DEMO_USER_ID + LIVE_VOICE_BINDING_PRIVATE_KEY. The
+# (src/config/process.ts) treats NODE_ENV=production as a hard gate that
+# requires DATABASE_URL, PRIVY_APP_ID + PRIVY_VERIFICATION_KEY, and
+# LIVE_VOICE_BINDING_PRIVATE_KEY. The
 # local compose dev flow must NOT hit that gate; the same image becomes
 # production-ready when those vars are provided by a deployment.
 
