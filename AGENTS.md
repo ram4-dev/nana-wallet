@@ -58,6 +58,17 @@ El front se comunica con el back solo por HTTP (`apps/nana-wallet/src/lib/api.ts
 
 Todo PR debe llegar con esta validación ejecutada y en verde. **GitHub Actions (`.github/workflows/ci.yml`) la verifica por PR**: job de backend (lint, typecheck, tests y evals contra una base Postgres con pgvector levantada con el mismo `compose.yaml` local) y job de frontend (lint, typecheck, tests). El PR no se puede mergear con CI en rojo.
 
+GitHub Actions aplica la cadena de migraciones de Supabase (`supabase/roles.sql`
++ `supabase/migrations/*.sql`) a ese PostgreSQL 16 de compose con psql, igual
+que el flujo docker local. Roles: Supabase local (`npx supabase start`,
+PostgreSQL 17, `127.0.0.1:54322`, esquema vía `npx supabase db reset`) es LA
+base de desarrollo principal; el Postgres de compose (PG16, `127.0.0.1:5432`,
+servicio `db`) es solo la base del stack docker y de CI. Las dos cadenas están
+espejadas: `supabase/migrations/` es la cadena de Supabase (Supabase local y
+CI), y `src/db/migrations/` es el espejo que aplica `npm run db:migrate` — que
+falla sobre una base ya migrada por la cadena de Supabase (`relation
+"conversations" already exists`); eso es esperado, no un bug.
+
 Backend (raíz):
 
 ```bash
@@ -86,6 +97,7 @@ Reglas:
 ## Convenciones
 
 - Comandos del backend: `npm run dev`, `npm test`, `npm run test:simulation`, `npm run db:migrate`, `npm run eval`.
+- Database: Supabase local es la base de desarrollo principal (`npx supabase start` + `npx supabase db reset`). `npm run db:migrate` aplica solo la cadena espejo `src/db/migrations/`; falla sobre una base ya migrada por la cadena de Supabase (esperado) — en ese caso usá `npx supabase db reset`. `npm run db:seed` requiere el id de usuario destino: `npm run db:seed -- <userId>`.
 - Comandos del front: `npm run dev`, `npm test`, `npm run mobile:sync` (en `apps/nana-wallet/`).
 - Los comentarios y UI del front están en español rioplatense; seguí esa convención en cada parte.
 - Tests: backend en `tests/{unit,integration,simulation,e2e}`, evals en `evals/`; front colocaliza tests junto al código.
