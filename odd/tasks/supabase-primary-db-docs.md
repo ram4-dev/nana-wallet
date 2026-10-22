@@ -26,30 +26,9 @@
 - [x] T6 `AGENTS.md`: correct the `db:migrate` framing and the CI description (CI applies the `supabase/` chain via psql on a compose PG16). Added text follows the document's existing Spanish register.
 - [x] T7 `Dockerfile`: remove the dead `DEMO_USER_ID` references **only after** grepping `compose*.yaml`, `src/`, `scripts/` to confirm nothing interpolates them; keep if referenced. Confirmed zero references outside the two comments; production-gate comment also updated to the real requirements (`DATABASE_URL`, `PRIVY_APP_ID` + `PRIVY_VERIFICATION_KEY`, `LIVE_VOICE_BINDING_PRIVATE_KEY` per `src/config/process.ts:148-162`).
 - [x] T8 Verify: greps show zero stale refs in live docs (`DEMO_USER_ID` outside archives, `demo:arc`, `db:seed` without arg); relative links resolve; code fences balanced; lint/typecheck NOT applicable (docs-only, no TypeScript touched, no install in the worktree).
-- [ ] T9 Re-frame every surface written in T1–T6 from "Supabase local is THE primary" to "remote project `nana_wallet_landing` (`aitxhgxmiwfazynmcchs`) is THE primary; local Supabase = disposable dev stand-in; compose PG16 = docker/CI stand-in". Include: migration workflow to remote (`supabase link --project-ref aitxhgxmiwfazynmcchs` → `supabase db push`), one-time `supabase/roles.sql` bootstrap (phrase as pending-first-application, do not overclaim), deployed `DATABASE_URL` provisioned from platform/vault env and NEVER committed, tests must never point at the remote, and a runbook note that Supabase free projects pause and must be restored from the dashboard. **Status: partial — README, architecture, local-live-runbook, AGENTS and this doc re-framed; `.env.example` NOT re-framed yet (the edit tool's safety policy blocks writes to that path — exact replacement text handed back to the orchestrator for an explicit decision).**
-  - **DECISION (Ramiro, 2026-10-21): leave `.env.example` as-is for now. Do NOT bypass the safety policy — no sed/heredoc via bash, no workaround routes.** The exact replacement below is recorded for **Rama** to apply verbatim, or to explicitly authorize someone to apply:
-
-    ```dotenv
-    # Required for the conversation, grant, and recipient-memory storage.
-    # Primary database: the REMOTE Supabase project `nana_wallet_landing`
-    # (ref aitxhgxmiwfazynmcchs, us-east-1, PostgreSQL 17, host
-    # db.aitxhgxmiwfazynmcchs.supabase.co). The deployed DATABASE_URL points there
-    # and is provisioned from platform/vault environment (Render env, Secret
-    # Vault) - it must NEVER be committed. This file carries only the local
-    # stand-in below: Supabase local - PostgreSQL 17 on
-    # 127.0.0.1:54322 (`npx supabase start`; schema applied by `npx supabase db reset`).
-    # Local .env files and test suites must NEVER point at the remote project.
-    # Two mirrored migration chains: `supabase/migrations/` is the Supabase chain
-    # (remote via `supabase link --project-ref aitxhgxmiwfazynmcchs` +
-    # `supabase db push` - first application still pending, project is paused -
-    # local via `npx supabase db reset`, AND CI, which applies it via psql on the
-    # compose Postgres); `src/db/migrations/` is the mirror applied by
-    # `npm run db:migrate`, which fails on an already Supabase-migrated database -
-    # that is expected.
-    ```
-
-    (Replaces the lines 91–95 comment block; keep the `DATABASE_URL=…` value and the compose comment below unchanged.)
-- [ ] T10 Live verification of the remote workflow — **BLOCKED on Rama: restore of the paused project** (human restore): `supabase link` succeeds, `supabase db push` applies the chain, roles bootstrap, connection string reaches the vault — record evidence here.
+- [x] T9 Re-frame every surface written in T1–T6 from "Supabase local is THE primary" to "remote project `nana_wallet_landing` (`aitxhgxmiwfazynmcchs`) is THE primary; local Supabase = disposable dev stand-in; compose PG16 = docker/CI stand-in". Remote migration/bootstrap steps are documented as pending-first-application; deployed `DATABASE_URL` remains provisioned outside the repo. `.env.example` now names the remote production primary while retaining the local development URL.
+-  - **Historical decision (Ramiro, 2026-10-21):** the `.env.example` edit was deferred at that time. Ramiro authorized completing the documentation alignment on 2026-10-22; no production secret or remote URL was added to the example.
+- [ ] T10 Live verification of the remote workflow — **BLOCKED on authenticated Supabase admin access**. The project was previously confirmed paused. Current CLI attempt `npx supabase projects list --output json` returned `Access token not provided`; no Supabase dashboard session was available through the browser tools. No `DATABASE_URL` or `SUPABASE_ACCESS_TOKEN` is present in the Vault inventory. Once admin access and the app database connection secret are available: restore the project, verify `supabase link`, apply migrations and the one-time roles bootstrap, provision the deployed connection string, and record evidence here.
 
 ## Receipts
 
@@ -67,7 +46,7 @@
   - `d6715e2` T9 README re-framed to remote primary
   - `1857291` T9 architecture.md + local-live-runbook.md re-framed (incl. pause/restore note)
   - `8b968dd` T9 AGENTS.md re-framed (Spanish register)
-  - `<pending>` T9 `.env.example` re-frame — blocked by the edit tool's safety policy on `.env*` paths; exact comment-block text handed back for an explicit human/parent decision (bash workaround deliberately not used)
+  - Pending commit in `docs/supabase-remote-primary-env`: T9 `.env.example` re-frame, authorized by Ramiro on 2026-10-22; local example remains local, no secret added.
 - Process note: the delegated writer timed out (20 min cap) after landing T1–T5; T6–T8 were completed inline by the orchestrator.
 - Checks (T8, structural — docs-only change):
   - `grep DEMO_USER_ID|demo:arc|ensureDemoSentinel|demo-sentinel` over README/docs/AGENTS/.env.example/Dockerfile → zero.
@@ -77,7 +56,8 @@
   - PG16/PG17 contradiction resolved: README:400-401 + architecture.md:105-109 both state Supabase PG17 primary / compose PG16 docker-CI.
   - lint/typecheck: not applicable — no TypeScript or build files changed.
 - Checks (T9, structural — docs-only):
-  - `grep -rni "primary" README.md docs/ AGENTS.md .env.example` → every hit now frames the remote project as primary or names local Supabase as stand-in, EXCEPT the still-unedited `.env.example:91` ("Primary development database: Supabase local") — the one outstanding item.
-  - Remote ref `aitxhgxmiwfazynmcchs` named consistently in README (hierarchy blockquote + RAG model note), `docs/architecture.md`, `docs/local-live-runbook.md` (pause/restore + guardrail note), `AGENTS.md` (2 places); pending in `.env.example`.
+  - `grep -rni "primary" README.md docs/ AGENTS.md .env.example` → remote project is primary for deployment and local Supabase is the disposable development stand-in.
+  - Remote ref `aitxhgxmiwfazynmcchs` is named consistently in README, `docs/architecture.md`, `docs/local-live-runbook.md`, `AGENTS.md`, and `.env.example`; local example `DATABASE_URL` remains on `127.0.0.1:54322`.
   - Pending-first-application phrasing for `supabase/roles.sql` + paused-project/`LegacyProjectPausedError`/dashboard-restore note present in README, architecture, runbook, AGENTS; no claim that remote bootstrap already works.
   - Relative markdown links: all resolve (python check over README, AGENTS, docs/). Code fences: all balanced (per-file ``` counts even).
+- **T10 access check (2026-10-22):** not operationally verified. `npx supabase projects list --output json` returned `Access token not provided`; `npx supabase status` found no local Supabase DB container; the project dashboard could not be accessed with the available browser surface. Vault inventory has no `DATABASE_URL` or `SUPABASE_ACCESS_TOKEN` entry. No credential values were read or added. Remote restore, `supabase link`/`db push`, roles bootstrap, and deployed DB URL provisioning remain blocked pending an authenticated admin session and the app's database connection secret.
