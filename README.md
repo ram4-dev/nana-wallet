@@ -9,7 +9,7 @@ no necesita el backend) y el **backend** (raíz; Fastify + PostgreSQL/pgvector).
 # Frontend — no necesita backend
 cd apps/nana-wallet && npm ci && npm run dev -- --host 0.0.0.0 --port 8083
 
-# Backend — from the repo root (Supabase local is the primary dev database)
+# Backend — from the repo root (local Supabase: disposable dev stand-in for the remote primary DB)
 npm ci && npx supabase start && npx supabase db reset && npm run dev
 ```
 
@@ -237,7 +237,9 @@ Notas:
   esas suites **se saltean** (y en CI sí corren). Before trusting a local green,
   bring up a database: Supabase local (`npx supabase start` +
   `npx supabase db reset`), or, to mirror CI exactly,
-  `docker compose up -d db` with the schema applied via psql.
+  `docker compose up -d db` with the schema applied via psql. Local runs and
+  test suites always use one of these local databases — never the remote
+  primary.
 - `npm run eval` corre Evalite sobre el agente. Los evals en modo real
   (`EVAL_REAL=1`) no forman parte de CI.
 - Si tocás solo el frontend, alcanza con la suite del frontend; si el cambio toca
@@ -348,8 +350,9 @@ Los contenedores **recompilan desde el `src` montado al arrancar**
 > Un 401 prueba que el sidecar responde; `ECONNREFUSED` prueba la orfandad.
 
 For the RAG demo, set the following values in `.env`. They match `.env.example`
-and target the primary development database, Supabase local (PostgreSQL 17 on
-`127.0.0.1:54322`); the seed is demo data and contains no credential:
+and target the local development stand-in, Supabase local (PostgreSQL 17 on
+`127.0.0.1:54322`) — never the remote primary; the seed is demo data and
+contains no credential:
 
 ```dotenv
 RECIPIENT_MEMORY_ENABLED=true
@@ -397,8 +400,10 @@ foreign record clears the selection and approval.
 
 ## RAG memory model
 
-Supabase PostgreSQL 17 + pgvector holds the durable data (the compose
-PostgreSQL 16 is only the docker/CI database). The local multilingual model
+Supabase PostgreSQL 17 + pgvector holds the durable data: the remote project
+(`aitxhgxmiwfazynmcchs`) is the primary store, local Supabase is a disposable
+development stand-in, and the compose PostgreSQL 16 is only the docker/CI
+database. The local multilingual model
 is `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` through
 `@huggingface/transformers@4.2.0`, with 384-dimensional normalized embeddings.
 No embedding API key is needed.
@@ -447,7 +452,7 @@ contain it.
 | `AGENT_RUNTIME` | `llm` | `llm` uses the conversational `ToolLoopAgent`; `deterministic` uses the parser-only path. |
 | `PORT` | `3000` | Fastify HTTP port. |
 | `RECIPIENT_MEMORY_ENABLED` | `false` | Feature flag. When false, no DB/model/memory tools are initialized and explicit-address transfers remain available. |
-| `DATABASE_URL` | — | Application login connection (local: `postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions`); required when memory is enabled. Each transaction then runs under the restricted `recipient_app` role with `app.user_id` set. |
+| `DATABASE_URL` | — | Application login connection. Locally use the stand-in URL `postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions`. The deployed value points at the remote primary and is provisioned from platform/vault environment (Render env, Secret Vault) — it must never be committed, and local `.env`/test suites must never point at the remote. Required when memory is enabled. Each transaction then runs under the restricted `recipient_app` role with `app.user_id` set. |
 | `RECIPIENT_MEMORY_MODEL_CACHE` | `.cache/recipient-memory-model` | Reusable local Transformers.js cache. |
 | `RECIPIENT_MEMORY_SCORE_FLOOR` | `0.55` | Relevance floor. Below it nothing is selectable, so the lookup answers `no_match` — but the rows found still travel back as evidence. Between the floor and the threshold the contact is plausible and unproven, so the caller asks. |
 | `RECIPIENT_MEMORY_SCORE_THRESHOLD` | `0.78` | Minimum semantic score for a non-exact candidate to resolve on its own. |
@@ -477,21 +482,37 @@ espera larga sin volver al criterio de silencio.
 [runbook Docker](docs/local-docker-runbook.md). Un Postgres compatible con
 pgvector cambia solo las URLs de arriba.
 
-> **Primary vs. docker/CI database.** Two local Postgres setups exist, each
-> with a distinct role — they are not interchangeable defaults:
+> **Database hierarchy — three Postgres setups, three distinct roles:**
 >
-> 1. `npx supabase start` — **the primary development database**: Supabase
->    local, PostgreSQL 17 on `127.0.0.1:54322` (+ Studio, Inbucket). Apply its
->    schema with `npx supabase db reset`. The demo, live, and E2E runbooks use
->    it.
-> 2. `docker compose up -d db` — `pgvector/pgvector:0.8.1-pg16` on
+> 1. **Remote Supabase project — THE primary database.** `nana_wallet_landing`
+>    (ref `aitxhgxmiwfazynmcchs`, region us-east-1, PostgreSQL 17, host
+>    `db.aitxhgxmiwfazynmcchs.supabase.co`). The deployed app connects here,
+>    and this is the migration target: apply the versioned chain
+>    `supabase/migrations/` with `supabase link --project-ref aitxhgxmiwfazynmcchs`
+>    then `supabase db push` (bookkept in `supabase_migrations`). One-time
+>    remote bootstrap: apply `supabase/roles.sql` (role grants) via psql before
+>    the first `db push` — **this first remote application is still pending**:
+>    the project is currently paused, so `supabase link` fails with
+>    `LegacyProjectPausedError` until an admin restores it from
+>    `https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs` (Supabase
+>    free projects pause on inactivity). The deployed `DATABASE_URL` is
+>    provisioned from platform/vault environment (Render env, Secret Vault) and
+>    must never be committed; `.env.example` carries only the local stand-in
+>    URL. Local `.env` files and test suites must never point at the remote
+>    project. See the note in [the local live runbook](docs/local-live-runbook.md).
+> 2. `npx supabase start` — **disposable development stand-in**: local
+>    Supabase, PostgreSQL 17 on `127.0.0.1:54322` (+ Studio, Inbucket). Apply
+>    its schema with `npx supabase db reset`. The demo, live, and E2E runbooks
+>    use it for local work.
+> 3. `docker compose up -d db` — `pgvector/pgvector:0.8.1-pg16` on
 >    `127.0.0.1:5432` (service `db` in `compose.yaml`): the docker-stack and CI
 >    database only. CI applies the same Supabase chain to it with psql
 >    (`.github/workflows/ci.yml`).
 >
 > **Migration chains.** Two mirrored chains exist:
-> `supabase/migrations/` is the Supabase chain (applied locally by
-> `npx supabase db reset`, and in CI by psql on the compose Postgres);
+> `supabase/migrations/` is the Supabase chain (applied to the remote primary
+> by `supabase db push`, locally by `npx supabase db reset`, and in CI by psql
+> on the compose Postgres);
 > `src/db/migrations/` is the local-runner mirror applied by
 > `npm run db:migrate`. Running `npm run db:migrate` against a database already
 > migrated by the Supabase chain fails with `relation "conversations" already
