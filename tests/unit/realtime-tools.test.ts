@@ -363,7 +363,6 @@ preview: { network: "arc-testnet", token: "USDC", recipient: "0xsecret", amount:
       }, language: "es" }),
     };
     const voiceDecisionGate = createVoiceDecisionGate({ isConfirmation, isCancellation });
-    const speakPreview = vi.fn().mockResolvedValue({ interrupted: false });
     const tools = createRealtimeTools({
       conversationId: "conv-1",
       userId: "binding-user",
@@ -372,7 +371,6 @@ preview: { network: "arc-testnet", token: "USDC", recipient: "0xsecret", amount:
       recipientMemory: recipientMemory as never,
       conversations: conversations as never,
       voiceDecisionGate,
-      speakPreview,
     } as never);
     const sendToken = financialTool(byName(tools, "send_token"), 2);
 
@@ -399,7 +397,11 @@ preview: { network: "arc-testnet", token: "USDC", recipient: "0xsecret", amount:
     });
     expect(result).not.toHaveProperty("recipient");
     expect(result).not.toHaveProperty("address");
-    expect(speakPreview).toHaveBeenCalledWith(expect.stringContaining("Comisión estimada: 0.0003 ETH"));
+    // bafc63d removed the TTS narration seam (speakPreview / speak-text.ts):
+    // narration moved to the model's own turn. The tool result now carries the
+    // instruction — amount, estimated fee and contact name — for the model to
+    // speak, so that is the contract to pin instead of a TTS call.
+    expect(result.message).toContain("el monto, la comisión estimada y el nombre del contacto");
     voiceDecisionGate.recordTranscript({ previewId: "preview-abc", text: "sí", isFinal: true, authenticatedSpeaker: true, createdAt: Date.now() + 1 });
     expect(voiceDecisionGate.consume("preview-abc", "confirm")).toBe("confirmed");
   });
