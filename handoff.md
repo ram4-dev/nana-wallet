@@ -16,7 +16,7 @@ Resume attempt on 2026-10-22: Herdr resumed the same Pi session under `nan/glm5.
 | --- | --- |
 | `test/self-provisioning-suites` | Complete through `4854c4d`, pushed to its origin branch. Fresh database full suite: 5 expected failures from class B, parked `realtime-agent-session`, and PEW-013; 1848 passed. |
 | `fix/class-b-realtime-baselines` | Complete through `0c06cd2`, pushed. Fresh database full suite at `--maxWorkers=2`: 8 expected failures from the class-A sibling work and parked `realtime-agent-session`; 1828 passed. Its three owned tests passed in the full suite. |
-| `fix/broadcast-uncertain-defects` | D-A, D-D, and D-E are committed and pushed through `ce84043`; D-B is implemented and locally verified but not yet committed. D-C remains safely open. Latest full suite on this checkout failed as recorded in `odd/tasks/broadcast-uncertain-defects.md`; DB could not be started because port 5432 was occupied. |
+| `fix/broadcast-uncertain-defects` | D-A, D-D, and D-E are committed and pushed through `ce84043`; D-B is implemented and locally verified in commit `1e81163` (not pushed). D-C remains safely open. Latest full suite on this checkout failed as recorded in `odd/tasks/broadcast-uncertain-defects.md`; DB could not be started because port 5432 was occupied. |
 
 The two sibling worktrees and this branch are separate. Keep their current work intact. The main checkout has unrelated untracked work (`.agent-workflow/tasks/privy-sdk-migration/` and `compose.privy-local.ports.yaml`); do not alter it.
 
@@ -29,7 +29,7 @@ The two sibling worktrees and this branch are separate. Keep their current work 
 
 ## Next work
 
-1. **D-B:** implemented in the working tree. Provider request/preparation failures and typed `PrivyWalletRuntimeError` resolve to `not_dispatched`; generic resolver/provider/dispatch failures remain `uncertain`. Focused tests, typecheck, lint, build, and fake E2E pass. Review `git diff`, then commit the verified D-B change if desired.
+1. **D-B:** implemented and committed as `1e81163`. Provider request/preparation failures and typed `PrivyWalletRuntimeError` resolve to `not_dispatched`; generic resolver/provider/dispatch failures remain `uncertain`. Focused tests, typecheck, lint, build, and fake E2E pass.
 2. **D-C:** behavior intentionally unchanged; missing reference lookup and bounded history are not proof of absence. Keep uncertain/no retry and leave D-C open pending authoritative production correlation.
 3. Full suite was attempted and failed; details and environmental blockers are in `odd/tasks/broadcast-uncertain-defects.md` and `.agent-workflow/tasks/broadcast-uncertain-defects/90-verification.md`.
 
