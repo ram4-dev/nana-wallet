@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -74,6 +75,7 @@ suite("/v1/contacts + /v1/recipient-policy routes (task 3.2)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
+    await provisionTestUser(USER_A);
     // Fixture hygiene: the shared demo wallet is reused by every policy suite
     // in this repo, and some of them REWIND its `desired_revision`. The unique
     // `(wallet_id, desired_revision)` intent index still holds the historical

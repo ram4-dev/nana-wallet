@@ -23,6 +23,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.js";
 import type { SnsResolver, SnsResolveFailure } from "../../src/wallet/sns/resolver.js";
 
@@ -120,6 +121,7 @@ suite("the create alias arm (task 5.2)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
+    await provisionTestUser(TEST_USER_ID);
     // This database is SHARED with every other suite, so cleanup is a DELTA: the
     // rows this suite could have created are the ones that appeared during it.
     const existing = await database.query<{ id: string }>(

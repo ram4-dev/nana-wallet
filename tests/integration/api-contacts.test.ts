@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -16,6 +17,7 @@ suite("/v1/contacts CRUD (fixture identity, PMU-008..012)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
+    await provisionTestUser(USER_A);
   });
 
   afterAll(async () => {

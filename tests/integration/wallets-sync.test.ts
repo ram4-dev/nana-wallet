@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -39,6 +40,9 @@ suite("/v1/wallets sync + embedded wallet service (PEW-002/003/005)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
+    // The suite's own users come from `users_ensure_for_privy_did` below; the
+    // shared fixture identity still needs its `users` row before USER_A writes.
+    await provisionTestUser(USER_A);
   });
 
   afterAll(async () => {

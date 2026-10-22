@@ -1,12 +1,19 @@
-import { vi, describe, expect, it } from 'vitest';
+import { vi, beforeAll, describe, expect, it } from 'vitest';
 
 // CI-load headroom: server-injection cases can exceed Vitest's 5s default under
 // full-suite parallel load (documented pattern in api-voice).
 vi.setConfig({ testTimeout: 15_000 });
 
-import { buildTestServer } from '../fixtures/test-server.js';
+import { buildTestServer, TEST_USER_ID } from '../fixtures/test-server.js';
+import { provisionTestUser } from '../fixtures/provision-user.js';
 
 describe('conversation API', () => {
+  beforeAll(async () => {
+    // The durable-conversation case writes rows for the default fixture
+    // identity; on a fresh database the `users` row must exist first (FK).
+    await provisionTestUser(TEST_USER_ID);
+  });
+
   it('does not expose legacy session routes', async () => {
     const app = buildTestServer();
     const response = await app.inject({ method: 'POST', url: '/v1/sessions' });

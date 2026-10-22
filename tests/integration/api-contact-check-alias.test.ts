@@ -27,7 +27,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildTestServer } from "../fixtures/test-server.js";
+import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.js";
 import type { SnsResolver, SnsResolveFailure } from "../../src/wallet/sns/resolver.js";
 
@@ -155,6 +156,7 @@ suite("the explicit drift check (task 7.1)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
+    await provisionTestUser(TEST_USER_ID);
     userId = await provisionUser(database, { wallet: true });
     walletlessUserId = await provisionUser(database, { wallet: false });
     userIds.push(userId, walletlessUserId);

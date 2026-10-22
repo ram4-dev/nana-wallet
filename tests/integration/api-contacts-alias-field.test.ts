@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { provisionTestUser } from "../fixtures/provision-user.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.js";
 import type { SnsResolver } from "../../src/wallet/sns/resolver.js";
 
@@ -57,8 +58,9 @@ suite("the alias a contact read reports (task 5.4)", () => {
   let database: DatabaseClient;
   const createdIds: string[] = [];
 
-  beforeAll(() => {
+  beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
+    await provisionTestUser(TEST_USER_ID);
   });
 
   afterAll(async () => {
