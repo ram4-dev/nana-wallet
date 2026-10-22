@@ -19,7 +19,7 @@
 
 - [x] T1 `README.md`: unify the DB story — Supabase local (PG17, `:54322`, `npx supabase db reset`) as primary dev DB; compose PG16 (`:5432`) as the docker/CI database; explain the two migration chains; fix the PG16/PG17 contradiction; fix `db:seed` usage; correct the `recipient_app` connection claims; replace "both setups are equally valid" with role-scoped guidance.
 - [x] T2 `docs/architecture.md`: remove the demo-tenant / `DEMO_USER_ID` claims (identity is Privy per-request); state Supabase as primary DB with chain ownership.
-- [ ] T3 `docs/api.md`: remove the `DEMO_USER_ID`-missing → 503 claim and the "token identity is the demo identity" claim; voice token identity is server-derived (PMU-020).
+- [x] T3 `docs/api.md`: remove the `DEMO_USER_ID`-missing → 503 claim and the "token identity is the demo identity" claim; voice token identity is server-derived (PMU-020).
 - [ ] T4 Runbooks (`docs/demo-runbook.md`, `docs/local-live-runbook.md`, `docs/livekit-development-runbook.md`, `docs/nani-e2e-runbook.md`, `docs/local-docker-runbook.md`): drop dead `DEMO_USER_ID` references, fix the `.env.example` quote, add the required `db:seed <userId>` arg, correct "same as CI" identity claims.
 - [ ] T5 `.env.example`: point `DATABASE_URL` at Supabase local (`127.0.0.1:54322/postgres`) as the primary dev connection and comment the chain split (`supabase/` chain vs `src/db/migrations` mirror). No secrets, values only.
 - [ ] T6 `AGENTS.md`: correct the `db:migrate` framing and the CI description (CI applies the `supabase/` chain via psql on a compose PG16).

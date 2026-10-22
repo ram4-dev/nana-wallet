@@ -89,8 +89,8 @@ never mutates bindings, grants or operations.
 
 ## `POST /v1/conversations`
 
-No body. Creates a durable conversation for the server-resolved demo identity.
-The identity is never accepted from the request body.
+No body. Creates a durable conversation for the authenticated user resolved per
+request. The identity is never accepted from the request body.
 
 ```json
 { "conversationId": "b1f0...", "mode": "typed" }
@@ -160,8 +160,8 @@ voice does not cancel financial work.
 
 ## `POST /v1/live-bindings`
 
-Issues a short-lived EdDSA binding for the server-resolved demo user. The
-development LiveKit token is a separate media credential. The binding token is
+Issues a short-lived EdDSA binding for the authenticated user resolved per
+request. The development LiveKit token is a separate media credential. The binding token is
 opaque and is never returned by state inspection, room data, traces, or logs.
 
 ```json
@@ -173,8 +173,9 @@ opaque and is never returned by state inspection, room data, traces, or logs.
 ```
 
 `503 voice_unavailable` means the API private binding key is not configured.
-Production must replace the demo identity and issue authenticated LiveKit
-tokens from Fastify.
+Live voice tokens already go through the authenticated path of
+`POST /v1/voice/room-token`: the caller is verified per request and must own
+the conversation before Fastify issues any LiveKit token.
 
 ## `POST /v1/voice/room-token`
 
@@ -202,9 +203,10 @@ Errors:
 - `400 { status, message, code: 'invalid_body' }` — malformed or missing
   request body (`conversationId` must be a UUID).
 - `503 { status, message, code: 'voice_token_unavailable' }` — LiveKit token
-  issuance is misconfigured: missing `LIVEKIT_URL` / `LIVEKIT_API_KEY` /
-  `LIVEKIT_API_SECRET`, missing `DEMO_USER_ID`, or a `LIVEKIT_ROOM_TOKEN_TTL`
-  below the 60-second minimum. The message names the offending variable.
+  issuance failed: the server-side configuration (`LIVEKIT_URL` /
+  `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET`) is missing or invalid, and the
+  message names the offending variable. A `LIVEKIT_ROOM_TOKEN_TTL` below the
+  60-second minimum is rejected at startup instead, never per request.
 
 Privacy/security notes:
 
@@ -213,16 +215,17 @@ Privacy/security notes:
 - Video grants are exactly `roomJoin`, `canPublish`, `canSubscribe` for that
   room — no `roomAdmin`, no `roomCreate`, so the token can never control or
   record a room.
-- The token identity is the server-owned demo identity (`DEMO_USER_ID`); the
-  browser cannot choose or forge it.
+- The token identity is the authenticated user's id, derived server-side after
+  the request is verified and the conversation's ownership is checked
+  (PMU-020); the browser cannot choose or forge it.
 - The participant token is returned only to the requesting client and is never
   persisted or logged by the API.
 
 ## Recipient-memory behaviour
 
-When `RECIPIENT_MEMORY_ENABLED=true`, a named or relationship recipient goes
-through the server-configured `DEMO_USER_ID`; the client cannot send a tenant
-ID. Search output can include a stable recipient ID, version, name,
+When `RECIPIENT_MEMORY_ENABLED=true`, a named or relationship recipient is
+scoped to the authenticated user resolved per request; the client cannot send a
+tenant ID. Search output can include a stable recipient ID, version, name,
 description, evidence, and score, but never an address. The exact address is
 an internal, session-bound tool result only after safe resolution.
 
