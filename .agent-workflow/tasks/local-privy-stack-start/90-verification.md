@@ -57,3 +57,7 @@ The final startup probe also checks the `users` and `conversations` tables, visi
 ## Repeated-start readiness correction
 
 A later repeat exposed a false failure: active worker job logs pushed its registration outside the last 120 lines. The launcher now discovers the SDK health listener from container logs and requests its current health endpoint inside the worker container. The SDK returns 503 while disconnected, so an old registration cannot satisfy readiness. The new regression covers log truncation, listener replacement, and invalid ports. All 10 launcher tests passed; complete startup passed after this correction.
+
+## Local main integration
+
+Fast-forwarded the implementation into local main. Ran `npm run dev:stack` from main twice successfully, including the owned frontend transition from the task worktree to main. Repeated the real Chromium transport/MSW check against that frontend: HTTPS 200, API 200, binding 401, signed WSS upgrade, no CORS/mixed-content errors. The isolated proxy E2E also passed from main. All 10 launcher tests passed under Node 22.18 Docker. API and worker remained running with OOMKilled=false. Unrelated untracked files were preserved; no remote push was performed.
