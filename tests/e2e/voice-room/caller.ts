@@ -426,6 +426,20 @@ export async function interruptAgent(input: {
  * trusting the RPC's `ok`. Returns the wall-clock instant the last speech frame
  * arrived, so the caller can report how quickly the agent yielded — and whether
  * it yielded at all.
+ *
+ * THE EMPTY WINDOW IS THE SUCCESS CASE, NOT THE FAILURE CASE
+ * ---------------------------------------------------------
+ * Silence is measured from the last speech frame, or from the moment this began
+ * watching when there has been NO speech at all. That second case is the whole
+ * point: an interrupt that lands perfectly stops the agent instantly, so the
+ * window after it contains no speech frames whatsoever. An earlier version
+ * required at least one speech frame before it would consider the agent silent,
+ * which meant the most effective possible interrupt timed out and FAILED — the
+ * test was measuring "did it keep talking a little", not "did it stop".
+ *
+ * The caller is responsible for proving there was speech to cut in the first
+ * place (`speechBeforeInterruptMs`), so an empty window here cannot be confused
+ * with an agent that never spoke.
  */
 export function waitForAgentSilence(input: {
   frames: () => readonly CapturedFrame[];
@@ -443,8 +457,11 @@ export function waitForAgentSilence(input: {
       for (const frame of frames) {
         if (frame.energy.rms >= input.speechRmsThreshold) lastSpeechAtMs = frame.atMs;
       }
-      const waitedMs = Date.now() - startedAt;
-      if (lastSpeechAtMs !== null && Date.now() - lastSpeechAtMs >= input.silenceMs) {
+      const now = Date.now();
+      const waitedMs = now - startedAt;
+      // No speech at all since the interrupt means silence started when we did.
+      const silentSinceMs = lastSpeechAtMs ?? startedAt;
+      if (now - silentSinceMs >= input.silenceMs) {
         return { silenced: true, lastSpeechAtMs, waitedMs };
       }
       if (waitedMs >= input.timeoutMs) {

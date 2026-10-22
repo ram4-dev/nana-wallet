@@ -197,11 +197,52 @@ export async function seedVoiceRoomFixture(
       `UPDATE public.conversations SET mode = 'typed' WHERE id = ANY($1::uuid[]) AND mode <> 'typed'`,
       [FIXTURE_CONVERSATION_IDS],
     );
-    // Scenario isolation: a transfer attempt from a previous run (a crashed
-    // broadcaster, a stale preview, a leftover 'cancelled') must not be read as
-    // this run's outcome. The unique partial index would also refuse a new
-    // preview while an ACTIVE row survived, so clearing here is what makes the
-    // confirmed scenario repeatable at all.
+    // Scenario isolation, part one: the conversation's HISTORY.
+    //
+    // This is the reset that matters most and was missing the longest. The
+    // worker loads the agent's chat context from `conversation_messages`
+    // (postgres-repository.ts reads it back), so without clearing it every run
+    // APPENDS to the previous run's transcript and the model is asked to answer a
+    // live transfer while still holding several finished ones. The symptom is not
+    // an error: it is an agent that slowly stops doing the thing, going back to a
+    // balance question instead of previewing, with answers that get shorter and
+    // shorter.
+    //
+    // It surfaces as flakiness that looks environmental, and it cost a real
+    // debugging session: with history left in place the suite passes for the first
+    // few runs, then degrades, and recreating the worker appears to help only
+    // because the conversations that happen to be run first differ.
+    //
+    // `conversation_state` is reset with it because it carries the other
+    // per-conversation decisions — the pending interpretation, the progress
+    // object, the last transaction hash — that would otherwise leak across runs.
+    const messagesCleared = await pool.query(
+      `DELETE FROM public.conversation_messages WHERE conversation_id = ANY($1::uuid[])`,
+      [FIXTURE_CONVERSATION_IDS],
+    );
+    await pool.query(
+      `UPDATE public.conversation_state
+          SET revision = 0,
+              generation = 1,
+              recipient_memory = '{}'::jsonb,
+              pending_interpretation = NULL,
+              progress = '{}'::jsonb,
+              last_transaction_hash = NULL,
+              updated_at = now()
+        WHERE conversation_id = ANY($1::uuid[])`,
+      [FIXTURE_CONVERSATION_IDS],
+    );
+    log(
+      `message history cleared: ${messagesCleared.rowCount ?? 0} row(s), conversation state reset (context isolation)`,
+    );
+
+    // Scenario isolation, part two: the transfer attempts.
+    //
+    // A transfer attempt from a previous run (a crashed broadcaster, a stale
+    // preview, a leftover 'cancelled') must not be read as this run's outcome.
+    // The unique partial index would also refuse a new preview while an ACTIVE row
+    // survived, so clearing here is what makes the confirmed scenario repeatable
+    // at all.
     const cleared = await pool.query(
       `DELETE FROM public.conversation_transfer_attempts WHERE conversation_id = ANY($1::uuid[])`,
       [FIXTURE_CONVERSATION_IDS],

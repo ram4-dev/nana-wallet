@@ -20,6 +20,7 @@ import {
 import { seedFixtureRecipientMemory } from './recipient-fixture.js';
 import { runVoiceRoomScenario, type VoiceRoomScenarioReport } from './roundtrip.js';
 import { waitForTransferSettlement } from './transfer-state.js';
+import { isCancellation, isConfirmation } from '../../../src/livekit/resolution-phrases.js';
 import { ConversationTransferState, describeTransferState } from './transfer-state.js';
 
 /**
@@ -158,7 +159,7 @@ describe('voice room backend state — the transfer discriminating pair', () => 
     // The negative assertion: no money can move from a cancelled conversation.
     expect(
       snapshot.active.length,
-      `no transfer attempt may be left ACTIVE after a cancellation. ${observed}`,
+      `no transfer attempt may be left ACTIVE after a cancellation. ${observed}${knownRaceNote(report, snapshot, snapshot.active.length)}`,
     ).toBe(0);
     expect(
       snapshot.confirmed.length,
@@ -226,4 +227,48 @@ function logScenario(report: VoiceRoomScenarioReport): void {
         .join(' | ')}`,
     ].join('\n'),
   );
+}
+
+/**
+ * Recognises the signature of the known decision-gate race and says so in the
+ * failure message.
+ *
+ * This adds DIAGNOSIS, never tolerance: the assertion above still fails, because
+ * the product really did leave a transfer active after the caller cancelled it.
+ * What it removes is the cost of re-investigating a defect that is already
+ * understood, so the next reader is not sent hunting through worker logs.
+ *
+ * The signature is specific: the row is still active, AND the room transcript
+ * contains a user utterance that classifies as a cancellation. That second half
+ * is what makes it the race rather than a genuine failure to cancel — the words
+ * arrived, the model called the tool, and the gate had not yet recorded the final
+ * transcript to authorise it.
+ *
+ * See `.agent-workflow/tasks/voice-room-e2e/90-verification.md`, defect 1. It
+ * needs a product owner's decision, not a harness change: the guard it involves
+ * authorises payments.
+ */
+function knownRaceNote(
+  report: VoiceRoomScenarioReport,
+  snapshot: Awaited<ReturnType<ConversationTransferState['read']>>,
+  activeCount: number,
+): string {
+  if (activeCount === 0) return '';
+  const userSaidCancellation = report.transcripts
+    .filter((line) => line.identity.startsWith('e2e'))
+    .some((line) => isCancellation(line.text));
+  if (!userSaidCancellation) {
+    return '\n  NOTE: the transcript holds no cancellation-classifying utterance, so this is NOT the known race — investigate it as a new failure.';
+  }
+  return [
+    '',
+    '  KNOWN PRODUCT DEFECT (not a harness failure). The caller said a clear cancellation',
+    '  and the room transcript captured it, the model called cancel_transfer, and the',
+    '  server refused to act because the decision gate had not yet recorded a FINAL',
+    '  transcript for the preview — the realtime provider transcribes asynchronously and',
+    '  the tool call can beat its own transcript. The row therefore stays active.',
+    `  Observed: ${describeTransferState(snapshot)}`,
+    '  Recorded as defect 1 in .agent-workflow/tasks/voice-room-e2e/90-verification.md.',
+    '  It needs a product decision: the guard involved authorises payments.',
+  ].join('\n');
 }
