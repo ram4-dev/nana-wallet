@@ -103,10 +103,23 @@ Confirm/Cancel card arbitrate on the same database claim.
 ## Recipient address memory boundary
 
 Recipient references are durable application data in Supabase PostgreSQL 17 + pgvector,
-not model context. **Supabase local is the primary development database**:
-`npx supabase start` (PostgreSQL 17 on `127.0.0.1:54322`), with the Supabase
-migration chain `supabase/migrations/` applied by `npx supabase db reset`. The
-compose PostgreSQL 16 on `127.0.0.1:5432` (service `db`) is only the
+not model context. **The primary database is the remote Supabase project
+`nana_wallet_landing` (ref `aitxhgxmiwfazynmcchs`, region us-east-1,
+PostgreSQL 17, host `db.aitxhgxmiwfazynmcchs.supabase.co`)**: the deployed app
+connects there, and the Supabase migration chain `supabase/migrations/` is
+applied to it with `supabase link --project-ref aitxhgxmiwfazynmcchs` then
+`supabase db push` (bookkept in `supabase_migrations`). That first remote
+application — including the one-time `supabase/roles.sql` role-grant bootstrap
+via psql — is still pending: the project is currently paused, and an admin must
+restore it from
+`https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs` (Supabase free
+projects pause on inactivity) before `link` succeeds. The deployed
+`DATABASE_URL` is provisioned from platform/vault environment and never
+committed. Local Supabase (`npx supabase start`, PostgreSQL 17 on
+`127.0.0.1:54322`, schema applied by `npx supabase db reset`) is a disposable
+development stand-in for it; local `.env` files and test suites never point at
+the remote. The compose PostgreSQL 16 on `127.0.0.1:5432` (service `db`) is
+only the
 docker-stack/CI database; CI applies the same Supabase chain to it with psql.
 The `src/db/migrations/` chain is the local-runner mirror used by
 `npm run db:migrate`. `recipients` stores a versioned exact address payload with a

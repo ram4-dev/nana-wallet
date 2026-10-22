@@ -36,6 +36,21 @@ Use the local Supabase connection from `.env.example`:
 DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions
 ```
 
+> **Remote primary vs. local stand-in.** The primary database is the remote
+> Supabase project `nana_wallet_landing` (ref `aitxhgxmiwfazynmcchs`, region
+> us-east-1, PostgreSQL 17, host `db.aitxhgxmiwfazynmcchs.supabase.co`); the
+> local Supabase URL above is only a disposable stand-in, and local `.env`
+> files and test suites must never point at the remote project. Migrations
+> reach the remote with `supabase link --project-ref aitxhgxmiwfazynmcchs` then
+> `supabase db push` (the versioned chain `supabase/migrations/`), preceded by
+> the one-time `supabase/roles.sql` bootstrap — **that first application is
+> still pending: the project is currently paused**, so `supabase link` fails
+> with `LegacyProjectPausedError` until an admin restores it from
+> `https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs`. Supabase free
+> projects pause on inactivity; restoring them from that dashboard is the fix.
+> The deployed `DATABASE_URL` is provisioned from platform/vault environment
+> (Render env, Secret Vault) and is never committed.
+
 Do not add `DATABASE_ADMIN_URL` to the application. Administrative migration
 work is performed by Supabase CLI; runtime repository access uses the
 restricted `recipient_app` role and transaction-local tenant identity.
