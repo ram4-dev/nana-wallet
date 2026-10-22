@@ -16,7 +16,7 @@ const userId = "33333333-3333-4333-8333-333333333333";
 beforeAll(async () => {
   await provisionTestUser(userId);
 });
-const recipient = "0x1234567890123456789012345678901234567890";
+const recipient = "DFYT4RDcvr6vL46c7iVDmfBbEYQxAZhUxkgvwzuVHMEk";
 const recipientId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const conversationId = "99999999-9999-4999-8999-999999999999";
 
@@ -45,6 +45,7 @@ describe("previewTransfer real claim semantics", () => {
               userId,
               version: 1,
               address: recipient,
+              network: "solana-devnet",
               name: "Lucas Gutiérrez",
               normalizedName: "lucas gutiérrez",
               description: "Amigo del equipo",
