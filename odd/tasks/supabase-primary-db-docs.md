@@ -3,6 +3,7 @@
 - Branch: `docs/supabase-primary-db` (worktree `colloseum.docs-supabase-primary-db`)
 - Base: `main @ 76473ea`
 - Decision (Ramiro, 2026-10-21): **Supabase local (`npx supabase start`, PG17, `127.0.0.1:54322`, chain `supabase/migrations`) is THE primary development database.** The compose Postgres (PG16, `:5432`) is demoted to the docker/CI database. Documentation-only alignment plus dead-config removal; no connection/migration code changes.
+- **DECISION AMENDED (Ramiro, 2026-10-21, supersedes the line above): the primary database is a REMOTE Supabase project — reuse of `nana_wallet_landing`, ref `aitxhgxmiwfazynmcchs` (us-east-1, PG17.11, host `db.aitxhgxmiwfazynmcchs.supabase.co`), was chosen from the account's project list.** New hierarchy: (1) remote project = authoritative primary (deployed app + migration target via `supabase link` + `db push`), (2) local Supabase `:54322` = disposable dev stand-in, (3) compose PG16 `:5432` = docker/CI stand-in. Local `.env` and test suites must NEVER point at the remote. The project is currently PAUSED (`LegacyProjectPausedError` — an admin must restore it from `https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs`); live verification of link/db push/roles bootstrap is pending on that human action (task T10).
 - Scope decision: item 2 of the review (security re-read clause) is deferred by user decision; item 3 (B3 policy) stays as is.
 
 ## Context (audit findings this feature closes)
@@ -25,6 +26,8 @@
 - [x] T6 `AGENTS.md`: correct the `db:migrate` framing and the CI description (CI applies the `supabase/` chain via psql on a compose PG16). Added text follows the document's existing Spanish register.
 - [x] T7 `Dockerfile`: remove the dead `DEMO_USER_ID` references **only after** grepping `compose*.yaml`, `src/`, `scripts/` to confirm nothing interpolates them; keep if referenced. Confirmed zero references outside the two comments; production-gate comment also updated to the real requirements (`DATABASE_URL`, `PRIVY_APP_ID` + `PRIVY_VERIFICATION_KEY`, `LIVE_VOICE_BINDING_PRIVATE_KEY` per `src/config/process.ts:148-162`).
 - [x] T8 Verify: greps show zero stale refs in live docs (`DEMO_USER_ID` outside archives, `demo:arc`, `db:seed` without arg); relative links resolve; code fences balanced; lint/typecheck NOT applicable (docs-only, no TypeScript touched, no install in the worktree).
+- [ ] T9 Re-frame every surface written in T1–T6 from "Supabase local is THE primary" to "remote project `nana_wallet_landing` (`aitxhgxmiwfazynmcchs`) is THE primary; local Supabase = disposable dev stand-in; compose PG16 = docker/CI stand-in". Include: migration workflow to remote (`supabase link --project-ref aitxhgxmiwfazynmcchs` → `supabase db push`), one-time `supabase/roles.sql` bootstrap (phrase as pending-first-application, do not overclaim), deployed `DATABASE_URL` provisioned from platform/vault env and NEVER committed, tests must never point at the remote, and a runbook note that Supabase free projects pause and must be restored from the dashboard. **Status: partial — README, architecture, local-live-runbook, AGENTS and this doc re-framed; `.env.example` NOT re-framed yet (the edit tool's safety policy blocks writes to that path — exact replacement text handed back to the orchestrator for an explicit decision).**
+- [ ] T10 Live verification of the remote workflow (blocked on human restore): `supabase link` succeeds, `supabase db push` applies the chain, roles bootstrap, connection string reaches the vault — record evidence here.
 
 ## Receipts
 
@@ -39,6 +42,10 @@
   - `e9cc488` T5 .env.example
   - `90945ab` T6 AGENTS.md
   - `4dbee94` T7 Dockerfile
+  - `d6715e2` T9 README re-framed to remote primary
+  - `1857291` T9 architecture.md + local-live-runbook.md re-framed (incl. pause/restore note)
+  - `8b968dd` T9 AGENTS.md re-framed (Spanish register)
+  - `<pending>` T9 `.env.example` re-frame — blocked by the edit tool's safety policy on `.env*` paths; exact comment-block text handed back for an explicit human/parent decision (bash workaround deliberately not used)
 - Process note: the delegated writer timed out (20 min cap) after landing T1–T5; T6–T8 were completed inline by the orchestrator.
 - Checks (T8, structural — docs-only change):
   - `grep DEMO_USER_ID|demo:arc|ensureDemoSentinel|demo-sentinel` over README/docs/AGENTS/.env.example/Dockerfile → zero.
@@ -47,3 +54,8 @@
   - One canonical dev URL everywhere (README, 4 runbooks, .env.example): `postgresql://postgres:postgres@127.0.0.1:54322/postgres?options=-csearch_path%3Dpublic,extensions`.
   - PG16/PG17 contradiction resolved: README:400-401 + architecture.md:105-109 both state Supabase PG17 primary / compose PG16 docker-CI.
   - lint/typecheck: not applicable — no TypeScript or build files changed.
+- Checks (T9, structural — docs-only):
+  - `grep -rni "primary" README.md docs/ AGENTS.md .env.example` → every hit now frames the remote project as primary or names local Supabase as stand-in, EXCEPT the still-unedited `.env.example:91` ("Primary development database: Supabase local") — the one outstanding item.
+  - Remote ref `aitxhgxmiwfazynmcchs` named consistently in README (hierarchy blockquote + RAG model note), `docs/architecture.md`, `docs/local-live-runbook.md` (pause/restore + guardrail note), `AGENTS.md` (2 places); pending in `.env.example`.
+  - Pending-first-application phrasing for `supabase/roles.sql` + paused-project/`LegacyProjectPausedError`/dashboard-restore note present in README, architecture, runbook, AGENTS; no claim that remote bootstrap already works.
+  - Relative markdown links: all resolve (python check over README, AGENTS, docs/). Code fences: all balanced (per-file ``` counts even).
