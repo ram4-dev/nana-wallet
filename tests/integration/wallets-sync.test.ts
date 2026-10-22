@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 import { provisionTestUser } from "../fixtures/provision-user.js";
 import {
   createDatabaseClient,
@@ -18,8 +18,9 @@ import { isValidSolanaAddress } from "../../src/memory/address.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
-// Fixture identity: the identity provider resolves every request to this user.
-const USER_A = TEST_USER_ID;
+// Per-suite identity: the identity provider resolves every request to this
+// user, which must be unique so parallel suites never share per-user rows.
+const USER_A = randomUUID();
 /** A second owned Solana wallet, distinct from the fixture's per-user wallet. */
 const SECOND_SOLANA_ADDRESS =
   "4Nd1mBQtrMJVYVfKf2PJy9NZUZdTAsp7ua4e6FjZg3Dq";

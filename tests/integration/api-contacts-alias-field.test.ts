@@ -17,13 +17,17 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 import { provisionTestUser } from "../fixtures/provision-user.js";
 import { createDatabaseClient, type DatabaseClient } from "../../src/db/client.js";
 import type { SnsResolver } from "../../src/wallet/sns/resolver.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
+
+// Per-suite identity: the identity provider resolves every request to this
+// user, which must be unique so parallel suites never share per-user rows.
+const USER_ID = randomUUID();
 
 const ALIAS_NAME = "sophie.sns";
 const ALIAS_ADDRESS = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
@@ -60,7 +64,7 @@ suite("the alias a contact read reports (task 5.4)", () => {
 
   beforeAll(async () => {
     database = createDatabaseClient(databaseUrl!);
-    await provisionTestUser(TEST_USER_ID);
+    await provisionTestUser(USER_ID);
   });
 
   afterAll(async () => {
@@ -86,7 +90,7 @@ suite("the alias a contact read reports (task 5.4)", () => {
   }
 
   it("reports the alias of an alias-origin contact and null for the paste path", async () => {
-    const app = buildTestServer({ recipientAliases: stubResolver() });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: stubResolver() });
 
     const aliased = await app.inject({
       method: "POST",
@@ -139,7 +143,7 @@ suite("the alias a contact read reports (task 5.4)", () => {
          (id, user_id, name, normalized_name, description, address, provenance,
           embedding, embedding_model_revision, address_confirmed_at)
        VALUES ($1, $2, $3, $4, '', $5, $6::jsonb, $7::vector, 'test', now())`,
-      [id, TEST_USER_ID, name, name.toLocaleLowerCase("es-AR"), PASTED_ADDRESS, provenance, zeroEmbedding],
+      [id, USER_ID, name, name.toLocaleLowerCase("es-AR"), PASTED_ADDRESS, provenance, zeroEmbedding],
     );
     createdIds.push(id);
     return id;
@@ -160,7 +164,7 @@ suite("the alias a contact read reports (task 5.4)", () => {
       }),
     );
 
-    const app = buildTestServer({ recipientAliases: stubResolver() });
+    const app = buildTestServer({ userId: USER_ID, recipientAliases: stubResolver() });
 
     // Row 3: marked `source: 'sns'` but with no usable name/resolvedAt pair — a
     // malformed claim is not a claim, and must not reach the client as one.

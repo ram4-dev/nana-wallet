@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildTestServer, TEST_USER_ID } from "../fixtures/test-server.js";
+import { buildTestServer } from "../fixtures/test-server.js";
 import { provisionTestUser } from "../fixtures/provision-user.js";
 import {
   createDatabaseClient,
@@ -9,8 +10,9 @@ import {
 const databaseUrl = process.env.DATABASE_URL;
 const suite = databaseUrl ? describe : describe.skip;
 
-// Fixture identity: the identity provider resolves every request to this user.
-const USER_A = TEST_USER_ID;
+// Per-suite identity: the identity provider resolves every request to this
+// user, which must be unique so parallel suites never share per-user rows.
+const USER_A = randomUUID();
 
 suite("/v1/contacts CRUD (fixture identity, PMU-008..012)", () => {
   let database: DatabaseClient;
