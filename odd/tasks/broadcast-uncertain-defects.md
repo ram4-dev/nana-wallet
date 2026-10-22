@@ -40,6 +40,7 @@ D-C last and may legitimately remain open with a recorded proposal.
 
 ## Receipts
 
+- **CI local reproduction (2026-10-22):** lint PASS, typecheck PASS, full suite fresh DB @`--maxWorkers=2` = **11 failed files / 24 failed tests / 1826 passed** — exactly the pre-existing CI baseline (7 class-A + 4 class-B files, minus `api-contact-check-alias` whose shared-user provisioning happens to be satisfied by ordering). **D-A introduced zero new failures** (24 tests < CI's original 26; every failing test is accounted for by the two unfixed sibling scopes).
 - Commits: (to be recorded)
 - Per-defect evidence: (to be recorded)
 - Checks: (to be recorded)
