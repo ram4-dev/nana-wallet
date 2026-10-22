@@ -24,7 +24,7 @@ npm run dev:stack -- --check
 
 El arranque termina con `Stack listo` cuando pasan HTTPS, API same-origin,
 binding sin autenticar, WSS por `/livekit`, una consulta remota de solo lectura,
-el signer y el registro del worker. La room usada para WSS se elimina al final.
+el signer y la conexión actual del worker con LiveKit. La room usada para WSS se elimina al final.
 
 El proyecto Docker se llama `nana-dev-stack`. Compila una sola imagen antes de
 iniciar los servicios; no ejecuta cuatro compiladores al arrancar. El estado

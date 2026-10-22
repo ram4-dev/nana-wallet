@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtempSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { ensureBindingPair, normalizeAuthorizationKey, parseProjectRef, readLinkedSupabaseMetadata, remoteDatabaseUrl, requiredVaultKeys, validateInfrastructureHealth, verifySupabaseTarget } from "./dev-stack.mjs";
+import { workerHealthPort, ensureBindingPair, normalizeAuthorizationKey, parseProjectRef, readLinkedSupabaseMetadata, remoteDatabaseUrl, requiredVaultKeys, validateInfrastructureHealth, verifySupabaseTarget } from "./dev-stack.mjs";
 
 test("normaliza el prefijo wallet-auth", () => {
   assert.equal(normalizeAuthorizationKey(" wallet-auth:abc123 "), "abc123");
@@ -66,4 +66,13 @@ test("acepta la degradación por usuario de Privy y exige signer verificado", ()
   const health = { mode: "live", network: "solana-devnet", provider: { status: "degraded", reason: "Privy wallet health is evaluated per authenticated user." }, policySigner: { capable: true, code: "verified" } };
   assert.doesNotThrow(() => validateInfrastructureHealth(health));
   assert.throws(() => validateInfrastructureHealth({ ...health, policySigner: { capable: false, code: "signer_unavailable" } }), /sidecar firmante/);
+});
+
+
+test("encuentra la salud actual aunque el registro haya salido de las últimas 120 líneas", () => {
+  const logs = "Server is listening on port 31001\nregistered worker\n" + "job activity\n".repeat(250);
+  assert.equal(workerHealthPort(logs), 31001);
+  assert.equal(workerHealthPort(logs + "Server is listening on port 32002\n"), 32002);
+  assert.throws(() => workerHealthPort("registered worker"), /puerto de salud/);
+  assert.throws(() => workerHealthPort("Server is listening on port 99999"), /puerto de salud/);
 });

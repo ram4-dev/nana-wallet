@@ -287,6 +287,13 @@ export function validateInfrastructureHealth(payload) {
   }
 }
 
+export function workerHealthPort(logs) {
+  const ports = [...logs.matchAll(/Server is listening on port (\d+)/gu)];
+  const port = Number(ports.at(-1)?.[1]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) fail("No se encontró el puerto de salud del worker.");
+  return port;
+}
+
 async function readiness(env, livekitPort) {
   await waitFor(async () => { if ((await request(origin)).statusCode !== 200) fail("frontend"); }, "frontend HTTPS");
   await waitFor(async () => { if ((await request(`${origin}/api/health`)).statusCode !== 200) fail("API health"); }, "API same-origin");
@@ -310,8 +317,9 @@ async function readiness(env, livekitPort) {
   const worker = compose(env, ["ps", "--format", "json", "voice-worker"]);
   if (!worker.includes("running")) fail("El worker de LiveKit no quedó en ejecución.");
   await waitFor(async () => {
-    const logs = compose(env, ["logs", "--tail", "120", "voice-worker"]);
-    if (!/registered.*(?:agent|worker)|(?:agent|worker).*registered/iu.test(logs)) fail("registro del worker");
+    const port = workerHealthPort(compose(env, ["logs", "voice-worker"]));
+    // The SDK returns 503 while disconnected, even if registration appeared in old logs.
+    compose(env, ["exec", "-T", "voice-worker", "node", "-e", `fetch('http://127.0.0.1:${port}/',{signal:AbortSignal.timeout(5000)}).then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))`]);
   }, "registro del worker de LiveKit", 20);
 }
 

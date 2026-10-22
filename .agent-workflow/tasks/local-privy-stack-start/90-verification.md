@@ -53,3 +53,7 @@ No remote schema/data migration, Nana Landing change, remote push, or payment wa
 A separate SDD verifier returned PASS WITH WARNINGS, no critical findings, and accepted verification-envelope validation. It reran the 9 launcher tests, 8 focused frontend proxy/MSW tests, the isolated Chromium proxy E2E, and public endpoint probes. Its warnings cover the existing full-suite failures and the unverified authenticated audio session. No Pi review was claimed.
 
 The final startup probe also checks the `users` and `conversations` tables, visibility of the `vector` type, and existence of `recipient_app` using read-only SQL. It fails with an explicit connection/TLS/schema diagnostic and never runs a migration.
+
+## Repeated-start readiness correction
+
+A later repeat exposed a false failure: active worker job logs pushed its registration outside the last 120 lines. The launcher now discovers the SDK health listener from container logs and requests its current health endpoint inside the worker container. The SDK returns 503 while disconnected, so an old registration cannot satisfy readiness. The new regression covers log truncation, listener replacement, and invalid ports. All 10 launcher tests passed; complete startup passed after this correction.
