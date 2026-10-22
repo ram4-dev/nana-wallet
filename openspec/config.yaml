@@ -2,12 +2,12 @@ schema: spec-driven
 
 context: |
   Project: Nana Wallet, Aleph Hackathon.
-  Repository state: Node.js TypeScript Fastify backend plus independent React/TanStack frontend in apps/nana-wallet, connected only by HTTP.
-  Stack: Node.js, TypeScript, Fastify, AI SDK Core, @ai-sdk/mcp, WDK, Vitest.
-  Recipient-memory foundation: PostgreSQL 16 with pgvector, pg, and Transformers.js.
+  Repository state: Node.js 22 TypeScript Fastify backend plus independent React 19/TanStack frontend in apps/nana-wallet, connected only by HTTP.
+  Stack: Fastify, LiveKit Agents, Privy, WDK, PostgreSQL/pgvector, Vitest, Playwright, ESLint, TypeScript.
+  Frontend quality tools: Vitest, Testing Library, ESLint, TypeScript, Prettier.
   Canonical planning document: docs/architecture.md.
   Artifact persistence: OpenSpec files under openspec/.
-  Strict TDD is disabled until a test runner and implementation workspace exist.
+  Active implementation worktree: feat/onboarding-roles.
 
 strict_tdd: false
 
@@ -20,13 +20,13 @@ testing:
   e2e: true
   coverage: false
   coverage_command: ""
-  linter: false
-  lint_command: ""
+  linter: true
+  lint_command: "npm run lint"
   type_checker: true
   typecheck_command: "npm run typecheck"
-  formatter: false
-  format_command: ""
-  notes: "Database integration requires the local pgvector compose service; WDK E2E is opt-in through WDK_E2E=1."
+  formatter: true
+  format_command: "cd apps/nana-wallet && npm run format"
+  notes: "Backend integration requires the local pgvector compose service. Backend WDK and LiveKit E2E paths are opt-in through their documented environment variables; browser E2E uses Playwright. Frontend commands run from apps/nana-wallet/. Coverage tooling exists in the frontend but no coverage script is configured."
 
 rules:
   proposal:
@@ -45,7 +45,7 @@ rules:
   apply:
     guidelines:
       - Follow the implementation plan and existing project conventions.
-      - Keep strict TDD disabled; use focused Vitest coverage and runtime harnesses.
+      - Keep strict TDD disabled per the existing repository setting; use focused Vitest coverage and runtime harnesses.
     tdd: false
     test_command: "npm test"
   verify:
