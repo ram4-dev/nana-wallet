@@ -387,7 +387,15 @@ export class SolanaDevnetProvider implements WalletProvider {
   public async broadcastTransfer(
     request: TransferRequest,
   ): Promise<BroadcastOutcome> {
-    assertDevnetNetwork(request.network);
+    try {
+      assertDevnetNetwork(request.network);
+    } catch (error) {
+      return {
+        kind: "not_dispatched",
+        reason: error instanceof Error ? error.message : "Unsupported network.",
+        cause: "invalid_request",
+      };
+    }
     // AD-11: fail closed on missing/blank preview identity — a persisted
     // previewId is the dispatch reference and reconciliation identity. No
     // timestamp/random fallback: an unpersisted reference would break
@@ -401,19 +409,48 @@ export class SolanaDevnetProvider implements WalletProvider {
         cause: "invalid_request",
       };
     }
-    this.assertRecipient(request.to);
-    const lamports = this.amountToLamports(request.amount);
     const referenceId = request.previewId;
-    const identity = this.bound();
-    const recentBlockhash = await this.requireRecentBlockhash();
-    const base64Transaction = serializeUnsignedTransaction(
-      buildDevnetSolTransfer(
-        identity.senderAddress,
-        request.to,
-        lamports,
-        recentBlockhash,
-      ),
-    );
+    let identity: { walletId: string; senderAddress: string };
+    try {
+      identity = this.bound();
+    } catch (error) {
+      return {
+        kind: "not_dispatched",
+        reason: error instanceof Error ? error.message : "Wallet identity unavailable.",
+        cause: "provider_unavailable",
+      };
+    }
+    let lamports: bigint;
+    try {
+      this.assertRecipient(request.to);
+      lamports = this.amountToLamports(request.amount);
+    } catch (error) {
+      return {
+        kind: "not_dispatched",
+        reason: error instanceof Error ? error.message : String(error),
+        cause: "invalid_request",
+      };
+    }
+    let base64Transaction: string;
+    try {
+      const recentBlockhash = await this.requireRecentBlockhash();
+      base64Transaction = serializeUnsignedTransaction(
+        buildDevnetSolTransfer(
+          identity.senderAddress,
+          request.to,
+          lamports,
+          recentBlockhash,
+        ),
+      );
+    } catch (error) {
+      // This entire preparation stage ends before signAndSend is invoked.
+      // Never widen this catch to include the dispatch boundary below.
+      return {
+        kind: "not_dispatched",
+        reason: error instanceof Error ? error.message : String(error),
+        cause: "provider_unavailable",
+      };
+    }
     try {
       const result = await this.signAndSend.signAndSend(
         identity.walletId,

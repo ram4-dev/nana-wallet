@@ -7,6 +7,7 @@ import type { ConversationTurnResult, PendingTransfer } from '../../src/contract
 import { FixtureWalletProvider } from '../../src/wallet/fixture-provider.js';
 import type { BroadcastOutcome, WalletProvider } from '../../src/wallet/provider.js';
 import { FinancialTaskRegistry } from '../../src/conversations/financial-task-registry.js';
+import { PrivyWalletRuntimeError } from '../../src/wallet/user-wallet.js';
 
 const userId = '11111111-1111-4111-8111-111111111111';
 const recipient = '0x1234567890123456789012345678901234567890';
@@ -169,6 +170,50 @@ describe('WalletConversationService', () => {
     const service = createWalletConversationService({ conversations: repository, wallet });
     await service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: `Send 10 USDT to ${recipient}` });
     await expect(service.handleTurn({ conversationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', userId, text: 'confirm the transfer' })).resolves.toMatchObject({ status: 'error', code: 'broadcast_uncertain', message: expect.stringContaining('uncertain') });
+  });
+
+  it('maps only typed wallet resolution failures to wallet_unavailable before dispatch', async () => {
+    const repository = repositoryFixture();
+    const wallet = walletFixture();
+    let resolutions = 0;
+    const service = createWalletConversationService({
+      conversations: repository,
+      wallet,
+      walletForUser: async () => {
+        resolutions += 1;
+        if (resolutions > 1) {
+          throw new PrivyWalletRuntimeError('wallet_unavailable', 'wallet resolver unavailable');
+        }
+        return wallet;
+      },
+    });
+    const conversationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+    await expect(service.handleTurn({ conversationId, userId, text: 'confirmar la transferencia' })).resolves.toMatchObject({
+      status: 'error',
+      code: 'wallet_unavailable',
+    });
+  });
+
+  it('keeps generic wallet resolver failures uncertain', async () => {
+    const repository = repositoryFixture();
+    const wallet = walletFixture();
+    let resolutions = 0;
+    const service = createWalletConversationService({
+      conversations: repository,
+      wallet,
+      walletForUser: async () => {
+        resolutions += 1;
+        if (resolutions > 1) throw new Error('unknown resolver failure');
+        return wallet;
+      },
+    });
+    const conversationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    await service.handleTurn({ conversationId, userId, text: `Send 10 USDT to ${recipient}` });
+    await expect(service.handleTurn({ conversationId, userId, text: 'confirmar la transferencia' })).resolves.toMatchObject({
+      status: 'error',
+      code: 'broadcast_uncertain',
+    });
   });
 
   describe('financial task terminal results', () => {

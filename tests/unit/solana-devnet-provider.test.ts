@@ -179,7 +179,7 @@ describe("SolanaDevnetProvider", () => {
       );
       await expect(
         p.broadcastTransfer({ ...REQUEST, network }),
-      ).rejects.toThrow(/solana-devnet/);
+      ).resolves.toMatchObject({ kind: "not_dispatched", cause: "invalid_request" });
     }
     expect(rpc.getBalance).not.toHaveBeenCalled();
     expect(signAndSend.signAndSend).not.toHaveBeenCalled();
@@ -196,9 +196,38 @@ describe("SolanaDevnetProvider", () => {
     await expect(
       p.previewTransfer({ ...REQUEST, to: SENDER }),
     ).rejects.toThrow();
+    const signer = signerDouble();
+    const broadcastProvider = provider(rpcDouble(), signer);
     await expect(
-      p.broadcastTransfer({ ...REQUEST, to: "not-base58!!" }),
-    ).rejects.toThrow();
+      broadcastProvider.broadcastTransfer({ ...REQUEST, to: "not-base58!!" }),
+    ).resolves.toMatchObject({ kind: "not_dispatched", cause: "invalid_request" });
+    expect(signer.signAndSend).not.toHaveBeenCalled();
+  });
+
+  it("classifies proven preparation failures before dispatch", async () => {
+    const signer = signerDouble();
+    const noBlockhash = provider(rpcDouble({
+      getRecentBlockhash: vi.fn().mockRejectedValue(new Error("RPC unavailable")),
+    }), signer);
+    await expect(noBlockhash.broadcastTransfer(REQUEST)).resolves.toMatchObject({
+      kind: "not_dispatched",
+      cause: "provider_unavailable",
+    });
+    expect(signer.signAndSend).not.toHaveBeenCalled();
+
+    const malformedAmount = provider(rpcDouble(), signer);
+    await expect(malformedAmount.broadcastTransfer({ ...REQUEST, amount: "0.0000000001" })).resolves.toMatchObject({
+      kind: "not_dispatched",
+      cause: "invalid_request",
+    });
+    expect(signer.signAndSend).not.toHaveBeenCalled();
+
+    const unbound = new SolanaDevnetProvider({}, { rpc: rpcDouble(), signAndSend: signer });
+    await expect(unbound.broadcastTransfer(REQUEST)).resolves.toMatchObject({
+      kind: "not_dispatched",
+      cause: "provider_unavailable",
+    });
+    expect(signer.signAndSend).not.toHaveBeenCalled();
   });
 
   it("fails closed without the persisted preview ID before RPC or signing", async () => {

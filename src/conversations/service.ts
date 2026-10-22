@@ -40,6 +40,7 @@ import {
 import { walletChainFamilyForNetwork } from "../wallet/chain-family.js";
 import {
   bindWalletForUser,
+  PrivyWalletRuntimeError,
   type WalletForUser,
 } from "../wallet/user-wallet.js";
 import {
@@ -1335,11 +1336,16 @@ export function createWalletConversationService(
         transfer.network,
       ).broadcastTransfer(transfer);
     } catch (error) {
-      broadcast = {
-        kind: "uncertain" as const,
-        reason:
-          error instanceof Error ? error.message : "Wallet provider failed.",
-      };
+      const reason =
+        error instanceof Error ? error.message : "Wallet provider failed.";
+      broadcast =
+        error instanceof PrivyWalletRuntimeError
+          ? {
+              kind: "not_dispatched" as const,
+              cause: "provider_unavailable" as const,
+              reason,
+            }
+          : { kind: "uncertain" as const, reason };
     }
 
     if (broadcast.kind === "not_dispatched") {
