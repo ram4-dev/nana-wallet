@@ -103,19 +103,16 @@ Confirm/Cancel card arbitrate on the same database claim.
 ## Recipient address memory boundary
 
 Recipient references are durable application data in Supabase PostgreSQL 17 + pgvector,
-not model context. **The primary database is the remote Supabase project
-`nana_wallet_landing` (ref `aitxhgxmiwfazynmcchs`, region us-east-1,
-PostgreSQL 17, host `db.aitxhgxmiwfazynmcchs.supabase.co`)**: the deployed app
-connects there, and the Supabase migration chain `supabase/migrations/` is
-applied to it with `supabase link --project-ref aitxhgxmiwfazynmcchs` then
-`supabase db push` (bookkept in `supabase_migrations`). That first remote
-application — including the one-time `supabase/roles.sql` role-grant bootstrap
-via psql — is still pending: the project is currently paused, and an admin must
-restore it from
-`https://supabase.com/dashboard/project/aitxhgxmiwfazynmcchs` (Supabase free
-projects pause on inactivity) before `link` succeeds. The deployed
-`DATABASE_URL` is provisioned from platform/vault environment and never
-committed. Local Supabase (`npx supabase start`, PostgreSQL 17 on
+not model context. **The primary database is the isolated remote Supabase project
+`nana_app` (ref `jnhemqouecznsziytzhm`, region us-east-1, PostgreSQL 17.11).**
+The repository is linked there, and the 18-migration chain plus the
+`recipient_app` role bootstrap are applied. For future changes, inspect
+`supabase db push --dry-run` before applying with official `supabase` CLI
+v2.113.0 or newer. The repo-pinned npm wrapper (v2.80.0) fails parsing
+`per_transfer_atomic6`. Nana Landing remains a separate waitlist project and
+is not a migration target; no waitlist data was copied. The deployed
+`DATABASE_URL` must be provisioned from platform/Vault and never
+committed; deployed runtime connectivity is not verified by this setup. Local Supabase (`npx supabase start`, PostgreSQL 17 on
 `127.0.0.1:54322`, schema applied by `npx supabase db reset`) is a disposable
 development stand-in for it; local `.env` files and test suites never point at
 the remote. The compose PostgreSQL 16 on `127.0.0.1:5432` (service `db`) is
