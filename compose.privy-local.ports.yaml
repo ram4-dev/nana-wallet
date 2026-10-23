@@ -1,0 +1,13 @@
+# Local-only override: pin host ports so the portless routes stay valid,
+# and point LiveKit at Cloud so a device can reach the media path.
+services:
+  backend:
+    ports: ["127.0.0.1:32800:3000"]
+    environment:
+      LIVEKIT_URL: ${LIVEKIT_URL:?}
+      LIVEKIT_BROWSER_URL: ${LIVEKIT_URL:?}
+  voice-worker:
+    environment:
+      LIVEKIT_URL: ${LIVEKIT_URL:?}
+  frontend:
+    ports: ["127.0.0.1:32802:80"]
