@@ -1,0 +1,19 @@
+{
+  "unit": "U2.3b1",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-capacity",
+  "branch": "feat/embedding-capacity",
+  "base": "6f0516b172b731c71eb454ecb9b313854a82e488",
+  "source_branch": "feat/embedding-recovery",
+  "parent_attempt_token": "sha256:5010f4aa1ad371194992bd4db8e197018944acbd30327b63f5b6f79b871bfec6",
+  "max_attempts": 3,
+  "total_limit": 2000,
+  "authored_target": 305,
+  "reviewed_maximum": 360,
+  "hard_maximum": 400,
+  "forecast": 350,
+  "apply_state": "ready",
+  "strict_tdd": false,
+  "ledger_owner": "parent; no acquire/settle/reset",
+  "subdivision_sha256": "a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46",
+  "cleanup": "retain worktree/dependencies/parent; remove only owned scratch resources"
+}
