@@ -17,3 +17,7 @@ The main checkout's existing npm run dev:stack completed successfully, printing 
 The complete image rebuild replaced the manually restarted containers and recreated sidecars. Final backend and worker connection probes verify linked Nana Wallet pooler, sslmode=verify-full and pgvector 0.8.2. Application source and main branch remain unchanged; restoration used existing approved tooling. Connection-crash source fix and remote embedding inference remain future implementation work.
 
 Concrete inference candidate: OpenAI text-embedding-3-small with dimensions=384 via authenticated Supabase Edge Function. Official docs establish multilingual performance and configurable dimensions: https://developers.openai.com/api/docs/guides/embeddings . This changes the model identity and requires retrieval validation/threshold assessment; it is not yet approved or implemented.
+
+## Automatic generation capability inventory
+
+Remote read-only pg_available_extensions confirms vector 0.8.2 and supabase_vault 0.3.1 installed. pg_net 0.20.4, pg_cron 1.6.4 and pgmq 1.5.1 are available but not enabled. Both embedding and embedding_model_revision columns on recipients/user_memories remain NOT NULL. No extensions or schema were changed.
