@@ -1,0 +1,258 @@
+{
+  "work_unit": "U1.2",
+  "task": "1.2",
+  "mode": "standard",
+  "strict_tdd": false,
+  "unit_status": "complete; parent settlement and independent review pending",
+  "global_validation": "incomplete; known red baseline retained",
+  "base_commit": "f8e45e23f83b336976a93a0be4b920ce36b0f119",
+  "native_attempt": {
+    "token": "sha256:f885e3a7d24398d50eda46b1f41182922a403096b8fedf28d014d7def4641963",
+    "same_parent_attempt_authenticated": "proceed; no mutation",
+    "max_attempts": 3,
+    "total_line_limit": 2000,
+    "authored_code_test_limit": 400,
+    "settlement_owner": "parent; executor did not settle/reset"
+  },
+  "sources": [
+    {
+      "path": "src/db/migrations/019_embedding_outbox.sql",
+      "sha256": "bc2b5bdaac163b7bba90f0531fd974a9920e927c02f7394ef8ea6886d0828301",
+      "bytes": 2324,
+      "additions": 43,
+      "deletions": 0
+    },
+    {
+      "path": "supabase/migrations/20261023000100_embedding_outbox.sql",
+      "sha256": "bc2b5bdaac163b7bba90f0531fd974a9920e927c02f7394ef8ea6886d0828301",
+      "bytes": 2324,
+      "additions": 43,
+      "deletions": 0
+    },
+    {
+      "path": "tests/integration/automatic-embeddings-lifecycle.test.ts",
+      "sha256": "75bfb1abba1c2f204dd1f1c3882392bc9debb2dfb7e67c21df9e8c83d1883bb8",
+      "bytes": 9253,
+      "additions": 131,
+      "deletions": 0
+    },
+    {
+      "path": "tests/integration/helpers/embedding-database.ts",
+      "sha256": "22f397560445b2221cf15b4d5107038b4550b8a147b859e004f087ea0a0e195e",
+      "bytes": 4377,
+      "additions": 12,
+      "deletions": 5
+    },
+    {
+      "path": "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "sha256": "b033a9481c97bda1e7ab564cf03c03250cdeb8c06885f641acfc37102f56101f",
+      "bytes": 4746,
+      "additions": 3,
+      "deletions": 1
+    }
+  ],
+  "authored_code_test_additions": 232,
+  "authored_code_test_deletions": 6,
+  "artifacts": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.2-authorization.json",
+      "sha256": "9a63a694afe52f5c8e93ae493a0ebc264b980e168953aaf8958bc3576052cdd5",
+      "bytes": 1474
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/status.json",
+      "sha256": "dc058a32cb3d4de4516120105131e28678f69e9b184379e539b57a9824e35082",
+      "bytes": 11660
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/tasks.md",
+      "sha256": "df617a506608b7b517cda35cf9f545a112fffa55c983d929c426140566b05a60",
+      "bytes": 3267
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/apply-progress.md",
+      "sha256": "e905378b9a20c57e19089658b01c3584221550119958c005b2ec0adc5c30f4bd",
+      "bytes": 25174
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510",
+      "bytes": 6
+    }
+  ],
+  "outputs": [
+    {
+      "name": "red",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-lifecycle.test.ts tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 1,
+      "result": "Before production SQL; 10 failed, 6 passed, 0 skipped; absent private jobs/columns, including outbox E2E.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/red.log",
+      "sha256": "39e9dd86a17a0db908a60ddcdc713dcae55747d5cc1f26c11ddd1898fe2aa216",
+      "bytes": 15152
+    },
+    {
+      "name": "focused",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-lifecycle.test.ts tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 0,
+      "result": "Initial green; 3 files, 16 passed, 0 skipped.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/focused.log",
+      "sha256": "03c48da3151c21f241de97f380afbf5f19d64f488173724fc2f4eed715735b9b",
+      "bytes": 8582
+    },
+    {
+      "name": "focused-final",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-lifecycle.test.ts tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 0,
+      "result": "Final candidate; 8 lifecycle integration + 4 foundation integration + 4 repository E2E = 16 passed, 0 skipped. Includes hostile pre-existing grants and exact source ACL preservation.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/focused-final.log",
+      "sha256": "658d737b0635f7726ca55b5507491ce177acd9828dbdc0ff0aa2b472bd44584b",
+      "bytes": 8581
+    },
+    {
+      "name": "lint",
+      "command": "npm run lint",
+      "exit_code": 0,
+      "result": "Passed, no warnings; prior to final added permission/grant assertions.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/lint.log",
+      "sha256": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+      "bytes": 73
+    },
+    {
+      "name": "typecheck",
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "result": "Passed; prior to final added permission/grant assertions.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/typecheck.log",
+      "sha256": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0",
+      "bytes": 79
+    },
+    {
+      "name": "build",
+      "command": "npm run build",
+      "exit_code": 0,
+      "result": "Passed; production SQL unchanged afterward, final tests covered by final lint/typecheck.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/build.log",
+      "sha256": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+      "bytes": 61
+    },
+    {
+      "name": "lint-final",
+      "command": "npm run lint",
+      "exit_code": 0,
+      "result": "Final candidate passed, no warnings.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/lint-final.log",
+      "sha256": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+      "bytes": 73
+    },
+    {
+      "name": "typecheck-final",
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "result": "Final candidate passed.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/typecheck-final.log",
+      "sha256": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0",
+      "bytes": 79
+    },
+    {
+      "name": "supabase-default-path",
+      "command": "docker exec -i nana-auto-embedding-db-1 psql -U postgres -d <unique owned embedding_u12_supabase_* database> -v ON_ERROR_STOP=1 -At; CREATE SCHEMA IF NOT EXISTS extensions; then stdin supabase/roles.sql and all sorted supabase/migrations/*.sql, separate invocation per file followed by SHOW search_path; assert empty jobs/disabled control/no triggers/private grants; DROP only owned database",
+      "exit_code": 0,
+      "result": "20 migrations passed on fresh PG16.12 template0; default search_path unchanged, vector in extensions; scratch dropped.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/supabase-default-path.log",
+      "sha256": "3986d387853601866dbd4066cd21ef2bf1905e3ce34040de68e5565ece105b09",
+      "bytes": 7365
+    },
+    {
+      "name": "mirror-default-path",
+      "command": "After fresh unique embedding_u12_mirror_* template0 database and supabase/roles.sql: DOTENV_CONFIG_PATH=/dev/null DATABASE_URL=postgres://postgres@127.0.0.1:55544/<owned-scratch> EVAL_REAL=0 npm run db:migrate; default-path psql metadata/assertions; DROP only owned database",
+      "exit_code": 0,
+      "result": "Actual CLI applied all 20 mirror migrations without options; default search_path unchanged, vector in public; empty jobs/disabled control/no triggers/private grants; scratch dropped.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/mirror-default-path.log",
+      "sha256": "d9dcd8026dd15737c119fb0d2ffa840358102fd5cdb5e00ab209897f0aeff7ba",
+      "bytes": 1592
+    },
+    {
+      "name": "cleanup",
+      "command": "docker exec nana-auto-embedding-db-1 psql -U postgres -d postgres -v ON_ERROR_STOP=1 -Atc \"SELECT version(); SELECT count(*) AS scratch_count FROM pg_database WHERE datname LIKE 'embedding_%'; SELECT EXISTS(SELECT FROM pg_database WHERE datname='wdk_agent') AS parent_database_retained; SELECT count(*) AS test_roles_remaining FROM pg_roles WHERE rolname IN ('anon','authenticated');\"",
+      "exit_code": 0,
+      "result": "PG16.12, 0 scratch DBs, parent DB retained, 0 temporary roles. All owned process calls completed; no background server started.",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/cleanup.log",
+      "sha256": "7f468da8d324bdc4b69f2a511598c0de639c1fa53a6e87032b60a63cbbd5d286",
+      "bytes": 137
+    }
+  ],
+  "dependency_setup": {
+    "command": "npm ci --ignore-scripts --no-audit --no-fund",
+    "exit_code": 0,
+    "result": "837 packages installed; package.json/package-lock.json unchanged; dependencies retained."
+  },
+  "preserved_u1_1_artifacts": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-evidence.json",
+      "sha256": "4007b983e07beba34aa0ec67919840b8cf337019b4bbad5028b60c3b4681dac2",
+      "bytes": 6120
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-a2-evidence.json",
+      "sha256": "075d9a3f4e21691df7b586a013f1a334cc8e1e01fac0dfae1f7ce8a5838d12e6",
+      "bytes": 9289
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-review.md",
+      "sha256": "2e8056c259a9199ac3fe4d0f80e97ab9db5ea8d21739f7432195b213a8223344",
+      "bytes": 1374
+    }
+  ],
+  "preserved_global_receipts": [
+    {
+      "name": "backend-full",
+      "command": "npm test",
+      "exit_code": 124,
+      "result": "Interrupted at 180 seconds; observed failures/timeouts in untouched suites; no aggregate pass/fail/skip count.",
+      "log": "/tmp/auto-embedding-u1-1-test.log",
+      "sha256": "2775dad5b66c75fa29817b94db7d70d09f1a2eb4f8eee6e6e290a5d9d41280d7"
+    },
+    {
+      "name": "eval",
+      "command": "npm run eval",
+      "exit_code": 0,
+      "result": "10 eval files, 29 evals, score 94%, threshold 0% passed; real-provider paths explicitly gated off.",
+      "log": "/tmp/auto-embedding-u1-1-eval.log",
+      "sha256": "19298d333cd73a9d0b170e717ac178ee0e31aac5fdda692787c50125fe397396"
+    },
+    {
+      "name": "baseline-voice",
+      "command": "npx vitest run tests/unit/voice-greeting-context.test.ts tests/unit/realtime-agent-session.test.ts",
+      "exit_code": 1,
+      "result": "2 files failed; 9 failed, 40 passed, 0 skipped; unchanged voice implementation assertions reproduced.",
+      "log": "/tmp/auto-embedding-u1-1-baseline-voice.log",
+      "sha256": "0accb282dffc9db50817022eda9c723b997fde41c111d70c50256063632a5779"
+    },
+    {
+      "name": "startup",
+      "command": "node --test scripts/docker-real-wallet.test.mjs scripts/dev-stack.test.mjs",
+      "exit_code": 1,
+      "result": "18 tests: 16 passed, 2 failed, 0 skipped; both CLI orchestration cases fail in unchanged launcher tests.",
+      "log": "/tmp/auto-embedding-u1-1-startup.log",
+      "sha256": "3abdb4b19b6c24c5620e5f95e8cf647692acf296542167367da0c1805ae73c94"
+    }
+  ],
+  "global_blocker": "Full backend suite previously timed out at 180 seconds with failures/timeouts in untouched suites; voice/startup reproductions remain red. Prior offline eval exit 0 (29 evals, 94%, threshold 0%, EVAL_REAL=0) is preserved, not live inference acceptance. No full-suite/eval rerun in correction attempt.",
+  "cleanup": {
+    "scratch_databases_remaining": 0,
+    "fixture_roles_remaining": 0,
+    "parent_database_present": true,
+    "parent_container_retained": true,
+    "owned_background_processes_remaining": [],
+    "worktree_and_dependencies": "retained for parent"
+  },
+  "rollback": "Revert only the five-file U1.2 implementation/test diff. Retain unused outbox on already-applied databases, disabled control and unchanged legacy source vectors/grants; no destructive down migration.",
+  "scope_exclusions": "No delegation, commit/push, PR, remote/secret/provider/payment operation, trigger/RPC/activation, settlement/reset or final whole-change verification.",
+  "next_recommended": "Parent settles this attempt using this manifest digest, then independently reviews U1.2; U1.3 onward unassigned.",
+  "complete_nonignored_diff": {
+    "additions": 587,
+    "deletions": 37,
+    "total": 624,
+    "files": 11
+  }
+}
