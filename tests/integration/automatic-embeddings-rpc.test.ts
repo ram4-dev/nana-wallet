@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { chains, claimsNames, completionNames, recoveryNames, embeddingDatabase } from './helpers/embedding-database.js';
+import { chains, claimsNames, completionNames, recoveryNames, capacityNames, embeddingDatabase } from './helpers/embedding-database.js';
 
 const identity = ['job_id', 'kind', 'owner_id', 'source_id', 'incarnation', 'generation', 'revision'];
 const signatures = ['embedding_begin_drain()', 'embedding_claim_jobs(uuid,integer)', 'embedding_read_job(uuid,uuid)'];
@@ -14,7 +14,7 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
     serviceOwned = !(await m.query("SELECT FROM pg_roles WHERE rolname='service_role'")).rowCount;
     if (serviceOwned) await m.query('CREATE ROLE service_role NOLOGIN');
     await fixture.applyFoundation(); await fixture.applyOutbox(); await fixture.applyLifecycle(); await fixture.applyProtection();
-    await fixture.applyClaims(); await fixture.applyCompletion(); await fixture.applyRecovery();
+    await fixture.applyClaims(); await fixture.applyCompletion(); await fixture.applyRecovery(); await fixture.applyCapacity();
   }, 30_000);
   afterAll(async () => {
     await fixture?.cleanup();
@@ -44,6 +44,7 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
         VALUES($1,$2,$2,'Mi hija','dedicated-secret-address',now(),'{"private":"excluded"}')`, [owner, `${name}${i}`]);
       await m.query("INSERT INTO user_memories(user_id,fact,confirmed_at,provenance) VALUES($1,$2,now(),'{\"private\":\"excluded\"}')", [owner, `${name} es mi hija`]);
     }
+    await expect.poll(async () => (await m.query('SELECT clock_timestamp()>=now() AS due')).rows[0].due).toBe(true);
     return (await worker('SELECT * FROM public.embedding_begin_drain()'))[0].run_token;
   };
   const claim = (run: string, limit = 4) => worker('SELECT * FROM public.embedding_claim_jobs($1,$2)', [run, limit]);
@@ -361,6 +362,141 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
     }
     expect(await readFile(`supabase/migrations/${recoveryNames.supabase}`, 'utf8')).toBe(await readFile(`src/db/migrations/${recoveryNames.mirror}`, 'utf8'));
   });
+
+  // U2.3b1: operator-only capacity, not provider-call permission.
+  const reserve = async (scope = 'query', bytes: number | null = 6000, owner: unknown = randomUUID(), job: Record<string, unknown> = {}) =>
+    (await roleQuery('postgres', 'SELECT * FROM embedding_private.reserve_request($1,$2,$3,$4,$5)', [scope,bytes,owner,job.job_id ?? null,job.claim_token ?? null]))[0];
+  const capacitySnapshot = async () => (await fixture.migration.query(`SELECT * FROM (SELECT to_jsonb(c) AS data FROM embedding_private.control c
+    UNION ALL SELECT to_jsonb(r) FROM embedding_private.reservations r UNION ALL SELECT to_jsonb(o) FROM embedding_private.owner_minutes o) s ORDER BY data::text`)).rows;
+  const expire = () => fixture.migration.query("UPDATE embedding_private.reservations SET expires_at=clock_timestamp()-interval '1 second'");
+  const deferred = { status: 'deferred', reservation_id: null, expires_at: null };
+
+  it('U2.3b1 validates input/control, atomically rolls back charges and restricts private capabilities', async () => {
+    const m = fixture.migration; const before = await capacitySnapshot();
+    expect(await reserve()).toEqual(deferred); expect(await capacitySnapshot()).toEqual(before); await enable();
+    for (const [scope,bytes,owner,job] of [['other',1,randomUUID(),{}],['query',0,randomUUID(),{}],['query',6001,randomUUID(),{}],
+      ['query',null,randomUUID(),{}],['query',1,null,{}],['query',1,randomUUID(),{ job_id: randomUUID() }],['drain',1,null,{}]] as const) {
+      const state = await capacitySnapshot();
+      await expect(reserve(scope,bytes,owner,job)).rejects.toMatchObject({ code: '22023' }); expect(await capacitySnapshot()).toEqual(state);
+    }
+    for (const change of ["claims_enabled=false","pause_code='provider_auth'","activated=false"]) {
+      await m.query('SAVEPOINT disabled'); await m.query(`UPDATE embedding_private.control SET ${change}`);
+      const state = await capacitySnapshot(); expect(await reserve()).toEqual(deferred); expect(await capacitySnapshot()).toEqual(state); await m.query('ROLLBACK TO disabled');
+    }
+    const state = await capacitySnapshot(); await m.query('SAVEPOINT admission'); expect((await reserve()).status).toBe('admitted');
+    await m.query('ROLLBACK TO admission'); expect(await capacitySnapshot()).toEqual(state);
+    await m.query("ALTER TABLE embedding_private.reservations ADD CONSTRAINT fixture_reject CHECK (false) NOT VALID");
+    await expect(reserve()).rejects.toMatchObject({ code: '23514' }); expect(await capacitySnapshot()).toEqual(state);
+    const [config] = (await m.query(`SELECT prosecdef,proconfig,r.rolsuper OR r.rolbypassrls AS bypass,
+      EXISTS(SELECT FROM aclexplode(p.proacl) a WHERE a.grantee=0 OR a.grantee<>p.proowner) AS extra_grant
+      FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE proname='reserve_request' AND pronamespace='embedding_private'::regnamespace`)).rows;
+    expect(config).toEqual({ prosecdef: true, proconfig: ['search_path=pg_catalog, extensions','row_security=off'], bypass: true, extra_grant: false });
+    for (const role of ['recipient_app','anon','authenticated','embedding_probe_public','embedding_worker','service_role']) {
+      if (!(await m.query('SELECT FROM pg_roles WHERE rolname=$1', [role])).rowCount) await m.query(`CREATE ROLE ${role} NOLOGIN`);
+      for (const sql of ['SELECT * FROM embedding_private.reservations','SELECT * FROM embedding_private.owner_minutes',
+        `SELECT embedding_private.reserve_request('query',1,'${randomUUID()}',NULL,NULL)`]) await expect(roleQuery(role,sql)).rejects.toMatchObject({ code: '42501' });
+    }
+    expect(await readFile(`supabase/migrations/${capacityNames.supabase}`, 'utf8')).toBe(await readFile(`src/db/migrations/${capacityNames.mirror}`, 'utf8'));
+  });
+
+  it('U2.3b1 enforces owner six, independent query slots, crash expiry and UTC rollover without refunds', async () => {
+    await enable(); const m = fixture.migration; const owner = randomUUID();
+    for (let n = 0; n < 6; n++) { expect((await reserve('query',1,owner)).status).toBe('admitted'); await expire(); }
+    const before = await capacitySnapshot(); expect(await reserve('query',1,owner)).toEqual(deferred); expect(await capacitySnapshot()).toEqual(before);
+    const first = await reserve(); expect(first.status).toBe('admitted');
+    expect((await m.query('SELECT extract(epoch FROM expires_at-created_at)::float8 AS seconds FROM embedding_private.reservations WHERE id=$1', [first.reservation_id])).rows[0].seconds).toBe(3);
+    await m.query("UPDATE embedding_private.reservations SET state='started' WHERE id=$1", [first.reservation_id]);
+    await m.query("SET LOCAL TIME ZONE 'Pacific/Honolulu'");
+    await m.query("UPDATE embedding_private.control SET minute_started_at=date_trunc('minute',clock_timestamp())-interval '1 minute',request_count=60,canonical_bytes=360000");
+    expect((await reserve('query',1,owner)).status).toBe('deferred'); // owner quota survives global rollover.
+    expect((await reserve()).status).toBe('admitted'); expect(await reserve()).toEqual(deferred);
+    expect((await m.query(`SELECT request_count,canonical_bytes,minute_started_at=date_trunc('minute',clock_timestamp()) AS utc FROM embedding_private.control`)).rows[0])
+      .toEqual({ request_count: 1, canonical_bytes: 6000, utc: true });
+    expect((await m.query('SELECT state FROM embedding_private.reservations WHERE id=$1', [first.reservation_id])).rows[0].state).toBe('started');
+    await expect.poll(async () => (await m.query("SELECT bool_and(expires_at<=clock_timestamp()) AS expired FROM embedding_private.reservations")).rows[0].expired, { timeout: 4000 }).toBe(true);
+    await m.query("UPDATE embedding_private.owner_minutes SET minute_started_at=minute_started_at-interval '1 minute' WHERE owner_id=$1", [owner]);
+    expect((await reserve('query',1,owner)).status).toBe('admitted');
+    expect((await m.query('SELECT request_count FROM embedding_private.control')).rows[0].request_count).toBe(2);
+  });
+
+  it.each(['recipient','fact'])('U2.3b1 %s: exact immutable drain binding, two pools and actual 40+20 budgets', async (kind) => {
+    const { run,job } = await selected(kind); const m = fixture.migration;
+    await m.query('INSERT INTO recipient_versions(recipient_id,user_id,version,name,description,address) SELECT id,user_id,version,name,description,address FROM recipients'); const sources = await snapshot();
+    for (const changed of [{ ...job, job_id: randomUUID() },{ ...job, claim_token: randomUUID() }]) expect(await reserve('drain',1,null,changed)).toEqual(deferred);
+    for (const change of ["run_token=gen_random_uuid()","lease_until=clock_timestamp()-interval '1 second'","revision='forged'","owner_id=gen_random_uuid()",
+      "source_id=gen_random_uuid()","incarnation=gen_random_uuid()","generation=generation+1",kind === 'recipient' ? "kind='fact'" : "kind='recipient'"]) {
+      await m.query('SAVEPOINT invalid_job'); await m.query(`UPDATE embedding_private.jobs SET ${change} WHERE id=$1`, [job.job_id]);
+      const state = await capacitySnapshot(); expect(await reserve('drain',1,null,job)).toEqual(deferred); expect(await capacitySnapshot()).toEqual(state); await m.query('ROLLBACK TO invalid_job');
+    }
+    for (const [scope,total,requests] of [['query',359999,0],['drain',239999,0],['query',0,60],['drain',0,40]] as const) {
+      await m.query('SAVEPOINT byte_limit'); await m.query("UPDATE embedding_private.control SET minute_started_at=date_trunc('minute',clock_timestamp()),canonical_bytes=$1,request_count=$2,query_canonical_bytes=0", [total,requests]);
+      const state = await capacitySnapshot(); expect(await reserve(scope,2,job.owner_id,scope === 'drain' ? job : {})).toEqual(deferred); expect(await capacitySnapshot()).toEqual(state);
+      if (requests === 0) expect((await reserve(scope,1,job.owner_id,scope === 'drain' ? job : {})).status).toBe('admitted'); await m.query('ROLLBACK TO byte_limit');
+    }
+    for (const target of ['embedding_private.jobs','embedding_private.control']) {
+      await m.query('SAVEPOINT bounded'); const [limit] = (await m.query(`UPDATE ${target} SET ${target.endsWith('jobs') ? 'lease_until' : 'run_until'}=clock_timestamp()+interval '2 seconds' WHERE ${target.endsWith('jobs') ? 'id=$1' : 'singleton AND $1::uuid IS NOT NULL'} RETURNING ${target.endsWith('jobs') ? 'lease_until' : 'run_until'} AS deadline`, [job.job_id])).rows;
+      expect((await reserve('drain',1,null,job)).expires_at).toEqual(limit.deadline); await m.query('ROLLBACK TO bounded');
+    }
+    const admitted = await reserve('drain',6000,randomUUID(),job); expect(admitted.status).toBe('admitted');
+    const [binding] = (await m.query('SELECT * FROM embedding_private.reservations WHERE id=$1', [admitted.reservation_id])).rows;
+    expect(binding).toMatchObject({ scope: 'drain', byte_count: 6000, owner_id: job.owner_id, job_id: job.job_id, claim_token: job.claim_token,
+      run_token: run, kind, source_id: job.source_id, incarnation: job.incarnation, generation: job.generation, revision: job.revision, state: 'reserved', started_at: null, released_at: null });
+    expect(binding.expires_at.getTime()-binding.created_at.getTime()).toBe(15000);
+    const before = await capacitySnapshot(); expect(await reserve('drain',6000,null,job)).toEqual(deferred); expect(await capacitySnapshot()).toEqual(before);
+    const others = (await m.query('SELECT id AS job_id,claim_token FROM embedding_private.jobs WHERE id<>$1 ORDER BY id', [job.job_id])).rows;
+    expect((await reserve('drain',1,null,others[0])).status).toBe('admitted'); expect(await reserve('drain',1,null,others[1])).toEqual(deferred);
+    expect((await reserve()).status).toBe('admitted'); expect((await reserve()).status).toBe('admitted'); expect(await reserve()).toEqual(deferred);
+    expect(await snapshot()).toEqual(sources);
+    // Independent budget fixture: real repeated claims and reservations, never provider starts.
+    await m.query('ROLLBACK'); await m.query('BEGIN'); const next = await selected(kind); let current = next.job;
+    for (let n = 0; n < 40; n++) {
+      expect((await reserve('drain',6000,null,current)).status).toBe('admitted'); await expire();
+      await m.query("UPDATE embedding_private.jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1", [current.job_id]);
+      [current] = await claim(next.run,1);
+    }
+    expect(await reserve('drain',1,null,current)).toEqual(deferred);
+    for (let n = 0; n < 20; n++) { expect((await reserve()).status).toBe('admitted'); await expire(); }
+    const full = await capacitySnapshot(); expect(await reserve('query',1)).toEqual(deferred); expect(await capacitySnapshot()).toEqual(full);
+    expect((await m.query('SELECT request_count,canonical_bytes,query_request_count,query_canonical_bytes FROM embedding_private.control')).rows[0])
+      .toEqual({ request_count: 60, canonical_bytes: 360000, query_request_count: 20, query_canonical_bytes: 120000 });
+    expect((await m.query('SELECT DISTINCT attempts FROM embedding_private.jobs')).rows).toEqual([{ attempts: 0 }]);
+  });
+
+  it.each(['recipient','fact'])('U2.3b1 %s: two real connections serialize last slot/budget and recheck expiry after waiting', async (kind) => {
+    const runtime = await embeddingDatabase(chain); const m = runtime.migration;
+    try {
+      await runtime.applyFoundation(); await runtime.applyOutbox(); await runtime.applyLifecycle(); await runtime.applyProtection();
+      await runtime.applyClaims(); await runtime.applyCompletion(); await runtime.applyRecovery(); await runtime.applyCapacity();
+      await m.query('SELECT embedding_private.activate()'); await m.query('UPDATE embedding_private.control SET claims_enabled=true');
+      const owner = randomUUID(); await m.query('INSERT INTO users(id,privy_did) VALUES($1,$2)', [owner,owner]);
+      const table = kind === 'recipient' ? 'recipients' : 'user_memories';
+      for (let n = 0; n < 3; n++) await m.query(kind === 'recipient' ? "INSERT INTO recipients(user_id,name,normalized_name,address,address_confirmed_at) VALUES($1,'Ana','ana','fixture',now())" : "INSERT INTO user_memories(user_id,fact,confirmed_at) VALUES($1,'Ana es mi hija',now())", [owner]);
+      await expect.poll(async () => (await m.query('SELECT bool_and(available_at<=clock_timestamp()) AS due FROM embedding_private.jobs')).rows[0].due).toBe(true);
+      const [run] = (await m.query('SELECT * FROM public.embedding_begin_drain()')).rows;
+      for (const barrier of ['slot','budget','run_expiry','job_expiry']) {
+        await m.query("UPDATE embedding_private.reservations SET state='released'");
+        await m.query("UPDATE embedding_private.control SET run_until=clock_timestamp()+interval '90 seconds',minute_started_at=date_trunc('minute',clock_timestamp()),request_count=0,canonical_bytes=0,query_request_count=0,query_canonical_bytes=0");
+        await m.query("UPDATE embedding_private.jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE state='leased'");
+        const jobs = (await m.query('SELECT * FROM public.embedding_claim_jobs($1,4)', [run.run_token])).rows;
+        if (barrier === 'slot') await m.query("SELECT * FROM embedding_private.reserve_request('drain',1,NULL,$1,$2)", [jobs[2].job_id,jobs[2].claim_token]);
+        if (barrier === 'budget') await m.query('UPDATE embedding_private.control SET request_count=59,canonical_bytes=359999,query_request_count=20,query_canonical_bytes=120000');
+        if (barrier === 'run_expiry') await m.query("UPDATE embedding_private.control SET run_until=clock_timestamp()+interval '500 milliseconds'");
+        if (barrier === 'job_expiry') await m.query("UPDATE embedding_private.jobs SET lease_until=clock_timestamp()+interval '500 milliseconds'");
+        await m.query('BEGIN'); await m.query('SELECT FROM embedding_private.control FOR UPDATE'); await m.query(`SELECT FROM ${table} FOR UPDATE`);
+        const calls = jobs.slice(0,barrier.endsWith('expiry') ? 1 : 2).map((j) => runtime.database.withUserTransactionAnonymous(async (c) => {
+          await c.query("SET LOCAL ROLE postgres"); await c.query("SET LOCAL statement_timeout='3s'"); return (await c.query("SELECT * FROM embedding_private.reserve_request('drain',1,NULL,$1,$2)", [j.job_id,j.claim_token])).rows[0];
+        }));
+        const result = Promise.all(calls); void result.catch(() => {});
+        try {
+          await expect.poll(async () => { await m.query('SELECT pg_stat_clear_snapshot()'); return (await m.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT * FROM embedding_private.reserve_request%'")).rows[0].n; }).toBe(calls.length);
+          if (barrier.endsWith('expiry')) await expect.poll(async () => (await m.query(barrier === 'run_expiry' ? 'SELECT run_until<=clock_timestamp() AS expired FROM embedding_private.control' : 'SELECT bool_and(lease_until<=clock_timestamp()) AS expired FROM embedding_private.jobs')).rows[0].expired).toBe(true);
+        } finally { await m.query('COMMIT'); }
+        const rows = await result; expect(rows.filter((r) => r.status === 'admitted')).toHaveLength(barrier.endsWith('expiry') ? 0 : 1);
+        expect(rows.filter((r) => r.status === 'deferred')).toHaveLength(1);
+        expect((await m.query('SELECT request_count FROM embedding_private.control')).rows[0].request_count).toBe(barrier === 'slot' ? 2 : barrier === 'budget' ? 60 : 0);
+      }
+    } finally { await m.query('ROLLBACK'); await runtime.cleanup(); }
+  }, 30_000);
 
   it('uses job-only SKIP LOCKED and a unique run across real concurrent connections', async () => {
     const run = await enable(); const m = fixture.migration; await m.query('COMMIT'); await m.query('BEGIN');
