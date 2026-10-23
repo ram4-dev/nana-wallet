@@ -359,3 +359,43 @@ Failed runs remain recorded: the inherited expiry test crossed a natural minute 
 Authored code/test/harness:323 additions+21 deletions=344, including SQL108,RPC153,helper3,E2E18,driver62; below reviewed360 and hard400. Initial forecast350; final reforecast344. New [u2.3b2-evidence.json](/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/u2.3b2-evidence.json) records exact commands/exits/counts, final source/log hashes, retained RED snapshot hashes, complete TOTAL and preservation checks. Prior receipts and this file's predecessor prefix remain unchanged.
 
 Parent owns native settlement,independent review and delivery. No whole-change pass:global CI/U7 and known baseline failures,PG17/PostgREST,backend/Edge header integration,provider/hosted and final acceptance remain later gates. STARTED occupancy fixtures are inherited operator fixtures; actual start/release/exhaustion/pause proof belongs to c–f. No delegation,commit,push,PR,merge,secrets,remote/provider/payment or native ledger mutation occurred;worktree/dependencies/evidence retained.
+
+
+## U2.3c: once-only starts passed; parent settlement/review pending
+
+- [x] U2.3c consumption/attempt accounting only. Whole task2.3 remains unchecked, cumulative6/25; d,e,f and final verification remain pending.
+
+Assigned fresh Worktrunk `/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts`, branch `feat/embedding-attempts`, base `d4162c580aa0dd77b8e6d26592c73380c176f54d`. Standard mode, strict_tdd=false, approved auto-chain/stacked-to-main and subdivision revision2 SHA256 a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46. Rebound inherited ready status to this checkout; parent token sha256:f4ea1033a0e52c3e8ce5a9e5d8ddeed2b4fbdc972d8991d44537ac31ced2ed9d, maxAttempts3/TOTAL2000. Parent owns ledger and delivery.
+
+Mirrored027/20261023000900 adds only `embedding_start_attempt(uuid,uuid,uuid)` and `embedding_start_query(uuid,integer)`, returning the reviewed row shapes. Drain locks source→job→control→reservation, rechecks complete identity and clock after waits, and increments attempts only for RESERVED→STARTED below5. Query requires exact reservation scope/bytes and retains admission+3s expiry. Only started permits a provider call; duplicates return already_started. Drain returns min(start+15s,job lease,run lease). Worker/service-only grants, fixed definer search_path and bypass ownership are verified; activation/claims/semantics stay false by default.
+
+| Work Unit Evidence | Exact result |
+|---|---|
+| Threat RED before production | Focused RPC command in u2.3c-evidence.json: red-final.log exit1,14 failed/68 passed/0 skipped. Five matching hashed source snapshots remain retained, including both comment-only SQL files. |
+| Focused GREEN | Same maxWorkers1 command, focused-final.log exit0,82 passed/0 skipped on final source. |
+| Combined runtime/repository E2E | RPC+foundation+lifecycle+repository E2E command, combined-final.log exit0,150 passed/0 skipped:82 RPC,44 lifecycle,4 foundation,20 E2E. |
+| Complete fresh chains | New38-line driver through unchanged shared runner:exit0,28 Supabase psql+roles migrations and28 mirrors through actual npm db:migrate, default paths and extensions/public vector placement. Actual both-domain drain starts, query deadline, duplicate/cross-scope refusal and counters pass. |
+| Static/build/parity | npm run lint,npm run typecheck,npm run build,SQL cmp and git diff --check:exit0. Package/lock and legacy SQL unchanged. |
+| Nonvacuity | Both domains/chains:forged reservation tuple/IDs,token/run rotation,new generation,archive/delete/reinsert,rollback on forced job-update failure and successful rollback,three drain expiry causes after observed source/job/control/reservation lock waits,concurrent duplicate drain/query starts,query bytes/grants/gates/deadline and post-wait expiry. Real admission/start/failure reaches attempts1..5;duplicates/denied/unused work spend0 and claim cannot authorize6. Operator fixture expiry/due time frees capacity between starts; no fake STARTED counts or external calls. |
+| Rollback/cleanup | Revert only six source/test/harness paths plus this part's status/evidence/progress delta. Applied DB:disable claims/revoke only the two starts;retain attempts,reservations,minute charges and all business/history/RLS state. All owned commands completed;zero scratch databases/connections/fixture roles after removing newly owned embedding_worker. Parent wdk_agent/container,worktree,deps and evidence retained. |
+
+The first GREEN had80 passes and two failures in inherited capacity fixtures that crossed a real UTC minute. The fixtures now wait at most2s when less than2s remains before minute rollover; the separate rollover assertions remain. No production capacity/lease/backoff values or test timeout limits were weakened. Final focused and combined runs pass. Additional query expiry uses labelled operator fixture expiry while the existing admission+3s assertion proves the unchanged deadline.
+
+Final authored code/test/harness count377 additions+deletions, including both72-line SQL copies and the38-line new driver; reviewed maximum380/hard400. Initial forecast378. Generated RED copies are retained as ignored logs, hash-bound separately; no transient alternative executable harness was authored. u2.3c-evidence.json records source/log hashes,commands/exits/counts and complete nonignored TOTAL. All predecessor evidence and this progress prefix remain unchanged.
+
+Parent settlement/independent review remains pending. Global backend/voice/startup baseline and CI correction remain separate parent work;PG17/PostgREST,Edge/provider integration,release/exhaustion/pause and hosted/final acceptance remain later gates. No whole-change pass is claimed. No delegation,commit,push,PR,merge,secret,remote/provider/payment or native ledger mutation occurred.
+
+## U2.3c attempt 2: atomic start publication correction
+
+Parent settled attempt1 FAILED at manifest SHA256 87062e7216da3ac2a22eb31bb1bfaf2f154ad0d34b661ea543e21343a2a22f54; its bytes and all historical evidence remain unchanged. Assignment: same objective, review candidate e599854, original unit base d4162c5; parent-owned attempt2 token sha256:4b708fd91cfa7dae89c0ddd1e9af0de3657472eb434413675fbec819c1831f4f, max3/TOTAL2000. Standard mode, strict_tdd=false; no native ledger operation or delivery performed.
+
+One DO statement now owns the existing owner check, both dynamically created start functions, revokes and grants. Function bodies, signatures and final permissions are unchanged. Reforecast before SQL:400 hard authored lines rather than prior380; actual400 includes both74-line SQL copies,189 RPC changes,4 helper lines,21 E2E changes and38 existing driver lines. Attempt2 source delta47 additions+deletions versus e599854; complete native cumulative accounting is in u2.3c-a2-evidence.json.
+
+| Work Unit Evidence | Result |
+|---|---|
+| Mapped RED before correction | New fault injection through the existing fresh scratch helper and actual default psql autocommit, both chains: corrected RED exit1,2 failures because BOTH functions survive pregrant failure. Initial RED also exposed mirror aggregate introspection; fixed before SQL and both logs/snapshots retained. |
+| Focused GREEN / runtime | Same fault injection exit0,2 passed,82 name-filtered; both functions absent after failure and predecessor function definitions/ACLs unchanged. Combined real RPC/lifecycle/foundation/repository E2E exit0,152 passed,0 skipped (84+44+4+20). |
+| Full chains / static | Unmodified38-line driver copied byte-for-byte into new ignored log directory: both fresh28-migration chains pass, Supabase ordinary psql and actual mirror npm db:migrate; source/drain/query proofs retained. lint,typecheck,build,SQL parity and diff checks pass. No new executable probe beyond the counted18-line regression and1-line helper exposure. |
+| Rollback / cleanup | Revert only attempt2's two SQL wrappers,regression/helper and this append/new manifest. No applied persistent DB was changed; all owned scratch DBs/connections and newly created embedding_worker removed;parent DB/container/worktree retained. All owned processes completed;no server or external calls. |
+
+Scoped correction is ready for parent settlement and fresh independent review. Whole2.3 remains unchecked,6/25; later d/e/f,global baseline/CI,PG17/PostgREST,Edge/provider/hosted and final acceptance gates remain. This append preserves every prior progress byte;new logs/command records are separately hash-bound without rewriting original evidence.
