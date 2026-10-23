@@ -26,6 +26,8 @@ export const recoveryNames = { supabase: '20261023000600_embedding_recovery.sql'
 
 export const capacityNames = { supabase: '20261023000700_embedding_capacity.sql', mirror: '025_embedding_capacity.sql' };
 
+export const admissionNames = { supabase: '20261023000800_embedding_admission.sql', mirror: '026_embedding_admission.sql' };
+
 export async function embeddingDatabase(chain: typeof chains[number]) {
   const configured = process.env.EMBEDDINGS_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!configured) throw new Error('A loopback embedding test database is required; tests never skip.');
@@ -98,6 +100,7 @@ export async function embeddingDatabase(chain: typeof chains[number]) {
       applyCompletion: () => applyMigration(completionNames[chain]),
       applyRecovery: () => applyMigration(recoveryNames[chain]),
       applyCapacity: () => applyMigration(capacityNames[chain]),
+      applyAdmission: () => applyMigration(admissionNames[chain]),
     };
   } catch (error) {
     await cleanup();

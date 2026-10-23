@@ -1,0 +1,27 @@
+[
+  {
+    "path": "src/db/migrations/026_embedding_admission.sql",
+    "snapshot": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/red-source/src/db/migrations/026_embedding_admission.sql.log",
+    "sha256": "b5bc751e230a483e4aeadd5d9fd3b8bbf860954e99aea731857c231e0f493c65"
+  },
+  {
+    "path": "supabase/migrations/20261023000800_embedding_admission.sql",
+    "snapshot": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/red-source/supabase/migrations/20261023000800_embedding_admission.sql.log",
+    "sha256": "b5bc751e230a483e4aeadd5d9fd3b8bbf860954e99aea731857c231e0f493c65"
+  },
+  {
+    "path": "tests/integration/automatic-embeddings-rpc.test.ts",
+    "snapshot": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/red-source/tests/integration/automatic-embeddings-rpc.test.ts.log",
+    "sha256": "9760c7ecec98e9aeb9e65f87c2e83b3d84e9fdfec402160478f75a57bcbc558c"
+  },
+  {
+    "path": "tests/integration/helpers/embedding-database.ts",
+    "snapshot": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/red-source/tests/integration/helpers/embedding-database.ts.log",
+    "sha256": "7751ed7c9fce2bc410744c6233c3f8ff152aa806133ad81e49c9abef77962db6"
+  },
+  {
+    "path": "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+    "snapshot": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/red-source/tests/e2e/automatic-embeddings-foundation.e2e.test.ts.log",
+    "sha256": "de1d2d805cc9fc6db85455a25f261d5bbb15bcd0f3be661f6f0325f347ecb79d"
+  }
+]

@@ -1,0 +1,284 @@
+{
+  "unit": "U2.3b2",
+  "status": "scoped implementation/checks passed; parent settlement/review pending; no whole-change pass",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission",
+  "branch": "feat/embedding-admission",
+  "base": "6e40da6ff004895ccab4e42521262de9f72cf2c1",
+  "parent_branch": "feat/embedding-capacity",
+  "mode": "standard;strict_tdd=false;auto-chain;stacked-to-main",
+  "parent_attempt_token": "sha256:665e20b6e888b3bf5302a80e5fd6798c60ce5a295835c4be3040ff2cb2ac1779",
+  "limits": {
+    "max_attempts": 3,
+    "reviewed_target": 305,
+    "reviewed_max": 360,
+    "source_hard_max": 400,
+    "total_max": 2000,
+    "initial_forecast": 350,
+    "final_authored": 344,
+    "additions": 323,
+    "deletions": 21
+  },
+  "ledger": "none; parent owns acquire/settle/reset and delivery; inherited ready status rebound locally with explicit provenance",
+  "task_progress": "U2.3b2 subunit checked only in append-only progress;whole2.3 unchecked;6/25",
+  "subdivision_sha256": "a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46",
+  "source_identity": {
+    "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/source-identity.json",
+    "sha256": "454aff08d08aabb8334bb0435efb014b974c26c1904c9be21016eb9b4d45974b",
+    "files": 6,
+    "all_harness_code_counted": "new stage driver62;unchanged shared complete-chain runner adds0"
+  },
+  "reused_harness": {
+    "path": "tests/integration/helpers/embedding-complete-chains.py",
+    "sha256": "0a68552649a8d729dea9757dbc5c3b117c35125f5b29c54dc805abf1d911bd4a"
+  },
+  "red_sources": {
+    "index": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/red-sources.json",
+    "sha256": "a51d3e6cb0961d80cef3ab933fb7824379d45cd564533684ff400042a450959c",
+    "controlling_log": "red-final.log",
+    "snapshot_files": 5,
+    "base_reconstructs_other_source": true,
+    "retention": "ignored .log files retained locally; snapshot hashes in index; snapshots captured before production SQL; later differences are fixture corrections and formatting"
+  },
+  "checks": [
+    {
+      "command": "npm ci --ignore-scripts --no-audit --no-fund",
+      "runs": [
+        [
+          "dependencies.log",
+          0,
+          "837 packages; package/lock unchanged"
+        ]
+      ]
+    },
+    {
+      "command": "npx tsc -p tsconfig.test.json --noEmit",
+      "runs": [
+        [
+          "pretype.log",
+          0,
+          "preproduction test typecheck"
+        ]
+      ]
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts --maxWorkers=1",
+      "runs": [
+        [
+          "red.log",
+          1,
+          "16 failed/52 passed/0 skipped; preliminary missing RPC"
+        ],
+        [
+          "red-final.log",
+          1,
+          "16 failed/52 passed/0 skipped; exact retained preproduction snapshots"
+        ],
+        [
+          "green-rpc.log",
+          1,
+          "1 failed/67 passed/0 skipped; inherited minute-boundary fixture"
+        ],
+        [
+          "green-rpc-final.log",
+          1,
+          "1 failed/67 passed/0 skipped; inherited immediate new-generation claim"
+        ],
+        [
+          "focused.log",
+          0,
+          "68 passed/0 skipped; before budget reclaim fixture correction"
+        ],
+        [
+          "focused-final.log",
+          0,
+          "68 passed/0 skipped; final source"
+        ]
+      ]
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts tests/integration/automatic-embeddings-foundation.test.ts tests/integration/automatic-embeddings-lifecycle.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts --maxWorkers=1",
+      "runs": [
+        [
+          "combined.log",
+          1,
+          "1 failed/133 passed/0 skipped; inherited immediate budget reclaim"
+        ],
+        [
+          "combined-final.log",
+          0,
+          "134 passed/0 skipped;68 RPC+44 lifecycle+4 foundation+18 repository E2E; final source"
+        ]
+      ]
+    },
+    {
+      "command": "EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 DOTENV_CONFIG_PATH=/dev/null python3 openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/check-chains.py",
+      "runs": [
+        [
+          "chains-run.log",
+          0,
+          "27 Supabase and27 mirror migrations; both actual scoped runtime proofs pass"
+        ]
+      ]
+    },
+    {
+      "command": "npm run lint",
+      "runs": [
+        [
+          "lint.log",
+          0,
+          "before fixture corrections"
+        ],
+        [
+          "lint-final.log",
+          0,
+          "intermediate fixtures"
+        ],
+        [
+          "lint-final-source.log",
+          0,
+          "final source"
+        ]
+      ]
+    },
+    {
+      "command": "npm run typecheck",
+      "runs": [
+        [
+          "typecheck.log",
+          0,
+          "before fixture corrections"
+        ],
+        [
+          "typecheck-final.log",
+          0,
+          "intermediate fixtures"
+        ],
+        [
+          "typecheck-final-source.log",
+          0,
+          "final source"
+        ]
+      ]
+    },
+    {
+      "command": "npm run build",
+      "runs": [
+        [
+          "build.log",
+          0,
+          "before fixture corrections"
+        ],
+        [
+          "build-final.log",
+          0,
+          "intermediate fixtures"
+        ],
+        [
+          "build-final-source.log",
+          0,
+          "final source"
+        ]
+      ]
+    },
+    {
+      "command": "cmp src/db/migrations/026_embedding_admission.sql supabase/migrations/20261023000800_embedding_admission.sql",
+      "runs": [
+        [
+          "parity.log",
+          0,
+          "byte-identical SQL"
+        ]
+      ]
+    },
+    {
+      "command": "git diff --check",
+      "runs": [
+        [
+          "diff-check.log",
+          0,
+          "no whitespace errors"
+        ]
+      ]
+    },
+    {
+      "command": "python3 -",
+      "runs": [
+        [
+          "red-source-verification.log",
+          0,
+          "five matching retained RED sources; verification code has no runtime semantics"
+        ]
+      ],
+      "stdin": "from pathlib import Path\nimport hashlib,json\nroot=Path('openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2')\nrows=json.loads((root/'red-sources.json').read_text())\nfor r in rows:\n assert hashlib.sha256(Path(r['snapshot']).read_bytes()).hexdigest()==r['sha256'],r['path']\nfor r in rows[:2]:\n assert Path(r['snapshot']).read_text()=='-- U2.3b2 regression reservation; public admission is intentionally absent.\\n'\nlog=(root/'red-final.log').read_text()\nassert '16 failed | 52 passed (68)' in log\nprint('PASS 5 exact RED source snapshots; both SQL comment-only; controlling RED 16 failed / 52 passed / 0 skips; base 6e40da6 retains all other source bytes')\n"
+    },
+    {
+      "command": "docker exec -i nana-auto-embedding-db-1 psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At",
+      "stdin": "SELECT 'scratch_databases='||count(*) FROM pg_database WHERE datname LIKE 'embedding%';\nSELECT 'scratch_connections='||count(*) FROM pg_stat_activity WHERE datname LIKE 'embedding%';\nDROP ROLE IF EXISTS embedding_worker;\nSELECT 'fixture_roles='||count(*) FROM pg_roles WHERE rolname IN ('embedding_worker','service_role','anon','authenticated','embedding_probe_public');\nSELECT 'parent_retained='||EXISTS(SELECT FROM pg_database WHERE datname='wdk_agent');\nSELECT version();\n",
+      "runs": [
+        [
+          "cleanup.log",
+          0,
+          "zero scratch DBs/connections/fixture roles; parent retained; PG16.12"
+        ]
+      ]
+    }
+  ],
+  "expanded_chain_commands": {
+    "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/chain-commands.json",
+    "sha256": "38b4088fdfc088c7ec8cf4cc0203fa870f2b87ef57ec8f92ae5a859fe1255452",
+    "all_exits_zero": true
+  },
+  "logs": {
+    "build-final-source.log": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+    "build-final.log": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+    "build.log": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+    "chains-run.log": "d66a52e2c474dc2705915300e8ba3541c3e07464e02c13bdcc74e6bbafdaa6e6",
+    "chains.log": "0dac0507d4b55468f5808bb9a1ab4fb91bf88c8666847737a5d6a15d06f685da",
+    "cleanup.log": "9253ed7268be6183133ad3d4b185b72dc790d3e7dea792259649312ea64cbd51",
+    "combined-final.log": "7b80c24312fb921699c63851d6536a110205ba664942706b50fec17b7fb7fe73",
+    "combined.log": "d9ac01a11fb2f6e7459d20f77110a86e3f02a5a7bc8f0451ac4357e12667fc80",
+    "dependencies.log": "455be00eeac4af54b4d53c719be771f7d60d40c0cb285951d3795a82a7f67701",
+    "diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused-final.log": "596fc9d74b94d9a7f6954983a4faa0e6691c529b706fabbd784608f3f54e8600",
+    "focused.log": "9b4a171dc260999440f433283a9157900ad7d3d2330426dc14e5ccaadd72d3a0",
+    "green-rpc-final.log": "a480c77285742d8ad3cc773934ec7e6215ffd629247977b5aa904e84e2c3c810",
+    "green-rpc.log": "0aebfef395b55a981230ffc441371a97549a3387fbb82388a92a4ec6a89c9ae3",
+    "lint-final-source.log": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+    "lint-final.log": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+    "lint.log": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+    "parity.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "pretype.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "red-final.log": "5a506a8b6556edca497667439d8493d7a8346d95b0aed32e708c07fdb69e9cfb",
+    "red-source-verification.log": "9dbd61c9d195496d543d124127e172aedb1f22c58a5590ddae1f5f45e1d42632",
+    "red.log": "91cbb926f5a311d9477482860a661ff43d415ff78881d422af2e87a7de28047b",
+    "typecheck-final-source.log": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0",
+    "typecheck-final.log": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0",
+    "typecheck.log": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0"
+  },
+  "nonvacuity": "Actual recipient_app withUserTransaction for both owners/domains; worker/service forged-query refusal; actual service drain binding; untrusted session cannot SET app role; private/claim/retry grants denied. Both domains/chains repeat public capacity60/360000,drain40/240000,bytes1..6000,owner6,independent slots2,expiry/UTC rollover,full tuple/run/lease fencing,duplicates,no-charge and rollback; two connections race last slot,budget and owner quota. Reserved IDs bind full immutable identity and spend0 attempts; dormant real repositories preserve business/history/RLS. STARTED fixture is operator-authored,not future consumption proof. No HTTP/provider boundary exists in this unit.",
+  "fixture_corrections": "Retained failures: natural minute boundary reset; immediate new-generation and budget reclaims returned no row. Assertions now use actual minute identity and bounded SQL eligibility checks with explicit reclaim cardinality. No production timestamp/lease/backoff,assertion or timeout weakening; production SQL unchanged since first green candidate.",
+  "preservation": {
+    "index": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3b2/preserved.json",
+    "sha256": "419f3a025735a440edc73371febb2b68e8c93d9271d67ebd011caecf456cb3a0",
+    "verified_files": 513,
+    "mismatches": 0,
+    "progress_prefix_unchanged": true,
+    "package_lock_unchanged": true
+  },
+  "rollback": "Revert only six paths in source-identity plus this part evidence/status/progress delta. Applied DB:disable claims/revoke embedding_admit_request(text,integer,uuid,uuid); retain private reservations/counters and all business/history/RLS state; no destructive down migration or legacy-reader restoration.",
+  "cleanup": "All owned commands returned; no server started; zero scratch DBs/connections/fixture roles after removing only newly-owned embedding_worker; parent wdk_agent/container,assigned worktree,deps and logs retained.",
+  "remaining": "c start,d release,e exhaustion,f pause; whole2.3 and final verify pending. Global CI/U7 and historical baseline failures remain parent work,not rerun. PG17/PostgREST,backend/Edge header integration,provider/hosted/browser/final acceptance later; no full-suite/eval/whole-change pass.",
+  "forbidden_actions_performed": false,
+  "complete_snapshot": {
+    "algorithm": "SHA256 of sorted changed/nonignored path NUL file-SHA256 LF; excludes manifest itself; ignored logs/snapshots bound separately",
+    "files": 13,
+    "sha256": "fadd80272709a7737ff015241702a67fff4b9f417df6f1e1aea829109120a785"
+  },
+  "total_diff": {
+    "additions": 1633,
+    "deletions": 49,
+    "total": 1682,
+    "ceiling": 2000,
+    "includes": "all tracked additions/deletions,all nonignored new files,generated chain records,metadata and manifest itself;ignored raw logs/snapshots hash-bound separately"
+  }
+}

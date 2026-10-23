@@ -1,0 +1,23 @@
+{
+  "unit": "U2.3b2",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission",
+  "branch": "feat/embedding-admission",
+  "base": "6e40da6ff004895ccab4e42521262de9f72cf2c1",
+  "parentBranch": "feat/embedding-capacity",
+  "parentAttemptToken": "sha256:665e20b6e888b3bf5302a80e5fd6798c60ce5a295835c4be3040ff2cb2ac1779",
+  "maxAttempts": 3,
+  "reviewedTarget": 305,
+  "reviewedMax": 360,
+  "hardSourceMax": 400,
+  "totalMax": 2000,
+  "precodeForecast": 350,
+  "delivery": "auto-chain; stacked-to-main; parent owns ledger and delivery",
+  "subdivisionSha256": "a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46",
+  "roleInventory": [
+    "recipient_app"
+  ],
+  "databaseInventory": [
+    "wdk_agent"
+  ],
+  "cleanup": "retain assigned fresh Worktrunk and parent container/database"
+}
