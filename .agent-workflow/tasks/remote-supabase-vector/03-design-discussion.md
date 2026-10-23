@@ -1,4 +1,4 @@
-# Design discussion revision 1 (proposed)
+# Design discussion revision 2 — inference decision resolved
 
 ## Runtime database
 Use only the existing Nana Wallet remote database for interactive app runtime, retaining verify-full TLS and owner-scoped database queries. Restore the managed domain-to-backend path and retire duplicate local application workers. Local disposable databases remain for CI/integration tests as required by AGENTS.md. Preserve all prior local volumes; data migration scope needs a separate inventory and explicit decision.
@@ -16,3 +16,9 @@ Frontend HTTPS 200, same-origin API health 200, binding request unauthenticated 
 Approval: database/runtime restoration authorized by current user request and existing design; inference design pending user response. Outline not yet drafted or reviewed.
 
 Concrete proposed provider: OpenAI text-embedding-3-small, API dimensions=384, behind the Supabase Edge Function. This keeps the existing vector column size, but does not make old and new model vectors compatible. Validate Spanish contact resolution, ambiguity and false positives; do not mechanically reuse old score thresholds. Provision credentials through vault-env and Supabase secret management, never frontend/env commits. No provider call or function deployment has occurred.
+
+## Controlling user decision, 2026-10-23
+
+Ramiro answered the architecture question with "Mantener generación actual por ahora". Retain the existing backend multilingual embedding model and its 384-dimensional output. Supabase remote remains the application database and vector query/storage destination. Do not introduce an Edge Function, external embedding provider, model replacement or embedding backfill under this task. All prior remote-inference proposals above are superseded by this explicit decision.
+
+Runtime database restoration is complete. Existing local application DB volumes remain preserved and stopped; no legacy data migration was requested or performed. The remote connection termination crash remains a reliability finding to address separately with scoped validation. CI remediation continues under its existing plan: deterministic test embeddings and prefetch isolation affect test execution only, preserving the production model.
