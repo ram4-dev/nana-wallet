@@ -13,4 +13,9 @@ Other scope, SDD prerequisites, auto-chain delivery, fencing/RLS/auth, cutover/r
 
 ## Round 2
 
-Revision2 re-review pending. Human outline approval remains pending; implementation has not started.
+Task: node:delegated-task:command%3Amcp%3Abc1b4cfa-6e7d-4d78-a9e8-dd9d51d4c688%3Adelegate-task%3Aremote-supabase-auto-embedding-outline-r2-20261023.
+Reviewer: Codex gpt-6.1-sol, reasoningEffort high, serviceTier default.
+Verdict: PASS. C1 resolved; zero critical or controlling findings.
+Exact reviewed revision2 SHA256: 1ed65e6132f95f061c197c0b34623e473fe782b452f360a12cf21d753dfaaa4c.
+Evidence: final gate and candidate selection share a post-HTTP snapshot; precheck cannot authorize results; both domains have required two-connection insert/reactivate/edit races and positive control, with recipient version revalidation preserved.
+CI red and the prior connection crash remain documented separate integration dependencies. Review was documentary only, with no changes, tests, database connections, secrets, provider calls or delegation. Human outline approval remains pending; implementation has not started.
