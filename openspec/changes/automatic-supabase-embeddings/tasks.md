@@ -21,7 +21,7 @@ Approved design/outline gates are complete. Root strict_tdd=false remains unchan
 
 ## 2. Fenced RPCs
 
-- [ ] 2.1 U2.1 Add claim/read RPCs; `automatic-embeddings-rpc.test.ts` T4/T6 first.
+- [x] 2.1 U2.1 Add claim/read RPCs; `automatic-embeddings-rpc.test.ts` T4/T6 first.
 - [ ] 2.2 U2.2 Add completion RPC; stale/forged completion tests first.
 - [ ] 2.3 U2.3 Add recovery/budget RPCs; T7 tests first.
 - [ ] 2.4 U2.4 Prove two-connection fencing in `automatic-embeddings-races.test.ts`.
