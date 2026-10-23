@@ -1,0 +1,24 @@
+{
+  "work_unit": "U1.4",
+  "task": "1.4",
+  "role": "sdd-apply executor",
+  "worktree": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-protection",
+  "branch": "feat/embedding-protection",
+  "source_branch": "feat/embedding-lifecycle",
+  "base_commit": "daf443ff75b4e169fd430ab609f5892fd883215b",
+  "initial_status": "clean",
+  "delivery_strategy": "auto-chain",
+  "chain_strategy": "stacked-to-main",
+  "strict_tdd": false,
+  "outline_approved_sha256": "1ed65e6132f95f061c197c0b34623e473fe782b452f360a12cf21d753dfaaa4c",
+  "native_attempt": {
+    "parent_owned": true,
+    "token": "sha256:44277754c56bf0039c3fd8f160f805ccf021d8d53b3790b55ee4aa12c8a9e968",
+    "max_attempts": 3,
+    "total_line_limit": 2000,
+    "source_test_line_limit": 400
+  },
+  "authorization": "Explicit parent assignment authorizes this exact fresh Worktrunk and ONLY U1.4. Preserve collaborators and predecessor evidence. No delegation,git writes,secret,remote,provider,payment,acquire,settle,reset. Parent owns ledger/delivery.",
+  "status_binding": "Native sdd-status automatic-supabase-embeddings --cwd <this-worktree> --json --instructions generated ready state and local allowed roots; confirmed supplied live token.",
+  "cleanup": "Retain worktree/dependencies and parent container/database; remove only owned scratch databases/roles/processes."
+}

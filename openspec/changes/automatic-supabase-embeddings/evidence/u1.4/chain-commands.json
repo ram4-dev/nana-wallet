@@ -1,0 +1,672 @@
+[
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "691e4b64d448c6cffd680247056c2f445e4fbf2dcbc9be821934064e906d1ce7",
+    "stdin_sql": "CREATE DATABASE \"embedding_u14_supabase_0a1cca9f2369\" TEMPLATE template0;"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "cf206c89664ece5cb95478f3b64539de722afc073b946d035004ff395e9dbaf2",
+    "stdin_sql": "CREATE SCHEMA extensions;\nSHOW search_path;"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "03f8f433120c1ec0e212aac8b1807957317f3582cc82048d58d8259d0ac9fee4",
+    "stdin_path": "supabase/roles.sql",
+    "stdin_source_sha256": "7ccbe48fa30e91328881e801dabbf8b686ec467b6b59512b46da968df20faef4",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "07ac5425dc7846b24bf823a7e263f3b034cb34527a17585e10db1275030e8725",
+    "stdin_path": "supabase/migrations/20260901000000_recipient_memory.sql",
+    "stdin_source_sha256": "06b134a94525833d5ea80c5cd1157545bfca0a2c9534575109cb211b8a022125",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "1e85236e08a5b0e9dc8ebed610a67a22349cf3540631ea73a3fce34fc2b847b6",
+    "stdin_path": "supabase/migrations/20260901000100_conversations.sql",
+    "stdin_source_sha256": "6709eb65f6d9b7c8b0f8a6808acc9c9cc07caeaca0c40f3ac17f342dffef43ca",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "002e0920b14f2b64f613c07e01f78cc23d9ba7ad22c6908db3d74b9757907933",
+    "stdin_path": "supabase/migrations/20260901000200_conversation_live_leases.sql",
+    "stdin_source_sha256": "b6a318934b9f01b8228ac074e8d17749688c5bde7e53cc2176d30acb0747f28b",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "5a234d7e1ec18548cc696ae63b13e7378af95cfc415859461454e73a187d734c",
+    "stdin_path": "supabase/migrations/20260901000300_users.sql",
+    "stdin_source_sha256": "19fb4e87f845ffcec01bfbbf743a5d04aa95d4f7953354eff3c8ab70ea31197f",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "5ddb10848a421c444ac489403d8b4de7e20549c0aedc0064e4cf18bdf93abde7",
+    "stdin_path": "supabase/migrations/20260901000400_recipient_versions.sql",
+    "stdin_source_sha256": "f1851a8d5491c415c8516ea6689a1da2d8e58fd819b904dd1e783054868887c3",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "b308befabbe5e11157d9c219ef0accee15849a530cbffdbd2829edb154b9ff4e",
+    "stdin_path": "supabase/migrations/20260901000500_embedded_wallets.sql",
+    "stdin_source_sha256": "d576d60addb539f8009a764722d970699d31389d9a367ef209c299e0b2ce9cd1",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "c241013f954fbbca8636acec4b4d12ad3c6d10ba1427fd8065a389d2d9bf8756",
+    "stdin_path": "supabase/migrations/20260901000600_conversation_language_default_en.sql",
+    "stdin_source_sha256": "92b83a38c5576dfb89e8dcad9c29f7d5348e93f40d3d61bc3e17ff64dc12f4d1",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "04ec3a6963d10748a87329300ba70425b6cb18c336ff2764678705e7a91d87ef",
+    "stdin_path": "supabase/migrations/20260901000700_delegated_grants.sql",
+    "stdin_source_sha256": "a29e04a4d1358739257008e9e6987e6d6efea0bf790c399a5adc65acb7fb15d7",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "817604a9dee52dc1fe50773234690cd65bf194e71e7917169944fac6598b35b3",
+    "stdin_path": "supabase/migrations/20260901000800_delegated_grant_positive_claim_amount.sql",
+    "stdin_source_sha256": "1f0e3e9c1d6c40f56af946dd85a064de2861208da35f15c009201030900f120e",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "d022cc15237e28178c0340b3b7b6b274a0c5c1fd803536a8c822bf5f8285071c",
+    "stdin_path": "supabase/migrations/20260901000900_canonical_signer_binding.sql",
+    "stdin_source_sha256": "26653fedfb3281990bc2828fc66d7937dbf702aa311e5d4074fdbecdd14a9669",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "e7b507ae23a0905b1ee55c4f3b477815e32abb80311fb0879edc93f7f63e377a",
+    "stdin_path": "supabase/migrations/20260901001000_solana_grant_lamports.sql",
+    "stdin_source_sha256": "8248681bc45d67142348ebb05350802172a6d26e1e7615cbc256640747b61377",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "b20bff7c22c14d65c8785ddd416f9a72e60bf0260c0008c5faf36739ff624d40",
+    "stdin_path": "supabase/migrations/20260901001100_grant_claim_release.sql",
+    "stdin_source_sha256": "cdabaabf419b9136b0e6163ba0961f81a8246a1e34c70ac76dfab184d6b5e628",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "d022cc15237e28178c0340b3b7b6b274a0c5c1fd803536a8c822bf5f8285071c",
+    "stdin_path": "supabase/migrations/20261005000100_chain_scoped_recipients.sql",
+    "stdin_source_sha256": "6aead10c34e9572473c38aef476a80b92ecb63518667c3ef89676e1f3e81cca8",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "0634cbcadf70e07d551d6f46a387c859e8b548c6066f1b6bc3a3e722fc832719",
+    "stdin_path": "supabase/migrations/20261005000200_wallet_notifications.sql",
+    "stdin_source_sha256": "7060fa19e3c74b072f3228636b3292a51ffa5388d36553d31ce7dc87955a26d1",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "c241013f954fbbca8636acec4b4d12ad3c6d10ba1427fd8065a389d2d9bf8756",
+    "stdin_path": "supabase/migrations/20261005000300_session_floor.sql",
+    "stdin_source_sha256": "481232df089ab90df79b9eda67255388b82236e07e075c1ca5b11c3bf651f0b1",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "97445cbc1c2abb1b7ab7071caeb05ac0042580562e4824019b72a7bfb4e09247",
+    "stdin_path": "supabase/migrations/20261005000400_recipient_policy_sync.sql",
+    "stdin_source_sha256": "512aabe50f8a92bbfe60e52804878dfba6afa469cb1da973c9833d5fb2b33b95",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "d022cc15237e28178c0340b3b7b6b274a0c5c1fd803536a8c822bf5f8285071c",
+    "stdin_path": "supabase/migrations/20261005000500_contact_action_proposal_payload.sql",
+    "stdin_source_sha256": "24b3484b6c7d9f3498343e829a6018086fe482183506a8b5cda7cff3ba7b8818",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "7be27fd3ba098b833f42e6b5b8c478c5d322eadfefbf36bb1f75434172556c7c",
+    "stdin_path": "supabase/migrations/20261005000600_recipient_alias_provenance.sql",
+    "stdin_source_sha256": "2c79516a90efe42f2c8919632550666f28fe36055f4aff2d72d5f97db4f9b019",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "ffd4f13dceff92593a79f4ec1891fed2e2d6b31c781186bd8c1741c573158d32",
+    "stdin_path": "supabase/migrations/20261023000000_embedding_foundation.sql",
+    "stdin_source_sha256": "cd8a5d246e859457f01094e8e8ba2d300be5722a50611315b07ca1f89012bb48",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "54313d0fb9f8f710ea5b2ce73efcaf00ab24502e7a29cc01da07c78f9ba17572",
+    "stdin_path": "supabase/migrations/20261023000100_embedding_outbox.sql",
+    "stdin_source_sha256": "bc2b5bdaac163b7bba90f0531fd974a9920e927c02f7394ef8ea6886d0828301",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "817604a9dee52dc1fe50773234690cd65bf194e71e7917169944fac6598b35b3",
+    "stdin_path": "supabase/migrations/20261023000200_embedding_lifecycle.sql",
+    "stdin_source_sha256": "9b6aef61acb9ad6b6026ee932660668255644b02f823d6ff0a7618e56d0804d4",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "817604a9dee52dc1fe50773234690cd65bf194e71e7917169944fac6598b35b3",
+    "stdin_path": "supabase/migrations/20261023000300_embedding_protection.sql",
+    "stdin_source_sha256": "86353d917e3e89b9d80243280388aa32419b4b3d4062baff2deefc8563d68d59",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_supabase_0a1cca9f2369",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "a7bb0ece78e12b463ce5992a6d9a35b3fc0f6150a49137a12dbe52fb166844c5",
+    "stdin_sql": "DO $proof$ BEGIN\nIF EXISTS (SELECT FROM embedding_private.control WHERE activated OR claims_enabled OR semantic_enabled) OR (SELECT count(*) FROM embedding_private.control)<>1 THEN RAISE EXCEPTION 'control'; END IF;\nIF EXISTS (SELECT FROM embedding_private.jobs) THEN RAISE EXCEPTION 'jobs'; END IF;\nIF (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('recipients','user_memories') AND column_name IN ('embedding','embedding_model_revision') AND is_nullable='YES')<>4 THEN RAISE EXCEPTION 'nullable'; END IF;\nIF (SELECT count(*) FROM pg_class WHERE oid IN ('public.recipients'::regclass,'public.user_memories'::regclass) AND relrowsecurity AND relforcerowsecurity)<>2 THEN RAISE EXCEPTION 'RLS'; END IF;\nIF (SELECT count(*) FROM pg_trigger WHERE tgrelid IN ('public.recipients'::regclass,'public.user_memories'::regclass) AND NOT tgisinternal AND tgenabled='O')<>4 THEN RAISE EXCEPTION 'triggers'; END IF;\nIF NOT has_table_privilege('recipient_app','public.recipients','INSERT') OR NOT has_table_privilege('recipient_app','public.user_memories','INSERT') OR NOT has_table_privilege('recipient_app','public.recipients','UPDATE') OR NOT has_table_privilege('recipient_app','public.user_memories','UPDATE') THEN RAISE EXCEPTION 'dormant grants'; END IF;\nIF has_schema_privilege('recipient_app','embedding_private','USAGE') OR has_function_privilege('recipient_app','embedding_private.activate()','EXECUTE') THEN RAISE EXCEPTION 'private'; END IF;\nIF (SELECT prosecdef OR proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, extensions','row_security=off'] FROM pg_proc WHERE oid='embedding_private.activate()'::regprocedure) THEN RAISE EXCEPTION 'activation config'; END IF;\nIF EXISTS (SELECT FROM pg_proc p,LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid='embedding_private.activate()'::regprocedure AND a.grantee=0) THEN RAISE EXCEPTION 'PUBLIC execute'; END IF;\nIF (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='vector')<>'extensions' THEN RAISE EXCEPTION 'vector namespace'; END IF;\nEND $proof$;\nSELECT version();\nSELECT 'proof passed: supabase,22 migrations,4 nullable fields,4 guards,RLS forced,grants dormant,activation private and disabled';\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "6e0504038d9284f24a4e629866b4a95050b3e6c28d03d72a3068b6023026ad30",
+    "stdin_sql": "DROP DATABASE \"embedding_u14_supabase_0a1cca9f2369\";"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "691e4b64d448c6cffd680247056c2f445e4fbf2dcbc9be821934064e906d1ce7",
+    "stdin_sql": "CREATE DATABASE \"embedding_u14_mirror_d7f6838842a3\" TEMPLATE template0;"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_mirror_d7f6838842a3",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "094a53b034708168af3e7b487f35e3b2780c90fb77602acea7d5bededa5559a8",
+    "stdin_path": "supabase/roles.sql",
+    "stdin_source_sha256": "7ccbe48fa30e91328881e801dabbf8b686ec467b6b59512b46da968df20faef4",
+    "stdin_suffix": "\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "npm",
+      "run",
+      "db:migrate"
+    ],
+    "exit_code": 0,
+    "output_sha256": "aa67236dbfbea7d93d477579f29f77b52ba996b67f488672c3c0233886266be8",
+    "environment_overrides": {
+      "DATABASE_URL": "postgres://postgres@127.0.0.1:55544/embedding_u14_mirror_d7f6838842a3",
+      "DOTENV_CONFIG_PATH": "/dev/null",
+      "EVAL_REAL": "0"
+    }
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_mirror_d7f6838842a3",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "2c37124420ffd6f19107e523be88e7a1b9413324d6623c8315e56142702b323d",
+    "stdin_sql": "DO $proof$ BEGIN\nIF EXISTS (SELECT FROM embedding_private.control WHERE activated OR claims_enabled OR semantic_enabled) OR (SELECT count(*) FROM embedding_private.control)<>1 THEN RAISE EXCEPTION 'control'; END IF;\nIF EXISTS (SELECT FROM embedding_private.jobs) THEN RAISE EXCEPTION 'jobs'; END IF;\nIF (SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name IN ('recipients','user_memories') AND column_name IN ('embedding','embedding_model_revision') AND is_nullable='YES')<>4 THEN RAISE EXCEPTION 'nullable'; END IF;\nIF (SELECT count(*) FROM pg_class WHERE oid IN ('public.recipients'::regclass,'public.user_memories'::regclass) AND relrowsecurity AND relforcerowsecurity)<>2 THEN RAISE EXCEPTION 'RLS'; END IF;\nIF (SELECT count(*) FROM pg_trigger WHERE tgrelid IN ('public.recipients'::regclass,'public.user_memories'::regclass) AND NOT tgisinternal AND tgenabled='O')<>4 THEN RAISE EXCEPTION 'triggers'; END IF;\nIF NOT has_table_privilege('recipient_app','public.recipients','INSERT') OR NOT has_table_privilege('recipient_app','public.user_memories','INSERT') OR NOT has_table_privilege('recipient_app','public.recipients','UPDATE') OR NOT has_table_privilege('recipient_app','public.user_memories','UPDATE') THEN RAISE EXCEPTION 'dormant grants'; END IF;\nIF has_schema_privilege('recipient_app','embedding_private','USAGE') OR has_function_privilege('recipient_app','embedding_private.activate()','EXECUTE') THEN RAISE EXCEPTION 'private'; END IF;\nIF (SELECT prosecdef OR proconfig IS DISTINCT FROM ARRAY['search_path=pg_catalog, extensions','row_security=off'] FROM pg_proc WHERE oid='embedding_private.activate()'::regprocedure) THEN RAISE EXCEPTION 'activation config'; END IF;\nIF EXISTS (SELECT FROM pg_proc p,LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid='embedding_private.activate()'::regprocedure AND a.grantee=0) THEN RAISE EXCEPTION 'PUBLIC execute'; END IF;\nIF (SELECT n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='vector')<>'public' THEN RAISE EXCEPTION 'vector namespace'; END IF;\nEND $proof$;\nSELECT version();\nSELECT 'proof passed: mirror,22 migrations,4 nullable fields,4 guards,RLS forced,grants dormant,activation private and disabled';\nSHOW search_path;\n"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "embedding_u14_mirror_d7f6838842a3",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "f14b4987904bcb5814e4459a057ed4d20f58a633152288a761214dcd28780b56",
+    "stdin_sql": "SELECT count(*) FROM schema_migrations;"
+  },
+  {
+    "argv": [
+      "docker",
+      "exec",
+      "-i",
+      "nana-auto-embedding-db-1",
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-At"
+    ],
+    "exit_code": 0,
+    "output_sha256": "6e0504038d9284f24a4e629866b4a95050b3e6c28d03d72a3068b6023026ad30",
+    "stdin_sql": "DROP DATABASE \"embedding_u14_mirror_d7f6838842a3\";"
+  }
+]
