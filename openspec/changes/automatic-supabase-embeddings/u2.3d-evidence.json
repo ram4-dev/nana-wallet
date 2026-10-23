@@ -1,0 +1,264 @@
+{
+  "unit": "U2.3d",
+  "status": "scoped implementation verified; parent settlement and independent review pending",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-reservations",
+  "branch": "feat/embedding-reservations",
+  "base": "ab71aeb4549c1be7ce36864c11ea9ca44ac627dc",
+  "source_branch": "feat/embedding-attempts",
+  "parent_attempt_token": "sha256:6ef3774437596001e5f8e494ea8916d3dab88c6e588610b8ed9ba2150147a203",
+  "ledger_owner": "parent; no acquire/settle/reset",
+  "mode": "standard; strict_tdd=false; mapped regressions before SQL; auto-chain/stacked-to-main",
+  "subdivision_sha256": "a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46",
+  "task_progress": {
+    "completed": 6,
+    "total": 25,
+    "whole_2_3_checked": false,
+    "subunit_d": "focused/runtime verified; review pending",
+    "remaining": "e exhaustion,f pause and subsequent units"
+  },
+  "limits": {
+    "max_attempts": 3,
+    "total_limit": 2000,
+    "reviewed_target": 341,
+    "reviewed_max": 380,
+    "hard_source_max": 400,
+    "precode_forecast": 370,
+    "final_source": 338,
+    "superseded_proof_churn": 16,
+    "transient_cleanup_sql": 6,
+    "conservative_authored_code_tests_harness": 360,
+    "manual_final_candidate_total": 873,
+    "manual_total_including_transient_proof": 895
+  },
+  "accounting": "Final source338 includes BOTH SQL52+52,RPC166 additions+3 deletions,helper3,E2E12+11,driver39. Superseded authored churn16: two SQL placeholders4;two availability-line revisions4;two role-fixture revisions4;two driver CASE revisions4. Six transient cleanup SQL lines also counted. Generated exact source copies/logs/expanded command records are retained,ignored,hash-bound;no alternate behavioral harness. Manual total below includes nonignored additions+deletions plus22 transient lines;native ledger remains sole authority.",
+  "finish_contract": {
+    "signature": "public.embedding_finish_request(reservation_id uuid,scope text,job_id uuid DEFAULT NULL,claim_token uuid DEFAULT NULL) RETURNS text",
+    "returns": [
+      "released",
+      "stale"
+    ],
+    "binding": "drain: exact stored reservation ID/scope/job/claim;query: stored ID/scope and NULL job/claim",
+    "lifetime": "released replay remains released;expiry does not prevent cleanup;no live-source/job/run lookup",
+    "future_edge": "Call in finally after transport success/error/abort,including stale completion;retain original immutable ID/job/token;no transaction over HTTP;lost ack may retry or rely on expiry"
+  },
+  "locking": "Start/completion unchanged source->job->control->reservation;new job trigger/finish acquire reservation-only;no source/control lock and no source/job/attempt/counter writes from finish.",
+  "atomic_publication": "Single DO validates bypass owner,creates BOTH SECURITY DEFINER fixed-search_path/row_security=off functions,trigger,revokes and narrow worker/service finish grants. Default psql pregrant failure on BOTH chains leaves pg_proc OIDs/ACLs/bodies equal to predecessor snapshot and no trigger. Private function/table refusal and bypass ownership tested.",
+  "nonvacuity": [
+    "Unchanged actual completion and all safe transient/terminal failure classes release matching STARTED;forged stored tuple does not release.",
+    "Both-domain actual edit/archive/delete/reinsert and real claim-token reclaim release RESERVED but retain STARTED transport occupancy;two slots fill,third refuses,old publication stale,finish frees capacity.",
+    "Finishing old ID/token leaves newer source/job/reservation unchanged;wrong ID/scope/job/token and query trailing identities refuse.",
+    "Duplicate/concurrent/lost-ack/expired finish and rollback retain minute/owner charges and attempts.",
+    "Forced release CHECK failure rolls back completion/failure source+job and actual source edit/archive/delete/reinsert together.",
+    "Both domains/chains prove job-transition cleanup and concurrent finishes progress while source/control/job locks are held elsewhere.",
+    "Full fresh-chain driver actually starts/completes both kinds,invalidates next generations,checks stale late completion and idempotent finish;four starts/charges retained."
+  ],
+  "commands": [
+    {
+      "command": "npm ci --no-audit --no-fund",
+      "exit": 0,
+      "result": "837 packages; tool output only, no raw log retained; package/lock unchanged"
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts --maxWorkers=1 -t U2.3d",
+      "runs": [
+        {
+          "log": "red.log",
+          "exit": 1,
+          "result": "20 failed,84 name-filtered; initial role fixture defect"
+        },
+        {
+          "log": "red-final.log",
+          "exit": 1,
+          "result": "20 failed,84 name-filtered; all mapped cases before production SQL"
+        },
+        {
+          "log": "green-scoped.log",
+          "exit": 0,
+          "result": "20 passed,84 name-filtered"
+        }
+      ]
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts --maxWorkers=1",
+      "log": "red-mapped.log",
+      "exit": 1,
+      "result": "20 failed,84 passed,0 skipped; before SQL; concurrency role fixture defect subsequently corrected"
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts tests/integration/automatic-embeddings-foundation.test.ts tests/integration/automatic-embeddings-lifecycle.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts --maxWorkers=1",
+      "runs": [
+        {
+          "log": "combined.log",
+          "exit": 1,
+          "result": "173 passed,1 failed,0 skipped; inherited b1/fact/mirror capacity race, fixture does not apply d"
+        },
+        {
+          "log": "combined-final.log",
+          "exit": 0,
+          "result": "174 passed,0 skipped;104 RPC,44 lifecycle,4 foundation,22 repository E2E"
+        }
+      ]
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts --maxWorkers=1 -t 'two real connections serialize'",
+      "log": "capacity-repro.log",
+      "exit": 0,
+      "result": "8 passed,96 name-filtered; no behavior/timeout change; intermittent cause not isolated"
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 python3 openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/check-chains.py",
+      "runs": [
+        {
+          "log": "chains-run.log",
+          "exit": 1,
+          "result": "initial owned driver CASE syntax; original driver retained"
+        },
+        {
+          "log": "chains-final.log",
+          "exit": 0,
+          "result": "29 Supabase psql+roles and29 mirror npm db:migrate migrations, separate fresh databases; actual both-domain release proof"
+        }
+      ]
+    },
+    {
+      "command": "npm run lint",
+      "runs": [
+        {
+          "log": "lint.log",
+          "exit": 0
+        },
+        {
+          "log": "lint-final.log",
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "command": "npm run typecheck",
+      "runs": [
+        {
+          "log": "typecheck.log",
+          "exit": 0
+        },
+        {
+          "log": "typecheck-final.log",
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "command": "npm run build",
+      "runs": [
+        {
+          "log": "build.log",
+          "exit": 0
+        },
+        {
+          "log": "build-final.log",
+          "exit": 0
+        }
+      ]
+    },
+    {
+      "command": "cmp src/db/migrations/028_embedding_reservations.sql supabase/migrations/20261023001000_embedding_reservations.sql",
+      "log": "parity.log",
+      "exit": 0
+    },
+    {
+      "command": "git diff --check",
+      "log": "diff-check.log",
+      "exit": 0
+    },
+    {
+      "command": "docker exec -i nana-auto-embedding-db-1 psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At < openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/cleanup.sql.log",
+      "log": "cleanup.log",
+      "exit": 0,
+      "result": "PG16.12;0 scratch databases,0 scratch connections,DROP newly owned embedding_worker,0 fixture roles,parent database=true"
+    }
+  ],
+  "git_add_implementation_paths": [
+    "src/db/migrations/028_embedding_reservations.sql",
+    "supabase/migrations/20261023001000_embedding_reservations.sql",
+    "tests/integration/automatic-embeddings-rpc.test.ts",
+    "tests/integration/helpers/embedding-database.ts",
+    "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/check-chains.py"
+  ],
+  "git_add_artifact_paths": [
+    "openspec/changes/automatic-supabase-embeddings/apply-progress.md",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/.gitignore",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/preserved.json",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/red-final-sources.json",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/red-sources.json",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/source-identity.json",
+    "openspec/changes/automatic-supabase-embeddings/status.json",
+    "openspec/changes/automatic-supabase-embeddings/u2.3d-authorization.json",
+    "openspec/changes/automatic-supabase-embeddings/u2.3d-evidence.json"
+  ],
+  "source_index": {
+    "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/source-identity.json",
+    "sha256": "07787a1349575834aeaa6843e1496c3f47eacab74fb27bd84c0d19db54a6f724"
+  },
+  "red_sources": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/red-sources.json",
+      "sha256": "896d02ee8f14f25e2003551c112fa527ab61173ba7b25c10b8e57eea28579641"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/red-final-sources.json",
+      "sha256": "9f3fe334112c9c7c8319c874b0b4e291884f5aea15990b54eb2116ea16b32b35"
+    }
+  ],
+  "preservation": {
+    "index": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/preserved.json",
+    "sha256": "3c44dc3dba7173c21d1ebeeec2adf90b99cf3614bc37d9b5fc2fe9b7e003e592",
+    "all_predecessor_artifacts_unchanged": true,
+    "progress_previous_sha256": "0b3422c9313f8e9ce57f96090b1f90b1251fb1bb00df018850c0d30c6250bff6",
+    "progress_append_only": true,
+    "legacy_sql_shared_runner_package_lock_unchanged": true
+  },
+  "logs": {
+    "build-final.log": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+    "build.log": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+    "capacity-repro.log": "203da75f22817e856632391d69b90b166ecc4dafd4e70ec0cb7e15fa7507fa3a",
+    "chains-final.log": "e0c24722bc5629656db0f72e068e017956d97451513d676e5cad63cf295e5b5e",
+    "chains-run.log": "3ba82cec2ed03b7b30e5cea4f35adeea28e72d29169d9badeed980c1d284d06a",
+    "chains.log": "9bb9597e39ec752bc55902ea5d4fbe73771ca268af482724182f103fd47c49fa",
+    "check-chains-initial.py.log": "2c523cf019c7b517c13082c4d05d3346bdd5b3ff87bc4bfa3dda55d99b36c8b0",
+    "cleanup.log": "7b15aacf0ae9c6c8daa8a1233a1ade162973a04d65c218436354f3c51e36eef2",
+    "cleanup.sql.log": "0138f6f4e86aeff22065b56b769f0248b0b1957e901bc2bccd9c208e561ac6d7",
+    "combined-final.log": "b5fdf78d9499cb8d8f049c3972d6deafd474d1d42f6c1ddb85d9ca37acc3c05e",
+    "combined.log": "a33522a8c11f847aa212b04b7f3696a7f97cc4090c42fab6a59bc40b0955cb8a",
+    "diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "green-scoped.log": "9bb461faff03cc8d48dacf514e0efaa9a508bf41601c406d52544976d310a67d",
+    "lint-final.log": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+    "lint.log": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+    "parity.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "red-final.log": "727bff67cfeb801abd15119b905f1b8f5a893185b6e2558051c460fd30aac197",
+    "red-mapped.log": "64c96fe82d28dac64fcd27bb0875caf34e7a510ee78dba9bd71a493e6ceef1a8",
+    "red.log": "46c976438216a304b66361ce9e824291a7f6aceb65a3297c88b0ae9ac53d2d42",
+    "typecheck-final.log": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0",
+    "typecheck.log": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0"
+  },
+  "expanded_generated_chain_records": {
+    "chain-commands-initial.json": "f3b61182a07ee39d436bce113f17552c2179574154562fe94cbdc401e244cd57",
+    "chain-commands.json": "d90825bf4b82ab75c6367d2b388a66557393248e5ed2ca3af418439fdb2ef822"
+  },
+  "artifact_sha256": {
+    "openspec/changes/automatic-supabase-embeddings/apply-progress.md": "78dcf32aadb600a19f14570a6223dfea7b0b67e97bd6ebe1ff01e06dacefc69d",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/.gitignore": "ffe80110acd97abc3886b54eff8521f8e163813ebcb2856f045cacc556e6c46f",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/preserved.json": "3c44dc3dba7173c21d1ebeeec2adf90b99cf3614bc37d9b5fc2fe9b7e003e592",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/red-final-sources.json": "9f3fe334112c9c7c8319c874b0b4e291884f5aea15990b54eb2116ea16b32b35",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/red-sources.json": "896d02ee8f14f25e2003551c112fa527ab61173ba7b25c10b8e57eea28579641",
+    "openspec/changes/automatic-supabase-embeddings/evidence/u2.3d/source-identity.json": "07787a1349575834aeaa6843e1496c3f47eacab74fb27bd84c0d19db54a6f724",
+    "openspec/changes/automatic-supabase-embeddings/status.json": "eb54300ff3239ddc7f8f02e1469ba0932414811fa8d667b2bcee93d6bf2a32f8",
+    "openspec/changes/automatic-supabase-embeddings/u2.3d-authorization.json": "c768f515a50c654e0f31964c4e903050291089b23124d5324a43225221c227cf"
+  },
+  "cleanup": "All owned processes completed;no server started. Scratch DBs/connections=0;newly owned embedding_worker dropped;fixture roles=0. Parent wdk_agent/container,worktree/deps and all evidence retained.",
+  "rollback": "Revert only six implementation paths plus d artifact/status/progress delta. For an applied persistent DB stop claims/revoke finish and correct trigger additively;retain source/jobs/reservations/attempts/charges and use bounded expiry. No persistent application DB was migrated here.",
+  "risks": [
+    "Single inherited capacity fixture failure did not reproduce in targeted8-case and final174-case runs;cause not isolated;diagnostic context added only.",
+    "Global CI M1 isolation/baseline,PG17/PostgREST,Edge/provider,exhaustion/pause,hosted/final acceptance remain parent/later work;no whole-change PASS."
+  ],
+  "skill_resolution": "fallback-path: project sdd-apply,shared phase/OpenSpec/status references,worktree-first-development"
+}

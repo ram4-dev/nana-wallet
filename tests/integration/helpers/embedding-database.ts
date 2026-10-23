@@ -30,6 +30,8 @@ export const admissionNames = { supabase: '20261023000800_embedding_admission.sq
 
 export const attemptsNames = { supabase: '20261023000900_embedding_attempts.sql', mirror: '027_embedding_attempts.sql' };
 
+export const reservationsNames = { supabase: '20261023001000_embedding_reservations.sql', mirror: '028_embedding_reservations.sql' };
+
 export async function embeddingDatabase(chain: typeof chains[number]) {
   const configured = process.env.EMBEDDINGS_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!configured) throw new Error('A loopback embedding test database is required; tests never skip.');
@@ -105,6 +107,7 @@ export async function embeddingDatabase(chain: typeof chains[number]) {
       applyCapacity: () => applyMigration(capacityNames[chain]),
       applyAdmission: () => applyMigration(admissionNames[chain]),
       applyAttempts: () => applyMigration(attemptsNames[chain]),
+      applyReservations: () => applyMigration(reservationsNames[chain]),
     };
   } catch (error) {
     await cleanup();
