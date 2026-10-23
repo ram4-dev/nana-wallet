@@ -6,3 +6,7 @@ Current phase: RPI research/design. Existing remote-runtime launcher restoration
 Boundaries: Nana Wallet project jnhemqouecznsziytzhm only; Nana Landing excluded. No database/volume deletion, no copying synthetic local data to the remote project, no tests against remote DB, no financial operations.
 
 Scope correction from explicit user decision: keep current embedding generation for now. Remote inference/Edge Function implementation is excluded. Remote runtime database and pgvector use were restored and verified; no further generation architecture approval is pending.
+
+## Latest scope, 2026-10-23
+
+User: "bueno entonces si hagamos eso con los mebeddings", responding to the explanation that Supabase needs explicitly configured automation on SQL inserts/updates. This supersedes the prior temporary keep-current-generation choice. Research/design now targets automatic remote document embedding generation for contacts/memories and remote on-demand query embeddings, with Spanish semantic retrieval. No implementation or deployment has begun. Product choice about asynchronous indexing visibility will be presented after current-state research.
