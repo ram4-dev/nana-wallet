@@ -1,9 +1,11 @@
 -- Once-only provider permission; rollout remains inactive and charges never refund.
-DO $owner$ BEGIN
+DO $starts$
+DECLARE role_name text;
+BEGIN
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=current_user AND (rolsuper OR rolbypassrls)) THEN
     RAISE EXCEPTION 'embedding start owner must bypass forced RLS' USING ERRCODE='42501';
   END IF;
-END $owner$;
+  EXECUTE $ddl$
 CREATE FUNCTION public.embedding_start_attempt(job_id uuid,claim_token uuid,reservation_id uuid)
 RETURNS TABLE(status text,attempt integer,expires_at timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,extensions SET row_security=off AS $body$
@@ -39,6 +41,8 @@ BEGIN
   UPDATE embedding_private.jobs SET attempts=attempts+1,updated_at=started WHERE id=j.id RETURNING attempts INTO attempt;
   status := 'started'; RETURN NEXT;
 END $body$;
+$ddl$;
+  EXECUTE $ddl$
 CREATE FUNCTION public.embedding_start_query(reservation_id uuid,byte_count integer)
 RETURNS TABLE(status text,expires_at timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,extensions SET row_security=off AS $body$
@@ -57,9 +61,7 @@ BEGIN
   UPDATE embedding_private.reservations SET state='started',started_at=started WHERE id=r.id;
   status := 'started'; RETURN NEXT;
 END $body$;
-DO $grants$
-DECLARE role_name text;
-BEGIN
+$ddl$;
   REVOKE ALL ON FUNCTION public.embedding_start_attempt(uuid,uuid,uuid),public.embedding_start_query(uuid,integer) FROM PUBLIC;
   FOREACH role_name IN ARRAY ARRAY['recipient_app','anon','authenticated','embedding_worker','service_role'] LOOP
     IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=role_name) THEN
@@ -69,4 +71,4 @@ BEGIN
       END IF;
     END IF;
   END LOOP;
-END $grants$;
+END $starts$;

@@ -5,6 +5,24 @@ import { chains, claimsNames, completionNames, recoveryNames, capacityNames, adm
 
 const identity = ['job_id', 'kind', 'owner_id', 'source_id', 'incarnation', 'generation', 'revision'];
 const signatures = ['embedding_begin_drain()', 'embedding_claim_jobs(uuid,integer)', 'embedding_read_job(uuid,uuid)'];
+it.each(chains)('T4 atomic start publication under default psql autocommit: %s', async (chain) => {
+  const f = await embeddingDatabase(chain);
+  try {
+    for (const apply of [f.applyFoundation, f.applyOutbox, f.applyLifecycle, f.applyProtection, f.applyClaims,
+      f.applyCompletion, f.applyRecovery, f.applyCapacity, f.applyAdmission]) await apply();
+    const sql = await readFile(`${chain === 'supabase' ? 'supabase/migrations' : 'src/db/migrations'}/${attemptsNames[chain]}`, 'utf8');
+    const marker = '  REVOKE ALL ON FUNCTION public.embedding_start_attempt(uuid,uuid,uuid),public.embedding_start_query(uuid,integer) FROM PUBLIC;';
+    expect(sql.split(marker)).toHaveLength(2);
+    const snapshot = () => f.migration.query(`SELECT p.oid,p.proacl,CASE WHEN p.prokind='a' THEN p.prosrc ELSE pg_get_functiondef(p.oid) END AS definition
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname IN ('public','embedding_private') ORDER BY p.oid`);
+    const before = (await snapshot()).rows;
+    expect(() => f.psql(sql.replace(marker, "  RAISE EXCEPTION 'injected pregrant failure';\n" + marker))).toThrow('injected pregrant failure');
+    expect((await f.migration.query(`SELECT to_regprocedure('public.embedding_start_attempt(uuid,uuid,uuid)') AS drain,
+      to_regprocedure('public.embedding_start_query(uuid,integer)') AS query`)).rows).toEqual([{ drain: null, query: null }]);
+    expect((await snapshot()).rows).toEqual(before);
+  } finally { await f.cleanup(); }
+}, 30_000);
 describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
   let fixture: Awaited<ReturnType<typeof embeddingDatabase>>;
   let serviceOwned = false;

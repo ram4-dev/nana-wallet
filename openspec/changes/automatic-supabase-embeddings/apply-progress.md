@@ -384,3 +384,18 @@ The first GREEN had80 passes and two failures in inherited capacity fixtures tha
 Final authored code/test/harness count377 additions+deletions, including both72-line SQL copies and the38-line new driver; reviewed maximum380/hard400. Initial forecast378. Generated RED copies are retained as ignored logs, hash-bound separately; no transient alternative executable harness was authored. u2.3c-evidence.json records source/log hashes,commands/exits/counts and complete nonignored TOTAL. All predecessor evidence and this progress prefix remain unchanged.
 
 Parent settlement/independent review remains pending. Global backend/voice/startup baseline and CI correction remain separate parent work;PG17/PostgREST,Edge/provider integration,release/exhaustion/pause and hosted/final acceptance remain later gates. No whole-change pass is claimed. No delegation,commit,push,PR,merge,secret,remote/provider/payment or native ledger mutation occurred.
+
+## U2.3c attempt 2: atomic start publication correction
+
+Parent settled attempt1 FAILED at manifest SHA256 87062e7216da3ac2a22eb31bb1bfaf2f154ad0d34b661ea543e21343a2a22f54; its bytes and all historical evidence remain unchanged. Assignment: same objective, review candidate e599854, original unit base d4162c5; parent-owned attempt2 token sha256:4b708fd91cfa7dae89c0ddd1e9af0de3657472eb434413675fbec819c1831f4f, max3/TOTAL2000. Standard mode, strict_tdd=false; no native ledger operation or delivery performed.
+
+One DO statement now owns the existing owner check, both dynamically created start functions, revokes and grants. Function bodies, signatures and final permissions are unchanged. Reforecast before SQL:400 hard authored lines rather than prior380; actual400 includes both74-line SQL copies,189 RPC changes,4 helper lines,21 E2E changes and38 existing driver lines. Attempt2 source delta47 additions+deletions versus e599854; complete native cumulative accounting is in u2.3c-a2-evidence.json.
+
+| Work Unit Evidence | Result |
+|---|---|
+| Mapped RED before correction | New fault injection through the existing fresh scratch helper and actual default psql autocommit, both chains: corrected RED exit1,2 failures because BOTH functions survive pregrant failure. Initial RED also exposed mirror aggregate introspection; fixed before SQL and both logs/snapshots retained. |
+| Focused GREEN / runtime | Same fault injection exit0,2 passed,82 name-filtered; both functions absent after failure and predecessor function definitions/ACLs unchanged. Combined real RPC/lifecycle/foundation/repository E2E exit0,152 passed,0 skipped (84+44+4+20). |
+| Full chains / static | Unmodified38-line driver copied byte-for-byte into new ignored log directory: both fresh28-migration chains pass, Supabase ordinary psql and actual mirror npm db:migrate; source/drain/query proofs retained. lint,typecheck,build,SQL parity and diff checks pass. No new executable probe beyond the counted18-line regression and1-line helper exposure. |
+| Rollback / cleanup | Revert only attempt2's two SQL wrappers,regression/helper and this append/new manifest. No applied persistent DB was changed; all owned scratch DBs/connections and newly created embedding_worker removed;parent DB/container/worktree retained. All owned processes completed;no server or external calls. |
+
+Scoped correction is ready for parent settlement and fresh independent review. Whole2.3 remains unchecked,6/25; later d/e/f,global baseline/CI,PG17/PostgREST,Edge/provider/hosted and final acceptance gates remain. This append preserves every prior progress byte;new logs/command records are separately hash-bound without rewriting original evidence.
