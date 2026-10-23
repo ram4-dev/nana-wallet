@@ -1,0 +1,307 @@
+{
+  "work_unit": "U2.3",
+  "task": "2.3",
+  "status": "blocked_preimplementation_workload",
+  "executive_summary": "Full-unit forecast 570-725 authored code/test lines exceeds hard400. Returned three bounded sequential subunits before code; task remains pending.",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery",
+  "branch": "feat/embedding-recovery",
+  "base_commit": "b8a38e9c21089a91607a7f1f8c05b362fa8263f5",
+  "native_attempt": {
+    "parent_owned": true,
+    "token": "sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a",
+    "max_attempts": 3,
+    "total_line_limit": 2000,
+    "manual_code_test_line_limit": 400,
+    "acquired_settled_or_reset_by_executor": false
+  },
+  "mode": {
+    "strict_tdd": false,
+    "delivery_strategy": "auto-chain",
+    "chain_strategy": "stacked-to-main"
+  },
+  "native_status_command": {
+    "command": "gentle-ai sdd-status automatic-supabase-embeddings --cwd /Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery --json --instructions",
+    "exit_code": 0,
+    "result": "ready; local bindings; supplied active parent token; completed6/25"
+  },
+  "checks": [
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": "git diff --exit-code HEAD -- src tests supabase scripts package.json package-lock.json .agent-workflow openspec/config.yaml",
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "assertions": [
+    "Base and branch match assignment; initial git status was clean.",
+    "All predecessor tracked change artifacts except appended progress/regenerated status equal HEAD byte for byte.",
+    "Prior progress is an unchanged byte prefix; task2.3 is unchecked.",
+    "No production code, migration, test or executable harness changed; no runtime resources created."
+  ],
+  "source_identity": {
+    "tracked_file_count": 510,
+    "algorithm": "sha256 of compact sorted-key JSON array of path/sha256 pairs in git ls-files order",
+    "sha256": "8c3282f588b067dbea642c99a79b3a6e6571ba4d1e392d6c3f6f6b9ae7c4cbc7"
+  },
+  "artifacts": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/status.json",
+      "sha256": "e46b73a6d6129c6e5a9e4d31a59b8fce1ce98c5972d9d85093f6aacc587fb929",
+      "bytes": 11708
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/apply-progress.md",
+      "sha256": "b057ec46a9298427c5b8db8d90c3d4fcb6e4471561293dc4575d2b1c6063b7f0",
+      "bytes": 60053
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.3-authorization.json",
+      "sha256": "ca792b10cc38efe3f26643223c0548f7e546907b23e46ef80a31e1307d8b7056",
+      "bytes": 1463
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.3-subdivision.md",
+      "sha256": "89c7596560eb942a53cc4f6d04a14c2cf3f27f360bf36b8235dd8dfa6943bbe4",
+      "bytes": 6090
+    }
+  ],
+  "prior_progress_prefix": {
+    "sha256": "49e05e0b4c3baa67629a54c2b5f4713c4fe3ed6a1b9ea234ffa468bf86128a58",
+    "bytes": 57596,
+    "preserved": true
+  },
+  "preserved_predecessor_artifacts": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/contracts.md",
+      "sha256": "9adbfff5e335fc2a7850da32374f8912c68e4276c9f2976e69451e86e7ba0904"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/design.md",
+      "sha256": "2726e29dc3f79321b7e66422fa8c91ecd2ac064e139feb19be0e67a5b904f7a0"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.3/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.3/chain-commands.json",
+      "sha256": "cc42025e1716da66348a7054d2e21e5ef967601101303550d93115bc921b1231"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.4/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.4/chain-commands.json",
+      "sha256": "5c03cb7d729a29c756711d888ad2db92092f6cb4c21a65bfad277383fca144e1"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.1/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.1/chain-commands.json",
+      "sha256": "8bbce48c88041b91a238ab59f49a9bab04effcc638b77a5085b620e5581e44df"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.1/check-chains.py",
+      "sha256": "b9b1d93fa40d4cf172ee15f07aaf4998fcc9c99968d3c951d0dc087de96948ab"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/chain-commands.json",
+      "sha256": "cf89a0403dee61e937c26c0dc417cc1c8939fb902175634f61e1e141c2b644d5"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/check-chains.py",
+      "sha256": "e8db2de950f394cb2e9de69e881eb9862c129c5c5dde51791d57f280200b9472"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/proposal.md",
+      "sha256": "b328140664b7f7ef9c5fb557ba2fc179e6208730fc86fd39d72f2ee310e001c4"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
+      "sha256": "14159965f2e7432846d25e7d1fca29bceb0b767c6c4493872d1f97eb015338d8"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
+      "sha256": "d7ee2c060a6add4b6c6c1be682ccd20a8f2f63decf507ec4a1bccf1be7f4042c"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md",
+      "sha256": "67a3135534ba8ab3146f96e275de2049ffc656d0601b77f744c7d976d2d2928d"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/tasks.md",
+      "sha256": "2459fd5acfc7331cd3a42e14f962bc6602c132c91a7053bc69f877f404bc4a7d"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-a2-evidence.json",
+      "sha256": "075d9a3f4e21691df7b586a013f1a334cc8e1e01fac0dfae1f7ce8a5838d12e6"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-evidence.json",
+      "sha256": "4007b983e07beba34aa0ec67919840b8cf337019b4bbad5028b60c3b4681dac2"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-review.md",
+      "sha256": "2e8056c259a9199ac3fe4d0f80e97ab9db5ea8d21739f7432195b213a8223344"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.2-authorization.json",
+      "sha256": "9a63a694afe52f5c8e93ae493a0ebc264b980e168953aaf8958bc3576052cdd5"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.2-evidence.json",
+      "sha256": "54defa02bef2ae13df37eb28a3a548f9f081f0e099d773b26e42f556b97d817c"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.2-review.md",
+      "sha256": "980a003063157d5937e6d90dadc85ce9212ba7e16fd95c56397974c13b31cda1"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.3-authorization.json",
+      "sha256": "366d61b991c612dcb879ddec3e276ad3b4f00341b9c4867e5b6a4aa4a02fe457"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.3-evidence.json",
+      "sha256": "e5272094db03452c869a0aa8e1f3b4c739b0bd46eea3d07789eee5c45fad73b4"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.3-review.md",
+      "sha256": "ee72971a78c5bf8fe9f19d00993df11f97b9ca65cae8747930072a387a6d6a8f"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.4-authorization.json",
+      "sha256": "6f2b7014cdde0307c85945b964422098f9423297e76ebd3bcf899ad76636e830"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.4-evidence.json",
+      "sha256": "98aec7238ffbfdc0eceab194c80d2c9e9f2057d6477a7f78abe472ef238b9060"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.4-review.md",
+      "sha256": "fc3097c6a399846a344866d3f9cbaa0f27ac40df5ef0965bb7c58aec09ea8fb9"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.1-authorization.json",
+      "sha256": "8a5e03e28840dde1cac2910e06c5691f73229731a2f961125e4359b270d2feb4"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.1-evidence.json",
+      "sha256": "c5ebf8855493fac6a60e8ac1cc52ebbd89a8ddf0fd3e87871abfb397dab857ea"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.1-review.md",
+      "sha256": "478b75e7c6a3048416052ba3ab383f67e3dac678929b56fb03a8938c9f74f047"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.2-authorization.json",
+      "sha256": "212507a9c459915f443f68eb2ea2ee087a06c277cac30a5357eab776c8f85f34"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.2-evidence.json",
+      "sha256": "64190487c3ce839a89d11739ea8858a5065a86393153277071d981dc383f48f7"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.2-review.md",
+      "sha256": "64fc333e0f1b142ec95854f647b057cf414cb125dbc8dc8ae5741c2d35b0ab8c"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/verification.md",
+      "sha256": "2b862afc75813aa4973e5cd4e490bdfa8c66432801b367cf24a7f62d7d5e448e"
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/work-units.md",
+      "sha256": "4c2001e418a0f4fa84499f97245da68f7adad9b44fc319d4122fbe9fdee82f49"
+    }
+  ],
+  "subdivision": [
+    {
+      "unit": "U2.3a",
+      "scope": "fenced failure and explicit manual retry",
+      "target_code_test_lines": 340,
+      "maximum": 390
+    },
+    {
+      "unit": "U2.3b",
+      "scope": "durable shared request/byte/slot and owner capacity",
+      "target_code_test_lines": 340,
+      "maximum": 390
+    },
+    {
+      "unit": "U2.3c",
+      "scope": "started-attempt accounting and global pause",
+      "target_code_test_lines": 300,
+      "maximum": 360
+    }
+  ],
+  "runtime": {
+    "executed": false,
+    "reason": "Explicit pre-code budget stop; no implementation admitted.",
+    "focused_integration": "not run",
+    "repository_e2e": "not run",
+    "fresh_migration_chains": "not run",
+    "lint_typecheck_build": "not run",
+    "historical_evidence": "U2.2 90 tests/zero skips,24 migrations per chain preserved; not U2.3 execution."
+  },
+  "cleanup": {
+    "created_databases": [],
+    "created_roles": [],
+    "database_connections_opened": 0,
+    "dependency_installs": 0,
+    "background_processes_started": [],
+    "parent_resources": "untouched",
+    "worktree": "retained"
+  },
+  "rollback": "Remove only new U2.3 documents and appended progress; restore prior status binding if parent elects. No runtime rollback necessary.",
+  "limitations": "No implementation or pass claimed. Parent must amend delivery subdivision and assign next bounded work. Known-red global receipts and separate CI/U4 reset approval untouched; PG17/hosted/provider/final matrix deferred.",
+  "next_recommended": "Parent settlement review using this manifest digest; parent decides bounded reassignment.",
+  "authored_code_test_additions": 0,
+  "authored_code_test_deletions": 0,
+  "counting": "Complete nonignored tracked diff plus all new artifact lines,including manifest itself; no authored source or harness exclusions.",
+  "complete_nonignored_diff": {
+    "additions": 403,
+    "deletions": 27,
+    "total": 430,
+    "per_file": [
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/apply-progress.md",
+        "additions": 11,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/status.json",
+        "additions": 27,
+        "deletions": 27
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/u2.3-authorization.json",
+        "additions": 25,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/u2.3-evidence.json",
+        "additions": 307,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/u2.3-subdivision.md",
+        "additions": 33,
+        "deletions": 0
+      }
+    ]
+  }
+}

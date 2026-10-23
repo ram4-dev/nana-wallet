@@ -1,0 +1,25 @@
+{
+  "work_unit": "U2.3",
+  "task": "2.3",
+  "role": "sdd-apply executor",
+  "worktree": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery",
+  "branch": "feat/embedding-recovery",
+  "source_branch": "feat/embedding-completion",
+  "base_commit": "b8a38e9c21089a91607a7f1f8c05b362fa8263f5",
+  "initial_status": "clean",
+  "delivery_strategy": "auto-chain",
+  "chain_strategy": "stacked-to-main",
+  "strict_tdd": false,
+  "native_attempt": {
+    "parent_owned": true,
+    "token": "sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a",
+    "max_attempts": 3,
+    "total_line_limit": 2000,
+    "source_test_line_limit": 400
+  },
+  "authorization": "ONLY U2.3; stop before implementation and return bounded subdivision when the full unit cannot fit 400 authored additions plus deletions, including SQL mirrors and authored harness scripts. Parent owns ledger and delivery.",
+  "status_binding": "Supported gentle-ai sdd-status regenerated checkout-local paths, ready state and the supplied active token; no acquire, settle or reset.",
+  "disposition": "Preimplementation workload stop; no production SQL, tests or harness authored; task 2.3 remains unchecked.",
+  "cleanup": "No dependencies installed, database connections opened, scratch resources created or background processes started. Retain worktree and all parent resources.",
+  "outline_approved_sha256": "1ed65e6132f95f061c197c0b34623e473fe782b452f360a12cf21d753dfaaa4c"
+}
