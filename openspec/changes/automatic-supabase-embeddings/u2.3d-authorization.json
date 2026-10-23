@@ -1,0 +1,18 @@
+{
+  "unit": "U2.3d",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-reservations",
+  "branch": "feat/embedding-reservations",
+  "base": "ab71aeb4549c1be7ce36864c11ea9ca44ac627dc",
+  "parentAttemptToken": "sha256:6ef3774437596001e5f8e494ea8916d3dab88c6e588610b8ed9ba2150147a203",
+  "ledgerOwner": "parent",
+  "maxAttempts": 3,
+  "totalMax": 2000,
+  "reviewedTarget": 341,
+  "reviewedMax": 380,
+  "hardSourceMax": 400,
+  "precodeForecast": 370,
+  "subdivisionSha256": "a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46",
+  "roleInventory": [
+    "recipient_app"
+  ]
+}
