@@ -1,0 +1,145 @@
+{
+  "work_unit": "U1.1",
+  "task": "1.1",
+  "mode": "standard",
+  "strict_tdd": false,
+  "unit_status": "complete",
+  "global_validation": "incomplete",
+  "attempt": {
+    "request_id": "auto-embedding-u1-1-a1",
+    "state_at_handoff": "proceed",
+    "token": "sha256:93e3329c0279ed62265f77195cc7b81e98a58a154f7d91584e2c0a95da3e75e8",
+    "settlement_owner": "parent"
+  },
+  "environment": {
+    "database": "explicit parent-supplied loopback PostgreSQL on 127.0.0.1:55544",
+    "real_providers": false,
+    "full_commands_environment": {
+      "DOTENV_CONFIG_PATH": "/dev/null",
+      "EVAL_REAL": "0"
+    }
+  },
+  "sources": [
+    {
+      "path": "supabase/migrations/20261023000000_embedding_foundation.sql",
+      "lines": 51,
+      "sha256": "c0f646df21fb81c5827385365be03b602740f8fcd43e672ff4746bf192f7fbe7"
+    },
+    {
+      "path": "src/db/migrations/018_embedding_foundation.sql",
+      "lines": 51,
+      "sha256": "c0f646df21fb81c5827385365be03b602740f8fcd43e672ff4746bf192f7fbe7"
+    },
+    {
+      "path": "tests/integration/helpers/embedding-database.ts",
+      "lines": 71,
+      "sha256": "2ba188e8c5f5469d622a4b540f4ffa12bccb39675e9511a248f90dea564ac6c0"
+    },
+    {
+      "path": "tests/integration/automatic-embeddings-foundation.test.ts",
+      "lines": 71,
+      "sha256": "31bf84178d6dff7137db6a392acf002cac2b960a85315b70e6817741837bb1b4"
+    },
+    {
+      "path": "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "lines": 55,
+      "sha256": "7b28b3523e7e965d7e5d558c8dc62b2d124aeeb881f8fb1cd57d3b960b66e967"
+    }
+  ],
+  "authored_code_test_additions": 299,
+  "authored_code_test_deletions": 0,
+  "outputs": [
+    {
+      "name": "initial-red",
+      "command": "npx vitest run tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 1,
+      "result": "Initial fixture error (missing users) and absent SQL; not behavioral RED evidence.",
+      "log": "/tmp/auto-embedding-u1-1-red.log",
+      "sha256": "63e28f6cbd9846f948028d51d65537ba9a175f3b97a0ec050ab9f17e3723789e"
+    },
+    {
+      "name": "behavioral-red",
+      "command": "npx vitest run tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 1,
+      "result": "5 failed, 0 skipped; missing metadata/control and wrong error code before production SQL.",
+      "log": "/tmp/auto-embedding-u1-1-red-behavior.log",
+      "sha256": "fe0d9c5542889f20992eb30c164d997233e5adc99412ddfe313699be2a9d5e92"
+    },
+    {
+      "name": "focused-runtime",
+      "command": "npx vitest run tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 0,
+      "result": "2 files passed; 3 integration + 2 E2E tests passed; 0 skipped.",
+      "log": "/tmp/auto-embedding-u1-1-focused.log",
+      "sha256": "c052f66c2e6b7aefbbe7586b61da4f6b3599504807f0fb1068bc689180b0c58c"
+    },
+    {
+      "name": "lint",
+      "command": "npm run lint",
+      "exit_code": 0,
+      "result": "Passed, zero warnings.",
+      "log": "/tmp/auto-embedding-u1-1-lint.log",
+      "sha256": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d"
+    },
+    {
+      "name": "typecheck",
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "result": "Passed.",
+      "log": "/tmp/auto-embedding-u1-1-typecheck.log",
+      "sha256": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0"
+    },
+    {
+      "name": "build",
+      "command": "npm run build",
+      "exit_code": 0,
+      "result": "Passed.",
+      "log": "/tmp/auto-embedding-u1-1-build.log",
+      "sha256": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604"
+    },
+    {
+      "name": "backend-full",
+      "command": "npm test",
+      "exit_code": 124,
+      "result": "Interrupted at 180 seconds; observed failures/timeouts in untouched suites; no aggregate pass/fail/skip count.",
+      "log": "/tmp/auto-embedding-u1-1-test.log",
+      "sha256": "2775dad5b66c75fa29817b94db7d70d09f1a2eb4f8eee6e6e290a5d9d41280d7"
+    },
+    {
+      "name": "eval",
+      "command": "npm run eval",
+      "exit_code": 0,
+      "result": "10 eval files, 29 evals, score 94%, threshold 0% passed; real-provider paths explicitly gated off.",
+      "log": "/tmp/auto-embedding-u1-1-eval.log",
+      "sha256": "19298d333cd73a9d0b170e717ac178ee0e31aac5fdda692787c50125fe397396"
+    },
+    {
+      "name": "baseline-voice",
+      "command": "npx vitest run tests/unit/voice-greeting-context.test.ts tests/unit/realtime-agent-session.test.ts",
+      "exit_code": 1,
+      "result": "2 files failed; 9 failed, 40 passed, 0 skipped; unchanged voice implementation assertions reproduced.",
+      "log": "/tmp/auto-embedding-u1-1-baseline-voice.log",
+      "sha256": "0accb282dffc9db50817022eda9c723b997fde41c111d70c50256063632a5779"
+    },
+    {
+      "name": "startup",
+      "command": "node --test scripts/docker-real-wallet.test.mjs scripts/dev-stack.test.mjs",
+      "exit_code": 1,
+      "result": "18 tests: 16 passed, 2 failed, 0 skipped; both CLI orchestration cases fail in unchanged launcher tests.",
+      "log": "/tmp/auto-embedding-u1-1-startup.log",
+      "sha256": "3abdb4b19b6c24c5620e5f95e8cf647692acf296542167367da0c1805ae73c94"
+    }
+  ],
+  "cleanup": {
+    "log": "/tmp/auto-embedding-u1-1-cleanup.log",
+    "sha256": "5dd8699508b59397c41c21540363cf3c12e4c474f800f4f804bce4b1bfdfddff",
+    "scratch_databases_remaining": 0,
+    "parent_database_present": true,
+    "owned_process_groups_remaining": []
+  },
+  "next_pending": "U1.2 / task 1.2",
+  "rollback": "Revert the five additive source/test files before deployment. Retain unused columns/control in any applied persistent database; do not drop data or restore constraints. Only owned scratch databases were dropped.",
+  "deviations": [
+    "Use pg_catalog.gen_random_uuid() rather than extensions.gen_random_uuid(): PG16/17 built-in UUID supports both the mirror public pgcrypto location and Supabase extensions location without extension relocation."
+  ]
+}

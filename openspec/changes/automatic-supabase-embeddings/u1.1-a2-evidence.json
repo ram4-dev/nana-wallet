@@ -1,0 +1,180 @@
+{
+  "work_unit": "U1.1",
+  "task": "1.1",
+  "mode": "standard",
+  "strict_tdd": false,
+  "unit_status": "corrected_focused_proof_passed",
+  "global_validation": "blocked",
+  "attempt": {
+    "request_id": "auto-embedding-u1-1-a2",
+    "state_at_launch": "proceed",
+    "token": "sha256:837009730fc5e72825f609374f5fa5b7518a20ec676fe8494bcb2aee922efbab",
+    "max_attempts": 3,
+    "max_changed_lines": 400,
+    "settlement_owner": "parent",
+    "executor_acquired_or_settled": false
+  },
+  "prior_evidence": {
+    "path": "openspec/changes/automatic-supabase-embeddings/u1.1-evidence.json",
+    "sha256": "4007b983e07beba34aa0ec67919840b8cf337019b4bbad5028b60c3b4681dac2",
+    "disposition": "Historical attempt 1; parent settled failed after CI default-search-path defect. Original receipts preserved unchanged."
+  },
+  "environment": {
+    "database": "Explicit parent-supplied loopback PostgreSQL 127.0.0.1:55544; task-owned nana-auto-embedding-db-1; only owned template0 scratch databases mutated.",
+    "focused_env": {
+      "EMBEDDINGS_TEST_DATABASE_URL": "parent-supplied loopback application URL with public,extensions option",
+      "EMBEDDINGS_TEST_CONTAINER": "nana-auto-embedding-db-1",
+      "DOTENV_CONFIG_PATH": "/dev/null"
+    },
+    "migration_options": "No search_path connection option; no SQL search_path mutation.",
+    "real_providers": false
+  },
+  "sources": [
+    {
+      "path": "supabase/migrations/20261023000000_embedding_foundation.sql",
+      "lines": 61,
+      "sha256": "cd8a5d246e859457f01094e8e8ba2d300be5722a50611315b07ca1f89012bb48"
+    },
+    {
+      "path": "src/db/migrations/018_embedding_foundation.sql",
+      "lines": 61,
+      "sha256": "cd8a5d246e859457f01094e8e8ba2d300be5722a50611315b07ca1f89012bb48"
+    },
+    {
+      "path": "tests/integration/helpers/embedding-database.ts",
+      "lines": 81,
+      "sha256": "1701f7cb5de1ed1623eee9065521efdcff2026544a4cc1f4e4ee415580e9c46c"
+    },
+    {
+      "path": "tests/integration/automatic-embeddings-foundation.test.ts",
+      "lines": 84,
+      "sha256": "64ec023099a5920f1138362f9f0f6a7fbdec2c6116adc4562473b75dd2ed2599"
+    },
+    {
+      "path": "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "lines": 55,
+      "sha256": "7b28b3523e7e965d7e5d558c8dc62b2d124aeeb881f8fb1cd57d3b960b66e967"
+    }
+  ],
+  "authored_code_test_additions": 342,
+  "authored_code_test_deletions": 0,
+  "sql_byte_parity": true,
+  "correction": "Look up pgvector extension namespace in pg_catalog and format schema-qualified vector_dims/vector_norm constraints. Identical SQL mirrors; no historical migration rewritten; no session search_path altered; legacy preservation and ready constraints retained.",
+  "outputs": [
+    {
+      "name": "parent-controlling-failure",
+      "command": "CI roles + full Supabase chain under default search_path",
+      "exit_code": 3,
+      "result": "Foundation fails: function vector_dims(extensions.vector) does not exist. Attempt 1 settled failed by parent.",
+      "log": "/tmp/auto-embedding-u1-1-ci-search-path.log",
+      "sha256": "9b2ddb823cb1e30e606452bddf11ca3a41331cbba6b8c86673c1c6ed0914b34c"
+    },
+    {
+      "name": "regression-red",
+      "command": "npx vitest run tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 1,
+      "result": "Before SQL correction: reproduced vector_dims(extensions.vector) failure in Supabase migration setup and E2E. 2 files failed; 1 failed, 1 passed, 4 skipped due to failed setup. Mirror legacy E2E passed.",
+      "log": "/tmp/auto-embedding-u1-1-a2-red.log",
+      "sha256": "5747b4fbe22e4c8491e5034e65204eeaf386cacff5c67d2769d9284997fe6a9e"
+    },
+    {
+      "name": "focused-integration-e2e",
+      "command": "npx vitest run tests/integration/automatic-embeddings-foundation.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 0,
+      "result": "2 files passed; 4 integration + 2 E2E = 6 passed, 0 skipped. Both default migration paths and configured application repository paths execute. Wrong dimension CHECK tested independently of vector typmod; zero norm and revision checks retained.",
+      "log": "/tmp/auto-embedding-u1-1-a2-focused.log",
+      "sha256": "ca0992039c88c001350f16850ba56cca8855fb76e6e179fd6dafe9e97b362085"
+    },
+    {
+      "name": "ci-default-path",
+      "command": "docker exec -i nana-auto-embedding-db-1 psql -U postgres -d <owned-scratch> -v ON_ERROR_STOP=1; CREATE SCHEMA IF NOT EXISTS extensions; then stdin supabase/roles.sql and every sorted supabase/migrations/*.sql in separate psql invocations",
+      "exit_code": 0,
+      "result": "Exact CI flags/roles/full chain successful on fresh template0 database; search_path remains default; vector schema extensions; activation/claims/semantics false; scratch dropped.",
+      "log": "/tmp/auto-embedding-u1-1-a2-ci-default-path.log",
+      "sha256": "63af151459098259d0017016377403f2478f00ebb01e218eb9db01232fac64b8"
+    },
+    {
+      "name": "mirror-default-path",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL=postgres://postgres@127.0.0.1:55544/<owned-scratch> npm run db:migrate",
+      "exit_code": 0,
+      "result": "Actual CLI applied all 19 migrations without connection options on fresh template0 database after roles bootstrap; default search_path; vector schema public; activation/claims/semantics false; scratch dropped.",
+      "log": "/tmp/auto-embedding-u1-1-a2-mirror-default-path.log",
+      "sha256": "618335e45a533441bd286bccac881bc2dcc4e3e9e53fe1e35b3f6dc0fd3c918b"
+    },
+    {
+      "name": "lint",
+      "command": "npm run lint",
+      "exit_code": 0,
+      "result": "Passed, zero warnings.",
+      "log": "/tmp/auto-embedding-u1-1-a2-lint.log",
+      "sha256": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d"
+    },
+    {
+      "name": "typecheck",
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "result": "Passed.",
+      "log": "/tmp/auto-embedding-u1-1-a2-typecheck.log",
+      "sha256": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0"
+    },
+    {
+      "name": "build",
+      "command": "npm run build",
+      "exit_code": 0,
+      "result": "Passed.",
+      "log": "/tmp/auto-embedding-u1-1-a2-build.log",
+      "sha256": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604"
+    },
+    {
+      "name": "cleanup",
+      "command": "docker exec nana-auto-embedding-db-1 psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c <version/scratch-count/parent-presence metadata queries>",
+      "exit_code": 0,
+      "result": "PostgreSQL 16.12; 0 embedding_* scratch databases; parent wdk_agent exists; all owned subprocesses exited, container retained.",
+      "log": "/tmp/auto-embedding-u1-1-a2-cleanup.log",
+      "sha256": "27e7e49d74d2189cbf10e107524d51f171cc2bb91ffd8932812dabb2b8aa7aa1"
+    }
+  ],
+  "preserved_global_receipts": [
+    {
+      "name": "backend-full",
+      "command": "npm test",
+      "exit_code": 124,
+      "result": "Interrupted at 180 seconds; observed failures/timeouts in untouched suites; no aggregate pass/fail/skip count.",
+      "log": "/tmp/auto-embedding-u1-1-test.log",
+      "sha256": "2775dad5b66c75fa29817b94db7d70d09f1a2eb4f8eee6e6e290a5d9d41280d7"
+    },
+    {
+      "name": "eval",
+      "command": "npm run eval",
+      "exit_code": 0,
+      "result": "10 eval files, 29 evals, score 94%, threshold 0% passed; real-provider paths explicitly gated off.",
+      "log": "/tmp/auto-embedding-u1-1-eval.log",
+      "sha256": "19298d333cd73a9d0b170e717ac178ee0e31aac5fdda692787c50125fe397396"
+    },
+    {
+      "name": "baseline-voice",
+      "command": "npx vitest run tests/unit/voice-greeting-context.test.ts tests/unit/realtime-agent-session.test.ts",
+      "exit_code": 1,
+      "result": "2 files failed; 9 failed, 40 passed, 0 skipped; unchanged voice implementation assertions reproduced.",
+      "log": "/tmp/auto-embedding-u1-1-baseline-voice.log",
+      "sha256": "0accb282dffc9db50817022eda9c723b997fde41c111d70c50256063632a5779"
+    },
+    {
+      "name": "startup",
+      "command": "node --test scripts/docker-real-wallet.test.mjs scripts/dev-stack.test.mjs",
+      "exit_code": 1,
+      "result": "18 tests: 16 passed, 2 failed, 0 skipped; both CLI orchestration cases fail in unchanged launcher tests.",
+      "log": "/tmp/auto-embedding-u1-1-startup.log",
+      "sha256": "3abdb4b19b6c24c5620e5f95e8cf647692acf296542167367da0c1805ae73c94"
+    }
+  ],
+  "global_blocker": "Full backend suite previously timed out at 180 seconds with failures/timeouts in untouched suites; voice/startup reproductions remain red. Prior offline eval exit 0 (29 evals, 94%, threshold 0%, EVAL_REAL=0) is preserved, not live inference acceptance. No full-suite/eval rerun in correction attempt.",
+  "cleanup": {
+    "scratch_databases_remaining": 0,
+    "parent_database_present": true,
+    "parent_container_retained": true,
+    "owned_background_processes_remaining": []
+  },
+  "rollback": "Only five additive code/test files; retain dormant unused schema if already applied. Drop only owned scratch databases, never parent data.",
+  "next_recommended": "Parent evaluates attempt-2 evidence and settles attempt; no executor review/final SDD verify launched."
+}
