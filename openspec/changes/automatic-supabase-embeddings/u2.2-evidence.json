@@ -1,0 +1,543 @@
+{
+  "work_unit": "U2.2",
+  "task": "2.2",
+  "status": "U2.2 complete,6/25 tasks; parent settlement/review pending; whole change incomplete",
+  "task_progress": {
+    "completed": 6,
+    "total": 25,
+    "whole_change_pass": false
+  },
+  "before_task_completion_budget": {
+    "authored": 322,
+    "total_nonignored": 1633,
+    "limit_authored": 400,
+    "limit_total": 2000
+  },
+  "artifacts": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.2-authorization.json",
+      "sha256": "212507a9c459915f443f68eb2ea2ee087a06c277cac30a5357eab776c8f85f34",
+      "bytes": 1187
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/status.json",
+      "sha256": "e0b17937192b01935270c24cabf09a199d574b269b49ed445a46e6f4b43a782b",
+      "bytes": 11756
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/tasks.md",
+      "sha256": "2459fd5acfc7331cd3a42e14f962bc6602c132c91a7053bc69f877f404bc4a7d",
+      "bytes": 3267
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/apply-progress.md",
+      "sha256": "49e05e0b4c3baa67629a54c2b5f4713c4fe3ed6a1b9ea234ffa468bf86128a58",
+      "bytes": 57596
+    }
+  ],
+  "worktree": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion",
+  "branch": "feat/embedding-completion",
+  "base_commit": "3093f3a548f54004255ad4ed5a9f06bb9471d8ef",
+  "source_branch": "feat/embedding-claims",
+  "strict_tdd": false,
+  "delivery_strategy": "auto-chain",
+  "chain_strategy": "stacked-to-main",
+  "native_attempt": {
+    "parent_owned": true,
+    "token": "sha256:9a072f12521f2adb2a3c75da0c24eeeeff092cffbceee08f666aa071e5d325ec",
+    "max_attempts": 3,
+    "total_line_limit": 2000,
+    "source_test_line_limit": 400
+  },
+  "protocol": "Read-only native sdd-status regenerated ready state/local paths and confirmed supplied parent token. Predecessor evidence remains unchanged.",
+  "sources": [
+    {
+      "path": "src/db/migrations/023_embedding_completion.sql",
+      "sha256": "c6cba20f5f335fc7829a454406c87e28f8f3cd65fa261ceeb11aefd2a5937a0c",
+      "bytes": 3839,
+      "additions": 59,
+      "deletions": 0
+    },
+    {
+      "path": "supabase/migrations/20261023000500_embedding_completion.sql",
+      "sha256": "c6cba20f5f335fc7829a454406c87e28f8f3cd65fa261ceeb11aefd2a5937a0c",
+      "bytes": 3839,
+      "additions": 59,
+      "deletions": 0
+    },
+    {
+      "path": "tests/integration/automatic-embeddings-rpc.test.ts",
+      "sha256": "744e79d266a8fa01f60199a524b3a4a2044d9cda30af28f265640b4fefe21333",
+      "bytes": 24791,
+      "additions": 139,
+      "deletions": 2
+    },
+    {
+      "path": "tests/integration/helpers/embedding-database.ts",
+      "sha256": "34b20bddc89870575f27e90ffdbaa38d0d31332e97d4cf08d050c2f234772ec5",
+      "bytes": 5144,
+      "additions": 3,
+      "deletions": 0
+    },
+    {
+      "path": "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "sha256": "aeea34789214790228212e7508246b5befdabf3bd965546be64cd5ebd557d01d",
+      "bytes": 5312,
+      "additions": 6,
+      "deletions": 5
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/check-chains.py",
+      "sha256": "e8db2de950f394cb2e9de69e881eb9862c129c5c5dde51791d57f280200b9472",
+      "bytes": 4553,
+      "additions": 49,
+      "deletions": 0
+    }
+  ],
+  "authored_code_test_total": 322,
+  "authored_harness_included": true,
+  "checks": [
+    {
+      "name": "dependencies",
+      "command": "npm ci --ignore-scripts --no-audit --no-fund",
+      "exit_code": 0,
+      "result": "837 packages; no package/lock changes",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/dependencies.log",
+      "sha256": "2dbdbfeae57d528086ac4e8190d5fe6a592564d12da69bbd5b9271571e487320",
+      "bytes": 1012
+    },
+    {
+      "name": "red",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run --maxWorkers=1 tests/integration/automatic-embeddings-rpc.test.ts",
+      "exit_code": 1,
+      "result": "14 failed,12 passed,0 skipped; missing completion RPC",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/red.log",
+      "sha256": "c931095ade247adabe6bfebfa36baec157b322e3974a3e6f1138e4bd881e0eb9",
+      "bytes": 10007
+    },
+    {
+      "name": "focused",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run --maxWorkers=1 tests/integration/automatic-embeddings-rpc.test.ts",
+      "exit_code": 1,
+      "result": "4 failed,22 passed,0 skipped; test vector JSON serialization expectation corrected",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/focused.log",
+      "sha256": "e6fdd7642b8e940ebc3f9e74dd1579e1ad11a1dc0f7b4792745f50d3323d3cda",
+      "bytes": 32210
+    },
+    {
+      "name": "red-lock-expiry",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run --maxWorkers=1 tests/integration/automatic-embeddings-rpc.test.ts",
+      "exit_code": 1,
+      "result": "4 failed,26 passed,0 skipped; pg_stat_activity snapshot cached in test transaction",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/red-lock-expiry.log",
+      "sha256": "55c1b0446ced1af4958d14a41bb78d395d608206d3e32bee83fda3d9088d0081",
+      "bytes": 8147
+    },
+    {
+      "name": "red-lock-expiry-final",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run --maxWorkers=1 tests/integration/automatic-embeddings-rpc.test.ts",
+      "exit_code": 1,
+      "result": "4 failed,26 passed,0 skipped; all four real control-lock waits expired then incorrectly applied",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/red-lock-expiry-final.log",
+      "sha256": "a52d566ff14784d0ff63e01ad7902123f87cea3e4eba42d210a712aac2ca1f82",
+      "bytes": 8540
+    },
+    {
+      "name": "focused-final",
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run --maxWorkers=1 tests/integration/automatic-embeddings-rpc.test.ts tests/integration/automatic-embeddings-foundation.test.ts tests/integration/automatic-embeddings-lifecycle.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+      "exit_code": 0,
+      "result": "4 files,90 passed,0 skipped:30 RPC,44 lifecycle,4 foundation,12 repository E2E",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/focused-final.log",
+      "sha256": "c132b8c43b5c822b449529003dd1b2acbd8e881ccbda3a33cca671fbda31e04b",
+      "bytes": 29417
+    },
+    {
+      "name": "lint",
+      "command": "npm run lint",
+      "exit_code": 0,
+      "result": "no warnings",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/lint.log",
+      "sha256": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+      "bytes": 73
+    },
+    {
+      "name": "typecheck",
+      "command": "npm run typecheck",
+      "exit_code": 0,
+      "result": "passed",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/typecheck.log",
+      "sha256": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0",
+      "bytes": 79
+    },
+    {
+      "name": "build",
+      "command": "npm run build",
+      "exit_code": 0,
+      "result": "passed",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/build.log",
+      "sha256": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+      "bytes": 61
+    },
+    {
+      "name": "chains-run",
+      "command": "python3 openspec/changes/automatic-supabase-embeddings/evidence/u2.2/check-chains.py",
+      "exit_code": 0,
+      "result": "2 independent complete24-file chains; separate template0 PG16.12 DBs; default paths; scratch dropped",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/chains-run.log",
+      "sha256": "346ece14aa0c405ae34c0bee2cd697c28cb8c817c5b773e672f9d949edc8bd5c",
+      "bytes": 132
+    },
+    {
+      "name": "diff-check",
+      "command": "git diff --check",
+      "exit_code": 0,
+      "result": "passed",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "mirror-parity",
+      "command": "cmp src/db/migrations/023_embedding_completion.sql supabase/migrations/20261023000500_embedding_completion.sql",
+      "exit_code": 0,
+      "result": "byte-identical",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/mirror-parity.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "name": "cleanup",
+      "argv": [
+        "docker",
+        "exec",
+        "-i",
+        "nana-auto-embedding-db-1",
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-At"
+      ],
+      "stdin": "DO $$ BEGIN IF EXISTS (SELECT FROM pg_database WHERE datname LIKE 'embedding_%') THEN RAISE EXCEPTION 'scratch DBs remain; refuse role cleanup'; END IF; END $$;\nDROP ROLE embedding_worker;\nSELECT version();\nSELECT 'scratch_databases='||count(*) FROM pg_database WHERE datname LIKE 'embedding_%';\nSELECT 'fixture_roles='||count(*) FROM pg_roles WHERE rolname IN ('embedding_worker','service_role','anon','authenticated') OR rolname LIKE 'embedding_probe_%';\nSELECT 'scratch_connections='||count(*) FROM pg_stat_activity WHERE datname LIKE 'embedding_%';\nSELECT 'parent_database_retained='||EXISTS(SELECT FROM pg_database WHERE datname='wdk_agent');\n",
+      "exit_code": 0,
+      "result": "PG16.12;scratch databases=0,fixture roles=0,scratch connections=0,parent retained=true",
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/cleanup.log",
+      "sha256": "4330d275e4c5577ae8d19ab692176b8010b77788fb4c56b7bf5a6ff61da54465",
+      "bytes": 232
+    }
+  ],
+  "auxiliary_evidence": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510",
+      "bytes": 6
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/chain-commands.json",
+      "sha256": "cf89a0403dee61e937c26c0dc417cc1c8939fb902175634f61e1e141c2b644d5",
+      "bytes": 19031
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/chains.log",
+      "sha256": "01595db03c260ca5c2b149a7667e191c60084344306c7357a613c09d396afe8c",
+      "bytes": 11851
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/cleanup-empty.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/pre-hardening.log",
+      "sha256": "d8b1560dadf267ef82105d1f44990b058ccb1f42497ddc3b6c923b62a059ad8e",
+      "bytes": 113
+    }
+  ],
+  "preserved_predecessor_artifacts": [
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/contracts.md",
+      "sha256": "9adbfff5e335fc2a7850da32374f8912c68e4276c9f2976e69451e86e7ba0904",
+      "bytes": 17507
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/design.md",
+      "sha256": "2726e29dc3f79321b7e66422fa8c91ecd2ac064e139feb19be0e67a5b904f7a0",
+      "bytes": 5442
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.2/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510",
+      "bytes": 6
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.3/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510",
+      "bytes": 6
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.3/chain-commands.json",
+      "sha256": "cc42025e1716da66348a7054d2e21e5ef967601101303550d93115bc921b1231",
+      "bytes": 23766
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.4/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510",
+      "bytes": 6
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u1.4/chain-commands.json",
+      "sha256": "5c03cb7d729a29c756711d888ad2db92092f6cb4c21a65bfad277383fca144e1",
+      "bytes": 22280
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.1/.gitignore",
+      "sha256": "318d9a16533732a69cda7bb7b174ee392fdd15be3d72a114cd8f2d51f3eab510",
+      "bytes": 6
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.1/chain-commands.json",
+      "sha256": "8bbce48c88041b91a238ab59f49a9bab04effcc638b77a5085b620e5581e44df",
+      "bytes": 18465
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.1/check-chains.py",
+      "sha256": "b9b1d93fa40d4cf172ee15f07aaf4998fcc9c99968d3c951d0dc087de96948ab",
+      "bytes": 4511
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/proposal.md",
+      "sha256": "b328140664b7f7ef9c5fb557ba2fc179e6208730fc86fd39d72f2ee310e001c4",
+      "bytes": 3574
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
+      "sha256": "14159965f2e7432846d25e7d1fca29bceb0b767c6c4493872d1f97eb015338d8",
+      "bytes": 3910
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
+      "sha256": "d7ee2c060a6add4b6c6c1be682ccd20a8f2f63decf507ec4a1bccf1be7f4042c",
+      "bytes": 3815
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md",
+      "sha256": "67a3135534ba8ab3146f96e275de2049ffc656d0601b77f744c7d976d2d2928d",
+      "bytes": 4140
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-a2-evidence.json",
+      "sha256": "075d9a3f4e21691df7b586a013f1a334cc8e1e01fac0dfae1f7ce8a5838d12e6",
+      "bytes": 9289
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-evidence.json",
+      "sha256": "4007b983e07beba34aa0ec67919840b8cf337019b4bbad5028b60c3b4681dac2",
+      "bytes": 6120
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.1-review.md",
+      "sha256": "2e8056c259a9199ac3fe4d0f80e97ab9db5ea8d21739f7432195b213a8223344",
+      "bytes": 1374
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.2-authorization.json",
+      "sha256": "9a63a694afe52f5c8e93ae493a0ebc264b980e168953aaf8958bc3576052cdd5",
+      "bytes": 1474
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.2-evidence.json",
+      "sha256": "54defa02bef2ae13df37eb28a3a548f9f081f0e099d773b26e42f556b97d817c",
+      "bytes": 13162
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.2-review.md",
+      "sha256": "980a003063157d5937e6d90dadc85ce9212ba7e16fd95c56397974c13b31cda1",
+      "bytes": 1102
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.3-authorization.json",
+      "sha256": "366d61b991c612dcb879ddec3e276ad3b4f00341b9c4867e5b6a4aa4a02fe457",
+      "bytes": 1262
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.3-evidence.json",
+      "sha256": "e5272094db03452c869a0aa8e1f3b4c739b0bd46eea3d07789eee5c45fad73b4",
+      "bytes": 17488
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.3-review.md",
+      "sha256": "ee72971a78c5bf8fe9f19d00993df11f97b9ca65cae8747930072a387a6d6a8f",
+      "bytes": 1057
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.4-authorization.json",
+      "sha256": "6f2b7014cdde0307c85945b964422098f9423297e76ebd3bcf899ad76636e830",
+      "bytes": 1341
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.4-evidence.json",
+      "sha256": "98aec7238ffbfdc0eceab194c80d2c9e9f2057d6477a7f78abe472ef238b9060",
+      "bytes": 19505
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u1.4-review.md",
+      "sha256": "fc3097c6a399846a344866d3f9cbaa0f27ac40df5ef0965bb7c58aec09ea8fb9",
+      "bytes": 1184
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.1-authorization.json",
+      "sha256": "8a5e03e28840dde1cac2910e06c5691f73229731a2f961125e4359b270d2feb4",
+      "bytes": 1216
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.1-evidence.json",
+      "sha256": "c5ebf8855493fac6a60e8ac1cc52ebbd89a8ddf0fd3e87871abfb397dab857ea",
+      "bytes": 19392
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/u2.1-review.md",
+      "sha256": "478b75e7c6a3048416052ba3ab383f67e3dac678929b56fb03a8938c9f74f047",
+      "bytes": 1178
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/verification.md",
+      "sha256": "2b862afc75813aa4973e5cd4e490bdfa8c66432801b367cf24a7f62d7d5e448e",
+      "bytes": 11608
+    },
+    {
+      "path": "openspec/changes/automatic-supabase-embeddings/work-units.md",
+      "sha256": "4c2001e418a0f4fa84499f97245da68f7adad9b44fc319d4122fbe9fdee82f49",
+      "bytes": 15383
+    }
+  ],
+  "preserved_global_receipts": [
+    {
+      "name": "backend-full",
+      "command": "npm test",
+      "exit_code": 124,
+      "result": "Interrupted at 180 seconds; observed failures/timeouts in untouched suites; no aggregate pass/fail/skip count.",
+      "log": "/tmp/auto-embedding-u1-1-test.log",
+      "sha256": "2775dad5b66c75fa29817b94db7d70d09f1a2eb4f8eee6e6e290a5d9d41280d7"
+    },
+    {
+      "name": "eval",
+      "command": "npm run eval",
+      "exit_code": 0,
+      "result": "10 eval files, 29 evals, score 94%, threshold 0% passed; real-provider paths explicitly gated off.",
+      "log": "/tmp/auto-embedding-u1-1-eval.log",
+      "sha256": "19298d333cd73a9d0b170e717ac178ee0e31aac5fdda692787c50125fe397396"
+    },
+    {
+      "name": "baseline-voice",
+      "command": "npx vitest run tests/unit/voice-greeting-context.test.ts tests/unit/realtime-agent-session.test.ts",
+      "exit_code": 1,
+      "result": "2 files failed; 9 failed, 40 passed, 0 skipped; unchanged voice implementation assertions reproduced.",
+      "log": "/tmp/auto-embedding-u1-1-baseline-voice.log",
+      "sha256": "0accb282dffc9db50817022eda9c723b997fde41c111d70c50256063632a5779"
+    },
+    {
+      "name": "startup",
+      "command": "node --test scripts/docker-real-wallet.test.mjs scripts/dev-stack.test.mjs",
+      "exit_code": 1,
+      "result": "18 tests: 16 passed, 2 failed, 0 skipped; both CLI orchestration cases fail in unchanged launcher tests.",
+      "log": "/tmp/auto-embedding-u1-1-startup.log",
+      "sha256": "3abdb4b19b6c24c5620e5f95e8cf647692acf296542167367da0c1805ae73c94"
+    }
+  ],
+  "prior_progress_prefix": {
+    "sha256": "ba2baf06c076b826824d947bc3113606df171708d150ef20ac950e769d61e830",
+    "bytes": 49976,
+    "preserved": true
+  },
+  "runtime_proof": "Both real SQL source types complete once; null/forged full identity and stale edit/archive/reactivate/delete/reinsert/generation/revision/token/run/job lease results preserve snapshots. Nonfinite vector parser rejection; dimension/zero/nonunit/NULL rejection. All allowed clients denied. Source lock barrier allows job NOWAIT; control wait expiry rejected after lock. Forced job CHECK failure rolls back source publication. Populated history/policy and all business columns unchanged; duplicate delivery unchanged; attempts0 and5 preserved. Dormant repository roundtrip at all six stages, all24 migrations in both namespaces/default paths.",
+  "rollback": "Revert only both completion migrations,RPC/helper/E2E changes and chain harness. On persistent databases disable claims and revoke only completion signature; retain valid vectors/jobs,protected grants and compatible readers; additive corrections only. Never destructive source rollback or legacy reader restoration.",
+  "cleanup": {
+    "scratch_databases_remaining": 0,
+    "fixture_roles_remaining": 0,
+    "scratch_connections_remaining": 0,
+    "parent_database_retained": true,
+    "parent_container_retained": true,
+    "owned_background_processes_remaining": [],
+    "worktree_dependencies_evidence": "retained",
+    "role_ownership": "Initial inventory contained no worker/service/client/probe roles; removed only newly created embedding_worker after all scratch DBs closed; service/client/probe roles already removed by tests."
+  },
+  "limitations": "Global backend/voice/startup known-red receipts preserved; separate parent CI/U4 reset approval untouched. PG17/PostgREST/hosted/provider/browser/final matrix deferred; no whole-change pass. U2.3 admission/start/failure/retry/budgets deliberately absent.",
+  "scope_exclusions": "No delegation,commit,push,PR,merge,secrets,remote,provider,payment,native acquire/settle/reset or final verify-report.",
+  "next_recommended": "Parent settlement and independent content review using final manifest SHA256.",
+  "counting": "git diff HEAD --numstat plus complete nonignored untracked lines,including this manifest itself. Both SQL mirrors and authored49-line Python runtime harness are included in manual322/400. Raw ignored logs are retained/hash-bound; no source exception.",
+  "complete_nonignored_diff": {
+    "additions": 1676,
+    "deletions": 37,
+    "total": 1713,
+    "per_file": [
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/apply-progress.md",
+        "additions": 31,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/.gitignore",
+        "additions": 1,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/chain-commands.json",
+        "additions": 732,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.2/check-chains.py",
+        "additions": 49,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/status.json",
+        "additions": 29,
+        "deletions": 29
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/tasks.md",
+        "additions": 1,
+        "deletions": 1
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/u2.2-authorization.json",
+        "additions": 24,
+        "deletions": 0
+      },
+      {
+        "path": "openspec/changes/automatic-supabase-embeddings/u2.2-evidence.json",
+        "additions": 543,
+        "deletions": 0
+      },
+      {
+        "path": "src/db/migrations/023_embedding_completion.sql",
+        "additions": 59,
+        "deletions": 0
+      },
+      {
+        "path": "supabase/migrations/20261023000500_embedding_completion.sql",
+        "additions": 59,
+        "deletions": 0
+      },
+      {
+        "path": "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+        "additions": 6,
+        "deletions": 5
+      },
+      {
+        "path": "tests/integration/automatic-embeddings-rpc.test.ts",
+        "additions": 139,
+        "deletions": 2
+      },
+      {
+        "path": "tests/integration/helpers/embedding-database.ts",
+        "additions": 3,
+        "deletions": 0
+      }
+    ]
+  }
+}

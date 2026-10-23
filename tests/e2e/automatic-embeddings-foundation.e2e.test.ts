@@ -8,7 +8,7 @@ const vector = [1, ...Array(383).fill(0)];
 const model = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2';
 
 describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
-  it.each(['foundation', 'outbox', 'lifecycle', 'protection', 'claims'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
+  it.each(['foundation', 'outbox', 'lifecycle', 'protection', 'claims', 'completion'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
     const fixture = await embeddingDatabase(chain);
     const { database } = fixture;
     try {
@@ -27,9 +27,10 @@ describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
       const before = await snapshot();
       await fixture.applyFoundation();
       if (stage !== 'foundation') await fixture.applyOutbox();
-      if (['lifecycle', 'protection', 'claims'].includes(stage)) await fixture.applyLifecycle();
-      if (['protection', 'claims'].includes(stage)) await fixture.applyProtection();
-      if (stage === 'claims') await fixture.applyClaims();
+      if (['lifecycle', 'protection', 'claims', 'completion'].includes(stage)) await fixture.applyLifecycle();
+      if (['protection', 'claims', 'completion'].includes(stage)) await fixture.applyProtection();
+      if (['claims', 'completion'].includes(stage)) await fixture.applyClaims();
+      if (stage === 'completion') await fixture.applyCompletion();
       expect(await snapshot()).toEqual(before);
       for (const table of ['recipients', 'user_memories']) {
         expect((await database.query(`SELECT embedding_generation, desired_embedding_revision, embedding_state,
@@ -54,7 +55,7 @@ describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
       expect((await database.query('SELECT count(DISTINCT embedding_incarnation)::int AS count FROM (SELECT embedding_incarnation FROM recipients UNION ALL SELECT embedding_incarnation FROM user_memories) s')).rows[0]?.count).toBe(4);
       expect((await database.query('SELECT activated, claims_enabled, semantic_enabled FROM embedding_private.control')).rows[0])
         .toEqual({ activated: false, claims_enabled: false, semantic_enabled: false });
-      if (stage === 'claims') expect((await database.query('SELECT * FROM public.embedding_begin_drain()')).rows).toEqual([]);
+      if (['claims', 'completion'].includes(stage)) expect((await database.query('SELECT * FROM public.embedding_begin_drain()')).rows).toEqual([]);
       if (stage !== 'foundation') expect((await database.query('SELECT count(*)::int AS count FROM embedding_private.jobs')).rows[0]?.count).toBe(0);
     } finally { await fixture.cleanup(); }
   }, 30_000);

@@ -20,6 +20,8 @@ export const protectionNames = { supabase: '20261023000300_embedding_protection.
 
 export const claimsNames = { supabase: '20261023000400_embedding_claims.sql', mirror: '022_embedding_claims.sql' };
 
+export const completionNames = { supabase: '20261023000500_embedding_completion.sql', mirror: '023_embedding_completion.sql' };
+
 export async function embeddingDatabase(chain: typeof chains[number]) {
   const configured = process.env.EMBEDDINGS_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!configured) throw new Error('A loopback embedding test database is required; tests never skip.');
@@ -89,6 +91,7 @@ export async function embeddingDatabase(chain: typeof chains[number]) {
       applyLifecycle: () => applyMigration(lifecycleNames[chain]),
       applyProtection: () => applyMigration(protectionNames[chain]),
       applyClaims: () => applyMigration(claimsNames[chain]),
+      applyCompletion: () => applyMigration(completionNames[chain]),
     };
   } catch (error) {
     await cleanup();
