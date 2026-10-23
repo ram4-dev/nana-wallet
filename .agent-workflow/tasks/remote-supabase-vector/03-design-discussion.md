@@ -1,6 +1,6 @@
 # Automatic Supabase embeddings — design revision 3
 
-Status: proposed for human design approval. The user requested automatic generation after learning that SQL inserts need explicitly configured automation. This supersedes the temporary keep-current-generation decision recorded in intake and git history.
+Status: design revision 3 approved by Ramiro. The user requested automatic generation after learning that SQL inserts need explicitly configured automation. This supersedes the temporary keep-current-generation decision recorded in intake and git history.
 
 ## Intended behavior
 
@@ -51,4 +51,4 @@ Forecast: roughly 1350-2300 authored changed lines including mirrored SQL and te
 Gate: remote-supabase-vector-design-r3
 Allowed action requested: accept the behavior, OpenAI text processing/model and eventual indexing, bounded operating defaults, short activation pause and auto-chain delivery described above; proceed to outline/review, then implementation only after its required gate.
 Decision owner: Ramiro.
-Status: proposed; no schema/source changes, external provider calls or deployment performed.
+Status: approved by Ramiro on 2026-10-23 with "apruebo eso", following the revision 3 summary/link in chat. This approves automatic asynchronous generation, OpenAI multilingual processing, the stated behavior and auto-chain delivery. No schema/source changes, external provider calls or deployment performed yet. Human implementation-outline approval remains a separate required gate.
