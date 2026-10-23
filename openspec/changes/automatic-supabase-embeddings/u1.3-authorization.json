@@ -1,0 +1,24 @@
+{
+  "work_unit": "U1.3",
+  "task": "1.3",
+  "role": "sdd-apply executor",
+  "worktree": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-lifecycle",
+  "branch": "feat/embedding-lifecycle",
+  "source_branch": "feat/embedding-outbox",
+  "base_commit": "382d6493d70130daf6f6eef3179ebbd287e9b2cd",
+  "initial_status": "clean",
+  "delivery_strategy": "auto-chain",
+  "chain_strategy": "stacked-to-main",
+  "strict_tdd": false,
+  "outline_approved_sha256": "1ed65e6132f95f061c197c0b34623e473fe782b452f360a12cf21d753dfaaa4c",
+  "native_attempt": {
+    "parent_owned": true,
+    "token": "sha256:640d69724d2bd4e6e2eb9a0201bf068ebe7220ae6e6e68112aafdc4817bfd96c",
+    "max_attempts": 3,
+    "total_line_limit": 2000,
+    "source_test_line_limit": 400
+  },
+  "authorization": "Explicit parent assignment authorizes this exact fresh Worktrunk checkout and 2000 TOTAL / 400 code+test additions+deletions including SQL mirrors. No acquire, settle, reset, delegation, Git writes, remote/provider/secret/payment operations.",
+  "status_binding": "Native sdd-status --cwd generated paths and ready state; existing parent attempt confirmed without acquisition.",
+  "cleanup": "Retain worktree/dependencies/parent container and DB; remove only owned scratch resources."
+}

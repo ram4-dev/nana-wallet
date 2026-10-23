@@ -8,7 +8,7 @@ const vector = [1, ...Array(383).fill(0)];
 const model = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2';
 
 describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
-  it.each(['foundation', 'outbox'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
+  it.each(['foundation', 'outbox', 'lifecycle'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
     const fixture = await embeddingDatabase(chain);
     const { database } = fixture;
     try {
@@ -26,7 +26,8 @@ describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
         FROM user_memories m UNION ALL SELECT 'history', to_jsonb(v) FROM recipient_versions v ORDER BY kind`)).rows;
       const before = await snapshot();
       await fixture.applyFoundation();
-      if (stage === 'outbox') await fixture.applyOutbox();
+      if (stage !== 'foundation') await fixture.applyOutbox();
+      if (stage === 'lifecycle') await fixture.applyLifecycle();
       expect(await snapshot()).toEqual(before);
       for (const table of ['recipients', 'user_memories']) {
         expect((await database.query(`SELECT embedding_generation, desired_embedding_revision, embedding_state,
@@ -51,7 +52,7 @@ describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
       expect((await database.query('SELECT count(DISTINCT embedding_incarnation)::int AS count FROM (SELECT embedding_incarnation FROM recipients UNION ALL SELECT embedding_incarnation FROM user_memories) s')).rows[0]?.count).toBe(4);
       expect((await database.query('SELECT activated, claims_enabled, semantic_enabled FROM embedding_private.control')).rows[0])
         .toEqual({ activated: false, claims_enabled: false, semantic_enabled: false });
-      if (stage === 'outbox') expect((await database.query('SELECT count(*)::int AS count FROM embedding_private.jobs')).rows[0]?.count).toBe(0);
+      if (stage !== 'foundation') expect((await database.query('SELECT count(*)::int AS count FROM embedding_private.jobs')).rows[0]?.count).toBe(0);
     } finally { await fixture.cleanup(); }
   }, 30_000);
 });
