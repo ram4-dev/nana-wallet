@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { chains, claimsNames, completionNames, embeddingDatabase } from './helpers/embedding-database.js';
+import { chains, claimsNames, completionNames, recoveryNames, embeddingDatabase } from './helpers/embedding-database.js';
 
 const identity = ['job_id', 'kind', 'owner_id', 'source_id', 'incarnation', 'generation', 'revision'];
 const signatures = ['embedding_begin_drain()', 'embedding_claim_jobs(uuid,integer)', 'embedding_read_job(uuid,uuid)'];
@@ -14,7 +14,7 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
     serviceOwned = !(await m.query("SELECT FROM pg_roles WHERE rolname='service_role'")).rowCount;
     if (serviceOwned) await m.query('CREATE ROLE service_role NOLOGIN');
     await fixture.applyFoundation(); await fixture.applyOutbox(); await fixture.applyLifecycle(); await fixture.applyProtection();
-    await fixture.applyClaims(); await fixture.applyCompletion();
+    await fixture.applyClaims(); await fixture.applyCompletion(); await fixture.applyRecovery();
   }, 30_000);
   afterAll(async () => {
     await fixture?.cleanup();
@@ -148,6 +148,9 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
   const complete = (j: Record<string, unknown>, v: string | null = vector, role = 'embedding_worker') => roleQuery(role,
     'SELECT public.embedding_complete($1,$2,$3,$4,$5,$6,$7,$8,$9) AS result',
     [j.job_id, j.owner_id, j.kind, j.source_id, j.incarnation, j.generation, j.revision, j.claim_token, v]);
+  const fail = (j: Record<string, unknown>, code: string | null = 'provider_timeout', retry: number | null = null, role = 'embedding_worker') => roleQuery(role,
+    'SELECT public.embedding_fail($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS result',
+    [j.job_id,j.owner_id,j.kind,j.source_id,j.incarnation,j.generation,j.revision,j.claim_token,code,retry]);
   const snapshot = async () => {
     const rows = [];
     for (const t of ['recipients','user_memories','embedding_private.jobs','recipient_versions','recipient_policy_state',
@@ -198,6 +201,8 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
       ['kind','arbitrary'], ['source_id',randomUUID()], ['incarnation',randomUUID()], ['generation','99'], ['revision','forged'], ['claim_token',randomUUID()]]) {
       expect(await complete({ ...job, [field]: value })).toEqual([{ result: 'stale' }]);
       expect(await complete({ ...job, [field]: null })).toEqual([{ result: 'stale' }]);
+      expect(await fail({ ...job, [field]: value })).toEqual([{ result: 'stale' }]);
+      expect(await fail({ ...job, [field]: null })).toEqual([{ result: 'stale' }]);
       expect(await snapshot()).toEqual(before);
     }
     for (const invalid of [null, '[1,0]', JSON.stringify(Array(384).fill(0)), JSON.stringify([2,...Array(383).fill(0)]),
@@ -222,12 +227,14 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
       'UPDATE embedding_private.control SET claims_enabled=false', "UPDATE embedding_private.control SET pause_code='provider_auth'"];
     for (const sql of mutations) {
       await m.query('SAVEPOINT late'); await m.query(sql); const before = await snapshot();
-      expect(await complete(job)).toEqual([{ result: 'stale' }]); expect(await snapshot()).toEqual(before);
+      expect(await complete(job)).toEqual([{ result: 'stale' }]);
+      expect(await fail(job)).toEqual([{ result: 'stale' }]); expect(await snapshot()).toEqual(before);
       await m.query('ROLLBACK TO late'); await m.query('RELEASE late');
     }
     await m.query("UPDATE embedding_private.jobs SET lease_until=clock_timestamp()-interval '1 second',available_at=clock_timestamp()-interval '1 hour' WHERE id=$1", [job.job_id]);
     const [reclaimed] = await claim(run, 1); expect(reclaimed.job_id).toBe(job.job_id);
     expect(reclaimed.claim_token).not.toBe(job.claim_token); expect(await complete(job)).toEqual([{ result: 'stale' }]);
+    expect(await fail(job)).toEqual([{ result: 'stale' }]);
     expect(await complete(reclaimed)).toEqual([{ result: 'applied' }]);
   });
 
@@ -245,39 +252,115 @@ describe.each(chains)('U2.1 real claim/read RPCs: %s', (chain) => {
   });
 
 
-  it.each(['recipient','fact'])('T6 %s: locks source before job and rechecks run expiry after a control-lock wait', async (kind) => {
+  it.each(['recipient','fact'].flatMap((kind) => ['complete','fail'].map((operation) => ({ kind, operation }))))('T6 $kind/$operation: source-first locks and expiry after waits', async ({ kind, operation }) => {
     const runtime = await embeddingDatabase(chain); const m = runtime.migration;
     try {
       await runtime.applyFoundation(); await runtime.applyOutbox(); await runtime.applyLifecycle(); await runtime.applyProtection();
-      await runtime.applyClaims(); await runtime.applyCompletion(); await m.query('SELECT embedding_private.activate()');
+      await runtime.applyClaims(); await runtime.applyCompletion(); await runtime.applyRecovery(); await m.query('SELECT embedding_private.activate()');
       await m.query('UPDATE embedding_private.control SET claims_enabled=true');
       const owner = randomUUID(); await m.query('INSERT INTO users(id,privy_did) VALUES($1,$2)', [owner, `did:privy:${owner}`]);
       const table = kind === 'recipient' ? 'recipients' : 'user_memories';
       const fields = kind === 'recipient' ? "name,normalized_name,description,address,address_confirmed_at) VALUES($1,'Ana','ana','Hermana','fixture',now())"
         : "fact,confirmed_at) VALUES($1,'Ana es mi hermana',now())";
       const [run] = (await m.query('SELECT * FROM public.embedding_begin_drain()')).rows;
-      for (const barrier of ['source','control']) {
+      for (const barrier of ['source','control',...(operation === 'fail' ? ['job_lease','source_lease'] : [])]) {
         await m.query(`INSERT INTO ${table}(user_id,${fields}`, [owner]);
+        await m.query("UPDATE embedding_private.control SET run_until=clock_timestamp()+interval '90 seconds'");
         const [j] = (await m.query('SELECT * FROM public.embedding_claim_jobs($1,1)', [run.run_token])).rows;
         if (barrier === 'control') await m.query("UPDATE embedding_private.control SET run_until=clock_timestamp()+interval '500 milliseconds'");
+        if (barrier.endsWith('_lease')) await m.query("UPDATE embedding_private.jobs SET lease_until=clock_timestamp()+interval '500 milliseconds' WHERE id=$1", [j.job_id]);
         await m.query('BEGIN'); await m.query("SET LOCAL lock_timeout='100ms'");
-        await m.query(barrier === 'source' ? `SELECT FROM ${table} WHERE id='${j.source_id}' FOR UPDATE` : 'SELECT FROM embedding_private.control FOR UPDATE');
+        await m.query(barrier === 'job_lease' ? `SELECT FROM embedding_private.jobs WHERE id='${j.job_id}' FOR UPDATE` : barrier !== 'control' ? `SELECT FROM ${table} WHERE id='${j.source_id}' FOR UPDATE` : 'SELECT FROM embedding_private.control FOR UPDATE');
         const result = runtime.database.withUserTransactionAnonymous(async (c) => {
           await c.query('SET LOCAL ROLE embedding_worker'); await c.query("SET LOCAL statement_timeout='3s'");
-          return (await c.query('SELECT public.embedding_complete($1,$2,$3,$4,$5,$6,$7,$8,$9) AS result',
-            [j.job_id,j.owner_id,j.kind,j.source_id,j.incarnation,j.generation,j.revision,j.claim_token,vector])).rows;
+          return (await c.query(`SELECT public.embedding_${operation}($1,$2,$3,$4,$5,$6,$7,$8,${operation === 'fail' ? '$9,$10' : '$9'}) AS result`,
+            [j.job_id,j.owner_id,j.kind,j.source_id,j.incarnation,j.generation,j.revision,j.claim_token,...(operation === 'fail' ? ['invalid_input',null] : [vector])])).rows;
         });
+        void result.catch(() => {});
         try {
-          await expect.poll(async () => { await m.query('SELECT pg_stat_clear_snapshot()'); return (await m.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE 'SELECT public.embedding_complete%'")).rows[0].n; }).toBe(1);
+          await expect.poll(async () => { await m.query('SELECT pg_stat_clear_snapshot()'); return (await m.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock' AND query LIKE 'SELECT public.embedding_%'")).rows[0].n; }).toBe(1);
           if (barrier === 'source') await m.query('SELECT FROM embedding_private.jobs WHERE id=$1 FOR UPDATE NOWAIT', [j.job_id]);
-          else await expect.poll(async () => (await m.query('SELECT run_until<=clock_timestamp() AS expired FROM embedding_private.control')).rows[0].expired).toBe(true);
+          else await expect.poll(async () => (await m.query(barrier === 'control' ? 'SELECT run_until<=clock_timestamp() AS expired FROM embedding_private.control' : 'SELECT lease_until<=clock_timestamp() AS expired FROM embedding_private.jobs WHERE id=$1', barrier === 'control' ? [] : [j.job_id])).rows[0].expired).toBe(true);
         } finally { await m.query('ROLLBACK'); }
         expect(await result).toEqual([{ result: barrier === 'source' ? 'applied' : 'stale' }]);
         expect((await m.query(`SELECT embedding_state FROM ${table} WHERE id=$1`, [j.source_id])).rows[0].embedding_state)
-          .toBe(barrier === 'source' ? 'ready' : 'pending');
+          .toBe(barrier === 'source' ? (operation === 'fail' ? 'failed' : 'ready') : 'pending');
       }
     } finally { await m.query('ROLLBACK'); await runtime.cleanup(); }
   }, 30_000);
+
+  it.each(['recipient','fact'])('U2.3a T7/T11 %s: classified failure, bounded backoff, rollback and explicit retry', async (kind) => {
+    const { job } = await selected(kind); const m = fixture.migration;
+    const table = kind === 'recipient' ? 'recipients' : 'user_memories';
+    await m.query('INSERT INTO recipient_versions(recipient_id,user_id,version,name,description,address) SELECT id,user_id,version,name,description,address FROM recipients');
+    const wallet = randomUUID();
+    await m.query("INSERT INTO user_wallets(id,user_id,provider,provider_wallet_id,chain_family,address) VALUES($1,$2,'fixture',$3,'solana','fixture')", [wallet,job.owner_id,wallet]);
+    await m.query('INSERT INTO recipient_policy_state(wallet_id,user_id) VALUES($1,$2)', [wallet,job.owner_id]);
+    const before = await snapshot();
+    for (const code of [null,'raw provider body','attempts_exhausted','provider_auth','provider_quota','provider_config']) {
+      await expect(fail(job, code)).rejects.toMatchObject({ code: '22023' }); expect(await snapshot()).toEqual(before);
+    }
+    // Fixture-authored counts classify failures only; real STARTED accounting belongs to c/e.
+    for (const [code,attempt,retry,lower,upper] of [['provider_timeout',0,null,5,6],['provider_network',2,-20,10,12],
+      ['provider_5xx',4,null,40,48],['provider_rate_limit',1,120,120,120],['provider_rate_limit',1,2147483647,300,300],
+      ['invalid_input',1,null,0,0],['invalid_vector',1,null,0,0],['input_oversize',1,null,0,0],['provider_timeout',5,null,0,0]] as const) {
+      await m.query('SAVEPOINT failure'); await m.query('UPDATE embedding_private.jobs SET attempts=$2 WHERE id=$1', [job.job_id,attempt]);
+      expect(await fail(job,code,retry,'service_role')).toEqual([{ result: 'applied' }]);
+      const terminal = upper === 0; const after = await snapshot();
+      for (let i = 0; i < 2; i++) expect(after[i]).toEqual(before[i].map(({ data }) => ({ data: data.id === job.source_id
+        ? { ...data, embedding_state: terminal ? 'failed' : 'pending' } : data })));
+      expect(after.slice(3)).toEqual(before.slice(3)); expect(after[2]).toHaveLength(before[2].length);
+      expect(after[2].filter(({ data }) => data.id !== job.job_id)).toEqual(before[2].filter(({ data }) => data.id !== job.job_id));
+      const [state] = (await m.query('SELECT state,attempts,error_code,claim_token,lease_until,extract(epoch FROM available_at-updated_at)::float8 AS delay FROM embedding_private.jobs WHERE id=$1', [job.job_id])).rows;
+      expect(state).toMatchObject({ state: terminal ? 'failed' : 'pending', attempts: attempt, error_code: attempt === 5 ? 'attempts_exhausted' : code, claim_token: null, lease_until: null });
+      if (retry === null && !terminal) expect(state.delay).toBeGreaterThan(lower);
+      if (!terminal) { expect(state.delay).toBeGreaterThanOrEqual(lower); expect(state.delay).toBeLessThanOrEqual(upper); }
+      expect(await fail(job)).toEqual([{ result: 'stale' }]);
+      await m.query('ROLLBACK TO failure'); await m.query('RELEASE failure'); expect(await snapshot()).toEqual(before);
+    }
+    await m.query("ALTER TABLE embedding_private.jobs ADD CONSTRAINT fixture_no_failure CHECK (state<>'failed') NOT VALID");
+    await expect(fail(job,'invalid_input')).rejects.toMatchObject({ code: '23514' }); expect(await snapshot()).toEqual(before);
+    await m.query('ALTER TABLE embedding_private.jobs DROP CONSTRAINT fixture_no_failure');
+    const retry = (generation: unknown) => m.query('SELECT public.embedding_retry($1,$2,$3,$4) AS generation', [kind,job.owner_id,job.source_id,generation]);
+    expect((await retry(job.generation)).rows[0].generation).toBeNull();
+    await m.query('UPDATE embedding_private.jobs SET attempts=5 WHERE id=$1', [job.job_id]);
+    expect(await fail(job,'provider_timeout')).toEqual([{ result: 'applied' }]);
+    for (const args of [[kind,randomUUID(),job.source_id,job.generation],[kind,job.owner_id,randomUUID(),job.generation],[kind,job.owner_id,job.source_id,null],['unsupported',job.owner_id,job.source_id,job.generation]]) {
+      expect((await m.query('SELECT public.embedding_retry($1,$2,$3,$4) AS generation', args)).rows[0].generation).toBeNull();
+    }
+    for (const change of ["status='inactive'","desired_embedding_revision='forged'"]) {
+      await m.query('SAVEPOINT retry_stale'); await m.query(`UPDATE ${table} SET ${change} WHERE id=$1`, [job.source_id]);
+      expect((await retry(job.generation)).rows[0].generation).toBeNull(); await m.query('ROLLBACK TO retry_stale'); await m.query('RELEASE retry_stale');
+    }
+    expect((await retry(Number(job.generation)+1)).rows[0].generation).toBeNull();
+    expect((await retry(job.generation)).rows[0].generation).toBe(String(Number(job.generation)+1));
+    expect((await retry(job.generation)).rows[0].generation).toBeNull(); expect(await fail(job)).toEqual([{ result: 'stale' }]);
+    const source = (await m.query(`SELECT to_jsonb(s) AS data FROM ${table} s WHERE id=$1`, [job.source_id])).rows[0].data;
+    expect(source).toEqual({ ...before[kind === 'recipient' ? 0 : 1].find(({ data }) => data.id === job.source_id)!.data, embedding_generation: Number(job.generation)+1 });
+    const jobs = (await m.query('SELECT state,attempts FROM embedding_private.jobs WHERE source_id=$1 ORDER BY generation', [job.source_id])).rows;
+    expect(jobs).toEqual([{ state: 'superseded', attempts: 5 },{ state: 'pending', attempts: 0 }]);
+    expect((await snapshot()).slice(3)).toEqual(before.slice(3));
+    const healthy = (await m.query("SELECT * FROM embedding_private.jobs WHERE id<>$1 AND state='leased' LIMIT 1", [job.job_id])).rows[0];
+    expect(await complete({ ...healthy, job_id: healthy.id })).toEqual([{ result: 'applied' }]);
+    const [fresh] = await claim((await m.query('SELECT run_token FROM embedding_private.control')).rows[0].run_token,1);
+    expect(fresh.generation).toBe(String(Number(job.generation)+1));
+    expect(await complete(job)).toEqual([{ result: 'stale' }]); expect(await complete(fresh)).toEqual([{ result: 'applied' }]);
+  });
+
+  it('U2.3a enforces worker failure/operator-only retry and byte parity', async () => {
+    const { job } = await selected('fact'); const m = fixture.migration;
+    for (const name of ['embedding_fail','embedding_retry']) {
+      const [config] = (await m.query(`SELECT prosecdef,proconfig,r.rolsuper OR r.rolbypassrls AS bypass,
+        EXISTS(SELECT FROM aclexplode(p.proacl) a WHERE a.grantee=0) AS public_execute FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE proname=$1`, [name])).rows;
+      expect(config).toEqual({ prosecdef: true, proconfig: ['search_path=pg_catalog, extensions','row_security=off'], bypass: true, public_execute: false });
+    }
+    for (const role of ['recipient_app','anon','authenticated','embedding_probe_public','embedding_worker','service_role']) {
+      if (!(await m.query('SELECT FROM pg_roles WHERE rolname=$1', [role])).rowCount) await m.query(`CREATE ROLE ${role} NOLOGIN`);
+      await expect(roleQuery(role,'SELECT public.embedding_retry($1,$2,$3,$4)', ['fact',job.owner_id,job.source_id,job.generation])).rejects.toMatchObject({ code: '42501' });
+      if (!['embedding_worker','service_role'].includes(role)) await expect(fail(job,'invalid_input',null,role)).rejects.toMatchObject({ code: '42501' });
+    }
+    expect(await readFile(`supabase/migrations/${recoveryNames.supabase}`, 'utf8')).toBe(await readFile(`src/db/migrations/${recoveryNames.mirror}`, 'utf8'));
+  });
 
   it('uses job-only SKIP LOCKED and a unique run across real concurrent connections', async () => {
     const run = await enable(); const m = fixture.migration; await m.query('COMMIT'); await m.query('BEGIN');
