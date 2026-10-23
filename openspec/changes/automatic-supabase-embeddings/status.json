@@ -5,26 +5,26 @@
   "artifactStore": "openspec",
   "planningHome": {
     "mode": "repo-local",
-    "path": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec"
+    "path": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec"
   },
-  "changeRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings",
+  "changeRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings",
   "artifactPaths": {
     "proposal": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/proposal.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/proposal.md"
     ],
     "specs": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
     ],
     "design": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/design.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/design.md"
     ],
     "tasks": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/tasks.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/tasks.md"
     ],
     "applyProgress": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
     ],
     "verifyReport": [],
     "reviewPolicy": [],
@@ -36,21 +36,21 @@
   },
   "contextFiles": {
     "proposal": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/proposal.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/proposal.md"
     ],
     "specs": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
     ],
     "design": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/design.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/design.md"
     ],
     "tasks": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/tasks.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/tasks.md"
     ],
     "applyProgress": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
     ],
     "verifyReport": [],
     "reviewPolicy": [],
@@ -91,9 +91,9 @@
   "applyState": "ready",
   "actionContext": {
     "mode": "repo-local",
-    "workspaceRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion",
+    "workspaceRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery",
     "allowedEditRoots": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery"
     ]
   },
   "relationships": {
@@ -118,22 +118,22 @@
       "State: ready",
       "Read proposal, specs, design, and tasks before editing.",
       "Implement only unchecked tasks and update tasks.md checkboxes as work completes.",
-      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion\" --change \"automatic-supabase-embeddings\" --request-id \"\u003cunique-request-id\u003e\" --work-unit \"\u003clabel\u003e\" --evidence-goal \"\u003cstable-goal\u003e\" --max-attempts \u003ccount\u003e --max-changed-lines \u003ccount\u003e`.",
+      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery\" --change \"automatic-supabase-embeddings\" --request-id \"\u003cunique-request-id\u003e\" --work-unit \"\u003clabel\u003e\" --evidence-goal \"\u003cstable-goal\u003e\" --max-attempts \u003ccount\u003e --max-changed-lines \u003ccount\u003e`.",
       "Launch only for state proceed and retain its opaque token. State blocked or complete stops the launch; full runtime status is a diagnostic escape hatch, not normal model context.",
-      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion\" --change \"automatic-supabase-embeddings\" --token \"\u003cacquire-token\u003e\" --request-id \"\u003cunique-request-id\u003e\" --outcome \u003cpassed|failed|interrupted\u003e --evidence-revision \u003csha256\u003e --diagnosis \"\u003cproven-diagnosis\u003e\" --harness-disposition \u003creused|invalidated\u003e --cleanup-evidence \"\u003cevidence\u003e\" --process-evidence \"\u003cevidence\u003e\"`; add --successor-lineage only for a distinct approved remediation successor.",
+      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery\" --change \"automatic-supabase-embeddings\" --token \"\u003cacquire-token\u003e\" --request-id \"\u003cunique-request-id\u003e\" --outcome \u003cpassed|failed|interrupted\u003e --evidence-revision \u003csha256\u003e --diagnosis \"\u003cproven-diagnosis\u003e\" --harness-disposition \u003creused|invalidated\u003e --cleanup-evidence \"\u003cevidence\u003e\" --process-evidence \"\u003cevidence\u003e\"`; add --successor-lineage only for a distinct approved remediation successor.",
       "Treat settle state proceed as permission for another bounded acquire, blocked as a hard stop, and complete as terminal. Reset is exceptional, requires an explicit maintainer scope decision, and is never automatic.",
-      "An attempt is already active for this change: a distinct attempt token sha256:9a072f12521f2adb2a3c75da0c24eeeeff092cffbceee08f666aa071e5d325ec is already active for this work unit; run `gentle-ai sdd-attempt status --cwd \u003crepo\u003e --change \u003cchange\u003e` to see it, then add `--token sha256:9a072f12521f2adb2a3c75da0c24eeeeff092cffbceee08f666aa071e5d325ec` to your own `sdd-attempt acquire` call to continue that exact attempt, or to your `sdd-attempt settle` call to close it before starting a new one"
+      "An attempt is already active for this change: a distinct attempt token sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a is already active for this work unit; run `gentle-ai sdd-attempt status --cwd \u003crepo\u003e --change \u003cchange\u003e` to see it, then add `--token sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a` to your own `sdd-attempt acquire` call to continue that exact attempt, or to your `sdd-attempt settle` call to close it before starting a new one"
     ],
     "verify": [
       "Change: automatic-supabase-embeddings",
       "State: blocked",
       "Verify implementation against proposal, specs, design, and task completion.",
       "Run final verification only after every task is complete; apply-progress never makes final verification ready.",
-      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion\" --change \"automatic-supabase-embeddings\" --request-id \"\u003cunique-request-id\u003e\" --work-unit \"\u003clabel\u003e\" --evidence-goal \"\u003cstable-goal\u003e\" --max-attempts \u003ccount\u003e --max-changed-lines \u003ccount\u003e`.",
+      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery\" --change \"automatic-supabase-embeddings\" --request-id \"\u003cunique-request-id\u003e\" --work-unit \"\u003clabel\u003e\" --evidence-goal \"\u003cstable-goal\u003e\" --max-attempts \u003ccount\u003e --max-changed-lines \u003ccount\u003e`.",
       "Launch only for state proceed and retain its opaque token. State blocked or complete stops the launch; full runtime status is a diagnostic escape hatch, not normal model context.",
-      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion\" --change \"automatic-supabase-embeddings\" --token \"\u003cacquire-token\u003e\" --request-id \"\u003cunique-request-id\u003e\" --outcome \u003cpassed|failed|interrupted\u003e --evidence-revision \u003csha256\u003e --diagnosis \"\u003cproven-diagnosis\u003e\" --harness-disposition \u003creused|invalidated\u003e --cleanup-evidence \"\u003cevidence\u003e\" --process-evidence \"\u003cevidence\u003e\"`; add --successor-lineage only for a distinct approved remediation successor.",
+      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery\" --change \"automatic-supabase-embeddings\" --token \"\u003cacquire-token\u003e\" --request-id \"\u003cunique-request-id\u003e\" --outcome \u003cpassed|failed|interrupted\u003e --evidence-revision \u003csha256\u003e --diagnosis \"\u003cproven-diagnosis\u003e\" --harness-disposition \u003creused|invalidated\u003e --cleanup-evidence \"\u003cevidence\u003e\" --process-evidence \"\u003cevidence\u003e\"`; add --successor-lineage only for a distinct approved remediation successor.",
       "Treat settle state proceed as permission for another bounded acquire, blocked as a hard stop, and complete as terminal. Reset is exceptional, requires an explicit maintainer scope decision, and is never automatic.",
-      "An attempt is already active for this change: a distinct attempt token sha256:9a072f12521f2adb2a3c75da0c24eeeeff092cffbceee08f666aa071e5d325ec is already active for this work unit; run `gentle-ai sdd-attempt status --cwd \u003crepo\u003e --change \u003cchange\u003e` to see it, then add `--token sha256:9a072f12521f2adb2a3c75da0c24eeeeff092cffbceee08f666aa071e5d325ec` to your own `sdd-attempt acquire` call to continue that exact attempt, or to your `sdd-attempt settle` call to close it before starting a new one"
+      "An attempt is already active for this change: a distinct attempt token sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a is already active for this work unit; run `gentle-ai sdd-attempt status --cwd \u003crepo\u003e --change \u003cchange\u003e` to see it, then add `--token sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a` to your own `sdd-attempt acquire` call to continue that exact attempt, or to your `sdd-attempt settle` call to close it before starting a new one"
     ],
     "remediate": [
       "Change: automatic-supabase-embeddings",
@@ -141,11 +141,11 @@
       "Bind focused tests, runtime harness evidence, and rollback evidence to the exact failed evidence revision.",
       "A bare remediation envelope or stale failed revision never completes remediation.",
       "A passing bound remediation MUST finish atomically with --expected-binding-revision, --successor-lineage, and --remediates-evidence-revision so the charged evidence and approved compact successor share one native HEAD CAS.",
-      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion\" --change \"automatic-supabase-embeddings\" --request-id \"\u003cunique-request-id\u003e\" --work-unit \"\u003clabel\u003e\" --evidence-goal \"\u003cstable-goal\u003e\" --max-attempts \u003ccount\u003e --max-changed-lines \u003ccount\u003e`.",
+      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery\" --change \"automatic-supabase-embeddings\" --request-id \"\u003cunique-request-id\u003e\" --work-unit \"\u003clabel\u003e\" --evidence-goal \"\u003cstable-goal\u003e\" --max-attempts \u003ccount\u003e --max-changed-lines \u003ccount\u003e`.",
       "Launch only for state proceed and retain its opaque token. State blocked or complete stops the launch; full runtime status is a diagnostic escape hatch, not normal model context.",
-      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-completion\" --change \"automatic-supabase-embeddings\" --token \"\u003cacquire-token\u003e\" --request-id \"\u003cunique-request-id\u003e\" --outcome \u003cpassed|failed|interrupted\u003e --evidence-revision \u003csha256\u003e --diagnosis \"\u003cproven-diagnosis\u003e\" --harness-disposition \u003creused|invalidated\u003e --cleanup-evidence \"\u003cevidence\u003e\" --process-evidence \"\u003cevidence\u003e\"`; add --successor-lineage only for a distinct approved remediation successor.",
+      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-recovery\" --change \"automatic-supabase-embeddings\" --token \"\u003cacquire-token\u003e\" --request-id \"\u003cunique-request-id\u003e\" --outcome \u003cpassed|failed|interrupted\u003e --evidence-revision \u003csha256\u003e --diagnosis \"\u003cproven-diagnosis\u003e\" --harness-disposition \u003creused|invalidated\u003e --cleanup-evidence \"\u003cevidence\u003e\" --process-evidence \"\u003cevidence\u003e\"`; add --successor-lineage only for a distinct approved remediation successor.",
       "Treat settle state proceed as permission for another bounded acquire, blocked as a hard stop, and complete as terminal. Reset is exceptional, requires an explicit maintainer scope decision, and is never automatic.",
-      "An attempt is already active for this change: a distinct attempt token sha256:9a072f12521f2adb2a3c75da0c24eeeeff092cffbceee08f666aa071e5d325ec is already active for this work unit; run `gentle-ai sdd-attempt status --cwd \u003crepo\u003e --change \u003cchange\u003e` to see it, then add `--token sha256:9a072f12521f2adb2a3c75da0c24eeeeff092cffbceee08f666aa071e5d325ec` to your own `sdd-attempt acquire` call to continue that exact attempt, or to your `sdd-attempt settle` call to close it before starting a new one"
+      "An attempt is already active for this change: a distinct attempt token sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a is already active for this work unit; run `gentle-ai sdd-attempt status --cwd \u003crepo\u003e --change \u003cchange\u003e` to see it, then add `--token sha256:35e288f1564a796d33c8f319b2edfba773aba09acdfac6e64eb1b4fd45efc38a` to your own `sdd-attempt acquire` call to continue that exact attempt, or to your `sdd-attempt settle` call to close it before starting a new one"
     ],
     "archive": [
       "Change: automatic-supabase-embeddings",
