@@ -1,0 +1,163 @@
+{
+  "unit": "U2.3c",
+  "status": "passed scoped proof; parent settlement and independent review pending",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts",
+  "branch": "feat/embedding-attempts",
+  "base": "d4162c580aa0dd77b8e6d26592c73380c176f54d",
+  "parent_attempt_token": "sha256:f4ea1033a0e52c3e8ce5a9e5d8ddeed2b4fbdc972d8991d44537ac31ced2ed9d",
+  "ledger_owner": "parent",
+  "max_attempts": 3,
+  "authored_target": 348,
+  "reviewed_max": 380,
+  "hard_source_max": 400,
+  "total_max": 2000,
+  "initial_forecast": 378,
+  "final_authored_add_delete": 377,
+  "mode": "standard; strict_tdd=false; auto-chain; stacked-to-main",
+  "subdivision_sha256": "a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46",
+  "task_progress": "U2.3c checked in append-only progress;whole2.3 unchecked;6/25",
+  "evidence_directory": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3c",
+  "commands": [
+    {
+      "command": "npm ci --ignore-scripts --no-audit --no-fund",
+      "exit": 0,
+      "log": "npm-ci.log",
+      "result": "837 packages; package/lock unchanged"
+    },
+    {
+      "command": "npx tsc -p tsconfig.test.json --noEmit",
+      "exit": 0,
+      "log": "typecheck-red.log",
+      "result": "preproduction tests compile"
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts --maxWorkers=1",
+      "exit": 1,
+      "log": "red-final.log",
+      "result": "14 failed/68 passed/0 skipped; exact retained comment-only SQL snapshots"
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts --maxWorkers=1",
+      "exit": 1,
+      "log": "green-rpc.log",
+      "result": "80 passed/2 inherited capacity fixture failures; intermediate source, not final proof"
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts --maxWorkers=1",
+      "exit": 0,
+      "log": "focused-final.log",
+      "result": "82 passed/0 skipped; 14 new U2.3c cases"
+    },
+    {
+      "command": "DOTENV_CONFIG_PATH=/dev/null DATABASE_URL='postgres://postgres@127.0.0.1:55544/wdk_agent?options=-csearch_path%3Dpublic,extensions' EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 npx vitest run tests/integration/automatic-embeddings-rpc.test.ts tests/integration/automatic-embeddings-foundation.test.ts tests/integration/automatic-embeddings-lifecycle.test.ts tests/e2e/automatic-embeddings-foundation.e2e.test.ts --maxWorkers=1",
+      "exit": 0,
+      "log": "combined-final.log",
+      "result": "150 passed/0 skipped;82 RPC+44 lifecycle+4 foundation+20 repository E2E"
+    },
+    {
+      "command": "EMBEDDINGS_TEST_CONTAINER=nana-auto-embedding-db-1 DOTENV_CONFIG_PATH=/dev/null python3 openspec/changes/automatic-supabase-embeddings/evidence/u2.3c/check-chains.py",
+      "exit": 0,
+      "log": "chains-result.log",
+      "result": "both complete fresh28-migration chains; all expanded commands exit0"
+    },
+    {
+      "command": "npm run lint",
+      "exit": 0,
+      "log": "lint-final.log",
+      "result": "zero warnings"
+    },
+    {
+      "command": "npm run typecheck",
+      "exit": 0,
+      "log": "typecheck-final.log",
+      "result": "passed"
+    },
+    {
+      "command": "npm run build",
+      "exit": 0,
+      "log": "build-final.log",
+      "result": "passed"
+    },
+    {
+      "command": "cmp src/db/migrations/027_embedding_attempts.sql supabase/migrations/20261023000900_embedding_attempts.sql",
+      "exit": 0,
+      "log": "parity.log",
+      "result": "byte-identical"
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0,
+      "log": "diff-check.log",
+      "result": "passed"
+    },
+    {
+      "command": "docker exec -i nana-auto-embedding-db-1 psql -U postgres -d postgres -v ON_ERROR_STOP=1 -At",
+      "exit": 0,
+      "log": "cleanup.log",
+      "result": "zero owned scratch DBs/connections/fixture roles;parent retained"
+    }
+  ],
+  "source_identity": {
+    "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3c/source-identity.json",
+    "sha256": "5a671937b863d1d1991652a9aa4837f0f69d15030388179d6f7991457c8c117b",
+    "files": 6,
+    "counts": "SQL72+72;RPC169 additions+2 deletions;helper3;E2E11 additions+10 deletions;new driver38;shared driver unchanged"
+  },
+  "red_snapshot": {
+    "index": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3c/red-sources.json",
+    "sha256": "350b7c6c2f07c957e50fc537fab8b8be708095d6bbe3b448c019be63406a748f",
+    "verification_log": "red-source-verification.log",
+    "retained_files": 5,
+    "description": "Generated exact source copies use ignored .log names; unchanged hashes match controlling RED run. Base commit supplies other implementation bytes. Expanded assertions and UTC-minute fixture alignment added afterward; final current source hashes above."
+  },
+  "expanded_chain_commands": {
+    "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3c/chain-commands.json",
+    "sha256": "34eb502dc98fd7a8a751c8cf44b11870e68e253ef8594d9342b1c42dbe1a9792",
+    "records": 43,
+    "all_exits_zero": true
+  },
+  "logs": {
+    "build-final.log": "f5737dd795af8731486141effb9ecf4536bc1667b8aca0d214c19404f328f604",
+    "chains-result.log": "c53f04a680618d6e6640ffad61925dffd19b006af1d663978d05655d4e0ade2f",
+    "chains.log": "74f2afe22bf6353abc31fdd7ce534e8ea5c9c3e650fce7611cc468609b1e767a",
+    "cleanup.log": "9f7af6e80007dccb90721140b850da2075cc56691ac6a3111dd620fe947fb42f",
+    "combined-final.log": "24e0af6d290467918bcffc55c13ef4240f398cae6b2214dddc632871fea368b9",
+    "diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "focused-final.log": "fcf93111d0ea8be3e2629c0a383fe859b0321beca58207261a9e879b30473887",
+    "green-rpc.log": "9acaee82c8f1d21f9bf79d7595c5b3d53ecfe169369aced5a0b28b9014923555",
+    "lint-final.log": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+    "lint.log": "1ab0ea76e91da0438dafd1f2d6e921152799d9615439d687d4893cdac961471d",
+    "npm-ci.log": "4a2f1f09c2e7d525ec2a96df495387ad43944ba11894b00c25078170d8a8fea6",
+    "parity.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "red-final.log": "51a273dd70904b6cd2c5917d7096efe77280da9efe41be7059400c6c99243f1d",
+    "red-source-verification.log": "c6b4423c8d2baf1b3b6265bbe3418cca770da9ae6ed8d38246d8d9a5ddc237b1",
+    "typecheck-final.log": "a1bacf443ada73cadf82e411998096cb68a88713e3f835f28b5d2a7af4b2d1b0",
+    "typecheck-red.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "nonvacuity": "Both domains/chains;real authenticated admissions/start RPCs and repository dormant writes. Full source/job/run/reservation fencing,forged owner/scope/bytes/IDs,rotated tokens,new generation/archive/delete/reinsert,forced update rollback,successful start rollback,observed source/job/control/reservation waits with expired reserved/run/job refusals. Concurrent drain/query duplicate starts yield exactly one permission. Query keeps admission+3s,including refusal after reservation wait;drain min15s/run/job. Real starts1..5 with real transient failures,zero unused/duplicate increments,no6 claim. Capacity expiry/availability are explicitly operator fixtures;STARTED counts are never fixture-set.",
+  "fixture_corrections": "Retained first GREEN shows two inherited quota fixtures crossing natural UTC-minute boundaries. Fixture-only minute alignment waits at most2s before independent capacity checks;existing rollover proof remains. New query-wait fixture sets expiry500ms explicitly;admission+3s assertion remains independent. No production capacity/lease/backoff or test timeout weakening.",
+  "preservation": {
+    "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3c/preservation.json",
+    "sha256": "9c50efa2b78bdcf038e1d4015e740ddf5efc286cebb6f8d19210931c83d890e5",
+    "previous_progress_prefix_unchanged": true,
+    "prior_receipts_legacy_sql_packages_shared_helper_unchanged": true
+  },
+  "rollback": "Revert only six source/test/harness paths plus owned status/evidence/progress delta. Applied DB:disable claims/revoke embedding_start_attempt(uuid,uuid,uuid),embedding_start_query(uuid,integer);retain attempts,reservations,minute charges,business/history/RLS and compatible readers.",
+  "cleanup": "All owned commands completed;zero scratch databases/connections/fixture roles. Removed only embedding_worker created after recorded inventory. Parent wdk_agent/container and worktree/dependencies/evidence retained;no server started.",
+  "remaining": "U2.3d release,e fifth-start crash recovery,f pause;whole2.3/final verify unchecked. Parent global CI/U7 and known backend/voice/startup baseline remain separate,not rerun. PG17/PostgREST,Edge/adapters/providers/hosted/final acceptance later. No whole-change pass.",
+  "forbidden_actions_performed": false,
+  "transient_harness_accounting": "One new38-line executable driver;shared helper unchanged;all new test/helper/E2E edits included above. No alternative transient executable driver authored. RED files are generated copies,not additional authored code;ignored logs/snapshots are hashed separately.",
+  "cleanup_sql": "SELECT 'owned_scratch_databases='||count(*) FROM pg_database WHERE datname LIKE 'embedding_%';\nSELECT 'owned_scratch_connections='||count(*) FROM pg_stat_activity WHERE datname LIKE 'embedding_%';\nSELECT 'parent_database='||count(*) FROM pg_database WHERE datname='wdk_agent';\nSELECT 'pg_version='||current_setting('server_version');\nSELECT 'remaining_fixture_roles='||count(*) FROM pg_roles WHERE rolname IN ('embedding_worker','service_role','anon','authenticated','embedding_probe_public');",
+  "complete_snapshot": {
+    "algorithm": "SHA256 of sorted changed/nonignored path NUL file-SHA256 LF;excludes manifest itself;ignored raw logs/RED copies bound separately",
+    "files": 13,
+    "sha256": "eb07199512687255850839ed16a4a387461ad3238e6a828655bd4b701ac671d8"
+  },
+  "total_diff": {
+    "additions": 1574,
+    "deletions": 41,
+    "total": 1615,
+    "limit": 2000,
+    "includes": "all changed tracked and nonignored new files,including complete executable harness and generated chain command JSON;ignored generated raw logs/RED source copies bound separately"
+  }
+}

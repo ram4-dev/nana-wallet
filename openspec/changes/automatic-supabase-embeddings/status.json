@@ -5,26 +5,26 @@
   "artifactStore": "openspec",
   "planningHome": {
     "mode": "repo-local",
-    "path": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec"
+    "path": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec"
   },
-  "changeRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings",
+  "changeRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings",
   "artifactPaths": {
     "proposal": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/proposal.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/proposal.md"
     ],
     "specs": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
     ],
     "design": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/design.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/design.md"
     ],
     "tasks": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/tasks.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/tasks.md"
     ],
     "applyProgress": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
     ],
     "verifyReport": [],
     "reviewPolicy": [],
@@ -36,21 +36,21 @@
   },
   "contextFiles": {
     "proposal": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/proposal.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/proposal.md"
     ],
     "specs": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/specs/authenticated-embedding-inference/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/specs/automatic-embedding-lifecycle/spec.md",
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/specs/compatible-memory-retrieval/spec.md"
     ],
     "design": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/design.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/design.md"
     ],
     "tasks": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/tasks.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/tasks.md"
     ],
     "applyProgress": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts/openspec/changes/automatic-supabase-embeddings/apply-progress.md"
     ],
     "verifyReport": [],
     "reviewPolicy": [],
@@ -91,9 +91,9 @@
   "applyState": "ready",
   "actionContext": {
     "mode": "repo-local",
-    "workspaceRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission",
+    "workspaceRoot": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts",
     "allowedEditRoots": [
-      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission"
+      "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts"
     ]
   },
   "relationships": {
@@ -118,22 +118,22 @@
       "State: ready",
       "Read proposal, specs, design, and tasks before editing.",
       "Implement only unchecked tasks and update tasks.md checkboxes as work completes.",
-      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission\" --change \"automatic-supabase-embeddings\" --request-id \"<unique-request-id>\" --work-unit \"<label>\" --evidence-goal \"<stable-goal>\" --max-attempts <count> --max-changed-lines <count>`.",
+      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts\" --change \"automatic-supabase-embeddings\" --request-id \"<unique-request-id>\" --work-unit \"<label>\" --evidence-goal \"<stable-goal>\" --max-attempts <count> --max-changed-lines <count>`.",
       "Launch only for state proceed and retain its opaque token. State blocked or complete stops the launch; full runtime status is a diagnostic escape hatch, not normal model context.",
-      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission\" --change \"automatic-supabase-embeddings\" --token \"<acquire-token>\" --request-id \"<unique-request-id>\" --outcome <passed|failed|interrupted> --evidence-revision <sha256> --diagnosis \"<proven-diagnosis>\" --harness-disposition <reused|invalidated> --cleanup-evidence \"<evidence>\" --process-evidence \"<evidence>\"`; add --successor-lineage only for a distinct approved remediation successor.",
+      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts\" --change \"automatic-supabase-embeddings\" --token \"<acquire-token>\" --request-id \"<unique-request-id>\" --outcome <passed|failed|interrupted> --evidence-revision <sha256> --diagnosis \"<proven-diagnosis>\" --harness-disposition <reused|invalidated> --cleanup-evidence \"<evidence>\" --process-evidence \"<evidence>\"`; add --successor-lineage only for a distinct approved remediation successor.",
       "Treat settle state proceed as permission for another bounded acquire, blocked as a hard stop, and complete as terminal. Reset is exceptional, requires an explicit maintainer scope decision, and is never automatic.",
-      "Attempt lifecycle is parent-owned. Assigned U2.3b2 token sha256:665e20b6e888b3bf5302a80e5fd6798c60ce5a295835c4be3040ff2cb2ac1779; executor must not acquire, settle or reset."
+      "Attempt lifecycle is parent-owned. Assigned U2.3c token sha256:f4ea1033a0e52c3e8ce5a9e5d8ddeed2b4fbdc972d8991d44537ac31ced2ed9d; executor must not acquire, settle or reset."
     ],
     "verify": [
       "Change: automatic-supabase-embeddings",
       "State: blocked",
       "Verify implementation against proposal, specs, design, and task completion.",
       "Run final verification only after every task is complete; apply-progress never makes final verification ready.",
-      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission\" --change \"automatic-supabase-embeddings\" --request-id \"<unique-request-id>\" --work-unit \"<label>\" --evidence-goal \"<stable-goal>\" --max-attempts <count> --max-changed-lines <count>`.",
+      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts\" --change \"automatic-supabase-embeddings\" --request-id \"<unique-request-id>\" --work-unit \"<label>\" --evidence-goal \"<stable-goal>\" --max-attempts <count> --max-changed-lines <count>`.",
       "Launch only for state proceed and retain its opaque token. State blocked or complete stops the launch; full runtime status is a diagnostic escape hatch, not normal model context.",
-      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission\" --change \"automatic-supabase-embeddings\" --token \"<acquire-token>\" --request-id \"<unique-request-id>\" --outcome <passed|failed|interrupted> --evidence-revision <sha256> --diagnosis \"<proven-diagnosis>\" --harness-disposition <reused|invalidated> --cleanup-evidence \"<evidence>\" --process-evidence \"<evidence>\"`; add --successor-lineage only for a distinct approved remediation successor.",
+      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts\" --change \"automatic-supabase-embeddings\" --token \"<acquire-token>\" --request-id \"<unique-request-id>\" --outcome <passed|failed|interrupted> --evidence-revision <sha256> --diagnosis \"<proven-diagnosis>\" --harness-disposition <reused|invalidated> --cleanup-evidence \"<evidence>\" --process-evidence \"<evidence>\"`; add --successor-lineage only for a distinct approved remediation successor.",
       "Treat settle state proceed as permission for another bounded acquire, blocked as a hard stop, and complete as terminal. Reset is exceptional, requires an explicit maintainer scope decision, and is never automatic.",
-      "Attempt lifecycle is parent-owned. Assigned U2.3b2 token sha256:665e20b6e888b3bf5302a80e5fd6798c60ce5a295835c4be3040ff2cb2ac1779; executor must not acquire, settle or reset."
+      "Attempt lifecycle is parent-owned. Assigned U2.3c token sha256:f4ea1033a0e52c3e8ce5a9e5d8ddeed2b4fbdc972d8991d44537ac31ced2ed9d; executor must not acquire, settle or reset."
     ],
     "remediate": [
       "Change: automatic-supabase-embeddings",
@@ -141,11 +141,11 @@
       "Bind focused tests, runtime harness evidence, and rollback evidence to the exact failed evidence revision.",
       "A bare remediation envelope or stale failed revision never completes remediation.",
       "A passing bound remediation MUST finish atomically with --expected-binding-revision, --successor-lineage, and --remediates-evidence-revision so the charged evidence and approved compact successor share one native HEAD CAS.",
-      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission\" --change \"automatic-supabase-embeddings\" --request-id \"<unique-request-id>\" --work-unit \"<label>\" --evidence-goal \"<stable-goal>\" --max-attempts <count> --max-changed-lines <count>`.",
+      "Before any runtime-bearing apply, verify, or remediation launch, run `gentle-ai sdd-attempt acquire --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts\" --change \"automatic-supabase-embeddings\" --request-id \"<unique-request-id>\" --work-unit \"<label>\" --evidence-goal \"<stable-goal>\" --max-attempts <count> --max-changed-lines <count>`.",
       "Launch only for state proceed and retain its opaque token. State blocked or complete stops the launch; full runtime status is a diagnostic escape hatch, not normal model context.",
-      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-admission\" --change \"automatic-supabase-embeddings\" --token \"<acquire-token>\" --request-id \"<unique-request-id>\" --outcome <passed|failed|interrupted> --evidence-revision <sha256> --diagnosis \"<proven-diagnosis>\" --harness-disposition <reused|invalidated> --cleanup-evidence \"<evidence>\" --process-evidence \"<evidence>\"`; add --successor-lineage only for a distinct approved remediation successor.",
+      "After the external run, call `gentle-ai sdd-attempt settle --cwd \"/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts\" --change \"automatic-supabase-embeddings\" --token \"<acquire-token>\" --request-id \"<unique-request-id>\" --outcome <passed|failed|interrupted> --evidence-revision <sha256> --diagnosis \"<proven-diagnosis>\" --harness-disposition <reused|invalidated> --cleanup-evidence \"<evidence>\" --process-evidence \"<evidence>\"`; add --successor-lineage only for a distinct approved remediation successor.",
       "Treat settle state proceed as permission for another bounded acquire, blocked as a hard stop, and complete as terminal. Reset is exceptional, requires an explicit maintainer scope decision, and is never automatic.",
-      "Attempt lifecycle is parent-owned. Assigned U2.3b2 token sha256:665e20b6e888b3bf5302a80e5fd6798c60ce5a295835c4be3040ff2cb2ac1779; executor must not acquire, settle or reset."
+      "Attempt lifecycle is parent-owned. Assigned U2.3c token sha256:f4ea1033a0e52c3e8ce5a9e5d8ddeed2b4fbdc972d8991d44537ac31ced2ed9d; executor must not acquire, settle or reset."
     ],
     "archive": [
       "Change: automatic-supabase-embeddings",
@@ -156,8 +156,8 @@
   "nextRecommended": "apply",
   "blockedReasons": [],
   "executorAssignment": {
-    "unit": "U2.3b2",
-    "parentAttemptToken": "sha256:665e20b6e888b3bf5302a80e5fd6798c60ce5a295835c4be3040ff2cb2ac1779",
+    "unit": "U2.3c",
+    "parentAttemptToken": "sha256:f4ea1033a0e52c3e8ce5a9e5d8ddeed2b4fbdc972d8991d44537ac31ced2ed9d",
     "ledgerOwner": "parent",
     "statusSnapshot": "base committed ready status rebound to assigned worktree; no new native status or ledger mutation"
   }

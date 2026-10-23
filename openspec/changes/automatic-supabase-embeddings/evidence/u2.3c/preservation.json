@@ -1,0 +1,9 @@
+{
+  "base": "d4162c5",
+  "tracked_changes_within_assignment": true,
+  "progress_prefix_sha256": "2d4e3b29af2d62998ebad1e43c14d49e09d4258fbca84e63d5b68d6437dac059",
+  "all_prior_receipts_unchanged": true,
+  "legacy_sql_unchanged": true,
+  "packages_unchanged": true,
+  "shared_chain_helper_unchanged": true
+}

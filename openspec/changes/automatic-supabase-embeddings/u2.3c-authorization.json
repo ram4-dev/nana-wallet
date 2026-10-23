@@ -1,0 +1,18 @@
+{
+  "unit": "U2.3c",
+  "workspace": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-attempts",
+  "branch": "feat/embedding-attempts",
+  "base": "d4162c580aa0dd77b8e6d26592c73380c176f54d",
+  "parentAttemptToken": "sha256:f4ea1033a0e52c3e8ce5a9e5d8ddeed2b4fbdc972d8991d44537ac31ced2ed9d",
+  "maxAttempts": 3,
+  "reviewedTarget": 348,
+  "reviewedMax": 380,
+  "hardSourceMax": 400,
+  "totalMax": 2000,
+  "precodeForecast": 378,
+  "subdivisionSha256": "a5094e50b31f29f9b0607701d45e2a0d3d07c1e185350b2c59511345a180cf46",
+  "roleInventory": [
+    "recipient_app"
+  ],
+  "ledgerOwner": "parent"
+}

@@ -8,7 +8,7 @@ const vector = [1, ...Array(383).fill(0)];
 const model = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2';
 
 describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
-  it.each(['foundation', 'outbox', 'lifecycle', 'protection', 'claims', 'completion', 'recovery', 'capacity', 'admission'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
+  it.each(['foundation', 'outbox', 'lifecycle', 'protection', 'claims', 'completion', 'recovery', 'capacity', 'admission', 'attempts'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
     const fixture = await embeddingDatabase(chain);
     const { database } = fixture;
     try {
@@ -27,13 +27,14 @@ describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
       const before = await snapshot();
       await fixture.applyFoundation();
       if (stage !== 'foundation') await fixture.applyOutbox();
-      if (['lifecycle', 'protection', 'claims', 'completion', 'recovery', 'capacity', 'admission'].includes(stage)) await fixture.applyLifecycle();
-      if (['protection', 'claims', 'completion', 'recovery', 'capacity', 'admission'].includes(stage)) await fixture.applyProtection();
-      if (['claims', 'completion', 'recovery', 'capacity', 'admission'].includes(stage)) await fixture.applyClaims();
-      if (['completion', 'recovery', 'capacity', 'admission'].includes(stage)) await fixture.applyCompletion();
-      if (['recovery', 'capacity', 'admission'].includes(stage)) await fixture.applyRecovery();
-      if (['capacity', 'admission'].includes(stage)) await fixture.applyCapacity();
-      if (stage === 'admission') await fixture.applyAdmission();
+      if (['lifecycle', 'protection', 'claims', 'completion', 'recovery', 'capacity', 'admission', 'attempts'].includes(stage)) await fixture.applyLifecycle();
+      if (['protection', 'claims', 'completion', 'recovery', 'capacity', 'admission', 'attempts'].includes(stage)) await fixture.applyProtection();
+      if (['claims', 'completion', 'recovery', 'capacity', 'admission', 'attempts'].includes(stage)) await fixture.applyClaims();
+      if (['completion', 'recovery', 'capacity', 'admission', 'attempts'].includes(stage)) await fixture.applyCompletion();
+      if (['recovery', 'capacity', 'admission', 'attempts'].includes(stage)) await fixture.applyRecovery();
+      if (['capacity', 'admission', 'attempts'].includes(stage)) await fixture.applyCapacity();
+      if (['admission', 'attempts'].includes(stage)) await fixture.applyAdmission();
+      if (stage === 'attempts') await fixture.applyAttempts();
       expect(await snapshot()).toEqual(before);
       for (const table of ['recipients', 'user_memories']) {
         expect((await database.query(`SELECT embedding_generation, desired_embedding_revision, embedding_state,
@@ -58,8 +59,8 @@ describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
       expect((await database.query('SELECT count(DISTINCT embedding_incarnation)::int AS count FROM (SELECT embedding_incarnation FROM recipients UNION ALL SELECT embedding_incarnation FROM user_memories) s')).rows[0]?.count).toBe(4);
       expect((await database.query('SELECT activated, claims_enabled, semantic_enabled FROM embedding_private.control')).rows[0])
         .toEqual({ activated: false, claims_enabled: false, semantic_enabled: false });
-      if (['claims', 'completion', 'recovery', 'capacity', 'admission'].includes(stage)) expect((await database.query('SELECT * FROM public.embedding_begin_drain()')).rows).toEqual([]);
-      if (stage === 'admission') expect((await database.withUserTransaction(owner, c => c.query("SELECT * FROM public.embedding_admit_request('query',1)"))).rows).toEqual([{ status: 'deferred',reservation_id: null,expires_at: null }]);
+      if (['claims', 'completion', 'recovery', 'capacity', 'admission', 'attempts'].includes(stage)) expect((await database.query('SELECT * FROM public.embedding_begin_drain()')).rows).toEqual([]);
+      if (['admission', 'attempts'].includes(stage)) expect((await database.withUserTransaction(owner, c => c.query("SELECT * FROM public.embedding_admit_request('query',1)"))).rows).toEqual([{ status: 'deferred',reservation_id: null,expires_at: null }]);
       if (stage !== 'foundation') expect((await database.query('SELECT count(*)::int AS count FROM embedding_private.jobs')).rows[0]?.count).toBe(0);
     } finally { await fixture.cleanup(); }
   }, 30_000);

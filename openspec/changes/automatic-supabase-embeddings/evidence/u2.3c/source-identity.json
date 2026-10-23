@@ -1,0 +1,38 @@
+[
+  {
+    "path": "src/db/migrations/027_embedding_attempts.sql",
+    "additions": 72,
+    "deletions": 0,
+    "sha256": "5706189ceea1796c4f8a829d160ef0b33172c6364221d097383b06bcfa07b7bb"
+  },
+  {
+    "path": "supabase/migrations/20261023000900_embedding_attempts.sql",
+    "additions": 72,
+    "deletions": 0,
+    "sha256": "5706189ceea1796c4f8a829d160ef0b33172c6364221d097383b06bcfa07b7bb"
+  },
+  {
+    "path": "tests/integration/automatic-embeddings-rpc.test.ts",
+    "additions": 169,
+    "deletions": 2,
+    "sha256": "8e4536b0c22bb36b65d0bd56018ceb32de6a45e3de0167c765fd81b276e6f867"
+  },
+  {
+    "path": "tests/integration/helpers/embedding-database.ts",
+    "additions": 3,
+    "deletions": 0,
+    "sha256": "1a0389d6570b55169cce204a62925e16c56e9bc17dc4d4b1793938906665f3aa"
+  },
+  {
+    "path": "tests/e2e/automatic-embeddings-foundation.e2e.test.ts",
+    "additions": 11,
+    "deletions": 10,
+    "sha256": "e2567cfde6f8cb967ad2785940ddda9f7a28b8bcde06ce7b36645a6905faa6c1"
+  },
+  {
+    "path": "openspec/changes/automatic-supabase-embeddings/evidence/u2.3c/check-chains.py",
+    "additions": 38,
+    "deletions": 0,
+    "sha256": "0cb046c4be1b06182356c04655cdcd23af975222a6408294ea5c616aefec991f"
+  }
+]
