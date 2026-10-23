@@ -93,6 +93,7 @@ export async function embeddingDatabase(chain: typeof chains[number]) {
       } finally { await rm(bounded, { recursive: true }); }
     };
     return {
+      psql,
       database, migration, cleanup, migrationSearchPath: () => migrationSearchPath,
       applyFoundation: () => applyMigration(foundationNames[chain]),
       applyOutbox: () => applyMigration(outboxNames[chain]),
