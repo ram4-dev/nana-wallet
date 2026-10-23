@@ -8,7 +8,7 @@ const vector = [1, ...Array(383).fill(0)];
 const model = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2';
 
 describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
-  it.each(['foundation', 'outbox', 'lifecycle'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
+  it.each(['foundation', 'outbox', 'lifecycle', 'protection'])('preserves legacy data, writers/readers, role isolation and history after %s', async (stage) => {
     const fixture = await embeddingDatabase(chain);
     const { database } = fixture;
     try {
@@ -27,7 +27,8 @@ describe.each(chains)('U1.1 dormant legacy E2E: %s', (chain) => {
       const before = await snapshot();
       await fixture.applyFoundation();
       if (stage !== 'foundation') await fixture.applyOutbox();
-      if (stage === 'lifecycle') await fixture.applyLifecycle();
+      if (stage === 'lifecycle' || stage === 'protection') await fixture.applyLifecycle();
+      if (stage === 'protection') await fixture.applyProtection();
       expect(await snapshot()).toEqual(before);
       for (const table of ['recipients', 'user_memories']) {
         expect((await database.query(`SELECT embedding_generation, desired_embedding_revision, embedding_state,

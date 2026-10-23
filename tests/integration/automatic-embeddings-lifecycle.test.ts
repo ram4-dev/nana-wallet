@@ -298,3 +298,164 @@ describe.each(chains)('U1.3 guarded lifecycle L1-L3/T5/T11: %s', (chain) => {
   });
 
 });
+
+// U1.4 uses the real operator switch only in disposable, rollback-only fixtures.
+describe.each(chains)('U1.4 staged protection T4: %s', (chain) => {
+  let fixture: Awaited<ReturnType<typeof embeddingDatabase>>;
+  const policySql = `SELECT oid::regclass::text AS source,relrowsecurity,relforcerowsecurity,
+    (SELECT jsonb_agg(to_jsonb(p)) FROM pg_policy p WHERE polrelid=c.oid) AS policies
+    FROM pg_class c WHERE oid IN ('recipients'::regclass,'user_memories'::regclass) ORDER BY source`;
+  let policies: unknown; let grants: unknown;
+  beforeAll(async () => {
+    fixture = await embeddingDatabase(chain);
+    await fixture.applyFoundation(); await fixture.applyOutbox(); await fixture.applyLifecycle();
+    policies = (await fixture.migration.query(policySql)).rows;
+    grants = (await fixture.migration.query(sourceGrantsSql)).rows;
+    await fixture.applyProtection();
+  }, 30_000);
+  afterAll(async () => { await fixture?.cleanup(); });
+
+  it('expands nullable fields only after guards, retaining dormant grants, RLS and legacy input refusal', async () => {
+    const db = fixture.migration;
+    expect((await db.query(sourceGrantsSql)).rows).toEqual(grants);
+    expect((await db.query("SELECT proconfig FROM pg_proc WHERE oid='embedding_private.activate()'::regprocedure")).rows[0].proconfig)
+      .toEqual(['search_path=pg_catalog, extensions', 'row_security=off']);
+    expect((await db.query(policySql)).rows).toEqual(policies);
+    expect((await db.query(`SELECT count(*)::int AS n FROM information_schema.columns WHERE table_schema='public'
+      AND table_name IN ('recipients','user_memories') AND column_name IN ('embedding','embedding_model_revision') AND is_nullable='YES'`)).rows[0].n).toBe(4);
+    await db.query('BEGIN');
+    try {
+      const owner = randomUUID();
+      await db.query('INSERT INTO users(id,privy_did) VALUES($1,$2)', [owner, `did:privy:${owner}`]);
+      for (const [, table, fields, values] of domains) {
+        await db.query('SAVEPOINT dormant');
+        await expect(db.query(`INSERT INTO public.${table}(user_id,${fields}) VALUES($1,${values})`, [owner])).rejects.toMatchObject({ code: '23514' });
+        await db.query('ROLLBACK TO SAVEPOINT dormant');
+      }
+    } finally { await db.query('ROLLBACK'); }
+  });
+
+  it('refuses unplanned inventory, missing guards and inherited protected grants atomically', async () => {
+    const db = fixture.migration;
+    await db.query('BEGIN');
+    try {
+      for (const setup of [
+        "DROP TRIGGER embedding_source_before ON public.recipients",
+        "ALTER TABLE public.user_memories DISABLE TRIGGER embedding_source_after",
+        'ALTER TABLE public.user_memories NO FORCE ROW LEVEL SECURITY',
+        'GRANT UPDATE(embedding) ON public.recipients TO PUBLIC',
+        ...domains.map(([, table, fields, values]) => `INSERT INTO public.${table}(user_id,${fields},embedding,embedding_model_revision)
+          VALUES('${randomUUID()}',${values},'${vector}','legacy')`),
+      ]) {
+        await db.query('SAVEPOINT unsafe_activation');
+        // Source owner FK needs a real local fixture user for the inventory controls.
+        const id = setup.match(/VALUES\('([0-9a-f-]{36})'/)?.[1];
+        if (id) await db.query('INSERT INTO users(id,privy_did) VALUES($1,$2)', [id, `did:privy:${id}`]);
+        await db.query(setup);
+        await db.query('SAVEPOINT activate');
+        await expect(db.query('SELECT embedding_private.activate()')).rejects.toMatchObject({ code: '23514' });
+        await db.query('ROLLBACK TO SAVEPOINT activate');
+        expect((await db.query('SELECT activated,claims_enabled,semantic_enabled FROM embedding_private.control')).rows[0])
+          .toEqual({ activated: false, claims_enabled: false, semantic_enabled: false });
+        expect((await db.query(sourceGrantsSql)).rows).toEqual(grants);
+        await db.query('ROLLBACK TO SAVEPOINT unsafe_activation');
+      }
+    } finally { await db.query('ROLLBACK'); }
+  });
+
+  it.each(domains)('%s: protects every metadata column, keeps business writes and enforces owner RLS', async (_kind, table, fields, values, text) => {
+    const db = fixture.migration; const owner = randomUUID(); const other = randomUUID();
+    await db.query('BEGIN');
+    try {
+      await db.query('SELECT embedding_private.activate()');
+      expect((await db.query(policySql)).rows).toEqual(policies);
+      expect((await db.query('SELECT activated,claims_enabled,semantic_enabled FROM embedding_private.control')).rows[0])
+        .toEqual({ activated: true, claims_enabled: false, semantic_enabled: false });
+      await db.query('INSERT INTO users(id,privy_did) VALUES($1,$2),($3,$4)', [owner, `did:privy:${owner}`, other, `did:privy:${other}`]);
+      await db.query('SET LOCAL ROLE recipient_app');
+      await db.query("SELECT set_config('app.user_id',$1,true)", [owner]);
+      const { rows: [source] } = await db.query(`INSERT INTO public.${table}(user_id,${fields}) VALUES($1,${values}) RETURNING *`, [owner]);
+      expect(source).toMatchObject({ embedding: null, embedding_model_revision: null, embedding_generation: '1', embedding_state: 'pending' });
+      // Exercise all existing business columns, including CAS version/timestamps and contact history.
+      const business = table === 'recipients' ? 'name,normalized_name,description,address,network,version,status,provenance,address_confirmed_at,created_at,updated_at'
+        : 'fact,kind,version,status,provenance,confirmed_at,created_at,updated_at';
+      await db.query(`UPDATE public.${table} SET ${business.split(',').map((c) => `${c}=${c}`).join(',')} WHERE id=$1`, [source.id]);
+      const { rows: [second] } = await db.query(`INSERT INTO public.${table}(user_id,${business})
+        SELECT user_id,${business} FROM public.${table} WHERE id=$1 RETURNING id`, [source.id]);
+      if (table === 'recipients') await db.query(`INSERT INTO recipient_versions(recipient_id,user_id,version,name,description,address,network)
+        SELECT id,user_id,version,name,description,address,network FROM recipients WHERE id=$1`, [source.id]);
+      await db.query('RESET ROLE');
+      const wallet = randomUUID();
+      await db.query("INSERT INTO user_wallets(id,user_id,provider,provider_wallet_id,chain_family,address) VALUES($1,$2,'fixture',$3,'solana','fixture')", [wallet, owner, wallet]);
+      await db.query('INSERT INTO recipient_policy_state(wallet_id,user_id) VALUES($1,$2)', [wallet, owner]);
+      const snapshot = async () => (await db.query(`SELECT to_jsonb(t) AS data FROM public.${table} t
+        UNION ALL SELECT to_jsonb(v) FROM recipient_versions v UNION ALL SELECT to_jsonb(p) FROM recipient_policy_state p
+        UNION ALL SELECT to_jsonb(j) FROM embedding_private.jobs j`)).rows;
+      const before = await snapshot();
+      const protectedColumns = ['id','embedding','embedding_model_revision','embedding_generation','embedding_incarnation','desired_embedding_revision','embedding_state'];
+      for (const column of [...protectedColumns, 'user_id']) {
+        for (const operation of column === 'user_id' ? ['UPDATE'] : ['INSERT','UPDATE']) {
+          expect((await db.query('SELECT has_column_privilege(\'recipient_app\',$1,$2,$3) AS allowed', [`public.${table}`, column, operation])).rows[0].allowed).toBe(false);
+          await db.query('SAVEPOINT forge'); await db.query('SET LOCAL ROLE recipient_app');
+          await expect(db.query(operation === 'UPDATE' ? `UPDATE public.${table} SET ${column}=${column} WHERE id='${source.id}'`
+            : `INSERT INTO public.${table}(${column}) SELECT ${column} FROM public.${table} WHERE id='${source.id}'`)).rejects.toMatchObject({ code: '42501' });
+          await db.query('ROLLBACK TO SAVEPOINT forge');
+        }
+      }
+      expect(await snapshot()).toEqual(before);
+      for (const context of ['', other]) {
+        await db.query('SET LOCAL ROLE recipient_app'); await db.query("SELECT set_config('app.user_id',$1,true)", [context]);
+        expect((await db.query(`SELECT * FROM public.${table}`)).rowCount).toBe(0);
+        expect((await db.query(`UPDATE public.${table} SET ${text}='Intruso' WHERE id=$1`, [source.id])).rowCount).toBe(0);
+        expect((await db.query(`DELETE FROM public.${table} WHERE id=$1`, [source.id])).rowCount).toBe(0);
+        await db.query('SAVEPOINT wrong_owner');
+        await expect(db.query(`INSERT INTO public.${table}(user_id,${fields}) VALUES($1,${values})`, [owner])).rejects.toMatchObject({ code: '42501' });
+        await db.query('ROLLBACK TO SAVEPOINT wrong_owner'); await db.query('RESET ROLE');
+      }
+      expect(await snapshot()).toEqual(before);
+      await db.query('SET LOCAL ROLE recipient_app'); await db.query("SELECT set_config('app.user_id',$1,true)", [owner]);
+      await db.query(`UPDATE public.${table} SET ${text}='Contenido nuevo',version=version+1,updated_at=now() WHERE id=$1`, [source.id]);
+      expect((await db.query(`SELECT version,embedding_generation FROM public.${table} WHERE id=$1`, [source.id])).rows[0])
+        .toEqual({ version: '2', embedding_generation: '2' });
+      expect((await db.query(`DELETE FROM public.${table} WHERE id=$1`, [second.id])).rowCount).toBe(1);
+      await db.query('RESET ROLE');
+      // Fixture disable must never restore broad app metadata privileges.
+      await db.query('UPDATE embedding_private.control SET activated=false');
+      expect((await db.query("SELECT has_column_privilege('recipient_app',$1,'embedding','UPDATE') AS allowed", [`public.${table}`])).rows[0].allowed).toBe(false);
+    } finally { await db.query('ROLLBACK'); }
+  });
+
+  it('cannot hide inventory from a non-bypass operator through forced RLS', async () => {
+    const db = fixture.migration; const owner = randomUUID(); const role = `embedding_probe_${randomUUID().replaceAll('-', '')}`;
+    await db.query('BEGIN');
+    try {
+      await db.query('INSERT INTO users(id,privy_did) VALUES($1,$2)', [owner, `did:privy:${owner}`]);
+      await db.query(`INSERT INTO user_memories(user_id,fact,confirmed_at,embedding,embedding_model_revision) VALUES($1,'Fixture',now(),$2,'legacy')`, [owner, vector]);
+      await db.query(`CREATE ROLE ${role} NOLOGIN NOBYPASSRLS; ALTER TABLE recipients OWNER TO ${role}; ALTER TABLE user_memories OWNER TO ${role};
+        GRANT USAGE ON SCHEMA public,embedding_private TO ${role}; GRANT SELECT,UPDATE ON embedding_private.control TO ${role};
+        GRANT EXECUTE ON FUNCTION embedding_private.activate() TO ${role}`);
+      await db.query(`SET LOCAL ROLE ${role}`); await db.query("SELECT set_config('app.user_id','',true)");
+      expect((await db.query('SELECT * FROM user_memories')).rowCount).toBe(0);
+      await expect(db.query('SELECT embedding_private.activate()')).rejects.toMatchObject({ code: '42501' });
+    } finally { await db.query('ROLLBACK'); }
+  });
+
+  it('denies activation to all normal roles, including with schema USAGE; PUBLIC has no execute grant', async () => {
+    const db = fixture.migration;
+    await db.query('BEGIN');
+    try {
+      await db.query(`DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$`);
+      expect((await db.query(`SELECT count(*)::int AS n FROM pg_proc p,LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+        WHERE p.oid='embedding_private.activate()'::regprocedure AND a.grantee=0`)).rows[0].n).toBe(0);
+      for (const role of ['recipient_app','anon','authenticated']) {
+        await db.query(`GRANT USAGE ON SCHEMA embedding_private TO ${role}`);
+        for (const sql of ['SELECT embedding_private.activate()', 'UPDATE embedding_private.control SET activated=true', 'SELECT * FROM embedding_private.jobs']) {
+          await db.query('SAVEPOINT denied'); await db.query(`SET LOCAL ROLE ${role}`);
+          await expect(db.query(sql)).rejects.toMatchObject({ code: '42501' });
+          await db.query('ROLLBACK TO SAVEPOINT denied');
+        }
+      }
+    } finally { await db.query('ROLLBACK'); }
+  });
+});
