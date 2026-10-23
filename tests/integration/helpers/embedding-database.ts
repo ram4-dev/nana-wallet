@@ -12,6 +12,7 @@ export const foundationNames = {
   supabase: '20261023000000_embedding_foundation.sql',
   mirror: '018_embedding_foundation.sql',
 };
+export const outboxNames = { supabase: '20261023000100_embedding_outbox.sql', mirror: '019_embedding_outbox.sql' };
 
 export async function embeddingDatabase(chain: typeof chains[number]) {
   const configured = process.env.EMBEDDINGS_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
@@ -67,12 +68,18 @@ export async function embeddingDatabase(chain: typeof chains[number]) {
         await runMigrations(migrationUrl.href, baseline);
       } finally { await rm(baseline, { recursive: true }); }
     }
+    const applyMigration = async (file: string) => {
+      if (chain === 'supabase') return psql(await readFile(join(directory, file), 'utf8'));
+      const bounded = await mkdtemp(join(tmpdir(), 'embedding-migrations-'));
+      try {
+        await copyFile(join(directory, file), join(bounded, file));
+        await runMigrations(migrationUrl.href, bounded);
+      } finally { await rm(bounded, { recursive: true }); }
+    };
     return {
-      database, cleanup, migrationSearchPath: () => migrationSearchPath,
-      applyFoundation: async () => {
-        if (chain === 'mirror') return runMigrations(migrationUrl.href);
-        psql(await readFile(join(directory, foundationNames[chain]), 'utf8'));
-      },
+      database, migration, cleanup, migrationSearchPath: () => migrationSearchPath,
+      applyFoundation: () => applyMigration(foundationNames[chain]),
+      applyOutbox: () => applyMigration(outboxNames[chain]),
     };
   } catch (error) {
     await cleanup();

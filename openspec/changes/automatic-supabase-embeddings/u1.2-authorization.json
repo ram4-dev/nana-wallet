@@ -1,0 +1,26 @@
+{
+  "work_unit": "U1.2",
+  "task": "1.2",
+  "assigned_role": "sdd-apply implementation executor",
+  "worktree": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-outbox",
+  "branch": "feat/embedding-outbox",
+  "base_commit": "f8e45e23f83b336976a93a0be4b920ce36b0f119",
+  "initial_status": "clean",
+  "source_branch": "feat/remote-supabase-vector",
+  "delivery_strategy": "auto-chain",
+  "chain_strategy": "stacked-to-main",
+  "strict_tdd": false,
+  "outline_approved_sha256": "1ed65e6132f95f061c197c0b34623e473fe782b452f360a12cf21d753dfaaa4c",
+  "maintainer_authorization": "Latest explicit assignment authorizes 2000 total changed lines/unit while retaining 400 authored code/test additions+deletions including both SQL mirrors; parent already performed reset retaining lifetime 2 attempts / 804 lines. Executor must not reset, settle, delegate or perform git/PR/remote/secret/payment operations.",
+  "native_authentication": {
+    "request_id": "auto-embedding-u1-2-executor-auth",
+    "state": "proceed",
+    "token": "sha256:f885e3a7d24398d50eda46b1f41182922a403096b8fedf28d014d7def4641963",
+    "same_parent_attempt": true,
+    "max_attempts": 3,
+    "max_changed_lines": 2000,
+    "settlement_owner": "parent"
+  },
+  "status_binding": "Regenerated using native gentle-ai sdd-status --cwd for this checkout; no manual authority weakening.",
+  "cleanup_policy": "Retain worktree, dependencies and parent container; remove only harness-owned scratch resources."
+}
