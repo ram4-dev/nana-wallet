@@ -1,0 +1,24 @@
+{
+  "work_unit": "U2.1",
+  "task": "2.1",
+  "role": "sdd-apply executor",
+  "worktree": "/Users/ramiro/Desktop/projects/colloseum.feat-embedding-claims",
+  "branch": "feat/embedding-claims",
+  "source_branch": "feat/embedding-protection",
+  "base_commit": "0c0e285260493855345b4ca336150bcc887e5d05",
+  "initial_status": "clean",
+  "delivery_strategy": "auto-chain",
+  "chain_strategy": "stacked-to-main",
+  "strict_tdd": false,
+  "native_attempt": {
+    "parent_owned": true,
+    "token": "sha256:fe6e698a45feb3276c2447c839a4bd98330344bf2e5d67d337fe17387d9e53f4",
+    "max_attempts": 3,
+    "total_line_limit": 2000,
+    "source_test_line_limit": 400
+  },
+  "authorization": "Explicit parent assignment for ONLY U2.1; no delegation,commit,push,PR,merge,secrets,remote,provider,native acquire/settle/reset. Parent owns ledger/delivery.",
+  "status_binding": "Read-only native sdd-status regenerated ready state/local paths and confirmed supplied parent token. Predecessor evidence remains unchanged.",
+  "cleanup": "Retain worktree/dependencies and parent DB/container; remove only owned scratch DBs/roles/processes.",
+  "outline_approved_sha256": "1ed65e6132f95f061c197c0b34623e473fe782b452f360a12cf21d753dfaaa4c"
+}
