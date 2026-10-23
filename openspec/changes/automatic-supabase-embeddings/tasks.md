@@ -14,7 +14,7 @@ Approved design/outline gates are complete. Root strict_tdd=false remains unchan
 
 ## 1. Dormant lifecycle
 
-- [ ] 1.1 U1.1 Add mirrored foundation and `automatic-embeddings-foundation.test.ts`.
+- [x] 1.1 U1.1 Add mirrored foundation and `automatic-embeddings-foundation.test.ts`.
 - [ ] 1.2 U1.2 Add mirrored outbox; extend `automatic-embeddings-lifecycle.test.ts`.
 - [ ] 1.3 U1.3 Add guarded lifecycle triggers; prove L1–L3/T5/T11.
 - [ ] 1.4 U1.4 Add staged grants/activation; prove T4 before protection.
